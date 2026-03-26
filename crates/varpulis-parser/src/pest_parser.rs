@@ -385,6 +385,7 @@ fn is_stream_op_error(positives: &[Rule]) -> bool {
         Rule::score_op,
         Rule::forecast_op,
         Rule::enrich_op,
+        Rule::alert_op,
     ];
     positives.len() >= 10 && positives.iter().all(|r| STREAM_OP_RULES.contains(r))
 }
@@ -1387,6 +1388,15 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                 batch_size,
                 device_id,
             }))
+        }
+        Rule::alert_op => {
+            let args = pair
+                .into_inner()
+                .filter(|p| p.as_rule() == Rule::named_arg_list)
+                .flat_map(|p| p.into_inner())
+                .map(parse_named_arg)
+                .collect::<ParseResult<Vec<_>>>()?;
+            Ok(StreamOp::Alert(args))
         }
         _ => Err(ParseError::UnexpectedToken {
             position: 0,

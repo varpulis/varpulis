@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tracing::info;
+use varpulis_cli::output;
 use varpulis_connectors::credentials::CredentialsStore;
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;
@@ -179,6 +180,7 @@ pub async fn run_program(
         let start = std::time::Instant::now();
         let mut last_report = std::time::Instant::now();
         let mut event_count = 0u64;
+        let spinner = output::create_spinner("Waiting for events...");
 
         // Process events from all sources — batch when multiple are available
         loop {
@@ -224,12 +226,12 @@ pub async fn run_program(
                     // Progress report every 2 seconds
                     if last_report.elapsed() >= std::time::Duration::from_secs(2) {
                         let metrics = engine.metrics();
-                        print!("\rEvents: {} | Output events: {} | Rate: {:.0}/s    ",
+                        spinner.set_message(format!(
+                            "Events: {} | Output: {} | Rate: {:.0}/s",
                             metrics.events_processed,
                             metrics.output_events_emitted,
                             event_count as f64 / start.elapsed().as_secs_f64()
-                        );
-                        std::io::Write::flush(&mut std::io::stdout())?;
+                        ));
                         last_report = std::time::Instant::now();
 
                         // Periodic checkpoint tick (piggybacks on progress interval)
@@ -241,7 +243,8 @@ pub async fn run_program(
                     }
                 }
                 _ = tokio::signal::ctrl_c() => {
-                    println!("\n\nStopping...");
+                    spinner.finish_and_clear();
+                    println!("\nStopping...");
                     registry.shutdown().await;
                     break;
                 }

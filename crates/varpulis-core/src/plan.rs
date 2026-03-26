@@ -169,6 +169,8 @@ pub enum LogicalOp {
     AllowedLateness(Expr),
     /// Fork: `.fork(...)`
     Fork(Vec<crate::ast::ForkPath>),
+    /// Alert notification: `.alert(...)`
+    Alert(Vec<NamedArg>),
 }
 
 /// Connector declaration in the logical plan.
@@ -370,6 +372,7 @@ fn describe_op(op: &LogicalOp) -> String {
         LogicalOp::Watermark(_) => "Watermark".to_string(),
         LogicalOp::AllowedLateness(_) => "AllowedLateness".to_string(),
         LogicalOp::Fork(paths) => format!("Fork({} paths)", paths.len()),
+        LogicalOp::Alert(_) => "Alert".to_string(),
     }
 }
 

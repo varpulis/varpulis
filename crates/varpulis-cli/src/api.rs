@@ -167,6 +167,20 @@ pub struct QuotaInfo {
 }
 
 // =============================================================================
+// Pipeline Graph (Visual Builder) Request/Response types
+// =============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct PipelineGraphRequest {
+    pub vpl: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GenerateResponse {
+    pub vpl: String,
+}
+
+// =============================================================================
 // Tenant Admin Request/Response types
 // =============================================================================
 
@@ -396,6 +410,9 @@ pub fn api_routes(
             "/api/v1/pipelines/{pipeline_id}/dlq/replay",
             post(handle_dlq_replay),
         )
+        // Pipeline graph (visual builder)
+        .route("/api/v1/pipeline/graph", post(handle_pipeline_to_graph))
+        .route("/api/v1/pipeline/generate", post(handle_graph_to_pipeline))
         // Tenant admin routes
         .route(
             "/api/v1/tenants",
@@ -1644,6 +1661,31 @@ async fn handle_delete_tenant(
         Ok(()) => axum::Json(serde_json::json!({"deleted": true})).into_response(),
         Err(e) => tenant_error_response(e),
     }
+}
+
+// =============================================================================
+// Pipeline Graph Handlers (Visual Builder)
+// =============================================================================
+
+async fn handle_pipeline_to_graph(Json(body): Json<PipelineGraphRequest>) -> Response {
+    match varpulis_parser::parse(&body.vpl) {
+        Ok(program) => {
+            let graph = varpulis_runtime::engine::graph::program_to_graph(&program);
+            (StatusCode::OK, axum::Json(graph)).into_response()
+        }
+        Err(e) => error_response(
+            StatusCode::BAD_REQUEST,
+            "parse_error",
+            &format!("Failed to parse VPL: {e}"),
+        ),
+    }
+}
+
+async fn handle_graph_to_pipeline(
+    Json(graph): Json<varpulis_runtime::engine::graph::PipelineGraph>,
+) -> Response {
+    let vpl = varpulis_runtime::engine::graph::graph_to_vpl(&graph);
+    (StatusCode::OK, axum::Json(GenerateResponse { vpl })).into_response()
 }
 
 // =============================================================================

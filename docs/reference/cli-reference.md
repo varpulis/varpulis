@@ -233,6 +233,8 @@ varpulis simulate --program rules.vpl --events data.evt --workers 8
 | `-v, --verbose` | disabled | Show each event as it's processed |
 | `-w, --workers <N>` | CPU cores | Number of worker threads for parallel processing |
 | `--partition-by <FIELD>` | auto | Field to use for partitioning events |
+| `--watch` | disabled | Watch .vpl/.evt files and re-run on changes |
+| `-q, --quiet` | disabled | Benchmark mode: suppress output, show counts only |
 
 **Event File Format (.evt):**
 ```
@@ -504,6 +506,115 @@ The worker auto-registers, sends heartbeats every 5 seconds, and retries registr
 
 ---
 
+### `varpulis infer`
+
+Infer VPL `event` type declarations from sample data files.
+
+```bash
+varpulis infer --input events.jsonl
+varpulis infer --input sensor_data.evt --output schema.vpl --sample-size 500
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-i, --input <PATH>` | required | Input event file (.evt or .jsonl) |
+| `-o, --output <PATH>` | stdout | Output file for generated declarations |
+| `--sample-size <N>` | `100` | Number of events to sample for inference |
+
+**Supported formats:**
+- **JSONL** (flat): `{"event_type": "Login", "user": "alice", "success": true}`
+- **JSONL** (nested): `{"event_type": "Login", "data": {"user": "alice"}}`
+- **.evt**: `Login { user: "alice", success: true }`
+
+**Type inference rules:**
+- Integer + Float in same field → `float`
+- Mixed with String → `str`
+- Null + any type → the non-null type
+
+**Example output:**
+```
+$ varpulis infer --input events.jsonl
+
+event Login:
+    ip: str
+    success: bool
+    user_id: str
+
+event Transfer:
+    amount: float
+    currency: str
+    user_id: str
+# Inferred 2 event type(s) from 4 event(s)
+```
+
+---
+
+### `varpulis connector`
+
+Manage and inspect available connectors.
+
+#### `varpulis connector list`
+
+Show all registered connectors in a formatted table.
+
+```bash
+varpulis connector list
+```
+
+**Example output:**
+```
+┌──────────┬──────────────────────────────────────────┬────────┬──────┬─────────┐
+│ Type     │ Description                              │ Source │ Sink │ Managed │
+╞══════════╪══════════════════════════════════════════╪════════╪══════╪═════════╡
+│ console  │ Debug connector (stdin/stdout)           │   ✓    │  ✓   │         │
+├──────────┼──────────────────────────────────────────┼────────┼──────┼─────────┤
+│ http     │ HTTP webhook source and POST sink        │   ✓    │  ✓   │         │
+├──────────┼──────────────────────────────────────────┼────────┼──────┼─────────┤
+│ kafka    │ Apache Kafka producer/consumer           │   ✓    │  ✓   │    ✓    │
+├──────────┼──────────────────────────────────────────┼────────┼──────┼─────────┤
+│ mqtt     │ MQTT pub/sub for IoT                     │   ✓    │  ✓   │    ✓    │
+└──────────┴──────────────────────────────────────────┴────────┴──────┴─────────┘
+```
+
+> **Note:** Connectors behind feature flags (kafka, nats, redis, etc.) only appear
+> when compiled with the corresponding feature: `cargo build --features kafka,nats`
+
+#### `varpulis connector info <TYPE>`
+
+Show detailed configuration parameters and example VPL for a connector.
+
+```bash
+varpulis connector info mqtt
+```
+
+#### `varpulis connector test <TYPE> --url <URL>`
+
+Test connectivity to a service (placeholder — implementation varies by connector).
+
+```bash
+varpulis connector test mqtt --url "localhost:1883"
+```
+
+---
+
+### `varpulis simulate --watch`
+
+Watch mode re-runs the simulation automatically when the VPL or event file changes.
+
+```bash
+varpulis simulate --watch -p pipeline.vpl -e events.evt -w 1
+```
+
+On each file save, the terminal clears and the simulation re-executes. Parse errors
+are displayed without stopping the watcher — fix the error and save again.
+
+**Use case:** Rapid iteration during pipeline development. Edit your `.vpl` in one
+terminal (or IDE with LSP), see results update instantly in another.
+
+---
+
 ## Environment Variables
 
 | Variable | Used By | Description |
@@ -516,6 +627,10 @@ The worker auto-registers, sends heartbeats every 5 seconds, and retries registr
 | `VARPULIS_COORDINATOR` | `server` | Coordinator URL for cluster registration |
 | `VARPULIS_WORKER_ID` | `server` | Worker identifier in cluster mode |
 | `RUST_LOG` | All | Logging level (e.g., `info`, `debug`, `trace`) |
+| `NO_COLOR` | All | Disable colored CLI output (any value) |
+| `VARPULIS_SMTP_DANGEROUS` | `server` | Disable SMTP TLS verification (dev only) |
+| `VARPULIS_CREDENTIALS` | All | Path to credentials YAML file |
+| `VARPULIS_MASTER_KEY` | All | Encryption master key (hex) |
 
 ---
 

@@ -343,6 +343,27 @@ fn get_documentation(word: &str) -> Option<String> {
             ```"
         )),
 
+        "alert" => Some(format!(
+            "## .alert()\n\n\
+            Sends alert notifications via webhook when events flow through\n\
+            the pipeline. Fire-and-forget: does not consume events.\n\n\
+            **Parameters:**\n\
+            - `webhook` — URL to HTTP POST the alert payload (required for delivery)\n\
+            - `message` — Template string with `{{field}}` interpolation (optional)\n\n\
+            **Behavior:**\n\
+            - Sends a JSON payload with `text`, `event_type`, and `stream` fields\n\
+            - Non-blocking: failed webhooks log a warning but don't block the pipeline\n\
+            - Events continue downstream after the alert is sent\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            stream FraudAlerts = Login as l -> LargeTransfer as t\n\
+                .within(5m)\n\
+                .where(t.amount > 10000)\n\
+                .alert(webhook: \"https://hooks.slack.com/...\", message: \"Fraud: {{amount}}\")\n\
+                .emit(user: l.user_id, amount: t.amount)\n\
+            ```"
+        )),
+
         "forecast" => Some(format!(
             "## .forecast()\n\n\
             PST-based pattern forecasting. Predicts whether a partially-matched\n\

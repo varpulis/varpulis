@@ -182,6 +182,7 @@ fn translate_ops(ops: &[StreamOp]) -> Result<Vec<LogicalOp>, String> {
             StreamOp::Score(spec) => LogicalOp::Score(spec.clone()),
             StreamOp::Forecast(spec) => LogicalOp::Forecast(spec.clone()),
             StreamOp::Enrich(spec) => LogicalOp::Enrich(spec.clone()),
+            StreamOp::Alert(args) => LogicalOp::Alert(args.clone()),
             StreamOp::TrendAggregate(items) => LogicalOp::TrendAggregate(items.clone()),
             StreamOp::OrderBy(items) => LogicalOp::OrderBy(items.clone()),
             StreamOp::Context(name) => LogicalOp::Context(name.clone()),

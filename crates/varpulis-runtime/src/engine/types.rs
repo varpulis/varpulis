@@ -218,6 +218,8 @@ pub enum RuntimeOp {
     Forecast(ForecastConfig),
     /// External connector enrichment: lookup reference data and inject fields
     Enrich(EnrichConfig),
+    /// Alert notification: send webhook with event data as side-effect
+    Alert(AlertConfig),
     /// Deduplicate events by expression value (or entire event if None)
     Distinct(DistinctState),
     /// Pass at most N events, then stop the stream
@@ -253,6 +255,7 @@ impl RuntimeOp {
             Self::Score(_) => "Score",
             Self::Forecast(_) => "Forecast",
             Self::Enrich(_) => "Enrich",
+            Self::Alert(_) => "Alert",
             Self::Distinct(_) => "Distinct",
             Self::Limit(_) => "Limit",
             Self::Concurrent(_) => "Concurrent",
@@ -312,6 +315,14 @@ pub struct ForecastConfig {
     pub hawkes: bool,
     /// Whether conformal prediction intervals are enabled.
     pub conformal: bool,
+}
+
+/// Configuration for `.alert()` webhook notifications
+pub struct AlertConfig {
+    /// Webhook URL to POST alert payload
+    pub webhook_url: Option<String>,
+    /// Optional message template with `{field}` interpolation
+    pub message_template: Option<String>,
 }
 
 /// Configuration for external connector enrichment

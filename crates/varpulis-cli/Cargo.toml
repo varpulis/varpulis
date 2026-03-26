@@ -55,7 +55,15 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 argon2 = "0.5"
 getrandom = "0.4"
+indicatif = "0.17"
+owo-colors = "4"
+comfy-table = "7"
+varpulis-connector-api = { version = "0.7.0", path = "../varpulis-connector-api" }
 varpulis-connectors = { version = "0.7.0", path = "../varpulis-connectors" }
+notify = "7"
+
+# REPL (optional, behind "repl" feature)
+rustyline = { version = "15", optional = true }
 
 # OIDC/SSO (optional, behind "oidc" feature)
 openidconnect = { version = "4", optional = true }
@@ -82,6 +90,7 @@ persistent = ["raft", "varpulis-cluster/persistent"]
 saas = ["varpulis-db", "lettre"]
 oidc = ["openidconnect"]
 encryption = ["varpulis-connectors/encryption"]
+repl = ["rustyline"]
 otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry", "varpulis-cluster/otel"]
 
 [dev-dependencies]

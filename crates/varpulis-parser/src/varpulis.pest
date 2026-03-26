@@ -140,6 +140,7 @@ dot_op = { "." ~ (
     | score_op
     | forecast_op
     | enrich_op
+    | alert_op
 )}
 
 // followed_by: use filter_expr for filter (stops before stream ops), 'as identifier' handled at end
@@ -236,6 +237,9 @@ enrich_fields_param = { "fields" ~ ":" ~ "[" ~ identifier ~ ("," ~ identifier)* 
 enrich_cache_ttl_param = { "cache_ttl" ~ ":" ~ expr }
 enrich_timeout_param = { "timeout" ~ ":" ~ expr }
 enrich_fallback_param = { "fallback" ~ ":" ~ literal }
+
+// .alert(webhook: "https://...", message: "Alert: {field}")
+alert_op = { "alert" ~ "(" ~ named_arg_list ~ ")" }
 
 trend_agg_list = { trend_agg_item ~ ("," ~ trend_agg_item)* }
 trend_agg_item = { identifier ~ ":" ~ trend_agg_func }

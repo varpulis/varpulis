@@ -1,13 +1,18 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
+use notify::{EventKind, RecursiveMode, Watcher};
+use owo_colors::OwoColorize;
 use rayon::prelude::*;
 use tokio::sync::{mpsc, RwLock};
 use tracing::info;
+use varpulis_cli::output;
 use varpulis_connectors::credentials::CredentialsStore;
 use varpulis_parser::parse;
+use varpulis_runtime::engine::trace::TraceEntry;
 use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;
 use varpulis_runtime::event_file::{EventFileParser, EventFilePlayer, StreamingEventReader};
@@ -26,13 +31,19 @@ pub async fn run_simulation(
     checkpoint_dir: Option<PathBuf>,
     checkpoint_interval: u64,
     credentials_store: Option<Arc<CredentialsStore>>,
+    trace: bool,
 ) -> Result<()> {
     // Determine number of workers
-    let num_workers = workers.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    });
+    // Trace mode forces single-threaded for clear sequential output.
+    let num_workers = if trace {
+        1
+    } else {
+        workers.unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+        })
+    };
 
     // Configure rayon thread pool
     rayon::ThreadPoolBuilder::new()
@@ -54,8 +65,7 @@ pub async fn run_simulation(
         "preload"
     };
 
-    println!("Varpulis Event Simulation");
-    println!("============================");
+    output::header("Varpulis Event Simulation");
     println!("Program: {}", program_path.display());
     println!("Events:  {}", events_path.display());
     println!("Mode:    {mode_str}");
@@ -99,6 +109,11 @@ pub async fn run_simulation(
     engine
         .load_with_source(&program_source, &program)
         .map_err(|e| anyhow::anyhow!("Load error:\n{e}"))?;
+
+    // Enable trace if requested (must be after load())
+    if trace {
+        engine.set_trace_enabled(true);
+    }
 
     // Enable auto-checkpointing if requested (must be after load())
     if let Some(ref cp_dir) = checkpoint_dir {
@@ -157,14 +172,41 @@ pub async fn run_simulation(
         }
     });
 
+    if trace {
+        println!("Mode:    trace (single-threaded)");
+    }
     println!("Starting simulation...\n");
     let start = std::time::Instant::now();
 
     // Shared counter for total events processed across all workers
     let total_events_processed = Arc::new(AtomicU64::new(0));
 
-    // Process events based on mode
-    if !timed && !streaming && num_workers > 1 {
+    // Trace mode: process events one at a time and print trace entries after each
+    if trace {
+        let events_source = std::fs::read_to_string(events_path)?;
+        let events = EventFileParser::parse(&events_source)
+            .map_err(|e| anyhow::anyhow!("Event file error: {e}"))?;
+        let total_events = events.len();
+        info!("Preloaded {} events for trace mode", total_events);
+
+        for (idx, timed_event) in events.into_iter().enumerate() {
+            let event = timed_event.event;
+            let event_type = event.event_type.to_string();
+
+            // Print event header
+            print_trace_event_header(idx + 1, total_events, &event_type, &event);
+
+            // Process the single event
+            engine
+                .process(event)
+                .await
+                .map_err(|e| anyhow::anyhow!("Process error: {e}"))?;
+
+            // Drain and print trace entries
+            let entries = engine.drain_trace();
+            print_trace_entries(&entries);
+        }
+    } else if !timed && !streaming && num_workers > 1 {
         // Parallel preload mode (default with multiple workers)
         let events_source = std::fs::read_to_string(events_path)?;
         let events = EventFileParser::parse(&events_source)
@@ -244,6 +286,15 @@ pub async fn run_simulation(
         let output_counter = output_emitted_count.clone();
         let creds_arc = credentials_store.clone();
 
+        let spinner = if !quiet && !verbose {
+            let sp = output::create_spinner(&format!(
+                "Processing {total_events} events across {num_workers} workers..."
+            ));
+            Some(sp)
+        } else {
+            None
+        };
+
         tokio::task::spawn_blocking(move || {
             partitions
                 .into_par_iter()
@@ -279,6 +330,10 @@ pub async fn run_simulation(
         })
         .await
         .map_err(|e| anyhow::anyhow!("Spawn blocking failed: {e}"))?;
+
+        if let Some(sp) = spinner {
+            sp.finish_and_clear();
+        }
     } else if !timed && !streaming {
         // Single-threaded preload mode (default)
         let events_source = std::fs::read_to_string(events_path)?;
@@ -291,6 +346,12 @@ pub async fn run_simulation(
         let mut all_events: Vec<Event> = events.into_iter().map(|te| te.event).collect();
         let total_events = all_events.len();
 
+        let pb = if !quiet && !verbose {
+            Some(output::create_progress_bar(total_events as u64))
+        } else {
+            None
+        };
+
         const BATCH_SIZE: usize = 10000;
 
         if use_sync {
@@ -299,6 +360,7 @@ pub async fn run_simulation(
             while !all_events.is_empty() {
                 let end = BATCH_SIZE.min(all_events.len());
                 let batch: Vec<Event> = all_events.drain(..end).collect();
+                let batch_len = batch.len();
                 if verbose {
                     let start_idx = batch_idx * BATCH_SIZE + 1;
                     let end_idx = (start_idx + batch.len() - 1).min(total_events);
@@ -315,6 +377,9 @@ pub async fn run_simulation(
                 engine
                     .checkpoint_tick()
                     .map_err(|e| anyhow::anyhow!("Checkpoint error: {e}"))?;
+                if let Some(ref pb) = pb {
+                    pb.inc(batch_len as u64);
+                }
                 batch_idx += 1;
             }
         } else {
@@ -323,6 +388,7 @@ pub async fn run_simulation(
             while !all_events.is_empty() {
                 let end = BATCH_SIZE.min(all_events.len());
                 let batch: Vec<Event> = all_events.drain(..end).collect();
+                let batch_len = batch.len();
                 if verbose {
                     let start_idx = batch_idx * BATCH_SIZE + 1;
                     let end_idx = (start_idx + batch.len() - 1).min(total_events);
@@ -340,8 +406,15 @@ pub async fn run_simulation(
                 engine
                     .checkpoint_tick()
                     .map_err(|e| anyhow::anyhow!("Checkpoint error: {e}"))?;
+                if let Some(ref pb) = pb {
+                    pb.inc(batch_len as u64);
+                }
                 batch_idx += 1;
             }
+        }
+
+        if let Some(pb) = pb {
+            pb.finish_and_clear();
         }
     } else if streaming && num_workers > 1 {
         // Parallel streaming mode (--streaming with multiple workers)
@@ -386,6 +459,12 @@ pub async fn run_simulation(
             .collect();
         let worker_engines = Arc::new(worker_engines);
 
+        let spinner = if !quiet && !verbose {
+            Some(output::create_spinner("Streaming events..."))
+        } else {
+            None
+        };
+
         loop {
             let mut events: Vec<Event> = Vec::with_capacity(BATCH_SIZE);
             for _ in 0..BATCH_SIZE {
@@ -408,6 +487,12 @@ pub async fn run_simulation(
                     events.len(),
                     event_reader.events_read()
                 );
+            }
+            if let Some(ref sp) = spinner {
+                sp.set_message(format!(
+                    "Streaming events... {} read",
+                    event_reader.events_read()
+                ));
             }
 
             // Distribute events to workers
@@ -461,6 +546,10 @@ pub async fn run_simulation(
             .ok();
         }
 
+        if let Some(sp) = spinner {
+            sp.finish_and_clear();
+        }
+
         // Collect final metrics from all worker engines
         for (i, engine_mutex) in worker_engines.iter().enumerate() {
             let w_engine = engine_mutex.lock().unwrap_or_else(|e| e.into_inner());
@@ -483,6 +572,12 @@ pub async fn run_simulation(
 
         let mut event_reader = StreamingEventReader::from_file(events_path)
             .map_err(|e| anyhow::anyhow!("Failed to open event file: {e}"))?;
+
+        let spinner = if !quiet && !verbose {
+            Some(output::create_spinner("Streaming events..."))
+        } else {
+            None
+        };
 
         let mut batch: Vec<Event> = Vec::with_capacity(BATCH_SIZE);
         let mut batch_count = 0;
@@ -511,6 +606,12 @@ pub async fn run_simulation(
                     event_reader.events_read()
                 );
             }
+            if let Some(ref sp) = spinner {
+                sp.set_message(format!(
+                    "Streaming events... {} read",
+                    event_reader.events_read()
+                ));
+            }
 
             // PERF: Use sync path when no .to() sinks to avoid async overhead
             if use_sync {
@@ -526,6 +627,10 @@ pub async fn run_simulation(
             engine
                 .checkpoint_tick()
                 .map_err(|e| anyhow::anyhow!("Checkpoint error: {e}"))?;
+        }
+
+        if let Some(sp) = spinner {
+            sp.finish_and_clear();
         }
 
         info!("Streamed {} events from file", event_reader.events_read());
@@ -604,16 +709,22 @@ pub async fn run_simulation(
         output_count.load(Ordering::Relaxed) as usize
     };
 
-    println!("\nSimulation Complete");
+    println!();
+    output::success("Simulation Complete");
     println!("======================");
     println!("Duration:         {elapsed:?}");
     println!("Events processed: {events_processed}");
     println!("Workers used:     {num_workers}");
     println!("Output events emitted: {output_events_count}");
-    println!(
-        "Event rate:       {:.1} events/sec",
-        events_processed as f64 / elapsed.as_secs_f64()
-    );
+    let event_rate = events_processed as f64 / elapsed.as_secs_f64();
+    if output::color_enabled() {
+        println!(
+            "Event rate:       {}",
+            format!("{event_rate:.1} events/sec").cyan()
+        );
+    } else {
+        println!("Event rate:       {event_rate:.1} events/sec");
+    }
 
     // Show output events summary (only if collected, not in quiet mode)
     if output_events_count > 0 {
@@ -626,4 +737,282 @@ pub async fn run_simulation(
     }
 
     Ok(())
+}
+
+/// Watch for file changes and re-run simulation automatically.
+///
+/// Uses `notify::RecommendedWatcher` to watch the .vpl and .evt files.
+/// On any change, debounces for 300ms, clears the terminal, and re-runs
+/// the simulation. Parse/load errors are displayed but do not stop the watcher.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_watch_loop(
+    program_path: &PathBuf,
+    events_path: &PathBuf,
+    timed: bool,
+    verbose: bool,
+    streaming: bool,
+    workers: Option<usize>,
+    partition_by: Option<&str>,
+    quiet: bool,
+    checkpoint_dir: Option<PathBuf>,
+    checkpoint_interval: u64,
+    credentials_store: Option<Arc<CredentialsStore>>,
+    trace: bool,
+) -> Result<()> {
+    // Resolve to canonical paths for watching
+    let program_canonical =
+        std::fs::canonicalize(program_path).unwrap_or_else(|_| program_path.clone());
+    let events_canonical =
+        std::fs::canonicalize(events_path).unwrap_or_else(|_| events_path.clone());
+
+    output::header("Varpulis Watch Mode");
+    println!("Watching: {}", program_canonical.display());
+    println!("Watching: {}", events_canonical.display());
+    println!("Press Ctrl+C to stop.\n");
+
+    // Create a tokio mpsc channel for notify events
+    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+
+    // Set up the file watcher with a callback that sends to our tokio channel
+    let tx = notify_tx.clone();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(event) = res {
+            match event.kind {
+                EventKind::Modify(_) | EventKind::Create(_) => {
+                    let _ = tx.send(());
+                }
+                _ => {}
+            }
+        }
+    })
+    .map_err(|e| anyhow::anyhow!("Failed to create file watcher: {e}"))?;
+
+    // Watch the parent directories (handles editors that do atomic saves via rename)
+    let program_dir = program_canonical
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let events_dir = events_canonical
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+
+    watcher
+        .watch(program_dir, RecursiveMode::NonRecursive)
+        .map_err(|e| anyhow::anyhow!("Failed to watch {}: {e}", program_dir.display()))?;
+
+    // Only watch events dir separately if it differs from the program dir
+    if events_dir != program_dir {
+        watcher
+            .watch(events_dir, RecursiveMode::NonRecursive)
+            .map_err(|e| anyhow::anyhow!("Failed to watch {}: {e}", events_dir.display()))?;
+    }
+
+    // Keep partition_by as an owned String for the loop
+    let partition_by_owned = partition_by.map(|s| s.to_string());
+
+    // Run simulation once immediately
+    let result = run_simulation(
+        program_path,
+        events_path,
+        timed,
+        verbose,
+        streaming,
+        workers,
+        partition_by_owned.as_deref(),
+        quiet,
+        checkpoint_dir.clone(),
+        checkpoint_interval,
+        credentials_store.clone(),
+        trace,
+    )
+    .await;
+
+    if let Err(e) = result {
+        output::error(&format!("{e}"));
+    }
+
+    println!("\n--- Watching for changes... ---\n");
+
+    // Main watch loop
+    loop {
+        tokio::select! {
+            // Wait for a file change notification
+            Some(()) = notify_rx.recv() => {
+                // Debounce: drain any additional events that arrive within 300ms
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                while notify_rx.try_recv().is_ok() {}
+
+                // Clear terminal
+                print!("\x1B[2J\x1B[H");
+                std::io::stdout().flush().ok();
+
+                let now = chrono::Local::now().format("%H:%M:%S");
+                output::success(&format!("Reloaded at {now}"));
+                println!();
+
+                let result = run_simulation(
+                    program_path,
+                    events_path,
+                    timed,
+                    verbose,
+                    streaming,
+                    workers,
+                    partition_by_owned.as_deref(),
+                    quiet,
+                    checkpoint_dir.clone(),
+                    checkpoint_interval,
+                    credentials_store.clone(),
+                    trace,
+                )
+                .await;
+
+                if let Err(e) = result {
+                    output::error(&format!("{e}"));
+                }
+
+                println!("\n--- Watching for changes... ---\n");
+            }
+
+            // Handle Ctrl+C gracefully
+            _ = tokio::signal::ctrl_c() => {
+                println!();
+                output::success("Watch mode stopped.");
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// =========================================================================
+// Trace output helpers
+// =========================================================================
+
+/// Print a coloured header line for an incoming event in trace mode.
+fn print_trace_event_header(
+    index: usize,
+    total: usize,
+    event_type: &str,
+    event: &varpulis_runtime::event::Event,
+) {
+    let fields: Vec<String> = event.data.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    let fields_str = if fields.is_empty() {
+        String::new()
+    } else {
+        format!(" {{ {} }}", fields.join(", "))
+    };
+
+    if output::color_enabled() {
+        println!(
+            "{} [{}/{}] {}{}",
+            "EVENT".bold().blue(),
+            index,
+            total,
+            event_type.bold(),
+            fields_str.dimmed(),
+        );
+    } else {
+        println!("EVENT [{index}/{total}] {event_type}{fields_str}");
+    }
+}
+
+/// Print a list of trace entries with coloured output.
+fn print_trace_entries(entries: &[TraceEntry]) {
+    if entries.is_empty() {
+        if output::color_enabled() {
+            println!("  {} no matching streams", "->".dimmed());
+        } else {
+            println!("  -> no matching streams");
+        }
+        println!();
+        return;
+    }
+
+    for entry in entries {
+        match entry {
+            TraceEntry::StreamMatched {
+                stream_name,
+                event_type,
+            } => {
+                if output::color_enabled() {
+                    println!(
+                        "  {} stream {} matched on {}",
+                        "->".blue(),
+                        stream_name.bold().blue(),
+                        event_type.dimmed(),
+                    );
+                } else {
+                    println!("  -> stream {stream_name} matched on {event_type}");
+                }
+            }
+            TraceEntry::OperatorResult {
+                stream_name: _,
+                op_name,
+                passed,
+                detail,
+            } => {
+                let detail_str = detail
+                    .as_ref()
+                    .map(|d| format!(" ({d})"))
+                    .unwrap_or_default();
+                if *passed {
+                    if output::color_enabled() {
+                        println!(
+                            "     {} {}{} {}",
+                            "|".dimmed(),
+                            op_name.green(),
+                            detail_str.dimmed(),
+                            "PASS".green().bold(),
+                        );
+                    } else {
+                        println!("     | {op_name}{detail_str} PASS");
+                    }
+                } else if output::color_enabled() {
+                    println!(
+                        "     {} {}{} {}",
+                        "|".dimmed(),
+                        op_name.dimmed(),
+                        detail_str.dimmed(),
+                        "BLOCK".red(),
+                    );
+                } else {
+                    println!("     | {op_name}{detail_str} BLOCK");
+                }
+            }
+            TraceEntry::PatternState {
+                stream_name: _,
+                active_runs,
+                completed,
+            } => {
+                if output::color_enabled() {
+                    println!(
+                        "     {} pattern: {} active run(s), {} completed",
+                        "|".dimmed(),
+                        format!("{active_runs}").cyan(),
+                        format!("{completed}").cyan(),
+                    );
+                } else {
+                    println!("     | pattern: {active_runs} active run(s), {completed} completed");
+                }
+            }
+            TraceEntry::EventEmitted {
+                stream_name,
+                fields,
+            } => {
+                let fields_str: Vec<String> =
+                    fields.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                if output::color_enabled() {
+                    println!(
+                        "  {} {} emitted {{ {} }}",
+                        "<-".green().bold(),
+                        stream_name.green().bold(),
+                        fields_str.join(", ").green(),
+                    );
+                } else {
+                    println!("  <- {stream_name} emitted {{ {} }}", fields_str.join(", "));
+                }
+            }
+        }
+    }
+    println!();
 }

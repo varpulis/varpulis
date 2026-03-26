@@ -83,6 +83,9 @@ pub static AGGREGATE_REQUIRES_TWO_ARGS: &[&str] = &["ema", "percentile"];
 /// Valid parameter names for `.log()`.
 pub static LOG_PARAMS: &[&str] = &["level", "message", "data"];
 
+/// Valid parameter names for `.alert()`.
+pub static ALERT_PARAMS: &[&str] = &["webhook", "message"];
+
 /// Valid parameter names for `.watermark()`.
 pub static WATERMARK_PARAMS: &[&str] = &["out_of_order"];
 

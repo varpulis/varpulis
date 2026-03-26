@@ -5,13 +5,17 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use comfy_table::presets::UTF8_FULL;
+use comfy_table::{Cell, Table};
 use varpulis_cli::auth::AuthConfig;
 use varpulis_cli::client::VarpulisClient;
 use varpulis_cli::config::Config;
+use varpulis_cli::output;
 use varpulis_cli::{rate_limit, security, users};
 
 mod commands;
 
+use commands::connector::ConnectorAction;
 use commands::federation::FederationAction;
 
 #[derive(Parser)]
@@ -228,6 +232,14 @@ enum Commands {
         /// Checkpoint interval in seconds (default: 60)
         #[arg(long, default_value = "60")]
         checkpoint_interval: u64,
+
+        /// Watch for file changes and re-run simulation automatically
+        #[arg(long)]
+        watch: bool,
+
+        /// Show detailed trace of event processing through the pipeline
+        #[arg(long)]
+        trace: bool,
     },
 
     /// Generate example configuration file
@@ -504,6 +516,19 @@ enum Commands {
         api_key: Option<String>,
     },
 
+    /// Infer event type declarations from sample data
+    Infer {
+        /// Input event file (.evt or .jsonl)
+        #[arg(short, long)]
+        input: PathBuf,
+        /// Output file (stdout if not specified)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Number of events to sample (default: 100)
+        #[arg(long, default_value = "100")]
+        sample_size: usize,
+    },
+
     /// Encrypt sensitive fields in a connector credentials file
     EncryptCredentials {
         /// Path to the credentials YAML file (will be overwritten with encrypted values)
@@ -517,6 +542,20 @@ enum Commands {
 
     /// Generate a random 256-bit master key for encrypting connector credentials
     GenerateMasterKey,
+
+    /// Manage and inspect connectors
+    Connector {
+        #[command(subcommand)]
+        action: ConnectorAction,
+    },
+
+    /// Interactive VPL shell
+    #[cfg(feature = "repl")]
+    Repl {
+        /// VPL program file to auto-load
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -735,6 +774,8 @@ async fn main() -> Result<()> {
             quiet,
             checkpoint_dir,
             checkpoint_interval,
+            watch,
+            trace,
         } => {
             // Load config file if specified
             let config = if let Some(ref config_path) = cli.config {
@@ -749,20 +790,39 @@ async fn main() -> Result<()> {
                 .as_ref()
                 .and_then(|c| c.processing.partition_by.clone()));
 
-            commands::simulate::run_simulation(
-                &program,
-                &events,
-                timed,
-                verbose,
-                streaming,
-                workers,
-                partition_by.as_deref(),
-                quiet,
-                checkpoint_dir,
-                checkpoint_interval,
-                credentials_store,
-            )
-            .await?;
+            if watch {
+                commands::simulate::run_watch_loop(
+                    &program,
+                    &events,
+                    timed,
+                    verbose,
+                    streaming,
+                    workers,
+                    partition_by.as_deref(),
+                    quiet,
+                    checkpoint_dir,
+                    checkpoint_interval,
+                    credentials_store,
+                    trace,
+                )
+                .await?;
+            } else {
+                commands::simulate::run_simulation(
+                    &program,
+                    &events,
+                    timed,
+                    verbose,
+                    streaming,
+                    workers,
+                    partition_by.as_deref(),
+                    quiet,
+                    checkpoint_dir,
+                    checkpoint_interval,
+                    credentials_store,
+                    trace,
+                )
+                .await?;
+            }
         }
 
         Commands::ConfigGen { format, output } => {
@@ -808,12 +868,13 @@ async fn main() -> Result<()> {
             let client = VarpulisClient::new(&server, &api_key);
             match client.deploy_pipeline(&name, &source).await {
                 Ok(resp) => {
-                    println!("Pipeline deployed successfully!");
+                    output::success("Pipeline deployed successfully!");
                     println!("  ID:     {}", resp.id);
                     println!("  Name:   {}", resp.name);
                     println!("  Status: {}", resp.status);
                 }
                 Err(e) => {
+                    output::error(&format!("Deploy failed: {e}"));
                     anyhow::bail!("Deploy failed: {e}");
                 }
             }
@@ -838,12 +899,26 @@ async fn main() -> Result<()> {
                     println!("Pipelines ({} total):", resp.total);
                     if resp.pipelines.is_empty() {
                         println!("  (none)");
-                    }
-                    for p in &resp.pipelines {
-                        println!("  {} | {} | {}", p.id, p.name, p.status);
+                    } else {
+                        let mut table = Table::new();
+                        table.load_preset(UTF8_FULL);
+                        table.set_header(vec![
+                            Cell::new("ID"),
+                            Cell::new("Name"),
+                            Cell::new("Status"),
+                        ]);
+                        for p in &resp.pipelines {
+                            table.add_row(vec![
+                                Cell::new(&p.id),
+                                Cell::new(&p.name),
+                                Cell::new(&p.status),
+                            ]);
+                        }
+                        println!("{table}");
                     }
                 }
                 Err(e) => {
+                    output::error(&format!("Failed to list pipelines: {e}"));
                     anyhow::bail!("Failed to list pipelines: {e}");
                 }
             }
@@ -869,9 +944,10 @@ async fn main() -> Result<()> {
             let client = VarpulisClient::new(&server, &api_key);
             match client.delete_pipeline(&pipeline_id).await {
                 Ok(()) => {
-                    println!("Pipeline {pipeline_id} deleted.");
+                    output::success(&format!("Pipeline {pipeline_id} deleted."));
                 }
                 Err(e) => {
+                    output::error(&format!("Undeploy failed: {e}"));
                     anyhow::bail!("Undeploy failed: {e}");
                 }
             }
@@ -893,22 +969,38 @@ async fn main() -> Result<()> {
             let client = VarpulisClient::new(&server, &api_key);
             match client.get_usage().await {
                 Ok(usage) => {
-                    println!("Tenant: {}", usage.tenant_id);
-                    println!("  Events processed:  {}", usage.events_processed);
-                    println!("  Output events emitted: {}", usage.output_events_emitted);
-                    println!("  Active pipelines:  {}", usage.active_pipelines);
-                    println!("  Quota:");
-                    println!("    Max pipelines:          {}", usage.quota.max_pipelines);
-                    println!(
-                        "    Max events/sec:         {}",
-                        usage.quota.max_events_per_second
-                    );
-                    println!(
-                        "    Max streams/pipeline:   {}",
-                        usage.quota.max_streams_per_pipeline
-                    );
+                    output::header(&format!("Status: {}", usage.tenant_id));
+                    let mut table = Table::new();
+                    table.load_preset(UTF8_FULL);
+                    table.set_header(vec![Cell::new("Metric"), Cell::new("Value")]);
+                    table.add_row(vec![
+                        Cell::new("Events processed"),
+                        Cell::new(usage.events_processed),
+                    ]);
+                    table.add_row(vec![
+                        Cell::new("Output events emitted"),
+                        Cell::new(usage.output_events_emitted),
+                    ]);
+                    table.add_row(vec![
+                        Cell::new("Active pipelines"),
+                        Cell::new(usage.active_pipelines),
+                    ]);
+                    table.add_row(vec![
+                        Cell::new("Quota: max pipelines"),
+                        Cell::new(usage.quota.max_pipelines),
+                    ]);
+                    table.add_row(vec![
+                        Cell::new("Quota: max events/sec"),
+                        Cell::new(usage.quota.max_events_per_second),
+                    ]);
+                    table.add_row(vec![
+                        Cell::new("Quota: max streams/pipeline"),
+                        Cell::new(usage.quota.max_streams_per_pipeline),
+                    ]);
+                    println!("{table}");
                 }
                 Err(e) => {
+                    output::error(&format!("Failed to get status: {e}"));
                     anyhow::bail!("Failed to get status: {e}");
                 }
             }
@@ -1130,6 +1222,14 @@ async fn main() -> Result<()> {
             .await?;
         }
 
+        Commands::Infer {
+            input,
+            output,
+            sample_size,
+        } => {
+            commands::infer::run_infer(&input, output.as_deref(), sample_size)?;
+        }
+
         Commands::EncryptCredentials { input, output } => {
             use varpulis_connectors::credentials;
 
@@ -1195,6 +1295,15 @@ async fn main() -> Result<()> {
                 write!(hex, "{:02x}", byte)?;
             }
             println!("{}", hex);
+        }
+
+        Commands::Connector { action } => {
+            commands::connector::run_connector(action)?;
+        }
+
+        #[cfg(feature = "repl")]
+        Commands::Repl { file } => {
+            commands::repl::run_repl(file.as_deref())?;
         }
     }
 

@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-26
+
+### Added
+
+- **`varpulis infer`** — Infer VPL `event` type declarations from .evt or JSONL
+  sample data. Supports type promotion (int+float→float), flat and nested JSONL,
+  configurable sample size.
+- **`varpulis connector list/info/test`** — Discover and inspect available
+  connectors with formatted tables, config parameters, and example VPL snippets.
+- **`varpulis simulate --watch`** — File watcher re-runs simulation on .vpl/.evt
+  changes with 300ms debounce. Parse errors shown without stopping the watcher.
+- **`varpulis repl`** — Interactive VPL shell with `:load`, `:event`, `:events`,
+  `:reset`, `:streams` commands. Maintains engine state between events. History
+  persisted to `~/.varpulis_history`. Behind `repl` feature flag.
+- **`varpulis simulate --trace`** — Pipeline explain mode showing per-event flow:
+  stream matching, operator pass/block, pattern state, emitted events. Colored
+  output with PASS (green) / BLOCK (red) indicators.
+- **`.alert()` operator** — Side-effect operator for webhook notifications with
+  `{field}` template interpolation. Fire-and-forget via `tokio::spawn`. Events
+  continue downstream (not consumed). LSP completion and hover docs included.
+- **Pipeline graph API** — `POST /api/v1/pipeline/graph` (VPL→JSON graph) and
+  `POST /api/v1/pipeline/generate` (graph→VPL) for visual pipeline builders.
+  Both standalone and cluster APIs.
+- **6 new Prometheus metrics** — `operator_latency`, `pattern_matches_total`,
+  `window_fill_level`, `connector_health`, `connector_events_sent`,
+  `backpressure_drops`.
+- **2 new Grafana dashboards** — Pipeline Detail (8 panels: latency percentiles,
+  operator heatmap, pattern matches, window fill, backpressure) and Connector
+  Health (3 panels: status, events sent, active streams).
+- **Prometheus alerting rules** — High latency, connector unhealthy, DLQ growing,
+  backpressure drops.
+
+### Changed
+
+- **CLI output overhaul** — Progress bars (indicatif) for simulate/run, formatted
+  tables (comfy-table) for `pipelines` and `status`, colored output (owo-colors)
+  for success/error/warning messages. Respects `NO_COLOR` env var.
+
 ## [0.7.1] - 2026-03-26
 
 ### Security

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use super::builtins::{
     self, ParamContext, AGGREGATE_FUNCTIONS, AGGREGATE_REQUIRES_FIELD, AGGREGATE_REQUIRES_TWO_ARGS,
-    LOG_PARAMS, WATERMARK_PARAMS,
+    ALERT_PARAMS, LOG_PARAMS, WATERMARK_PARAMS,
 };
 use super::scope::*;
 use super::suggest::{did_you_mean, suggest};
@@ -705,6 +705,9 @@ fn check_stream_ops(
             // --- Parameter validation ---
             StreamOp::Log(args) => {
                 check_named_params(v, args, LOG_PARAMS, ".log()", op_span);
+            }
+            StreamOp::Alert(args) => {
+                check_named_params(v, args, ALERT_PARAMS, ".alert()", op_span);
             }
             StreamOp::Watermark(args) => {
                 check_named_params(v, args, WATERMARK_PARAMS, ".watermark()", op_span);

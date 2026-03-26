@@ -386,6 +386,42 @@ async fn execute_op(
         return Ok(());
     }
 
+    // Handle alert webhook (async fire-and-forget)
+    if let RuntimeOp::Alert(config) = op {
+        for event in current_events.iter() {
+            let message = if let Some(ref template) = config.message_template {
+                let mut msg = template.clone();
+                for (key, value) in &event.data {
+                    msg = msg.replace(&format!("{{{key}}}"), &value.to_string());
+                }
+                msg
+            } else {
+                format!("{:?}", event.data)
+            };
+
+            if let Some(ref url) = config.webhook_url {
+                let url = url.clone();
+                let msg = message.clone();
+                let stream = stream_name.to_string();
+                tokio::spawn(async move {
+                    let client = reqwest::Client::new();
+                    let payload = serde_json::json!({
+                        "text": msg,
+                        "event_type": "alert",
+                        "stream": stream,
+                    });
+                    if let Err(e) = client.post(&url).json(&payload).send().await {
+                        tracing::warn!("Alert webhook failed: {e}");
+                    }
+                });
+            } else {
+                tracing::info!(stream = %stream_name, "Alert: {message}");
+            }
+        }
+        // Events continue downstream (not consumed)
+        return Ok(());
+    }
+
     execute_op_common(
         op,
         stream_name,
@@ -1123,6 +1159,26 @@ fn execute_op_common(
                 all_emitted.extend(emitted);
             }
             *current_events = all_emitted.into_iter().map(Arc::new).collect();
+        }
+
+        RuntimeOp::Alert(config) => {
+            // Side-effect operator: log the alert message, don't consume events.
+            // Webhook HTTP POST is handled by the async execute_op path only.
+            if config.webhook_url.is_none() {
+                for event in current_events.iter() {
+                    let message = if let Some(ref template) = config.message_template {
+                        let mut msg = template.clone();
+                        for (key, value) in &event.data {
+                            msg = msg.replace(&format!("{{{key}}}"), &value.to_string());
+                        }
+                        msg
+                    } else {
+                        format!("{:?}", event.data)
+                    };
+                    tracing::info!(stream = %stream_name, "Alert: {message}");
+                }
+            }
+            // Events continue downstream (not consumed)
         }
 
         RuntimeOp::To(_) => {

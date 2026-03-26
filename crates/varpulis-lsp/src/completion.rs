@@ -405,6 +405,13 @@ fn get_stream_operation_completions() -> Vec<CompletionItem> {
             Some(".merge(streamA, streamB)"),
         ),
         completion_item(
+            "alert",
+            CompletionItemKind::METHOD,
+            "Send alert notification via webhook",
+            "alert(webhook: \"${1:https://...}\", message: \"${2:Alert: {field}}\")",
+            Some(".alert(webhook: \"https://hooks.slack.com/...\", message: \"Fraud: {amount}\")"),
+        ),
+        completion_item(
             "log",
             CompletionItemKind::METHOD,
             "Log events for debugging",

@@ -18,6 +18,7 @@ pub mod oauth;
 pub mod oidc;
 #[cfg(feature = "saas")]
 pub mod org;
+pub mod output;
 pub mod playground;
 pub mod rate_limit;
 pub mod security;

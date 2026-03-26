@@ -19,6 +19,18 @@ pub struct Metrics {
     pub active_streams: Gauge,
     pub dlq_events_total: prometheus::Counter,
     pub queue_pressure_ratio: GaugeVec,
+    // Per-operator processing latency
+    pub operator_latency: HistogramVec,
+    // Pattern match counter
+    pub pattern_matches_total: CounterVec,
+    // Window fill level (current events in window)
+    pub window_fill_level: GaugeVec,
+    // Connector health (1 = healthy, 0 = unhealthy)
+    pub connector_health: GaugeVec,
+    // Events sent per sink connector
+    pub connector_events_sent: CounterVec,
+    // Events dropped due to backpressure
+    pub backpressure_drops: CounterVec,
     // Per-tenant metrics (SaaS)
     pub tenant_events_total: CounterVec,
     pub tenant_events_rate: GaugeVec,
@@ -86,6 +98,63 @@ impl Metrics {
         )
         .expect("failed to create queue_pressure_ratio gauge");
 
+        let operator_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "varpulis_operator_latency_seconds",
+                "Per-operator processing latency",
+            )
+            .buckets(vec![
+                0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0,
+            ]),
+            &["stream", "operator"],
+        )
+        .expect("failed to create operator_latency histogram");
+
+        let pattern_matches_total = CounterVec::new(
+            Opts::new(
+                "varpulis_pattern_matches_total",
+                "Total pattern matches detected",
+            ),
+            &["stream"],
+        )
+        .expect("failed to create pattern_matches_total counter");
+
+        let window_fill_level = GaugeVec::new(
+            Opts::new(
+                "varpulis_window_fill_level",
+                "Current number of events in window",
+            ),
+            &["stream", "window_type"],
+        )
+        .expect("failed to create window_fill_level gauge");
+
+        let connector_health = GaugeVec::new(
+            Opts::new(
+                "varpulis_connector_health",
+                "Connector health status (1 = healthy, 0 = unhealthy)",
+            ),
+            &["connector", "type"],
+        )
+        .expect("failed to create connector_health gauge");
+
+        let connector_events_sent = CounterVec::new(
+            Opts::new(
+                "varpulis_connector_events_sent",
+                "Total events sent per sink connector",
+            ),
+            &["connector"],
+        )
+        .expect("failed to create connector_events_sent counter");
+
+        let backpressure_drops = CounterVec::new(
+            Opts::new(
+                "varpulis_backpressure_drops",
+                "Events dropped due to backpressure",
+            ),
+            &["stream"],
+        )
+        .expect("failed to create backpressure_drops counter");
+
         let tenant_events_total = CounterVec::new(
             Opts::new(
                 "varpulis_tenant_events_total",
@@ -138,6 +207,24 @@ impl Metrics {
             .register(Box::new(queue_pressure_ratio.clone()))
             .expect("failed to register queue_pressure_ratio");
         registry
+            .register(Box::new(operator_latency.clone()))
+            .expect("failed to register operator_latency");
+        registry
+            .register(Box::new(pattern_matches_total.clone()))
+            .expect("failed to register pattern_matches_total");
+        registry
+            .register(Box::new(window_fill_level.clone()))
+            .expect("failed to register window_fill_level");
+        registry
+            .register(Box::new(connector_health.clone()))
+            .expect("failed to register connector_health");
+        registry
+            .register(Box::new(connector_events_sent.clone()))
+            .expect("failed to register connector_events_sent");
+        registry
+            .register(Box::new(backpressure_drops.clone()))
+            .expect("failed to register backpressure_drops");
+        registry
             .register(Box::new(tenant_events_total.clone()))
             .expect("failed to register tenant_events_total");
         registry
@@ -157,6 +244,12 @@ impl Metrics {
             active_streams,
             dlq_events_total,
             queue_pressure_ratio,
+            operator_latency,
+            pattern_matches_total,
+            window_fill_level,
+            connector_health,
+            connector_events_sent,
+            backpressure_drops,
             tenant_events_total,
             tenant_events_rate,
             tenant_pipelines_active,
@@ -200,6 +293,46 @@ impl Metrics {
         self.tenant_events_rate
             .with_label_values(&[tenant_id])
             .set(rate);
+    }
+
+    /// Record per-operator latency
+    pub fn record_operator_latency(&self, stream: &str, operator: &str, latency_secs: f64) {
+        self.operator_latency
+            .with_label_values(&[stream, operator])
+            .observe(latency_secs);
+    }
+
+    /// Record a pattern match
+    pub fn record_pattern_match(&self, stream: &str) {
+        self.pattern_matches_total
+            .with_label_values(&[stream])
+            .inc();
+    }
+
+    /// Set the window fill level
+    pub fn set_window_fill_level(&self, stream: &str, window_type: &str, level: f64) {
+        self.window_fill_level
+            .with_label_values(&[stream, window_type])
+            .set(level);
+    }
+
+    /// Set connector health status
+    pub fn set_connector_health(&self, connector: &str, connector_type: &str, healthy: bool) {
+        self.connector_health
+            .with_label_values(&[connector, connector_type])
+            .set(if healthy { 1.0 } else { 0.0 });
+    }
+
+    /// Record events sent by a connector
+    pub fn record_connector_event_sent(&self, connector: &str) {
+        self.connector_events_sent
+            .with_label_values(&[connector])
+            .inc();
+    }
+
+    /// Record a backpressure drop
+    pub fn record_backpressure_drop(&self, stream: &str) {
+        self.backpressure_drops.with_label_values(&[stream]).inc();
     }
 
     /// Set tenant active pipeline count

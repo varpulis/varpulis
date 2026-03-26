@@ -191,6 +191,15 @@ pub fn cluster_routes(
         )
         // Validate
         .route("/api/v1/cluster/validate", post(handle_validate))
+        // Pipeline graph (visual builder)
+        .route(
+            "/api/v1/cluster/pipeline/graph",
+            post(handle_pipeline_to_graph),
+        )
+        .route(
+            "/api/v1/cluster/pipeline/generate",
+            post(handle_graph_to_pipeline),
+        )
         // Migration / Rebalance
         .route("/api/v1/cluster/rebalance", post(handle_rebalance))
         .route(
@@ -2517,6 +2526,47 @@ async fn handle_raft_status(State(state): State<AppState>) -> Response {
         "commit_index": 0,
         "nodes": [],
     });
+    reply_json_status(&resp, StatusCode::OK)
+}
+
+// =============================================================================
+// Pipeline Graph Handlers (Visual Builder)
+// =============================================================================
+
+#[derive(Debug, Deserialize)]
+struct PipelineGraphRequest {
+    vpl: String,
+}
+
+#[derive(Debug, Serialize)]
+struct GenerateResponse {
+    vpl: String,
+}
+
+async fn handle_pipeline_to_graph(
+    State(_state): State<AppState>,
+    _auth: RbacViewer,
+    Json(body): Json<PipelineGraphRequest>,
+) -> Response {
+    match varpulis_parser::parse(&body.vpl) {
+        Ok(program) => {
+            let graph = varpulis_runtime::engine::graph::program_to_graph(&program);
+            reply_json_status(&graph, StatusCode::OK)
+        }
+        Err(e) => error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("Failed to parse VPL: {e}"),
+        ),
+    }
+}
+
+async fn handle_graph_to_pipeline(
+    State(_state): State<AppState>,
+    _auth: RbacViewer,
+    Json(graph): Json<varpulis_runtime::engine::graph::PipelineGraph>,
+) -> Response {
+    let vpl = varpulis_runtime::engine::graph::graph_to_vpl(&graph);
+    let resp = GenerateResponse { vpl };
     reply_json_status(&resp, StatusCode::OK)
 }
 
