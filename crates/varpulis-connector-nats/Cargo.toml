@@ -9,8 +9,8 @@ documentation.workspace = true
 description = "NATS connector for Varpulis CEP engine"
 
 [dependencies]
-varpulis-connector-api = { version = "0.8.0", path = "../varpulis-connector-api" }
-varpulis-core = { version = "0.8.0", path = "../varpulis-core" }
+varpulis-connector-api = { version = "0.9.0", path = "../varpulis-connector-api" }
+varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
 async-nats = "0.46"
 tokio = { workspace = true }
 serde = { workspace = true }
