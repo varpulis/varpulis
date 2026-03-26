@@ -83,3 +83,76 @@ pub fn create_provider(
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_provider_unknown_type() {
+        let config = varpulis_connectors::ConnectorConfig::new("ftp", "ftp://example.com");
+        let result = create_provider(&config);
+        match result {
+            Err(err) => {
+                assert!(
+                    err.contains("ftp"),
+                    "error should mention the unsupported type, got: {err}"
+                );
+                assert!(
+                    err.contains("not supported"),
+                    "error should indicate lack of support, got: {err}"
+                );
+            }
+            Ok(_) => panic!("expected Err for unsupported connector type 'ftp'"),
+        }
+    }
+
+    #[test]
+    fn test_enrichment_error_display() {
+        let timeout_err = EnrichmentError::Timeout(5000);
+        let display = format!("{timeout_err}");
+        assert!(display.contains("5000"));
+        assert!(display.contains("timeout"));
+
+        let conn_err = EnrichmentError::Connection("refused".to_string());
+        let display = format!("{conn_err}");
+        assert!(display.contains("refused"));
+        assert!(display.contains("connection error"));
+
+        let parse_err = EnrichmentError::Parse("invalid json".to_string());
+        let display = format!("{parse_err}");
+        assert!(display.contains("invalid json"));
+        assert!(display.contains("parse error"));
+
+        let not_found = EnrichmentError::NotFound("user:999".to_string());
+        let display = format!("{not_found}");
+        assert!(display.contains("user:999"));
+        assert!(display.contains("not found"));
+    }
+
+    #[test]
+    fn test_enrichment_result_fields() {
+        let mut fields = HashMap::new();
+        fields.insert("city".to_string(), Value::Str("Riga".into()));
+        fields.insert("pop".to_string(), Value::Int(614_618));
+
+        let result = EnrichmentResult {
+            fields: fields.clone(),
+            cached: true,
+        };
+
+        assert!(result.cached);
+        assert_eq!(result.fields.len(), 2);
+        assert_eq!(result.fields.get("city"), Some(&Value::Str("Riga".into())));
+        assert_eq!(result.fields.get("pop"), Some(&Value::Int(614_618)));
+
+        // Verify Clone works
+        let cloned = result.clone();
+        assert_eq!(cloned.cached, result.cached);
+        assert_eq!(cloned.fields, result.fields);
+
+        // Verify Debug works
+        let debug = format!("{result:?}");
+        assert!(debug.contains("EnrichmentResult"));
+    }
+}

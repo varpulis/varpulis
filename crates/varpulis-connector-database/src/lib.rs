@@ -272,3 +272,78 @@ impl SinkConnector for DatabaseSink {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_database_config_new_valid() {
+        let config = DatabaseConfig::new("sqlite::memory:", "events").unwrap();
+        assert_eq!(config.connection_string.expose(), "sqlite::memory:");
+        assert_eq!(config.table, "events");
+        assert_eq!(config.max_connections, 5);
+    }
+
+    #[test]
+    fn test_database_config_with_max_connections() {
+        let config = DatabaseConfig::new("postgres://localhost/db", "logs")
+            .unwrap()
+            .with_max_connections(20);
+        assert_eq!(config.max_connections, 20);
+    }
+
+    #[test]
+    fn test_database_config_empty_table_name_rejected() {
+        let result = DatabaseConfig::new("sqlite::memory:", "");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ConnectorError::ConfigError(_)));
+    }
+
+    #[test]
+    fn test_validate_table_name_valid_names() {
+        assert!(validate_table_name("events").is_ok());
+        assert!(validate_table_name("_events").is_ok());
+        assert!(validate_table_name("public.events").is_ok());
+        assert!(validate_table_name("my_schema.my_table").is_ok());
+        assert!(validate_table_name("table123").is_ok());
+    }
+
+    #[test]
+    fn test_validate_table_name_invalid_names() {
+        // Starts with digit
+        assert!(validate_table_name("1table").is_err());
+        // Contains special chars
+        assert!(validate_table_name("table;DROP").is_err());
+        assert!(validate_table_name("table name").is_err());
+        assert!(validate_table_name("table-name").is_err());
+        // Empty
+        assert!(validate_table_name("").is_err());
+    }
+
+    #[test]
+    fn test_database_config_sql_injection_prevented() {
+        // Table names with SQL injection attempts should be rejected
+        let result = DatabaseConfig::new("sqlite::memory:", "events; DROP TABLE users");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_database_source_initial_state() {
+        let config = DatabaseConfig::new("sqlite::memory:", "events").unwrap();
+        let source = DatabaseSource::new("db-src", config);
+        assert_eq!(source.name, "db-src");
+        assert!(!source.running);
+        assert_eq!(source.last_id, 0);
+        assert!(source.pool.is_none());
+    }
+
+    #[test]
+    fn test_database_info_static() {
+        assert_eq!(DATABASE_INFO.connector_type, "database");
+        assert!(DATABASE_INFO.supports_source);
+        assert!(DATABASE_INFO.supports_sink);
+        assert!(!DATABASE_INFO.supports_managed);
+    }
+}

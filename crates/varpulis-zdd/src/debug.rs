@@ -182,4 +182,25 @@ mod tests {
         let dump = zdd.dump();
         assert!(dump.contains("[1]") || dump.contains("[2]"));
     }
+
+    #[test]
+    fn test_dump_truncation() {
+        // Build a ZDD with more than 20 sets so dump() triggers truncation.
+        // product_with_optional on 5 vars gives 2^5 = 32 sets.
+        let zdd = Zdd::base()
+            .product_with_optional(0)
+            .product_with_optional(1)
+            .product_with_optional(2)
+            .product_with_optional(3)
+            .product_with_optional(4);
+
+        assert_eq!(zdd.count(), 32);
+
+        let dump = zdd.dump();
+        // The dump should mention truncation: "... and 12 more"
+        assert!(
+            dump.contains("... and 12 more"),
+            "dump should indicate truncation for >20 sets, got: {dump}"
+        );
+    }
 }

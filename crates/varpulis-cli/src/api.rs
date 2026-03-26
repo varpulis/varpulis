@@ -14,7 +14,7 @@ use futures_util::stream;
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use varpulis_core::pagination::{PaginationMeta, PaginationParams, MAX_LIMIT};
 use varpulis_runtime::tenant::{SharedTenantManager, TenantError, TenantQuota};
 use varpulis_runtime::Event;
@@ -216,26 +216,51 @@ pub struct TenantUsageInfo {
 
 /// Build a tower-http CORS layer from an optional list of allowed origins.
 ///
-/// - `None` or a list containing `"*"`: allow any origin (backward-compatible default).
-/// - Otherwise: restrict to the given origins.
+/// - Explicit list of origins: restrict to those origins.
+/// - A list containing `"*"`: allow any origin (must be explicitly opted into).
+/// - `None` (default): allow only localhost origins for safety.
 fn build_cors(origins: Option<Vec<String>>) -> CorsLayer {
-    use axum::http::{HeaderValue, Method};
+    let methods = AllowMethods::list([
+        axum::http::Method::GET,
+        axum::http::Method::POST,
+        axum::http::Method::PUT,
+        axum::http::Method::DELETE,
+        axum::http::Method::OPTIONS,
+    ]);
 
-    let base = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
-        .allow_headers([
-            "content-type".parse().unwrap(),
-            "x-api-key".parse().unwrap(),
-            "authorization".parse().unwrap(),
-        ]);
+    let headers = AllowHeaders::list([
+        "content-type".parse().unwrap(),
+        "x-api-key".parse().unwrap(),
+        "authorization".parse().unwrap(),
+        "x-request-id".parse().unwrap(),
+        "traceparent".parse().unwrap(),
+    ]);
 
-    match origins {
-        Some(ref list) if !list.is_empty() && !list.iter().any(|o| o == "*") => {
-            let origins: Vec<HeaderValue> = list.iter().filter_map(|s| s.parse().ok()).collect();
-            base.allow_origin(origins)
+    let origin = match origins {
+        Some(ref list) if list.iter().any(|o| o == "*") => {
+            tracing::warn!(
+                "CORS configured with allow_any_origin — this is unsafe for production. \
+                 Set --cors-origins to restrict to specific origins."
+            );
+            AllowOrigin::any()
         }
-        _ => base.allow_origin(Any),
-    }
+        Some(ref list) if !list.is_empty() => {
+            let origins: Vec<axum::http::HeaderValue> =
+                list.iter().filter_map(|s| s.parse().ok()).collect();
+            AllowOrigin::list(origins)
+        }
+        _ => AllowOrigin::list([
+            "http://localhost:5173".parse().unwrap(),
+            "http://localhost:8080".parse().unwrap(),
+            "http://127.0.0.1:5173".parse().unwrap(),
+            "http://127.0.0.1:8080".parse().unwrap(),
+        ]),
+    };
+
+    CorsLayer::new()
+        .allow_methods(methods)
+        .allow_headers(headers)
+        .allow_origin(origin)
 }
 
 /// Shared state for the API router.

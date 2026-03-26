@@ -1,6 +1,6 @@
 //! Coverage tests for ZddArena — targeting uncovered SharedArena and edge cases.
 
-use varpulis_zdd::{SharedArena, ZddArena, ZddHandle};
+use varpulis_zdd::{SharedArena, Zdd, ZddArena, ZddHandle};
 
 // =============================================================================
 // SharedArena full API coverage
@@ -354,4 +354,149 @@ fn arena_gc_empty_live_set() {
     let (stats, new) = arena.gc(&[]);
     assert_eq!(new.len(), 0);
     assert_eq!(stats.nodes_after, 0);
+}
+
+// =============================================================================
+// Zdd::to_dot() with multiple nodes
+// =============================================================================
+
+#[test]
+fn zdd_to_dot_multiple_nodes() {
+    // Build a ZDD with multiple internal nodes via product_with_optional chain
+    let zdd = Zdd::base()
+        .product_with_optional(0)
+        .product_with_optional(1)
+        .product_with_optional(2);
+
+    let dot = zdd.to_dot();
+
+    // Verify DOT structure
+    assert!(
+        dot.starts_with("digraph ZDD {"),
+        "should start with digraph header"
+    );
+    assert!(
+        dot.contains("rankdir=TB"),
+        "should specify top-to-bottom layout"
+    );
+    assert!(
+        dot.contains("node [shape=circle]"),
+        "should set default node shape"
+    );
+
+    // Terminal nodes are always declared
+    assert!(
+        dot.contains("Empty [shape=box"),
+        "should define Empty terminal"
+    );
+    assert!(
+        dot.contains("Base [shape=box"),
+        "should define Base terminal"
+    );
+
+    // Internal nodes for variables 0, 1, 2
+    assert!(dot.contains("label=\"0\""), "should have node for var 0");
+    assert!(dot.contains("label=\"1\""), "should have node for var 1");
+    assert!(dot.contains("label=\"2\""), "should have node for var 2");
+
+    // Edges: LO (dashed) and HI (solid)
+    assert!(dot.contains("style=dashed"), "should have dashed LO edges");
+
+    // Should have edges pointing to Base terminal (product_with_optional always
+    // reaches Base since the empty set is always included)
+    assert!(
+        dot.contains("-> Base"),
+        "should have edges to Base terminal"
+    );
+
+    // Now test with a union that also produces Empty edges
+    let union_zdd = Zdd::singleton(10).union(&Zdd::singleton(20));
+    let union_dot = union_zdd.to_dot();
+    assert!(
+        union_dot.contains("label=\"10\""),
+        "should have node for var 10"
+    );
+    assert!(
+        union_dot.contains("label=\"20\""),
+        "should have node for var 20"
+    );
+    assert!(
+        union_dot.contains("-> Empty"),
+        "union ZDD should have edges to Empty"
+    );
+}
+
+// =============================================================================
+// Larger product_with_optional chains followed by iter() verification
+// =============================================================================
+
+#[test]
+fn arena_product_with_optional_chain_iter() {
+    let mut arena = ZddArena::new();
+    let mut zdd = arena.base();
+
+    // Build a chain of 4 optional variables: 2^4 = 16 sets
+    for var in 0..4 {
+        zdd = arena.product_with_optional(zdd, var);
+    }
+
+    assert_eq!(arena.count_uncached(zdd), 16);
+
+    // Collect all sets and verify properties
+    let sets: Vec<Vec<u32>> = arena.iter(zdd).collect();
+    assert_eq!(sets.len(), 16);
+
+    // Every set should only contain elements from {0, 1, 2, 3}
+    for set in &sets {
+        for &elem in set {
+            assert!(elem < 4, "element {elem} should be in range 0..4");
+        }
+        // Each set should be sorted
+        for window in set.windows(2) {
+            assert!(window[0] < window[1], "set should be sorted: {set:?}");
+        }
+    }
+
+    // Verify specific membership: empty set and full set should both be present
+    assert!(arena.contains(zdd, &[]), "should contain the empty set");
+    assert!(
+        arena.contains(zdd, &[0, 1, 2, 3]),
+        "should contain the full set"
+    );
+
+    // All singleton sets should be present
+    for var in 0..4 {
+        assert!(
+            arena.contains(zdd, &[var]),
+            "should contain singleton {{{var}}}"
+        );
+    }
+
+    // All pairs should be present (C(4,2) = 6)
+    let pairs: Vec<Vec<u32>> = sets.iter().filter(|s| s.len() == 2).cloned().collect();
+    assert_eq!(pairs.len(), 6, "should have 6 pairs from 4 variables");
+}
+
+#[test]
+fn arena_product_with_optional_chain_6_vars() {
+    let mut arena = ZddArena::new();
+    let mut zdd = arena.base();
+
+    // Build a chain of 6 optional variables: 2^6 = 64 sets
+    for var in 0..6 {
+        zdd = arena.product_with_optional(zdd, var * 10); // non-contiguous vars
+    }
+
+    assert_eq!(arena.count_uncached(zdd), 64);
+
+    // Iterate and verify count matches
+    let sets: Vec<Vec<u32>> = arena.iter(zdd).collect();
+    assert_eq!(sets.len(), 64);
+
+    // Verify a few specific sets with non-contiguous variable IDs
+    assert!(arena.contains(zdd, &[]));
+    assert!(arena.contains(zdd, &[0]));
+    assert!(arena.contains(zdd, &[10]));
+    assert!(arena.contains(zdd, &[0, 10, 20, 30, 40, 50]));
+    assert!(!arena.contains(zdd, &[1])); // 1 was never added, only 0,10,20,...
 }

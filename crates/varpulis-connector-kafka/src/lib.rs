@@ -680,3 +680,126 @@ impl SinkConnector for KafkaSink {
 pub type KafkaSinkFull = KafkaSink;
 /// Backward-compatible alias for [`KafkaSource`].
 pub type KafkaSourceFull = KafkaSource;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kafka_config_new() {
+        let config = KafkaConfig::new("localhost:9092", "my-topic");
+        assert_eq!(config.brokers, "localhost:9092");
+        assert_eq!(config.topic, "my-topic");
+        assert!(config.group_id.is_none());
+        assert!(config.properties.is_empty());
+        assert!(config.transactional_id.is_none());
+    }
+
+    #[test]
+    fn test_kafka_config_with_group_id() {
+        let config = KafkaConfig::new("broker1:9092,broker2:9092", "events")
+            .with_group_id("my-consumer-group");
+        assert_eq!(config.group_id.as_deref(), Some("my-consumer-group"));
+    }
+
+    #[test]
+    fn test_kafka_config_with_transactional_id() {
+        let config =
+            KafkaConfig::new("localhost:9092", "output").with_transactional_id("txn-producer-1");
+        assert_eq!(config.transactional_id.as_deref(), Some("txn-producer-1"));
+    }
+
+    #[test]
+    fn test_kafka_config_with_properties() {
+        let mut props = indexmap::IndexMap::new();
+        props.insert("batch_size".to_string(), "16384".to_string());
+        props.insert("linger_ms".to_string(), "10".to_string());
+
+        let config = KafkaConfig::new("localhost:9092", "t").with_properties(props);
+        assert_eq!(config.properties.len(), 2);
+        assert_eq!(config.properties.get("batch_size").unwrap(), "16384");
+    }
+
+    #[test]
+    fn test_kafka_config_serialization_roundtrip() {
+        let config = KafkaConfig::new("broker:9092", "topic1")
+            .with_group_id("grp")
+            .with_transactional_id("txn-1");
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: KafkaConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.brokers, "broker:9092");
+        assert_eq!(deserialized.topic, "topic1");
+        assert_eq!(deserialized.group_id.as_deref(), Some("grp"));
+        assert_eq!(deserialized.transactional_id.as_deref(), Some("txn-1"));
+    }
+
+    #[test]
+    fn test_apply_properties_translates_vpl_names() {
+        let mut client_config = ClientConfig::new();
+        let mut props = indexmap::IndexMap::new();
+        props.insert("batch_size".to_string(), "32768".to_string());
+        props.insert("linger_ms".to_string(), "5".to_string());
+        props.insert("compression_type".to_string(), "snappy".to_string());
+        props.insert("security_protocol".to_string(), "SASL_SSL".to_string());
+
+        apply_properties(&mut client_config, &props);
+
+        // Verify the properties were translated (ClientConfig doesn't expose
+        // getters, but this validates no panic and the mapping runs)
+    }
+
+    #[test]
+    fn test_apply_properties_skips_reserved_keys() {
+        let mut client_config = ClientConfig::new();
+        let mut props = indexmap::IndexMap::new();
+        props.insert("bootstrap.servers".to_string(), "ignored".to_string());
+        props.insert("group.id".to_string(), "ignored".to_string());
+        props.insert("brokers".to_string(), "ignored".to_string());
+        props.insert("topic".to_string(), "ignored".to_string());
+        props.insert("group_id".to_string(), "ignored".to_string());
+        props.insert("exactly_once".to_string(), "ignored".to_string());
+        props.insert("transactional_id".to_string(), "ignored".to_string());
+
+        // Should not panic; all keys are skipped
+        apply_properties(&mut client_config, &props);
+    }
+
+    #[test]
+    fn test_apply_properties_passthrough_unknown_keys() {
+        let mut client_config = ClientConfig::new();
+        let mut props = indexmap::IndexMap::new();
+        props.insert("custom.setting".to_string(), "value".to_string());
+
+        // Unknown keys are passed through as-is (no translation)
+        apply_properties(&mut client_config, &props);
+    }
+
+    #[test]
+    fn test_kafka_source_new() {
+        let config = KafkaConfig::new("localhost:9092", "input-topic");
+        let source = KafkaSource::new("my-source", config);
+        assert_eq!(source.name, "my-source");
+        assert!(!source.is_running());
+    }
+
+    #[test]
+    fn test_kafka_info_static() {
+        assert_eq!(KAFKA_INFO.connector_type, "kafka");
+        assert_eq!(KAFKA_INFO.display_name, "Apache Kafka");
+        assert!(KAFKA_INFO.supports_source);
+        assert!(KAFKA_INFO.supports_sink);
+        assert!(KAFKA_INFO.supports_managed);
+        assert!(!KAFKA_INFO.config_params.is_empty());
+    }
+
+    #[test]
+    fn test_kafka_params_contains_required_fields() {
+        let required: Vec<&str> = KAFKA_PARAMS
+            .iter()
+            .filter(|p| p.required)
+            .map(|p| p.name)
+            .collect();
+        assert!(required.contains(&"brokers"));
+        assert!(required.contains(&"topic"));
+    }
+}

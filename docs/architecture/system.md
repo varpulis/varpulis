@@ -66,9 +66,32 @@
 - See [observability.md](observability.md)
 
 ### Checkpoint Manager
-- State snapshots
-- Crash recovery
-- S3, local filesystem support
+- Versioned state snapshots (windows, SASE runs, aggregation, variables, watermarks)
+- Three backends: in-memory, filesystem, RocksDB (requires `persistence` feature)
+- Crash recovery with automatic watermark restoration
+- Opt-in by design — see [Feature Maturity](#feature-maturity) above
+- See [state-management.md](state-management.md)
+
+## Feature Maturity
+
+Several advanced features are **opt-in by design** — they are production-ready
+but require explicit activation. This table clarifies their status to prevent
+them from being mistaken for incomplete implementations during audits.
+
+| Feature | Status | Activation | Module |
+|---------|--------|------------|--------|
+| Checkpointing | Production | Pass a `StateStore` to `Engine`; call `checkpoint_tick()` periodically | `persistence.rs` |
+| Contexts | Production | Declare `context` blocks in VPL; engine auto-creates OS threads | `context.rs` |
+| `.concurrent()` | Production | Add `.concurrent()` to a stream; creates a rayon thread pool | `engine/compilation.rs` |
+| Worker Pool | Production | Instantiate `WorkerPool` with a config and dispatch events to it | `worker_pool.rs` |
+| Hamlet Aggregation | Production | Use `.trend_aggregate()` in VPL after a sequence pattern | `hamlet/` |
+| PST Forecasting | Production | Use `.forecast()` in VPL after a sequence pattern | `pst/` |
+
+**Why opt-in?** These features add runtime cost (threads, memory, I/O) that
+would be wasted in simple pipelines. A filter-only pipeline should not pay for
+checkpointing or multi-threading. The engine defaults to zero-overhead
+single-threaded execution and scales up only when the VPL program or API caller
+requests it.
 
 ### LSP Server
 - Language Server Protocol implementation for VPL

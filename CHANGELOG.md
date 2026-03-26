@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-03-26
+
+### Security
+
+- **CLI API CORS hardened** — default changed from `allow_origin(Any)` to
+  localhost-only (`localhost:5173`, `localhost:8080`, `127.0.0.1` variants),
+  matching the cluster API's safe default. Explicit `"*"` now logs a warning.
+- **SMTP TLS safety** — `builder_dangerous()` now logs `tracing::warn!` and
+  supports `VARPULIS_SMTP_DANGEROUS` env var for explicit opt-in beyond the
+  existing port-1025 (MailPit) guard.
+
+### Added
+
+- **130 connector unit tests** — added tests to 10 previously untested connector
+  crates (API, Kafka, Redis, HTTP, NATS, Database, Elasticsearch, S3, Kinesis,
+  Pulsar) covering config construction, error handling, and serialization.
+- **8 enrichment tests** — cache insert/get, TTL expiry, stats, provider factory,
+  error display.
+- **5 ZDD tests** — dump truncation, to_dot multi-node, iterator debug format,
+  chain iteration with 4 and 6 variables.
+- **WASM CI target** — `cargo check -p varpulis-wasm --target wasm32-unknown-unknown`
+  added to CI pipeline to prevent WASM compatibility regressions.
+- **Nightly fuzz testing** — re-enabled cron schedule for parser, JSON, and MQTT
+  fuzz targets (3 x 30 min nightly).
+
+### Changed
+
+- **Refactored `compile_ops_with_sequences()`** — extracted `compile_hamlet_mode`,
+  `compile_sase_detection`, and `compile_pst_forecaster` into separate methods,
+  reducing the function from 1,157 to ~713 lines with zero behavior changes.
+- **CORS headers expanded** — CLI API now includes `x-request-id` and `traceparent`
+  in allowed headers, matching the cluster API for observability consistency.
+
 ## [0.6.0] - 2026-03-08
 
 ### Highlights

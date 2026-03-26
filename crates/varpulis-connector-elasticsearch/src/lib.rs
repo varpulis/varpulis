@@ -288,3 +288,104 @@ impl SinkConnector for ElasticsearchSink {
         self.flush().await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_elasticsearch_config_new() {
+        let config = ElasticsearchConfig::new("http://localhost:9200", "events");
+        assert_eq!(config.urls, "http://localhost:9200");
+        assert_eq!(config.index, "events");
+        assert_eq!(config.doc_type, "_doc");
+        assert_eq!(config.batch_size, 100);
+        assert_eq!(config.flush_interval_ms, 1000);
+        assert!(config.username.is_none());
+        assert!(config.password.is_none());
+        assert!(config.api_key.is_none());
+    }
+
+    #[test]
+    fn test_elasticsearch_config_with_batch_size() {
+        let config = ElasticsearchConfig::new("http://es:9200", "idx").with_batch_size(500);
+        assert_eq!(config.batch_size, 500);
+    }
+
+    #[test]
+    fn test_elasticsearch_config_batch_size_minimum_one() {
+        let config = ElasticsearchConfig::new("http://es:9200", "idx").with_batch_size(0);
+        assert_eq!(config.batch_size, 1);
+    }
+
+    #[test]
+    fn test_elasticsearch_config_with_flush_interval() {
+        let config = ElasticsearchConfig::new("http://es:9200", "idx").with_flush_interval(5000);
+        assert_eq!(config.flush_interval_ms, 5000);
+    }
+
+    #[test]
+    fn test_elasticsearch_config_with_basic_auth() {
+        let config = ElasticsearchConfig::new("http://es:9200", "idx")
+            .with_username("elastic")
+            .with_password("changeme");
+        assert_eq!(config.username.as_deref(), Some("elastic"));
+        assert_eq!(config.password.as_ref().unwrap().expose(), "changeme");
+    }
+
+    #[test]
+    fn test_elasticsearch_config_with_api_key() {
+        let config =
+            ElasticsearchConfig::new("http://es:9200", "idx").with_api_key("base64encodedkey");
+        assert_eq!(
+            config.api_key.as_ref().unwrap().expose(),
+            "base64encodedkey"
+        );
+    }
+
+    #[test]
+    fn test_elasticsearch_config_serialization_roundtrip() {
+        let config = ElasticsearchConfig::new("http://es:9200", "events-{yyyy.MM.dd}")
+            .with_batch_size(200)
+            .with_username("user");
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ElasticsearchConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.urls, "http://es:9200");
+        assert_eq!(deserialized.index, "events-{yyyy.MM.dd}");
+        assert_eq!(deserialized.batch_size, 200);
+        assert_eq!(deserialized.username.as_deref(), Some("user"));
+    }
+
+    #[test]
+    fn test_elasticsearch_sink_new_valid_url() {
+        let config = ElasticsearchConfig::new("http://localhost:9200", "events");
+        let result = ElasticsearchSink::new("es-sink", config);
+        assert!(result.is_ok());
+        let sink = result.unwrap();
+        assert_eq!(sink.name, "es-sink");
+    }
+
+    #[test]
+    fn test_elasticsearch_sink_new_invalid_url() {
+        let config = ElasticsearchConfig::new("not a valid url", "events");
+        let result = ElasticsearchSink::new("es-sink", config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_elasticsearch_sink_expand_index_static() {
+        let config = ElasticsearchConfig::new("http://es:9200", "my-index");
+        let sink = ElasticsearchSink::new("test", config).unwrap();
+        let event = varpulis_core::Event::new("TestEvent");
+        // Static index name should be unchanged
+        assert_eq!(sink.expand_index(&event), "my-index");
+    }
+
+    #[test]
+    fn test_elasticsearch_info_static() {
+        assert_eq!(ES_INFO.connector_type, "elasticsearch");
+        assert!(!ES_INFO.supports_source);
+        assert!(ES_INFO.supports_sink);
+        assert!(!ES_INFO.supports_managed);
+    }
+}

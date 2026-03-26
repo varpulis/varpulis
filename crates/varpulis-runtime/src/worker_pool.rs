@@ -1,5 +1,10 @@
 //! Worker Pool for Controlled Parallelism
 //!
+//! **Status: Production-ready, opt-in.**  The worker pool is a library component
+//! for callers who need explicit control over parallel event dispatch.  It is not
+//! auto-wired into the engine — instantiate [`WorkerPool`] and submit events to
+//! it directly.
+//!
 //! Unlike Apama's opaque spawn/contexts, Varpulis provides explicit control over
 //! parallel workers with monitoring, backpressure, and dynamic resizing.
 //!
