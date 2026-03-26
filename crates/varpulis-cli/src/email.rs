@@ -63,8 +63,14 @@ impl EmailSender {
             builder = builder.credentials(Credentials::new(user.clone(), pass.clone()));
         }
 
-        // For local dev (MailPit), disable certificate verification
-        if config.port == 1025 {
+        // For local dev (MailPit) or explicit opt-in, disable TLS certificate verification
+        if config.port == 1025 || std::env::var("VARPULIS_SMTP_DANGEROUS").is_ok() {
+            tracing::warn!(
+                "SMTP: TLS certificate verification disabled for {}:{} — \
+                 do not use in production",
+                config.host,
+                config.port
+            );
             builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.host)
                 .port(config.port);
         }

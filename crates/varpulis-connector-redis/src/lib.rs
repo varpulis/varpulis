@@ -694,3 +694,140 @@ impl SinkConnector for RedisStreamSinkStub {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_redis_config_new() {
+        let config = RedisConfig::new("redis://localhost:6379", "my-channel");
+        assert_eq!(config.url, "redis://localhost:6379");
+        assert_eq!(config.channel, "my-channel");
+        assert!(config.key_prefix.is_none());
+    }
+
+    #[test]
+    fn test_redis_config_with_key_prefix() {
+        let config =
+            RedisConfig::new("redis://localhost:6379", "events").with_key_prefix("varpulis");
+        assert_eq!(config.key_prefix.as_deref(), Some("varpulis"));
+    }
+
+    #[test]
+    fn test_redis_config_serialization_roundtrip() {
+        let config = RedisConfig::new("redis://host:6379", "ch1").with_key_prefix("pfx");
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: RedisConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.url, "redis://host:6379");
+        assert_eq!(deserialized.channel, "ch1");
+        assert_eq!(deserialized.key_prefix.as_deref(), Some("pfx"));
+    }
+
+    #[test]
+    fn test_redis_stream_config_new() {
+        let config = RedisStreamConfig::new("redis://localhost:6379", "mystream");
+        assert_eq!(config.url, "redis://localhost:6379");
+        assert_eq!(config.stream_key, "mystream");
+        assert!(config.group_name.is_none());
+        assert!(config.consumer_name.is_none());
+        assert_eq!(config.batch_size, 100);
+        assert_eq!(config.block_ms, 1000);
+        assert!(config.max_len.is_none());
+    }
+
+    #[test]
+    fn test_redis_stream_config_builder_chain() {
+        let config = RedisStreamConfig::new("redis://localhost:6379", "events")
+            .with_group("my-group")
+            .with_consumer("worker-1")
+            .with_batch_size(500)
+            .with_block_ms(2000)
+            .with_max_len(100_000);
+
+        assert_eq!(config.group_name.as_deref(), Some("my-group"));
+        assert_eq!(config.consumer_name.as_deref(), Some("worker-1"));
+        assert_eq!(config.batch_size, 500);
+        assert_eq!(config.block_ms, 2000);
+        assert_eq!(config.max_len, Some(100_000));
+    }
+
+    #[test]
+    fn test_redis_stream_config_serialization_roundtrip() {
+        let config = RedisStreamConfig::new("redis://r:6379", "stream1")
+            .with_group("g")
+            .with_max_len(5000);
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: RedisStreamConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.stream_key, "stream1");
+        assert_eq!(deserialized.group_name.as_deref(), Some("g"));
+        assert_eq!(deserialized.max_len, Some(5000));
+    }
+
+    #[test]
+    fn test_redis_source_initial_state() {
+        let config = RedisConfig::new("redis://localhost:6379", "ch");
+        let source = RedisSource::new("redis-src", config);
+        assert_eq!(source.name, "redis-src");
+        assert!(!source.is_running());
+    }
+
+    #[test]
+    fn test_redis_stream_source_initial_state() {
+        let config = RedisStreamConfig::new("redis://localhost:6379", "stream");
+        let source = RedisStreamSource::new("stream-src", config);
+        assert_eq!(source.name, "stream-src");
+        assert!(!source.is_running());
+    }
+
+    #[test]
+    fn test_parse_stream_fields_valid() {
+        let fields = RedisValue::Array(vec![
+            RedisValue::BulkString(b"event_type".to_vec()),
+            RedisValue::BulkString(b"LoginEvent".to_vec()),
+            RedisValue::BulkString(b"user".to_vec()),
+            RedisValue::BulkString(b"alice".to_vec()),
+        ]);
+        let event = parse_stream_fields(&fields);
+        assert!(event.is_some());
+        let event = event.unwrap();
+        assert_eq!(event.event_type.as_ref(), "LoginEvent");
+    }
+
+    #[test]
+    fn test_parse_stream_fields_no_event_type() {
+        let fields = RedisValue::Array(vec![
+            RedisValue::BulkString(b"user".to_vec()),
+            RedisValue::BulkString(b"bob".to_vec()),
+        ]);
+        let event = parse_stream_fields(&fields);
+        assert!(event.is_some());
+        // Falls back to default "RedisStreamEvent"
+        assert_eq!(event.unwrap().event_type.as_ref(), "RedisStreamEvent");
+    }
+
+    #[test]
+    fn test_parse_stream_fields_non_array() {
+        let fields = RedisValue::Nil;
+        assert!(parse_stream_fields(&fields).is_none());
+    }
+
+    #[test]
+    fn test_parse_stream_fields_json_value() {
+        let fields = RedisValue::Array(vec![
+            RedisValue::BulkString(b"count".to_vec()),
+            RedisValue::BulkString(b"42".to_vec()),
+        ]);
+        let event = parse_stream_fields(&fields).unwrap();
+        // "42" should be parsed as JSON number
+        assert_eq!(event.get("count"), Some(&varpulis_core::Value::Int(42)));
+    }
+
+    #[test]
+    fn test_redis_info_static() {
+        assert_eq!(REDIS_INFO.connector_type, "redis");
+        assert!(REDIS_INFO.supports_source);
+        assert!(REDIS_INFO.supports_sink);
+        assert!(!REDIS_INFO.supports_managed);
+    }
+}

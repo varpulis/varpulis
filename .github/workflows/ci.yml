@@ -199,6 +199,21 @@ jobs:
       - run: cargo check --workspace --features ${{ matrix.features }}
       - run: cargo clippy --workspace --all-targets --features ${{ matrix.features }} -- -D warnings
 
+  wasm:
+    name: WASM Build
+    needs: [gate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+      - name: Check WASM build
+        run: cargo check -p varpulis-wasm --target wasm32-unknown-unknown
+
   chaos-tests:
     name: Chaos Tests
     runs-on: ubuntu-latest

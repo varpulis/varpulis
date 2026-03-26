@@ -93,3 +93,93 @@ impl EnrichmentCache {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_cache_insert_and_get() {
+        let cache = EnrichmentCache::new(Duration::from_secs(60));
+        let mut fields = HashMap::new();
+        fields.insert("name".to_string(), Value::Str("alice".into()));
+        fields.insert("score".to_string(), Value::Int(42));
+
+        cache.insert("user:1".to_string(), fields.clone());
+
+        let result = cache.get("user:1");
+        assert!(result.is_some());
+        let got = result.unwrap();
+        assert_eq!(got.get("name"), Some(&Value::Str("alice".into())));
+        assert_eq!(got.get("score"), Some(&Value::Int(42)));
+    }
+
+    #[test]
+    fn test_cache_miss() {
+        let cache = EnrichmentCache::new(Duration::from_secs(60));
+
+        let result = cache.get("nonexistent");
+        assert!(result.is_none());
+
+        let (hits, misses) = cache.stats();
+        assert_eq!(hits, 0);
+        assert_eq!(misses, 1);
+    }
+
+    #[test]
+    fn test_cache_hit_counter() {
+        let cache = EnrichmentCache::new(Duration::from_secs(60));
+        let mut fields = HashMap::new();
+        fields.insert("k".to_string(), Value::Bool(true));
+        cache.insert("key".to_string(), fields);
+
+        // Perform multiple gets to verify hit counter
+        for _ in 0..5 {
+            let result = cache.get("key");
+            assert!(result.is_some());
+        }
+
+        let (hits, misses) = cache.stats();
+        assert_eq!(hits, 5);
+        assert_eq!(misses, 0);
+    }
+
+    #[test]
+    fn test_cache_ttl_expiry() {
+        let cache = EnrichmentCache::new(Duration::from_millis(10));
+        let mut fields = HashMap::new();
+        fields.insert("temp".to_string(), Value::Float(2.78));
+        cache.insert("ephemeral".to_string(), fields);
+
+        // Should be present immediately
+        assert!(cache.get("ephemeral").is_some());
+
+        // Wait past TTL
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Should be expired now
+        let result = cache.get("ephemeral");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_cache_stats() {
+        let cache = EnrichmentCache::new(Duration::from_secs(60));
+        let mut fields = HashMap::new();
+        fields.insert("v".to_string(), Value::Null);
+        cache.insert("a".to_string(), fields);
+
+        // 2 hits
+        cache.get("a");
+        cache.get("a");
+        // 3 misses
+        cache.get("x");
+        cache.get("y");
+        cache.get("z");
+
+        let (hits, misses) = cache.stats();
+        assert_eq!(hits, 2);
+        assert_eq!(misses, 3);
+    }
+}

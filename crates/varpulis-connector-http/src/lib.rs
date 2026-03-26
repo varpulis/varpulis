@@ -550,3 +550,175 @@ fn json_to_event_from_json(json: &serde_json::Value) -> Event {
 
     event
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_http_webhook_config_default() {
+        let config = HttpWebhookConfig::default();
+        assert_eq!(config.port, 8080);
+        assert_eq!(config.bind_address, "0.0.0.0");
+        assert!(config.api_key.is_none());
+        assert_eq!(config.rate_limit, 0);
+        assert_eq!(config.max_batch_size, 1000);
+        assert_eq!(config.event_path, "/event");
+        assert_eq!(config.batch_path, "/events");
+    }
+
+    #[test]
+    fn test_http_webhook_config_new() {
+        let config = HttpWebhookConfig::new(9090);
+        assert_eq!(config.port, 9090);
+        assert_eq!(config.bind_address, "0.0.0.0");
+    }
+
+    #[test]
+    fn test_http_webhook_config_builder_chain() {
+        let config = HttpWebhookConfig::new(3000)
+            .with_api_key("secret-key-123")
+            .with_rate_limit(100)
+            .with_bind_address("127.0.0.1");
+
+        assert_eq!(config.port, 3000);
+        assert_eq!(config.api_key.as_deref(), Some("secret-key-123"));
+        assert_eq!(config.rate_limit, 100);
+        assert_eq!(config.bind_address, "127.0.0.1");
+    }
+
+    #[test]
+    fn test_http_webhook_config_serialization_roundtrip() {
+        let config = HttpWebhookConfig::new(8081).with_api_key("key");
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: HttpWebhookConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.port, 8081);
+        assert_eq!(deserialized.api_key.as_deref(), Some("key"));
+    }
+
+    #[test]
+    fn test_http_sink_new() {
+        let sink = HttpSink::new("test-sink", "http://localhost:8080/ingest");
+        assert_eq!(sink.name, "test-sink");
+        assert_eq!(sink.url, "http://localhost:8080/ingest");
+        assert!(sink.headers.is_empty());
+    }
+
+    #[test]
+    fn test_http_sink_with_headers() {
+        let sink = HttpSink::new("s", "http://example.com")
+            .with_header("Authorization", "Bearer token123")
+            .with_header("X-Custom", "value");
+        assert_eq!(sink.headers.len(), 2);
+        assert_eq!(
+            sink.headers.get("Authorization").unwrap(),
+            "Bearer token123"
+        );
+        assert_eq!(sink.headers.get("X-Custom").unwrap(), "value");
+    }
+
+    #[test]
+    fn test_check_auth_no_key_required() {
+        let headers = HeaderMap::new();
+        assert!(check_auth(&headers, &None).is_ok());
+    }
+
+    #[test]
+    fn test_check_auth_valid_api_key() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "my-secret".parse().unwrap());
+        let expected = Some("my-secret".to_string());
+        assert!(check_auth(&headers, &expected).is_ok());
+    }
+
+    #[test]
+    fn test_check_auth_invalid_api_key() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "wrong-key".parse().unwrap());
+        let expected = Some("correct-key".to_string());
+        assert!(check_auth(&headers, &expected).is_err());
+    }
+
+    #[test]
+    fn test_check_auth_bearer_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer my-token".parse().unwrap());
+        let expected = Some("my-token".to_string());
+        assert!(check_auth(&headers, &expected).is_ok());
+    }
+
+    #[test]
+    fn test_check_auth_missing_header() {
+        let headers = HeaderMap::new();
+        let expected = Some("required-key".to_string());
+        assert!(check_auth(&headers, &expected).is_err());
+    }
+
+    #[test]
+    fn test_json_to_event_from_json_basic() {
+        let json = serde_json::json!({
+            "event_type": "LoginEvent",
+            "user": "alice",
+            "ip": "10.0.0.1"
+        });
+        let event = json_to_event_from_json(&json);
+        assert_eq!(event.event_type.as_ref(), "LoginEvent");
+        assert!(event.get("user").is_some());
+        assert!(event.get("ip").is_some());
+    }
+
+    #[test]
+    fn test_json_to_event_from_json_with_type_field() {
+        let json = serde_json::json!({
+            "type": "OrderEvent",
+            "amount": 42
+        });
+        let event = json_to_event_from_json(&json);
+        assert_eq!(event.event_type.as_ref(), "OrderEvent");
+    }
+
+    #[test]
+    fn test_json_to_event_from_json_no_type() {
+        let json = serde_json::json!({"foo": "bar"});
+        let event = json_to_event_from_json(&json);
+        assert_eq!(event.event_type.as_ref(), "WebhookEvent");
+    }
+
+    #[test]
+    fn test_json_to_event_from_json_nested_data() {
+        let json = serde_json::json!({
+            "event_type": "NestedEvent",
+            "data": {
+                "key1": "val1",
+                "key2": 99
+            }
+        });
+        let event = json_to_event_from_json(&json);
+        assert_eq!(event.event_type.as_ref(), "NestedEvent");
+        assert!(event.get("key1").is_some());
+    }
+
+    #[test]
+    fn test_rate_limiter_allows_within_limit() {
+        let mut limiter = RateLimiter::new(10);
+        // First request should always be allowed
+        assert!(limiter.allow());
+    }
+
+    #[test]
+    fn test_rate_limiter_exhausts_tokens() {
+        let mut limiter = RateLimiter::new(2);
+        assert!(limiter.allow());
+        assert!(limiter.allow());
+        // Third request should be denied (no tokens left immediately)
+        assert!(!limiter.allow());
+    }
+
+    #[test]
+    fn test_http_info_static() {
+        assert_eq!(HTTP_INFO.connector_type, "http");
+        assert!(HTTP_INFO.supports_source);
+        assert!(HTTP_INFO.supports_sink);
+        assert!(!HTTP_INFO.supports_managed);
+    }
+}

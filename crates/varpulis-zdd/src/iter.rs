@@ -223,4 +223,31 @@ mod tests {
         let first_100: Vec<Vec<u32>> = zdd.iter().take(100).collect();
         assert_eq!(first_100.len(), 100);
     }
+
+    #[test]
+    fn test_iter_debug_format() {
+        let zdd = Zdd::base()
+            .product_with_optional(0)
+            .product_with_optional(1);
+        let iter = zdd.iter();
+
+        let debug = format!("{iter:?}");
+        assert!(
+            debug.contains("ZddIterator"),
+            "Debug output should contain struct name"
+        );
+        assert!(
+            debug.contains("stack_depth"),
+            "Debug output should contain stack_depth field"
+        );
+
+        // After partial iteration, stack depth should change
+        let mut iter2 = zdd.iter();
+        let _ = iter2.next(); // consume one element
+        let debug2 = format!("{iter2:?}");
+        assert!(
+            debug2.contains("ZddIterator"),
+            "Debug output should still work after partial iteration"
+        );
+    }
 }

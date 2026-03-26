@@ -364,3 +364,103 @@ impl SinkConnector for PulsarSink {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pulsar_config_new() {
+        let config = PulsarConfig::new(
+            "pulsar://localhost:6650",
+            "persistent://public/default/events",
+        );
+        assert_eq!(config.service_url, "pulsar://localhost:6650");
+        assert_eq!(config.topic, "persistent://public/default/events");
+        assert!(config.subscription.is_none());
+        assert!(config.consumer_name.is_none());
+        assert_eq!(config.batch_size, 100);
+        assert!(config.token.is_none());
+    }
+
+    #[test]
+    fn test_pulsar_config_with_subscription() {
+        let config = PulsarConfig::new("pulsar://host:6650", "topic").with_subscription("my-sub");
+        assert_eq!(config.subscription.as_deref(), Some("my-sub"));
+    }
+
+    #[test]
+    fn test_pulsar_config_with_consumer_name() {
+        let config =
+            PulsarConfig::new("pulsar://host:6650", "topic").with_consumer_name("worker-0");
+        assert_eq!(config.consumer_name.as_deref(), Some("worker-0"));
+    }
+
+    #[test]
+    fn test_pulsar_config_with_batch_size() {
+        let config = PulsarConfig::new("pulsar://host:6650", "topic").with_batch_size(500);
+        assert_eq!(config.batch_size, 500);
+    }
+
+    #[test]
+    fn test_pulsar_config_with_token() {
+        let config =
+            PulsarConfig::new("pulsar://host:6650", "topic").with_token("eyJhbGciOiJSUzI1NiJ9...");
+        assert_eq!(config.token.as_deref(), Some("eyJhbGciOiJSUzI1NiJ9..."));
+    }
+
+    #[test]
+    fn test_pulsar_config_serialization_roundtrip() {
+        let config = PulsarConfig::new("pulsar://host:6650", "my-topic")
+            .with_subscription("sub1")
+            .with_batch_size(200);
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: PulsarConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.service_url, "pulsar://host:6650");
+        assert_eq!(deserialized.topic, "my-topic");
+        assert_eq!(deserialized.subscription.as_deref(), Some("sub1"));
+        assert_eq!(deserialized.batch_size, 200);
+    }
+
+    #[test]
+    fn test_pulsar_source_initial_state() {
+        let config = PulsarConfig::new("pulsar://host:6650", "topic");
+        let source = PulsarSource::new("pulsar-src", config);
+        assert_eq!(source.name, "pulsar-src");
+        assert!(!source.is_running());
+    }
+
+    #[test]
+    fn test_pulsar_sink_initial_state() {
+        let config = PulsarConfig::new("pulsar://host:6650", "topic");
+        let sink = PulsarSink::new("pulsar-sink", config);
+        assert_eq!(sink.name, "pulsar-sink");
+    }
+
+    #[test]
+    fn test_pulsar_info_static() {
+        assert_eq!(PULSAR_INFO.connector_type, "pulsar");
+        assert!(PULSAR_INFO.supports_source);
+        assert!(PULSAR_INFO.supports_sink);
+        assert!(!PULSAR_INFO.supports_managed);
+    }
+
+    #[test]
+    fn test_json_payload_serialize() {
+        let payload = JsonPayload {
+            data: b"hello world".to_vec(),
+        };
+        let msg = JsonPayload::serialize_message(payload).unwrap();
+        assert_eq!(msg.payload, b"hello world");
+    }
+
+    #[test]
+    fn test_json_message_deserialize() {
+        let payload = Payload {
+            data: b"{}".to_vec(),
+            metadata: Default::default(),
+        };
+        let result = JsonMessage::deserialize_message(&payload);
+        assert!(result.is_ok());
+    }
+}

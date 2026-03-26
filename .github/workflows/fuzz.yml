@@ -1,8 +1,8 @@
 name: Fuzz Testing
 
 on:
-  # schedule:
-  #   - cron: '0 3 * * *'  # Nightly disabled to conserve Actions minutes
+  schedule:
+    - cron: '0 3 * * *'
   workflow_dispatch:
 
 jobs:

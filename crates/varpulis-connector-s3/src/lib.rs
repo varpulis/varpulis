@@ -309,3 +309,83 @@ impl SinkConnector for S3Sink {
         self.flush().await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_s3_config_new() {
+        let config = S3Config::new("my-bucket", "events/raw", "us-east-1");
+        assert_eq!(config.bucket, "my-bucket");
+        assert_eq!(config.prefix, "events/raw");
+        assert_eq!(config.region, "us-east-1");
+        assert_eq!(config.format, S3OutputFormat::JsonLines);
+        assert_eq!(config.file_rotation_size, 100 * 1024 * 1024);
+        assert_eq!(config.file_rotation_seconds, 3600);
+        assert!(!config.compression);
+        assert!(config.profile.is_none());
+    }
+
+    #[test]
+    fn test_s3_config_prefix_trailing_slash_stripped() {
+        let config = S3Config::new("bucket", "path/to/data/", "eu-west-1");
+        assert_eq!(config.prefix, "path/to/data");
+    }
+
+    #[test]
+    fn test_s3_config_with_format() {
+        let config =
+            S3Config::new("bucket", "prefix", "us-west-2").with_format(S3OutputFormat::Csv);
+        assert_eq!(config.format, S3OutputFormat::Csv);
+    }
+
+    #[test]
+    fn test_s3_config_with_rotation_settings() {
+        let config = S3Config::new("bucket", "prefix", "us-east-1")
+            .with_file_rotation_size(50 * 1024 * 1024)
+            .with_file_rotation_seconds(1800);
+        assert_eq!(config.file_rotation_size, 50 * 1024 * 1024);
+        assert_eq!(config.file_rotation_seconds, 1800);
+    }
+
+    #[test]
+    fn test_s3_config_with_compression() {
+        let config = S3Config::new("bucket", "prefix", "us-east-1").with_compression();
+        assert!(config.compression);
+    }
+
+    #[test]
+    fn test_s3_config_with_profile() {
+        let config = S3Config::new("bucket", "prefix", "us-east-1").with_profile("prod");
+        assert_eq!(config.profile.as_deref(), Some("prod"));
+    }
+
+    #[test]
+    fn test_s3_config_full_builder() {
+        let config = S3Config::new("test-bucket", "data", "eu-central-1")
+            .with_format(S3OutputFormat::Csv)
+            .with_compression()
+            .with_profile("dev");
+        assert_eq!(config.bucket, "test-bucket");
+        assert_eq!(config.prefix, "data");
+        assert_eq!(config.region, "eu-central-1");
+        assert_eq!(config.format, S3OutputFormat::Csv);
+        assert!(config.compression);
+        assert_eq!(config.profile.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn test_s3_output_format_default() {
+        let format = S3OutputFormat::default();
+        assert_eq!(format, S3OutputFormat::JsonLines);
+    }
+
+    #[test]
+    fn test_s3_info_static() {
+        assert_eq!(S3_INFO.connector_type, "s3");
+        assert!(!S3_INFO.supports_source);
+        assert!(S3_INFO.supports_sink);
+        assert!(!S3_INFO.supports_managed);
+    }
+}

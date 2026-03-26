@@ -632,3 +632,144 @@ impl SinkConnector for NatsSink {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_nats_config_new() {
+        let config = NatsConfig::new("nats://localhost:4222", "events.>");
+        assert_eq!(config.servers, "nats://localhost:4222");
+        assert_eq!(config.subject, "events.>");
+        assert!(config.queue_group.is_none());
+        assert!(config.username.is_none());
+        assert!(config.password.is_none());
+        assert!(config.token.is_none());
+        assert!(!config.use_tls);
+        assert!(config.ssl_ca_location.is_none());
+        assert!(config.ssl_certificate_location.is_none());
+        assert!(config.ssl_key_location.is_none());
+    }
+
+    #[test]
+    fn test_nats_config_with_queue_group() {
+        let config = NatsConfig::new("nats://host:4222", "events").with_queue_group("workers");
+        assert_eq!(config.queue_group.as_deref(), Some("workers"));
+    }
+
+    #[test]
+    fn test_nats_config_with_credentials() {
+        let config = NatsConfig::new("nats://host:4222", "sub").with_credentials("admin", "p@ss");
+        assert_eq!(config.username.as_deref(), Some("admin"));
+        assert_eq!(config.password.as_ref().unwrap().expose(), "p@ss");
+    }
+
+    #[test]
+    fn test_nats_config_with_token() {
+        let config = NatsConfig::new("nats://host:4222", "sub").with_token("my-secret-token");
+        assert_eq!(config.token.as_ref().unwrap().expose(), "my-secret-token");
+    }
+
+    #[test]
+    fn test_nats_config_with_tls() {
+        let config = NatsConfig::new("nats://host:4222", "sub")
+            .with_tls(true)
+            .with_ca_cert("/path/to/ca.pem")
+            .with_client_cert("/path/to/cert.pem", "/path/to/key.pem");
+        assert!(config.use_tls);
+        assert_eq!(config.ssl_ca_location.as_deref(), Some("/path/to/ca.pem"));
+        assert_eq!(
+            config.ssl_certificate_location.as_deref(),
+            Some("/path/to/cert.pem")
+        );
+        assert_eq!(config.ssl_key_location.as_deref(), Some("/path/to/key.pem"));
+    }
+
+    #[test]
+    fn test_nats_config_serialization_roundtrip() {
+        let config =
+            NatsConfig::new("nats://a:4222,nats://b:4222", "topic.*").with_queue_group("qg");
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: NatsConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.servers, "nats://a:4222,nats://b:4222");
+        assert_eq!(deserialized.subject, "topic.*");
+        assert_eq!(deserialized.queue_group.as_deref(), Some("qg"));
+    }
+
+    #[test]
+    fn test_parse_nats_payload_basic() {
+        let payload = r#"{"event_type":"Login","user":"alice","ip":"10.0.0.1"}"#;
+        let event = parse_nats_payload(payload, "events.login");
+        assert!(event.is_some());
+        let event = event.unwrap();
+        assert_eq!(event.event_type.as_ref(), "Login");
+        assert!(event.get("user").is_some());
+    }
+
+    #[test]
+    fn test_parse_nats_payload_fallback_to_subject() {
+        let payload = r#"{"user":"bob","amount":100}"#;
+        let event = parse_nats_payload(payload, "events.order").unwrap();
+        // No event_type or type field: falls back to last segment of subject
+        assert_eq!(event.event_type.as_ref(), "order");
+    }
+
+    #[test]
+    fn test_parse_nats_payload_with_data_field() {
+        let payload = r#"{"event_type":"Tx","data":{"amount":50,"currency":"EUR"}}"#;
+        let event = parse_nats_payload(payload, "events.tx").unwrap();
+        assert_eq!(event.event_type.as_ref(), "Tx");
+        assert!(event.get("amount").is_some());
+        assert!(event.get("currency").is_some());
+    }
+
+    #[test]
+    fn test_parse_nats_payload_invalid_json() {
+        let event = parse_nats_payload("not json", "sub");
+        assert!(event.is_none());
+    }
+
+    #[test]
+    fn test_parse_nats_payload_type_field_alias() {
+        let payload = r#"{"type":"Alert","severity":"high"}"#;
+        let event = parse_nats_payload(payload, "alerts").unwrap();
+        assert_eq!(event.event_type.as_ref(), "Alert");
+    }
+
+    #[test]
+    fn test_nats_source_initial_state() {
+        let config = NatsConfig::new("nats://localhost:4222", "sub");
+        let source = NatsSource::new("nats-src", config);
+        assert_eq!(source.name, "nats-src");
+        assert!(!source.is_running());
+    }
+
+    #[test]
+    fn test_nats_sink_initial_state() {
+        let config = NatsConfig::new("nats://localhost:4222", "pub");
+        let sink = NatsSink::new("nats-sink", config);
+        assert_eq!(sink.name, "nats-sink");
+        assert!(sink.client.is_none());
+    }
+
+    #[test]
+    fn test_nats_info_static() {
+        assert_eq!(NATS_INFO.connector_type, "nats");
+        assert!(NATS_INFO.supports_source);
+        assert!(NATS_INFO.supports_sink);
+        assert!(NATS_INFO.supports_managed);
+        assert!(!NATS_INFO.config_params.is_empty());
+    }
+
+    #[test]
+    fn test_nats_params_contains_required_fields() {
+        let required: Vec<&str> = NATS_PARAMS
+            .iter()
+            .filter(|p| p.required)
+            .map(|p| p.name)
+            .collect();
+        assert!(required.contains(&"servers"));
+        assert!(required.contains(&"subject"));
+    }
+}

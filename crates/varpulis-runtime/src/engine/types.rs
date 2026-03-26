@@ -260,7 +260,10 @@ impl RuntimeOp {
     }
 }
 
-/// Configuration for `.concurrent()` parallel processing
+/// Configuration for `.concurrent()` parallel processing.
+///
+/// Production-ready, opt-in via `.concurrent()` in VPL.  Creates a rayon
+/// thread pool that partitions events across workers by key or round-robin.
 pub struct ConcurrentConfig {
     pub workers: usize,
     pub partition_key: Option<String>,

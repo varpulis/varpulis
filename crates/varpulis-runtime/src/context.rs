@@ -1,11 +1,18 @@
 //! Context-based multi-threaded execution architecture.
 //!
+//! **Status: Production-ready, opt-in.**  Contexts are activated by declaring
+//! `context` blocks in VPL.  When no contexts are declared, the engine runs in
+//! single-threaded mode with zero overhead.
+//!
 //! Named contexts provide isolated execution domains. Each context runs on its own
 //! OS thread with a single-threaded Tokio runtime, enabling true parallelism without
 //! locks within a context. Cross-context communication uses bounded `mpsc` channels.
+//! CPU affinity pinning is supported via `core_affinity`.
 //!
-//! When no contexts are declared, the engine runs in single-threaded mode with zero
-//! overhead (backward compatible).
+//! Key types:
+//! - [`ContextRuntime`] — runs a single context on a dedicated OS thread
+//! - [`ContextOrchestrator`] — manages all contexts and routes events between them
+//! - [`CheckpointCoordinator`] — coordinates consistent snapshots across contexts
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -373,7 +373,7 @@ impl SinkConnector for KinesisSink {
 }
 
 /// Convert JSON to Event (helper for Kinesis)
-fn json_to_event_from_json(json: &serde_json::Value) -> Event {
+pub(crate) fn json_to_event_from_json(json: &serde_json::Value) -> Event {
     let event_type = json
         .get("event_type")
         .or_else(|| json.get("type"))
@@ -395,4 +395,128 @@ fn json_to_event_from_json(json: &serde_json::Value) -> Event {
     }
 
     event
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kinesis_config_new() {
+        let config = KinesisConfig::new("my-stream", "us-east-1");
+        assert_eq!(config.stream_name, "my-stream");
+        assert_eq!(config.region, "us-east-1");
+        assert_eq!(config.shard_iterator_type, "LATEST");
+        assert_eq!(config.batch_size, 100);
+        assert_eq!(config.poll_interval_ms, 200);
+        assert!(config.partition_key.is_none());
+        assert!(config.consumer_name.is_none());
+        assert!(config.profile.is_none());
+    }
+
+    #[test]
+    fn test_kinesis_config_with_shard_iterator_type() {
+        let config =
+            KinesisConfig::new("stream", "us-west-2").with_shard_iterator_type("TRIM_HORIZON");
+        assert_eq!(config.shard_iterator_type, "TRIM_HORIZON");
+    }
+
+    #[test]
+    fn test_kinesis_config_with_batch_size_clamped() {
+        // Below minimum
+        let config = KinesisConfig::new("s", "r").with_batch_size(0);
+        assert_eq!(config.batch_size, 1);
+
+        // Above maximum
+        let config = KinesisConfig::new("s", "r").with_batch_size(20000);
+        assert_eq!(config.batch_size, 10000);
+
+        // Within range
+        let config = KinesisConfig::new("s", "r").with_batch_size(500);
+        assert_eq!(config.batch_size, 500);
+    }
+
+    #[test]
+    fn test_kinesis_config_with_poll_interval() {
+        let config = KinesisConfig::new("stream", "us-east-1").with_poll_interval(1000);
+        assert_eq!(config.poll_interval_ms, 1000);
+    }
+
+    #[test]
+    fn test_kinesis_config_with_partition_key() {
+        let config = KinesisConfig::new("stream", "us-east-1").with_partition_key("user-123");
+        assert_eq!(config.partition_key.as_deref(), Some("user-123"));
+    }
+
+    #[test]
+    fn test_kinesis_config_with_consumer_name() {
+        let config = KinesisConfig::new("stream", "us-east-1").with_consumer_name("worker-1");
+        assert_eq!(config.consumer_name.as_deref(), Some("worker-1"));
+    }
+
+    #[test]
+    fn test_kinesis_config_with_profile() {
+        let config = KinesisConfig::new("stream", "us-east-1").with_profile("staging");
+        assert_eq!(config.profile.as_deref(), Some("staging"));
+    }
+
+    #[test]
+    fn test_kinesis_config_serialization_roundtrip() {
+        let config = KinesisConfig::new("test-stream", "eu-west-1")
+            .with_batch_size(200)
+            .with_partition_key("pk")
+            .with_profile("dev");
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: KinesisConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.stream_name, "test-stream");
+        assert_eq!(deserialized.region, "eu-west-1");
+        assert_eq!(deserialized.batch_size, 200);
+        assert_eq!(deserialized.partition_key.as_deref(), Some("pk"));
+    }
+
+    #[test]
+    fn test_json_to_event_from_json_basic() {
+        let json = serde_json::json!({
+            "event_type": "OrderEvent",
+            "amount": 99.99,
+            "user": "alice"
+        });
+        let event = json_to_event_from_json(&json);
+        assert_eq!(event.event_type.as_ref(), "OrderEvent");
+        assert!(event.get("amount").is_some());
+        assert!(event.get("user").is_some());
+    }
+
+    #[test]
+    fn test_json_to_event_from_json_type_field() {
+        let json = serde_json::json!({"type": "Alert", "level": "high"});
+        let event = json_to_event_from_json(&json);
+        assert_eq!(event.event_type.as_ref(), "Alert");
+    }
+
+    #[test]
+    fn test_json_to_event_from_json_no_type() {
+        let json = serde_json::json!({"foo": "bar"});
+        let event = json_to_event_from_json(&json);
+        assert_eq!(event.event_type.as_ref(), "WebhookEvent");
+    }
+
+    #[test]
+    fn test_json_to_event_from_json_nested_data() {
+        let json = serde_json::json!({
+            "event_type": "Ev",
+            "data": {"key1": "val1", "key2": 42}
+        });
+        let event = json_to_event_from_json(&json);
+        assert_eq!(event.event_type.as_ref(), "Ev");
+        assert!(event.get("key1").is_some());
+    }
+
+    #[test]
+    fn test_kinesis_info_static() {
+        assert_eq!(KINESIS_INFO.connector_type, "kinesis");
+        assert!(KINESIS_INFO.supports_source);
+        assert!(KINESIS_INFO.supports_sink);
+        assert!(!KINESIS_INFO.supports_managed);
+    }
 }

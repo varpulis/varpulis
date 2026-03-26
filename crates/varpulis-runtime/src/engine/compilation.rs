@@ -1054,215 +1054,14 @@ impl Engine {
 
         // Check if we're in trend aggregation mode (Hamlet) or detection mode (SASE)
         if let Some(ref agg_items) = trend_agg_items {
-            // === Trend Aggregation Mode (Hamlet) ===
-            // Build Hamlet aggregator instead of SASE engine.
-
-            let event_types = pattern_analyzer::extract_event_types(source, &followed_by_clauses);
-            let kleene_info = pattern_analyzer::extract_kleene_info(source, &followed_by_clauses);
-            let window_ms = pattern_analyzer::extract_within_ms(within_expr_for_hamlet.as_ref());
-
-            // Build a type_indices map for aggregate function resolution
-            let mut type_indices_map = std::collections::HashMap::new();
-
-            // Build MergedTemplate via TemplateBuilder
-            use crate::hamlet::template::TemplateBuilder;
-            let mut builder = TemplateBuilder::new();
-            let query_id: crate::greta::QueryId = 0;
-
-            // Register event types as a sequence
-            let type_strs: Vec<&str> = event_types.iter().map(|s| s.as_str()).collect();
-            builder.add_sequence(query_id, &type_strs);
-
-            // Build type_indices from the template after adding sequence
-            // (TemplateBuilder registers types internally)
-            let template_preview = builder.build();
-            for et in &event_types {
-                if let Some(idx) = template_preview.type_index(et) {
-                    type_indices_map.insert(et.clone(), idx);
-                }
-            }
-
-            // Also map aliases to type indices
-            // Source alias
-            match source {
-                StreamSource::IdentWithAlias { name, alias } => {
-                    if let Some(idx) = type_indices_map.get(name) {
-                        type_indices_map.insert(alias.clone(), *idx);
-                    }
-                }
-                StreamSource::AllWithAlias {
-                    name,
-                    alias: Some(alias),
-                } => {
-                    if let Some(idx) = type_indices_map.get(name) {
-                        type_indices_map.insert(alias.clone(), *idx);
-                    }
-                }
-                _ => {}
-            }
-            for clause in &followed_by_clauses {
-                if let Some(ref alias) = clause.alias {
-                    if let Some(idx) = type_indices_map.get(&clause.event_type) {
-                        type_indices_map.insert(alias.clone(), *idx);
-                    }
-                }
-            }
-
-            // Rebuild template with Kleene info
-            let mut builder = TemplateBuilder::new();
-            builder.add_sequence(query_id, &type_strs);
-
-            for ki in &kleene_info {
-                // The Kleene self-loop must be at the state AFTER consuming the
-                // Kleene event type (the target of the forward transition), not
-                // the source state. For a pattern A -> B+ -> C with types
-                // [A, B, C], states are [s0, s1, s2, s3]:
-                //   (s0,A)->s1, (s1,B)->s2, (s2,C)->s3
-                // The B+ self-loop goes at s2: (s2,B)->s2
-                let type_idx_in_seq = type_strs
-                    .iter()
-                    .position(|&t| t == ki.event_type)
-                    .unwrap_or(0);
-                let state = (type_idx_in_seq + 1) as u16;
-                builder.add_kleene(query_id, &ki.event_type, state);
-            }
-
-            let template = builder.build();
-
-            // Create Hamlet aggregator
-            let config = crate::hamlet::HamletConfig {
-                window_ms,
-                incremental: true,
-                ..Default::default()
-            };
-            let mut aggregator = crate::hamlet::HamletAggregator::new(config, template);
-
-            // Convert trend_agg_items to GretaAggregate list
-            let fields: Vec<(String, crate::greta::GretaAggregate)> = agg_items
-                .iter()
-                .map(|item| {
-                    let agg = pattern_analyzer::trend_item_to_greta(item, &type_indices_map);
-                    (item.alias.clone(), agg)
-                })
-                .collect();
-
-            // Use the first aggregate for the query registration
-            let primary_aggregate = fields
-                .first()
-                .map_or(crate::greta::GretaAggregate::CountTrends, |(_, agg)| *agg);
-
-            // Build Kleene types
-            let kleene_types: smallvec::SmallVec<[u16; 4]> = kleene_info
-                .iter()
-                .filter_map(|ki| type_indices_map.get(&ki.event_type).copied())
-                .collect();
-
-            // Build event type indices
-            let event_type_indices: smallvec::SmallVec<[u16; 4]> = event_types
-                .iter()
-                .filter_map(|et| type_indices_map.get(et).copied())
-                .collect();
-
-            aggregator.register_query(crate::hamlet::QueryRegistration {
-                id: query_id,
-                event_types: event_type_indices,
-                kleene_types,
-                aggregate: primary_aggregate,
-            });
-
-            // Build field aggregate info for runtime computation
-            // Resolves alias.field references from sum_trends(alias.field) etc.
-            let mut alias_to_event_type: std::collections::HashMap<String, String> =
-                std::collections::HashMap::new();
-            match source {
-                StreamSource::IdentWithAlias { name, alias } => {
-                    alias_to_event_type.insert(alias.clone(), name.clone());
-                }
-                StreamSource::AllWithAlias {
-                    name,
-                    alias: Some(alias),
-                } => {
-                    alias_to_event_type.insert(alias.clone(), name.clone());
-                }
-                _ => {}
-            }
-            for clause in &followed_by_clauses {
-                if let Some(ref alias) = clause.alias {
-                    alias_to_event_type.insert(alias.clone(), clause.event_type.clone());
-                }
-            }
-
-            let field_aggregates: Vec<FieldAggregateInfo> = agg_items
-                .iter()
-                .filter_map(|item| {
-                    let func = match item.func.as_str() {
-                        "sum_trends" => "sum",
-                        "avg_trends" => "avg",
-                        "min_trends" => "min",
-                        "max_trends" => "max",
-                        _ => return None,
-                    };
-                    if let Some(Expr::Member { expr, member }) = &item.arg {
-                        if let Expr::Ident(alias) = expr.as_ref() {
-                            let event_type = alias_to_event_type
-                                .get(alias)
-                                .cloned()
-                                .unwrap_or_else(|| alias.clone());
-                            return Some(FieldAggregateInfo {
-                                output_alias: item.alias.clone(),
-                                func: func.to_string(),
-                                event_type,
-                                field_name: member.clone(),
-                            });
-                        }
-                    }
-                    None
-                })
-                .collect();
-
-            // Build reverse map: type index → event type name
-            let max_idx = type_indices_map.values().copied().max().unwrap_or(0) as usize;
-            let mut type_index_to_name = vec![String::new(); max_idx + 1];
-            // First pass: set aliases as fallback
-            for (name, &idx) in &type_indices_map {
-                let i = idx as usize;
-                if i < type_index_to_name.len() && type_index_to_name[i].is_empty() {
-                    type_index_to_name[i] = name.clone();
-                }
-            }
-            // Second pass: overwrite with real event type names
-            for (name, &idx) in &type_indices_map {
-                let i = idx as usize;
-                if i < type_index_to_name.len() && event_types.contains(name) {
-                    type_index_to_name[i] = name.clone();
-                }
-            }
-
-            // Insert TrendAggregate op at the beginning (replaces Sequence)
-            runtime_ops.insert(
-                0,
-                RuntimeOp::TrendAggregate(TrendAggregateConfig {
-                    fields,
-                    query_id,
-                    field_aggregates,
-                    type_index_to_name,
-                    accumulated: Vec::new(),
-                }),
-            );
-
-            info!(
-                "Created Hamlet aggregator for trend aggregation ({} event types, {} Kleene patterns)",
-                event_types.len(),
-                kleene_info.len()
-            );
-
-            return Ok((
+            return self.compile_hamlet_mode(
+                source,
+                agg_items,
+                &followed_by_clauses,
+                within_expr_for_hamlet.as_ref(),
                 runtime_ops,
-                None,
                 sequence_event_types,
-                Some(aggregator),
-                None,
-            ));
+            );
         }
 
         // === Forecast Mode (PST + SASE) ===
@@ -1271,12 +1070,285 @@ impl Engine {
         let mut pst_forecaster = None;
 
         // === Detection Mode (SASE) ===
-        // Build SASE+ engine if we have sequence patterns or a named pattern reference
+        let sase_engine = self.compile_sase_detection(
+            source,
+            &followed_by_clauses,
+            &negation_clauses,
+            global_within,
+            &mut partition_key,
+            &mut runtime_ops,
+        );
+
+        // === Build PST Forecaster if .forecast() specified ===
+        if let Some(spec) = forecast_spec {
+            pst_forecaster = self.compile_pst_forecaster(
+                &spec,
+                &sase_engine,
+                global_within,
+                &sequence_event_types,
+                forecast_insert_idx,
+                &mut runtime_ops,
+            )?;
+        }
+
+        Ok((
+            runtime_ops,
+            sase_engine,
+            sequence_event_types,
+            None,
+            pst_forecaster,
+        ))
+    }
+
+    /// Compile Hamlet trend aggregation mode.
+    ///
+    /// Builds a `HamletAggregator` and `TrendAggregateConfig` from the parsed
+    /// sequence pattern and `.trend_aggregate()` items. Returns the full 5-tuple
+    /// so the caller can `return` it directly.
+    #[allow(clippy::type_complexity)]
+    fn compile_hamlet_mode(
+        &self,
+        source: &StreamSource,
+        agg_items: &[varpulis_core::ast::TrendAggItem],
+        followed_by_clauses: &[varpulis_core::ast::FollowedByClause],
+        within_expr: Option<&varpulis_core::ast::Expr>,
+        mut runtime_ops: Vec<RuntimeOp>,
+        sequence_event_types: Vec<String>,
+    ) -> Result<
+        (
+            Vec<RuntimeOp>,
+            Option<SaseEngine>,
+            Vec<String>,
+            Option<crate::hamlet::HamletAggregator>,
+            Option<crate::pst::PatternMarkovChain>,
+        ),
+        super::error::EngineError,
+    > {
+        let event_types = pattern_analyzer::extract_event_types(source, followed_by_clauses);
+        let kleene_info = pattern_analyzer::extract_kleene_info(source, followed_by_clauses);
+        let window_ms = pattern_analyzer::extract_within_ms(within_expr);
+
+        // Build a type_indices map for aggregate function resolution
+        let mut type_indices_map = std::collections::HashMap::new();
+
+        // Build MergedTemplate via TemplateBuilder
+        use crate::hamlet::template::TemplateBuilder;
+        let mut builder = TemplateBuilder::new();
+        let query_id: crate::greta::QueryId = 0;
+
+        // Register event types as a sequence
+        let type_strs: Vec<&str> = event_types.iter().map(|s| s.as_str()).collect();
+        builder.add_sequence(query_id, &type_strs);
+
+        // Build type_indices from the template after adding sequence
+        // (TemplateBuilder registers types internally)
+        let template_preview = builder.build();
+        for et in &event_types {
+            if let Some(idx) = template_preview.type_index(et) {
+                type_indices_map.insert(et.clone(), idx);
+            }
+        }
+
+        // Also map aliases to type indices
+        // Source alias
+        match source {
+            StreamSource::IdentWithAlias { name, alias } => {
+                if let Some(idx) = type_indices_map.get(name) {
+                    type_indices_map.insert(alias.clone(), *idx);
+                }
+            }
+            StreamSource::AllWithAlias {
+                name,
+                alias: Some(alias),
+            } => {
+                if let Some(idx) = type_indices_map.get(name) {
+                    type_indices_map.insert(alias.clone(), *idx);
+                }
+            }
+            _ => {}
+        }
+        for clause in followed_by_clauses {
+            if let Some(ref alias) = clause.alias {
+                if let Some(idx) = type_indices_map.get(&clause.event_type) {
+                    type_indices_map.insert(alias.clone(), *idx);
+                }
+            }
+        }
+
+        // Rebuild template with Kleene info
+        let mut builder = TemplateBuilder::new();
+        builder.add_sequence(query_id, &type_strs);
+
+        for ki in &kleene_info {
+            // The Kleene self-loop must be at the state AFTER consuming the
+            // Kleene event type (the target of the forward transition), not
+            // the source state. For a pattern A -> B+ -> C with types
+            // [A, B, C], states are [s0, s1, s2, s3]:
+            //   (s0,A)->s1, (s1,B)->s2, (s2,C)->s3
+            // The B+ self-loop goes at s2: (s2,B)->s2
+            let type_idx_in_seq = type_strs
+                .iter()
+                .position(|&t| t == ki.event_type)
+                .unwrap_or(0);
+            let state = (type_idx_in_seq + 1) as u16;
+            builder.add_kleene(query_id, &ki.event_type, state);
+        }
+
+        let template = builder.build();
+
+        // Create Hamlet aggregator
+        let config = crate::hamlet::HamletConfig {
+            window_ms,
+            incremental: true,
+            ..Default::default()
+        };
+        let mut aggregator = crate::hamlet::HamletAggregator::new(config, template);
+
+        // Convert trend_agg_items to GretaAggregate list
+        let fields: Vec<(String, crate::greta::GretaAggregate)> = agg_items
+            .iter()
+            .map(|item| {
+                let agg = pattern_analyzer::trend_item_to_greta(item, &type_indices_map);
+                (item.alias.clone(), agg)
+            })
+            .collect();
+
+        // Use the first aggregate for the query registration
+        let primary_aggregate = fields
+            .first()
+            .map_or(crate::greta::GretaAggregate::CountTrends, |(_, agg)| *agg);
+
+        // Build Kleene types
+        let kleene_types: smallvec::SmallVec<[u16; 4]> = kleene_info
+            .iter()
+            .filter_map(|ki| type_indices_map.get(&ki.event_type).copied())
+            .collect();
+
+        // Build event type indices
+        let event_type_indices: smallvec::SmallVec<[u16; 4]> = event_types
+            .iter()
+            .filter_map(|et| type_indices_map.get(et).copied())
+            .collect();
+
+        aggregator.register_query(crate::hamlet::QueryRegistration {
+            id: query_id,
+            event_types: event_type_indices,
+            kleene_types,
+            aggregate: primary_aggregate,
+        });
+
+        // Build field aggregate info for runtime computation
+        // Resolves alias.field references from sum_trends(alias.field) etc.
+        let mut alias_to_event_type: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        match source {
+            StreamSource::IdentWithAlias { name, alias } => {
+                alias_to_event_type.insert(alias.clone(), name.clone());
+            }
+            StreamSource::AllWithAlias {
+                name,
+                alias: Some(alias),
+            } => {
+                alias_to_event_type.insert(alias.clone(), name.clone());
+            }
+            _ => {}
+        }
+        for clause in followed_by_clauses {
+            if let Some(ref alias) = clause.alias {
+                alias_to_event_type.insert(alias.clone(), clause.event_type.clone());
+            }
+        }
+
+        let field_aggregates: Vec<FieldAggregateInfo> = agg_items
+            .iter()
+            .filter_map(|item| {
+                let func = match item.func.as_str() {
+                    "sum_trends" => "sum",
+                    "avg_trends" => "avg",
+                    "min_trends" => "min",
+                    "max_trends" => "max",
+                    _ => return None,
+                };
+                if let Some(Expr::Member { expr, member }) = &item.arg {
+                    if let Expr::Ident(alias) = expr.as_ref() {
+                        let event_type = alias_to_event_type
+                            .get(alias)
+                            .cloned()
+                            .unwrap_or_else(|| alias.clone());
+                        return Some(FieldAggregateInfo {
+                            output_alias: item.alias.clone(),
+                            func: func.to_string(),
+                            event_type,
+                            field_name: member.clone(),
+                        });
+                    }
+                }
+                None
+            })
+            .collect();
+
+        // Build reverse map: type index → event type name
+        let max_idx = type_indices_map.values().copied().max().unwrap_or(0) as usize;
+        let mut type_index_to_name = vec![String::new(); max_idx + 1];
+        // First pass: set aliases as fallback
+        for (name, &idx) in &type_indices_map {
+            let i = idx as usize;
+            if i < type_index_to_name.len() && type_index_to_name[i].is_empty() {
+                type_index_to_name[i] = name.clone();
+            }
+        }
+        // Second pass: overwrite with real event type names
+        for (name, &idx) in &type_indices_map {
+            let i = idx as usize;
+            if i < type_index_to_name.len() && event_types.contains(name) {
+                type_index_to_name[i] = name.clone();
+            }
+        }
+
+        // Insert TrendAggregate op at the beginning (replaces Sequence)
+        runtime_ops.insert(
+            0,
+            RuntimeOp::TrendAggregate(TrendAggregateConfig {
+                fields,
+                query_id,
+                field_aggregates,
+                type_index_to_name,
+                accumulated: Vec::new(),
+            }),
+        );
+
+        info!(
+            "Created Hamlet aggregator for trend aggregation ({} event types, {} Kleene patterns)",
+            event_types.len(),
+            kleene_info.len()
+        );
+
+        Ok((
+            runtime_ops,
+            None,
+            sequence_event_types,
+            Some(aggregator),
+            None,
+        ))
+    }
+
+    /// Build the SASE+ detection engine from sequence patterns or named pattern references.
+    ///
+    /// Returns `Some(SaseEngine)` when the stream has followed-by clauses, a Sequence source,
+    /// or references a named pattern. Returns `None` for non-sequence streams.
+    fn compile_sase_detection(
+        &self,
+        source: &StreamSource,
+        followed_by_clauses: &[varpulis_core::ast::FollowedByClause],
+        negation_clauses: &[varpulis_core::ast::FollowedByClause],
+        global_within: Option<std::time::Duration>,
+        partition_key: &mut Option<String>,
+        runtime_ops: &mut Vec<RuntimeOp>,
+    ) -> Option<SaseEngine> {
         let is_pattern_ref =
             matches!(source, StreamSource::Ident(name) if self.patterns.contains_key(name));
-        let sase_engine = if !followed_by_clauses.is_empty()
-            || matches!(source, StreamSource::Sequence(_))
-        {
+
+        if !followed_by_clauses.is_empty() || matches!(source, StreamSource::Sequence(_)) {
             // Add Sequence operation marker at the beginning
             runtime_ops.insert(0, RuntimeOp::Sequence);
 
@@ -1306,8 +1378,8 @@ impl Engine {
             // Compile to SASE+ pattern with stream resolution
             if let Some(pattern) = compiler::compile_to_sase_pattern_with_resolver(
                 source,
-                &followed_by_clauses,
-                &negation_clauses,
+                followed_by_clauses,
+                negation_clauses,
                 global_within,
                 &stream_resolver,
             ) {
@@ -1323,7 +1395,7 @@ impl Engine {
                 }
 
                 // Add global negation conditions
-                for clause in &negation_clauses {
+                for clause in negation_clauses {
                     let predicate = clause
                         .filter
                         .as_ref()
@@ -1358,7 +1430,7 @@ impl Engine {
             if let Some(varpulis_core::ast::Expr::Ident(field)) =
                 named_pattern.partition_by.as_ref()
             {
-                partition_key = Some(field.clone());
+                *partition_key = Some(field.clone());
             }
 
             // Add Sequence operation marker
@@ -1388,166 +1460,170 @@ impl Engine {
             }
         } else {
             None
+        }
+    }
+
+    /// Build the PST Pattern Markov Chain forecaster from a `.forecast()` spec.
+    ///
+    /// Requires that a SASE engine was already compiled (sequence pattern must exist).
+    /// Returns `Ok(Some(PatternMarkovChain))` on success, or an error if no SASE engine
+    /// is available.
+    fn compile_pst_forecaster(
+        &self,
+        spec: &varpulis_core::ast::ForecastSpec,
+        sase_engine: &Option<SaseEngine>,
+        global_within: Option<std::time::Duration>,
+        sequence_event_types: &[String],
+        forecast_insert_idx: Option<usize>,
+        runtime_ops: &mut Vec<RuntimeOp>,
+    ) -> Result<Option<crate::pst::PatternMarkovChain>, super::error::EngineError> {
+        if sase_engine.is_none() {
+            return Err(super::error::EngineError::Compilation(
+                ".forecast() requires a sequence pattern (use -> followed-by operators)".into(),
+            ));
+        }
+
+        // Resolve mode preset first, then allow explicit params to override
+        let mode_str = match &spec.mode {
+            Some(varpulis_core::ast::Expr::Str(s)) => Some(s.as_str()),
+            _ => None,
         };
 
-        // === Build PST Forecaster if .forecast() specified ===
-        if let Some(spec) = forecast_spec {
-            if sase_engine.is_none() {
-                return Err(super::error::EngineError::Compilation(
-                    ".forecast() requires a sequence pattern (use -> followed-by operators)".into(),
-                ));
+        // Mode presets: defaults that can be overridden by explicit params
+        let (
+            mode_confidence,
+            mode_warmup,
+            mode_max_depth,
+            mode_hawkes,
+            mode_conformal,
+            mode_adaptive,
+        ) = match mode_str {
+            Some("fast") => (0.5, 50u64, 3usize, false, false, false),
+            Some("accurate") => (0.5, 200, 5, true, true, true),
+            // "balanced" or default
+            _ => (0.5, 100, 3, true, true, true),
+        };
+
+        // Extract forecast parameters — explicit params override mode defaults
+        let confidence = match &spec.confidence {
+            Some(varpulis_core::ast::Expr::Float(f)) => *f,
+            Some(varpulis_core::ast::Expr::Int(i)) => *i as f64,
+            _ => mode_confidence,
+        };
+        let horizon_ns = match &spec.horizon {
+            Some(varpulis_core::ast::Expr::Duration(ns)) => *ns,
+            _ => global_within.map_or(300_000_000_000, |d| d.as_nanos() as u64),
+        };
+        let warmup = match &spec.warmup {
+            Some(varpulis_core::ast::Expr::Int(n)) => *n as u64,
+            _ => mode_warmup,
+        };
+        let max_depth = match &spec.max_depth {
+            Some(varpulis_core::ast::Expr::Int(n)) => *n as usize,
+            _ => mode_max_depth,
+        };
+        let hawkes = match &spec.hawkes {
+            Some(varpulis_core::ast::Expr::Bool(b)) => *b,
+            _ => mode_hawkes,
+        };
+        let conformal = match &spec.conformal {
+            Some(varpulis_core::ast::Expr::Bool(b)) => *b,
+            _ => mode_conformal,
+        };
+        let adaptive_warmup = mode_adaptive && spec.warmup.is_none();
+
+        // Build NFA transition map from SASE engine
+        let sase = sase_engine.as_ref().unwrap();
+        let nfa = sase.nfa();
+        let num_states = nfa.states.len();
+        let accept_states = nfa.accept_states.clone();
+
+        // Collect event types and build transition map
+        let pst_config = crate::pst::PSTConfig {
+            max_depth,
+            smoothing: 0.01,
+            ..Default::default()
+        };
+        let pmc_config = crate::pst::PMCConfig {
+            confidence_threshold: confidence,
+            horizon_ns,
+            warmup_events: warmup,
+            max_simulation_steps: 1000,
+            hawkes_enabled: hawkes,
+            conformal_enabled: conformal,
+            adaptive_warmup,
+            ..Default::default()
+        };
+
+        // Build NFA transitions: for each state, map symbol_id -> next_state
+        let mut nfa_transitions = vec![rustc_hash::FxHashMap::default(); num_states];
+        let mut nfa_event_types: Vec<String> = Vec::new();
+
+        // Register event types and build symbol map
+        let mut temp_pst = crate::pst::PredictionSuffixTree::new(crate::pst::PSTConfig {
+            max_depth,
+            smoothing: 0.01,
+            ..Default::default()
+        });
+        for et in sequence_event_types {
+            temp_pst.register_symbol(et);
+            if !nfa_event_types.contains(et) {
+                nfa_event_types.push(et.clone());
             }
+        }
 
-            // Resolve mode preset first, then allow explicit params to override
-            let mode_str = match &spec.mode {
-                Some(varpulis_core::ast::Expr::Str(s)) => Some(s.as_str()),
-                _ => None,
-            };
-
-            // Mode presets: defaults that can be overridden by explicit params
-            let (
-                mode_confidence,
-                mode_warmup,
-                mode_max_depth,
-                mode_hawkes,
-                mode_conformal,
-                mode_adaptive,
-            ) = match mode_str {
-                Some("fast") => (0.5, 50u64, 3usize, false, false, false),
-                Some("accurate") => (0.5, 200, 5, true, true, true),
-                // "balanced" or default
-                _ => (0.5, 100, 3, true, true, true),
-            };
-
-            // Extract forecast parameters — explicit params override mode defaults
-            let confidence = match &spec.confidence {
-                Some(varpulis_core::ast::Expr::Float(f)) => *f,
-                Some(varpulis_core::ast::Expr::Int(i)) => *i as f64,
-                _ => mode_confidence,
-            };
-            let horizon_ns = match &spec.horizon {
-                Some(varpulis_core::ast::Expr::Duration(ns)) => *ns,
-                _ => global_within.map_or(300_000_000_000, |d| d.as_nanos() as u64),
-            };
-            let warmup = match &spec.warmup {
-                Some(varpulis_core::ast::Expr::Int(n)) => *n as u64,
-                _ => mode_warmup,
-            };
-            let max_depth = match &spec.max_depth {
-                Some(varpulis_core::ast::Expr::Int(n)) => *n as usize,
-                _ => mode_max_depth,
-            };
-            let hawkes = match &spec.hawkes {
-                Some(varpulis_core::ast::Expr::Bool(b)) => *b,
-                _ => mode_hawkes,
-            };
-            let conformal = match &spec.conformal {
-                Some(varpulis_core::ast::Expr::Bool(b)) => *b,
-                _ => mode_conformal,
-            };
-            let adaptive_warmup = mode_adaptive && spec.warmup.is_none();
-
-            // Build NFA transition map from SASE engine
-            let sase = sase_engine.as_ref().unwrap();
-            let nfa = sase.nfa();
-            let num_states = nfa.states.len();
-            let accept_states = nfa.accept_states.clone();
-
-            // Collect event types and build transition map
-            let pst_config = crate::pst::PSTConfig {
-                max_depth,
-                smoothing: 0.01,
-                ..Default::default()
-            };
-            let pmc_config = crate::pst::PMCConfig {
-                confidence_threshold: confidence,
-                horizon_ns,
-                warmup_events: warmup,
-                max_simulation_steps: 1000,
-                hawkes_enabled: hawkes,
-                conformal_enabled: conformal,
-                adaptive_warmup,
-                ..Default::default()
-            };
-
-            // Build NFA transitions: for each state, map symbol_id -> next_state
-            let mut nfa_transitions = vec![rustc_hash::FxHashMap::default(); num_states];
-            let mut nfa_event_types: Vec<String> = Vec::new();
-
-            // Register event types and build symbol map
-            let mut temp_pst = crate::pst::PredictionSuffixTree::new(crate::pst::PSTConfig {
-                max_depth,
-                smoothing: 0.01,
-                ..Default::default()
-            });
-            for et in &sequence_event_types {
-                temp_pst.register_symbol(et);
-                if !nfa_event_types.contains(et) {
-                    nfa_event_types.push(et.clone());
-                }
-            }
-
-            // Extract transitions from NFA states.
-            // SASE run current_state means "this state's event was already matched".
-            // The transition label is the NEXT state's event_type (what's needed
-            // to advance from current_state to the next state).
-            for state in &nfa.states {
-                for &next in &state.transitions {
-                    let next_state = &nfa.states[next];
-                    if let Some(ref next_event_type) = next_state.event_type {
-                        if let Some(sym_id) = temp_pst.symbol_id(next_event_type) {
-                            nfa_transitions[state.id].insert(sym_id, next);
-                        }
+        // Extract transitions from NFA states.
+        // SASE run current_state means "this state's event was already matched".
+        // The transition label is the NEXT state's event_type (what's needed
+        // to advance from current_state to the next state).
+        for state in &nfa.states {
+            for &next in &state.transitions {
+                let next_state = &nfa.states[next];
+                if let Some(ref next_event_type) = next_state.event_type {
+                    if let Some(sym_id) = temp_pst.symbol_id(next_event_type) {
+                        nfa_transitions[state.id].insert(sym_id, next);
                     }
                 }
             }
-
-            let pmc = crate::pst::PatternMarkovChain::new(
-                &nfa_event_types,
-                nfa_transitions,
-                accept_states,
-                num_states,
-                pst_config,
-                pmc_config,
-            );
-
-            // Insert Forecast op at the position where .forecast() appeared in the
-            // VPL source (after Sequence but BEFORE any downstream .where()/.emit()).
-            // It reads the raw event from `last_raw_event` (set before pipeline
-            // execution) so it can learn from every event even when Sequence
-            // clears current_events.
-            let forecast_config = ForecastConfig {
-                confidence_threshold: confidence,
-                horizon_ns,
-                warmup_events: warmup,
-                max_depth,
-                hawkes,
-                conformal,
-            };
-            // Sequence was inserted at position 0 after forecast_insert_idx was
-            // recorded, shifting all indices by 1.  Account for that offset.
-            let insert_pos = forecast_insert_idx.map_or(runtime_ops.len(), |i| i + 1);
-            runtime_ops.insert(insert_pos, RuntimeOp::Forecast(forecast_config));
-
-            pst_forecaster = Some(pmc);
-
-            info!(
-                "Created PST forecaster for pattern forecasting ({} event types, max_depth={}, warmup={}, mode={}, adaptive={})",
-                nfa_event_types.len(),
-                max_depth,
-                warmup,
-                mode_str.unwrap_or("balanced"),
-                adaptive_warmup
-            );
         }
 
-        Ok((
-            runtime_ops,
-            sase_engine,
-            sequence_event_types,
-            None,
-            pst_forecaster,
-        ))
+        let pmc = crate::pst::PatternMarkovChain::new(
+            &nfa_event_types,
+            nfa_transitions,
+            accept_states,
+            num_states,
+            pst_config,
+            pmc_config,
+        );
+
+        // Insert Forecast op at the position where .forecast() appeared in the
+        // VPL source (after Sequence but BEFORE any downstream .where()/.emit()).
+        // It reads the raw event from `last_raw_event` (set before pipeline
+        // execution) so it can learn from every event even when Sequence
+        // clears current_events.
+        let forecast_config = ForecastConfig {
+            confidence_threshold: confidence,
+            horizon_ns,
+            warmup_events: warmup,
+            max_depth,
+            hawkes,
+            conformal,
+        };
+        // Sequence was inserted at position 0 after forecast_insert_idx was
+        // recorded, shifting all indices by 1.  Account for that offset.
+        let insert_pos = forecast_insert_idx.map_or(runtime_ops.len(), |i| i + 1);
+        runtime_ops.insert(insert_pos, RuntimeOp::Forecast(forecast_config));
+
+        info!(
+            "Created PST forecaster for pattern forecasting ({} event types, max_depth={}, warmup={}, mode={}, adaptive={})",
+            nfa_event_types.len(),
+            max_depth,
+            warmup,
+            mode_str.unwrap_or("balanced"),
+            adaptive_warmup
+        );
+
+        Ok(Some(pmc))
     }
 
     /// Extract join keys from join clauses and operations

@@ -1,10 +1,20 @@
 //! State Persistence for Varpulis Engine
 //!
+//! **Status: Production-ready, opt-in.**  Checkpointing is disabled by default
+//! because it adds I/O overhead that simple pipelines don't need.  Enable it by
+//! passing a [`StateStore`] implementation to the engine and calling
+//! [`CheckpointManager::tick()`] periodically (or use `force_checkpoint()`).
+//!
 //! Provides persistent storage for engine state including:
 //! - Window contents (events in active windows)
-//! - Aggregation state
-//! - Pattern matcher state
-//! - Checkpointing and recovery
+//! - Aggregation state (running sums, counts, etc.)
+//! - Pattern matcher state (active SASE runs)
+//! - Checkpointing and recovery (versioned snapshots)
+//!
+//! Three storage backends are available:
+//! - [`MemoryStore`] — fast, volatile (testing/development)
+//! - [`FileStore`] — atomic writes to local filesystem
+//! - [`RocksDbStore`] — production-grade, requires `persistence` feature
 //!
 //! # Example
 //! ```text
