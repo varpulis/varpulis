@@ -96,8 +96,9 @@ impl EnrichmentCache {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     #[test]
     fn test_cache_insert_and_get() {
