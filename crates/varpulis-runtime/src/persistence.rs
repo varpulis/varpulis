@@ -3,7 +3,7 @@
 //! **Status: Production-ready, opt-in.**  Checkpointing is disabled by default
 //! because it adds I/O overhead that simple pipelines don't need.  Enable it by
 //! passing a [`StateStore`] implementation to the engine and calling
-//! [`CheckpointManager::tick()`] periodically (or use `force_checkpoint()`).
+//! `Engine::checkpoint_tick()` periodically (or `Engine::force_checkpoint()`).
 //!
 //! Provides persistent storage for engine state including:
 //! - Window contents (events in active windows)
@@ -14,7 +14,7 @@
 //! Three storage backends are available:
 //! - [`MemoryStore`] — fast, volatile (testing/development)
 //! - [`FileStore`] — atomic writes to local filesystem
-//! - [`RocksDbStore`] — production-grade, requires `persistence` feature
+//! - `RocksDbStore` — production-grade, requires `persistence` feature
 //!
 //! # Example
 //! ```text
