@@ -1,0 +1,3 @@
+{"version": 2, "width": 80, "height": 20, "timestamp": 1774652829, "env": {"SHELL": "/usr/bin/zsh", "TERM": "xterm-256color"}}
+[0.004997, "o", "$ varpulis infer --input /tmp/demo.jsonl\r\n"]
+[0.513975, "o", "event Login:\r\n    ip: str\r\n    success: bool\r\n    user_id: str\r\n\r\nevent Transfer:\r\n    amount: float\r\n    currency: str\r\n    user_id: str\r\n"]
