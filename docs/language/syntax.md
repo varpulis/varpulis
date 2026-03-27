@@ -423,6 +423,32 @@ Available in `.where()` and `.emit()` after `.enrich()`:
 
 Compatible connectors: `http`, `database`, `redis`. See [Enrichment Reference](../reference/enrichment.md) for details.
 
+## Alert Notifications
+
+Use `.alert()` to send webhook notifications as a side-effect. The event continues
+downstream — `.alert()` does not consume it.
+
+```varpulis
+stream FraudAlerts = Login as l -> LargeTransfer as t
+    .within(5m)
+    .where(t.amount > 10000)
+    .alert(webhook: "https://hooks.slack.com/...", message: "Fraud: {amount}")
+    .emit(user: l.user_id, amount: t.amount)
+```
+
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `webhook` | URL to HTTP POST the alert payload (JSON body with event data + message) |
+| `message` | Template string with `{field}` interpolation for event field values |
+
+The alert is fire-and-forget — failed webhooks are logged as warnings but never
+block the pipeline. Works with any HTTP endpoint including Slack webhooks,
+PagerDuty, Datadog, or custom services.
+
+---
+
 ## Output Routing
 
 Use `.to()` to route stream output to declared connectors:
