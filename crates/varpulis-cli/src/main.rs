@@ -559,17 +559,17 @@ enum Commands {
 
     /// Interactive streaming session
     ///
-    /// Default: Python-interpreter-style shell (type VPL + events directly).
+    /// Default: split-pane TUI with integrated shell, topology, events, metrics.
     /// --json: JSON-line protocol for agents/MCP.
-    /// --tui: Split-pane terminal UI with topology, events, metrics.
+    /// --no-tui: Plain text shell (for terminals without TUI support).
     Interactive {
         /// Use JSON-line protocol on stdin/stdout (for agents/MCP)
         #[arg(long)]
         json: bool,
 
-        /// Use split-pane TUI (topology, events, input, metrics)
+        /// Disable TUI and use plain text shell instead
         #[arg(long)]
-        tui: bool,
+        no_tui: bool,
 
         /// VPL program file to auto-load
         #[arg(short, long)]
@@ -1339,7 +1339,7 @@ async fn main() -> Result<()> {
 
         Commands::Interactive {
             json,
-            tui,
+            no_tui,
             file,
             generate,
             rate,
@@ -1354,8 +1354,16 @@ async fn main() -> Result<()> {
                     trace,
                 )
                 .await?;
-            } else if tui {
-                // TUI mode: split-pane terminal UI
+            } else if no_tui {
+                // Plain text shell fallback
+                commands::interactive::shell::run_shell(
+                    file.as_deref(),
+                    generate.as_deref(),
+                    rate,
+                    trace,
+                )?;
+            } else {
+                // Default: TUI with integrated shell
                 commands::interactive::tui::run_tui_session(
                     file.as_deref(),
                     generate.as_deref(),
@@ -1363,14 +1371,6 @@ async fn main() -> Result<()> {
                     trace,
                 )
                 .await?;
-            } else {
-                // Default: Python-interpreter-style shell
-                commands::interactive::shell::run_shell(
-                    file.as_deref(),
-                    generate.as_deref(),
-                    rate,
-                    trace,
-                )?;
             }
         }
     }
