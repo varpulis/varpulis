@@ -65,9 +65,9 @@ notify = "7"
 # REPL (optional, behind "repl" feature)
 rustyline = { version = "15", optional = true }
 
-# TUI (optional, behind "tui" feature)
-ratatui = { version = "0.29", optional = true }
-crossterm = { version = "0.28", optional = true, features = ["event-stream"] }
+# TUI
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
 
 # OIDC/SSO (optional, behind "oidc" feature)
 openidconnect = { version = "4", optional = true }
@@ -95,7 +95,7 @@ saas = ["varpulis-db", "lettre"]
 oidc = ["openidconnect"]
 encryption = ["varpulis-connectors/encryption"]
 repl = ["rustyline"]
-tui = ["ratatui", "crossterm"]
+tui = []  # TUI is now always available; kept for backwards compatibility
 otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry", "varpulis-cluster/otel"]
 
 [dev-dependencies]

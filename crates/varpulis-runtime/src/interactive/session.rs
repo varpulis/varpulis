@@ -40,6 +40,8 @@ pub struct InteractiveSession {
     broadcast_tx: broadcast::Sender<SessionResponse>,
     program: Option<varpulis_core::ast::Program>,
     program_loaded: bool,
+    /// Accumulated VPL source for incremental building (Python-interpreter style).
+    vpl_buffer: String,
     // Datagen state
     generator_running: Arc<AtomicBool>,
     generator_count: Arc<AtomicU64>,
@@ -86,6 +88,7 @@ impl InteractiveSession {
             broadcast_tx,
             program: None,
             program_loaded: false,
+            vpl_buffer: String::new(),
             generator_running: Arc::new(AtomicBool::new(false)),
             generator_count: Arc::new(AtomicU64::new(0)),
             generator_handle: None,
@@ -110,6 +113,7 @@ impl InteractiveSession {
     pub fn handle_command(&mut self, cmd: SessionCommand) -> Vec<SessionResponse> {
         match cmd {
             SessionCommand::LoadVpl { vpl } => self.handle_load_vpl(&vpl),
+            SessionCommand::AppendVpl { vpl } => self.handle_append_vpl(&vpl),
             SessionCommand::LoadFile { path } => self.handle_load_file(&path),
             SessionCommand::Inject { event_type, data } => self.handle_inject(&event_type, &data),
             SessionCommand::InjectFile { path } => self.handle_inject_file(&path),
@@ -184,6 +188,7 @@ impl InteractiveSession {
                         .map(String::from)
                         .collect();
                     self.program = Some(program);
+                    self.vpl_buffer = vpl.to_string();
                     vec![SessionResponse::Loaded {
                         streams,
                         added: report.streams_added,
@@ -208,6 +213,7 @@ impl InteractiveSession {
                     self.program_loaded = true;
                     let added = streams.clone();
                     self.program = Some(program);
+                    self.vpl_buffer = vpl.to_string();
                     vec![SessionResponse::Loaded {
                         streams,
                         added,
@@ -220,6 +226,17 @@ impl InteractiveSession {
                 }],
             }
         }
+    }
+
+    /// Append VPL declarations to the accumulated buffer and recompile.
+    /// This is the Python-interpreter-style incremental building mode.
+    fn handle_append_vpl(&mut self, vpl: &str) -> Vec<SessionResponse> {
+        if !self.vpl_buffer.is_empty() {
+            self.vpl_buffer.push('\n');
+        }
+        self.vpl_buffer.push_str(vpl);
+        // Recompile the full accumulated buffer
+        self.handle_load_vpl(&self.vpl_buffer.clone())
     }
 
     fn handle_load_file(&mut self, path: &str) -> Vec<SessionResponse> {
