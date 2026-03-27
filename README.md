@@ -52,32 +52,39 @@ curl -sSf https://raw.githubusercontent.com/varpulis/varpulis/main/scripts/insta
 varpulis interactive
 ```
 
-Type VPL and events directly, like a Python interpreter:
+The interactive shell opens a split-pane TUI where you type VPL and events directly — like a Python interpreter, but with live topology, streaming events, and metrics:
+
+```bash
+varpulis interactive
+```
+
+Type declarations, inject events, see results instantly:
 
 ```
 vpl> event Sensor:
 ...>     temperature: float
 ...>     zone: str
-vpl>
-✓ 0 stream(s) loaded
 
 vpl> stream HighTemp = Sensor .where(temperature > 100) .emit(zone: zone, temp: temperature)
-✓ 1 stream(s) loaded: HighTemp
+✓ 1 stream loaded: HighTemp
 
 vpl> Sensor { temperature: 150, zone: "A" }
 → HighTemp: {"zone":"A","temp":150}
 
 vpl> Sensor { temperature: 50, zone: "B" }
+(filtered)
 
-vpl> Sensor { temperature: 200, zone: "C" }
-→ HighTemp: {"zone":"C","temp":200}
+vpl> :save my_pipeline.vpl
+✓ Saved 4 lines to my_pipeline.vpl
 ```
 
-Or use the **split-pane TUI** with live topology, event stream, and metrics:
+### Pipeline Trace (Explain Mode)
 
-```bash
-varpulis interactive --tui --file examples/hvac_quickstart.vpl --trace
-```
+<p align="center">
+  <img src="docs/assets/recordings/trace-mode.svg" alt="Pipeline trace mode" width="800">
+</p>
+
+See exactly how each event flows through your pipeline — which operators pass or block — with `--trace`.
 
 Or run from files:
 
@@ -123,6 +130,43 @@ cd starters/iot && docker compose up    # HVAC monitoring with MQTT
 cd starters/fraud && docker compose up  # Fraud detection with forecasting
 ```
 </details>
+
+## Example: Multi-Source Correlation
+
+Connect MQTT sensors and Kafka transactions, correlate them in real-time:
+
+```python
+# Connectors
+connector Sensors = mqtt(host: "broker", port: 1883, client_id: "sensors")
+connector Payments = kafka(brokers: "kafka:9092", consumer_group: "varpulis")
+
+# Events from different sources
+event SensorReading:
+    device_id: str
+    temperature: float
+
+event Transaction:
+    device_id: str
+    amount: float
+    status: str
+
+# Stream from MQTT sensors
+stream HotDevices = SensorReading
+    .from(Sensors, topic: "devices/+/temp")
+    .where(temperature > 80)
+
+# Stream from Kafka payments
+stream LargePayments = Transaction
+    .from(Payments, topic: "payments")
+    .where(amount > 5000 and status == "pending")
+
+# Correlate: device overheating AND large payment within 2 minutes
+stream SuspiciousActivity = HotDevices as h -> LargePayments as p
+    .within(2m)
+    .where(h.device_id == p.device_id)
+    .alert(webhook: "https://ops.example.com/alerts", message: "Device {h.device_id} overheating + large payment {p.amount}")
+    .emit(device: h.device_id, temp: h.temperature, amount: p.amount)
+```
 
 ## Example: HVAC Monitoring
 
