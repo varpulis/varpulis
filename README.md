@@ -4,10 +4,10 @@
 
 <p align="center"><strong>A modern Complex Event Processing engine.</strong> Rust performance. Pipeline syntax. SASE+ pattern matching.</p>
 
-[![Tests](https://img.shields.io/badge/tests-4011%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-4532%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A570%25-brightgreen)]()
 [![Rust](https://img.shields.io/badge/rust-1.93%2B-orange)]()
-[![Release](https://img.shields.io/badge/release-v0.6.4-blue)]()
+[![Release](https://img.shields.io/badge/release-v0.9.0-blue)]()
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 
 [Live Demo](https://demo.varpulis-cep.com/) | [Documentation](https://www.varpulis-cep.com/docs/) | [Discord](https://discord.gg/nVyctE8vPz) | [Quick Start](#quick-start) | [Benchmarks](#performance)
@@ -48,33 +48,81 @@ Login followed by two transfers exceeding $10K within 5 minutes — with predict
 # Install pre-built binary (Linux/macOS)
 curl -sSf https://raw.githubusercontent.com/varpulis/varpulis/main/scripts/install.sh | sh
 
-# Run a VPL file
-varpulis run --file examples/hvac_quickstart.vpl
+# Start the interactive shell — no files needed
+varpulis interactive
 ```
 
-Or build from source:
+Type VPL and events directly, like a Python interpreter:
+
+```
+vpl> event Sensor:
+...>     temperature: float
+...>     zone: str
+vpl>
+✓ 0 stream(s) loaded
+
+vpl> stream HighTemp = Sensor .where(temperature > 100) .emit(zone: zone, temp: temperature)
+✓ 1 stream(s) loaded: HighTemp
+
+vpl> Sensor { temperature: 150, zone: "A" }
+→ HighTemp: {"zone":"A","temp":150}
+
+vpl> Sensor { temperature: 50, zone: "B" }
+
+vpl> Sensor { temperature: 200, zone: "C" }
+→ HighTemp: {"zone":"C","temp":200}
+```
+
+Or use the **split-pane TUI** with live topology, event stream, and metrics:
+
+```bash
+varpulis interactive --tui --file examples/hvac_quickstart.vpl --trace
+```
+
+Or run from files:
+
+```bash
+# Infer event types from sample data
+varpulis infer --input data.jsonl
+
+# Simulate with trace (explain mode)
+varpulis simulate --trace -p pipeline.vpl -e events.evt -w 1
+
+# Watch mode: auto-reload on file changes
+varpulis simulate --watch -p pipeline.vpl -e events.evt
+```
+
+More options: [build from source](#from-source) | [Docker](#docker) | [starter projects](#starters)
+
+<details>
+<summary><b>From Source</b></summary>
 
 ```bash
 git clone https://github.com/varpulis/varpulis.git
 cd varpulis
 cargo build --release
-./target/release/varpulis run --file examples/hvac_quickstart.vpl
+./target/release/varpulis interactive
 ```
+</details>
 
-Or use Docker:
+<details>
+<summary><b>Docker</b></summary>
 
 ```bash
 docker compose -f deploy/docker/docker-compose.saas.yml up -d
 # Varpulis API: http://localhost:9000
 # Grafana:      http://localhost:3000 (admin/varpulis)
 ```
+</details>
 
-Try a starter project:
+<details>
+<summary><b>Starters</b></summary>
 
 ```bash
 cd starters/iot && docker compose up    # HVAC monitoring with MQTT
 cd starters/fraud && docker compose up  # Fraud detection with forecasting
 ```
+</details>
 
 ## Example: HVAC Monitoring
 
@@ -180,9 +228,10 @@ cargo bench -p varpulis-runtime
 
 ### Language
 
-- **Pipeline syntax**: `.where()`, `.window()`, `.aggregate()`, `.emit()`, `.to()`
+- **Pipeline syntax**: `.where()`, `.window()`, `.aggregate()`, `.emit()`, `.to()`, `.alert()`
 - **SASE+ patterns**: Sequences (`->`), Kleene closures (`+`, `*`), negation (`AND NOT`), conjunction/disjunction
 - **Forecasting**: `.forecast()` — PST-based pattern prediction with configurable confidence and horizon
+- **Alert notifications**: `.alert(webhook: "url", message: "template {field}")` — fire-and-forget webhooks
 - **Windows**: Tumbling, sliding, session, count-based
 - **Aggregations**: sum, avg, count, min, max, stddev, ema, percentile, median, p50/p95/p99, first, last, count_distinct (SIMD-accelerated)
 - **Joins**: Inner, LEFT, RIGHT, FULL outer joins with null-fill semantics
@@ -199,6 +248,16 @@ cargo bench -p varpulis-runtime
 - **State persistence**: RocksDB, file-based, or in-memory checkpointing with optional AES-256-GCM encryption at rest
 - **Resilience**: Circuit breaker, dead letter queue, exactly-once Kafka delivery, backpressure signaling
 
+### Developer Experience
+
+- **Interactive shell**: `varpulis interactive` — type VPL + events like a Python interpreter
+- **TUI mode**: `--tui` — split-pane terminal UI with topology, event stream, metrics dashboard
+- **Schema inference**: `varpulis infer` — generate event declarations from sample data
+- **Pipeline trace**: `--trace` — explain mode showing per-event operator pass/block
+- **Watch mode**: `--watch` — auto-reload simulation on file changes
+- **Connector discovery**: `varpulis connector list/info` — inspect available connectors
+- **REPL**: `varpulis repl` — interactive VPL shell with history
+
 ### Operations
 
 - **REST API**: Multi-tenant SaaS mode with rate limiting, RBAC, usage metering, and SSO/OIDC authentication
@@ -206,7 +265,8 @@ cargo bench -p varpulis-runtime
 - **Monitoring**: Prometheus metrics, OpenTelemetry tracing (`otel` feature), pre-configured Grafana dashboards
 - **Backpressure**: HTTP 429 + Retry-After signaling under load
 - **VS Code extension**: LSP with diagnostics, hover docs, completion, go-to-definition, find-references
-- **MCP server**: AI-assisted pipeline development
+- **MCP server**: AI-assisted pipeline development with interactive session tools
+- **Agent integration**: JSON-line protocol (`--json`) for programmatic session control
 - **Docker/K8s**: Dockerfile, docker-compose stacks, Kubernetes manifests, Helm chart
 
 ## Connectors
@@ -310,7 +370,7 @@ For architecture decisions and rationale, see the [Architecture Decision Records
 ## Testing
 
 ```bash
-cargo test --workspace          # 3899 tests
+cargo test --workspace          # 4532 tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo bench -p varpulis-runtime # Criterion benchmarks
 ```
