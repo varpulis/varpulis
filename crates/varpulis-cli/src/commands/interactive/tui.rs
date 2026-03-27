@@ -359,11 +359,31 @@ impl TuiApp {
             return;
         }
 
-        // Otherwise, treat as VPL source code
+        // Check if it looks like an event literal: `EventType { field: value }`
+        if input.contains('{') && input.contains('}') && !input.starts_with("event ") {
+            // Attempt to parse as event literal
+            if let Some(brace_pos) = input.find('{') {
+                let event_type = input[..brace_pos].trim();
+                let fields_str = input[brace_pos..].trim();
+                // Try parsing fields as JSON (convert evt syntax to JSON)
+                let json_str = crate::commands::interactive::shell::evt_fields_to_json(fields_str);
+                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                    self.push_log(format!("> {input}"), Color::DarkGray);
+                    let responses = self.session.handle_command(SessionCommand::Inject {
+                        event_type: event_type.to_string(),
+                        data,
+                    });
+                    self.process_responses(responses);
+                    return;
+                }
+            }
+        }
+
+        // Otherwise, treat as VPL source code (incremental append)
         self.push_log(format!("> {input}"), Color::White);
         let responses = self
             .session
-            .handle_command(SessionCommand::LoadVpl { vpl: input.clone() });
+            .handle_command(SessionCommand::AppendVpl { vpl: input.clone() });
         self.process_responses(responses);
     }
 
@@ -456,6 +476,20 @@ impl TuiApp {
                 });
                 let state = if self.trace_enabled { "ON" } else { "OFF" };
                 self.status = format!("Trace: {state}");
+            }
+            "save" | "s" => {
+                if arg.is_empty() {
+                    self.push_log("Usage: :save <file.vpl>".into(), Color::Red);
+                } else {
+                    let responses = self.session.handle_command(SessionCommand::Save {
+                        path: arg.to_string(),
+                    });
+                    self.process_responses(responses);
+                }
+            }
+            "source" | "src" => {
+                let responses = self.session.handle_command(SessionCommand::GetSource);
+                self.process_responses(responses);
             }
             "quit" | "q" => {
                 self.running = false;

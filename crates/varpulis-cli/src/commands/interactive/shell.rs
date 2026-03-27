@@ -304,7 +304,7 @@ fn inject_event_literal(input: &str, session: &mut InteractiveSession) {
 }
 
 /// Convert .evt-style fields `{ field: value, field2: "str" }` to JSON.
-fn evt_fields_to_json(input: &str) -> String {
+pub fn evt_fields_to_json(input: &str) -> String {
     let mut result = String::with_capacity(input.len() + 32);
     let mut in_string = false;
     let mut prev_char = '\0';
