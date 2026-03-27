@@ -55,7 +55,7 @@ varpulis interactive
 ### Interactive Shell
 
 <p align="center">
-  <img src="docs/assets/recordings/interactive-shell.svg" alt="Varpulis interactive shell" width="800">
+  <img src="docs/assets/recordings/interactive-session.gif" alt="Varpulis interactive shell" width="800">
 </p>
 
 Type VPL declarations and events directly — like a Python interpreter. Define event types, create streams, inject events, see results instantly. Save your session as a `.vpl` file when done.
