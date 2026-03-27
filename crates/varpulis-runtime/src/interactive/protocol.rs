@@ -50,6 +50,10 @@ pub enum SessionCommand {
     GetTopology,
     /// Enable or disable pipeline tracing.
     SetTrace { enabled: bool },
+    /// Save the current VPL buffer to a file.
+    Save { path: String },
+    /// Get the current accumulated VPL source.
+    GetSource,
     /// Terminate the session.
     Quit,
 }
@@ -100,6 +104,10 @@ pub enum SessionResponse {
     Error { message: String },
     /// Generator status update.
     GeneratorStatus { running: bool, generated: u64 },
+    /// VPL source saved to file.
+    Saved { path: String, lines: usize },
+    /// Current accumulated VPL source.
+    Source { vpl: String },
     /// Session is shutting down.
     Bye,
 }

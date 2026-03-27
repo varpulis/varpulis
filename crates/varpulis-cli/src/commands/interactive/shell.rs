@@ -175,6 +175,8 @@ fn handle_command(input: &str, session: &mut InteractiveSession) {
             println!("Commands:");
             println!("  :help          Show this help");
             println!("  :load <file>   Load a VPL file (replaces current program)");
+            println!("  :save <file>   Save current session as a .vpl file");
+            println!("  :source        Show accumulated VPL source");
             println!("  :streams       List loaded streams");
             println!("  :topology      Show pipeline graph");
             println!("  :metrics       Show engine metrics");
@@ -235,6 +237,20 @@ fn handle_command(input: &str, session: &mut InteractiveSession) {
         }
         ":stop" => {
             let responses = session.handle_command(SessionCommand::StopGenerate);
+            print_responses(&responses);
+        }
+        ":save" | ":s" => {
+            if arg.is_empty() {
+                output::error("Usage: :save <file.vpl>");
+                return;
+            }
+            let responses = session.handle_command(SessionCommand::Save {
+                path: arg.to_string(),
+            });
+            print_responses(&responses);
+        }
+        ":source" | ":src" => {
+            let responses = session.handle_command(SessionCommand::GetSource);
             print_responses(&responses);
         }
         ":reset" => {
@@ -453,6 +469,12 @@ fn print_responses(responses: &[SessionResponse]) {
                 } else {
                     println!("Generator stopped ({generated} events generated)");
                 }
+            }
+            SessionResponse::Saved { path, lines } => {
+                output::success(&format!("Saved {lines} lines to {path}"));
+            }
+            SessionResponse::Source { vpl } => {
+                println!("{vpl}");
             }
             _ => {}
         }

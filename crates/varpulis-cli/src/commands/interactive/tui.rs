@@ -183,6 +183,14 @@ impl TuiApp {
                     Color::Magenta,
                 );
             }
+            SessionResponse::Saved { path, lines } => {
+                self.push_log(format!("Saved {lines} lines to {path}"), Color::Green);
+            }
+            SessionResponse::Source { vpl } => {
+                for line in vpl.lines() {
+                    self.push_log(line.to_string(), Color::White);
+                }
+            }
             SessionResponse::Bye => {
                 self.running = false;
             }

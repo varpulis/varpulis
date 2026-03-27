@@ -129,6 +129,8 @@ impl InteractiveSession {
             SessionCommand::GetMetrics => self.handle_get_metrics(),
             SessionCommand::GetTopology => self.handle_get_topology(),
             SessionCommand::SetTrace { enabled } => self.handle_set_trace(enabled),
+            SessionCommand::Save { path } => self.handle_save(&path),
+            SessionCommand::GetSource => self.handle_get_source(),
             SessionCommand::Quit => vec![SessionResponse::Bye],
         }
     }
@@ -499,6 +501,32 @@ impl InteractiveSession {
     fn handle_set_trace(&mut self, enabled: bool) -> Vec<SessionResponse> {
         self.engine.set_trace_enabled(enabled);
         vec![]
+    }
+
+    fn handle_save(&self, path: &str) -> Vec<SessionResponse> {
+        if self.vpl_buffer.is_empty() {
+            return vec![SessionResponse::Error {
+                message: "Nothing to save — no VPL declarations in the current session".into(),
+            }];
+        }
+        match std::fs::write(path, &self.vpl_buffer) {
+            Ok(()) => {
+                let lines = self.vpl_buffer.lines().count();
+                vec![SessionResponse::Saved {
+                    path: path.to_string(),
+                    lines,
+                }]
+            }
+            Err(e) => vec![SessionResponse::Error {
+                message: format!("Failed to save to '{path}': {e}"),
+            }],
+        }
+    }
+
+    fn handle_get_source(&self) -> Vec<SessionResponse> {
+        vec![SessionResponse::Source {
+            vpl: self.vpl_buffer.clone(),
+        }]
     }
 
     // =========================================================================
