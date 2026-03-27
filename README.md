@@ -60,6 +60,14 @@ varpulis interactive
 
 Type VPL declarations and events directly — like a Python interpreter. Define event types, create streams, inject events, see results instantly. Save your session as a `.vpl` file when done.
 
+### TUI Mode (Default)
+
+<p align="center">
+  <img src="docs/assets/recordings/tui-split-pane.gif" alt="Varpulis TUI split-pane" width="800">
+</p>
+
+Split-pane terminal UI with topology graph, event stream, VPL input, and metrics — all in one screen.
+
 ```bash
 varpulis interactive           # TUI with topology, events, metrics panes
 varpulis interactive --no-tui  # Plain text shell (shown above)
