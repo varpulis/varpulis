@@ -25,7 +25,7 @@ export PATH="$PATH:$(pwd)/target/release"
 
 # Verify installation
 varpulis --version
-# Output: varpulis 0.6.0
+# Output: varpulis 0.9.0
 ```
 
 ### Quick Build Check
@@ -47,16 +47,19 @@ Create a file called `temperature_monitor.vpl`:
 // temperature_monitor.vpl
 // Simple temperature monitoring with alerts
 
-// Define what events we're listening for
-stream TemperatureReadings = TemperatureReading
-    .where(temperature > 0)  // Basic validation
+// Declare the event type we expect
+event TemperatureReading:
+    sensor_id: str
+    temperature: float
+    unit: str
 
 // Create an alert stream for high temperatures
 stream HighTempAlerts = TemperatureReading
     .where(temperature > 100)
     .emit(
         alert_type: "HighTemperature",
-        message: "Temperature exceeded 100 degrees"
+        sensor: sensor_id,
+        temp: temperature
     )
 ```
 
@@ -220,6 +223,112 @@ varpulis demo --duration 60 --anomalies --metrics --metrics-port 9090
 
 Then open http://localhost:9090/metrics to see real-time metrics.
 
+## Interactive Mode (Recommended for Learning)
+
+The fastest way to explore VPL is the interactive shell — type definitions and
+events directly, no files needed:
+
+```bash
+varpulis interactive
+```
+
+```
+Varpulis Interactive Shell v0.9.0
+Type VPL declarations (event, stream, ...) or event literals to inject.
+Type :help for commands, :quit to exit.
+
+vpl> event TemperatureReading:
+...>     sensor_id: str
+...>     temperature: float
+vpl>
+✓ 0 stream(s) loaded
+
+vpl> stream HighTemp = TemperatureReading .where(temperature > 100) .emit(sensor: sensor_id, temp: temperature)
+✓ 1 stream(s) loaded: HighTemp
+  added: HighTemp
+
+vpl> TemperatureReading { sensor_id: "sensor-1", temperature: 72.5 }
+
+vpl> TemperatureReading { sensor_id: "sensor-1", temperature: 105.2 }
+→ HighTemp: {"sensor":"sensor-1","temp":105.2}
+
+vpl> TemperatureReading { sensor_id: "sensor-1", temperature: 112.5 }
+→ HighTemp: {"sensor":"sensor-1","temp":112.5}
+
+vpl> :streams
+  HighTemp (source: stream:TemperatureReading, 2 ops)
+
+vpl> :quit
+Bye!
+```
+
+**Key features:**
+- Type `event` or `stream` declarations and they compile incrementally
+- Multi-line blocks: type `event Foo:`, then indented fields, blank line to submit
+- Type event literals (e.g., `Sensor { temp: 150 }`) to inject and see results
+- Commands: `:streams`, `:topology`, `:trace on`, `:gen fraud`, `:help`
+
+### TUI Mode
+
+For a split-pane visual experience with topology, events, and metrics:
+
+```bash
+varpulis interactive --tui --file temperature_monitor.vpl --trace
+```
+
+This opens a full terminal UI with 4 panes:
+- **Top-left**: Pipeline topology graph
+- **Top-right**: Scrolling event stream with trace (PASS/BLOCK indicators)
+- **Bottom-left**: VPL input / command area
+- **Bottom-right**: Live metrics dashboard
+
+Key bindings: `Tab` (switch pane), `Ctrl+G` (toggle datagen), `Ctrl+T` (trace), `Ctrl+Q` (quit).
+
+## Pipeline Trace (Explain Mode)
+
+To understand exactly how events flow through your pipeline, use `--trace`:
+
+```bash
+varpulis simulate --trace \
+    -p temperature_monitor.vpl \
+    -e test_events.evt \
+    -w 1
+```
+
+```
+EVENT [1/5] TemperatureReading { sensor_id="sensor-1", temperature=72.5, unit="F" }
+  -> stream HighTempAlerts matched on TemperatureReading
+     | Filter BLOCK
+
+EVENT [3/5] TemperatureReading { sensor_id="sensor-1", temperature=105.2, unit="F" }
+  -> stream HighTempAlerts matched on TemperatureReading
+     | Filter PASS
+  <- HighTempAlerts emitted { alert_type="HighTemperature", sensor="sensor-1", temp=105.2 }
+```
+
+Each event shows: which streams matched, which operators passed (green) or
+blocked (red), and what output was emitted. Essential for debugging complex
+pipelines.
+
+## Schema Inference
+
+Don't want to write event declarations manually? Use `varpulis infer` to
+generate them from sample data:
+
+```bash
+varpulis infer --input test_events.evt
+```
+
+```
+event TemperatureReading:
+    sensor_id: str
+    temperature: float
+    unit: str
+# Inferred 1 event type(s) from 5 event(s)
+```
+
+Copy the output into your VPL file — instant type declarations.
+
 ## Next Steps
 
 Now that you have Varpulis running:
@@ -236,11 +345,16 @@ Now that you have Varpulis running:
 
 | Command | Purpose |
 |---------|---------|
+| `varpulis interactive` | Interactive shell (type VPL + events live) |
+| `varpulis interactive --tui` | Split-pane terminal UI |
+| `varpulis interactive --json` | JSON-line protocol (for agents) |
 | `varpulis check file.vpl` | Validate syntax |
-| `varpulis parse file.vpl` | Show AST |
 | `varpulis simulate -p file.vpl -e events.evt` | Run simulation |
-| `varpulis simulate ... --workers 8` | Parallel mode |
-| `varpulis run --file file.vpl` | Run with MQTT |
+| `varpulis simulate --trace ...` | Explain mode (per-event flow) |
+| `varpulis simulate --watch ...` | Auto-reload on file changes |
+| `varpulis infer --input data.jsonl` | Infer event type declarations |
+| `varpulis connector list` | Show available connectors |
+| `varpulis run --file file.vpl` | Run with live connectors |
 | `varpulis demo` | Built-in HVAC demo |
 | `varpulis server` | Start WebSocket API |
 
