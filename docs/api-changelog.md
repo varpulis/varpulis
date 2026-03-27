@@ -273,7 +273,7 @@ All endpoints listed in v0.2.0 were present in v0.1.0 with the following excepti
 
 ### Breaking Changes
 
-No breaking changes have been introduced through v0.6.0. All additions have been backward-compatible.
+No breaking changes have been introduced through v0.9.0. All additions have been backward-compatible.
 
 This section will be updated when a major version introduces breaking changes.
 
