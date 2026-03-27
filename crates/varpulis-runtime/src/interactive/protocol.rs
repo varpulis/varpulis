@@ -16,8 +16,10 @@ use crate::engine::graph::{GraphEdge, GraphNode};
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum SessionCommand {
-    /// Load a VPL program from an inline string.
+    /// Load a VPL program from an inline string (replaces current program).
     LoadVpl { vpl: String },
+    /// Append VPL declarations to the current program and recompile.
+    AppendVpl { vpl: String },
     /// Load a VPL program from a file path.
     LoadFile { path: String },
     /// Inject a single event.

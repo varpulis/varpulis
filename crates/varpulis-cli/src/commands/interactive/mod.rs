@@ -1,3 +1,3 @@
 pub mod jsonl;
-#[cfg(feature = "tui")]
+pub mod shell;
 pub mod tui;

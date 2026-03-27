@@ -557,11 +557,19 @@ enum Commands {
         file: Option<PathBuf>,
     },
 
-    /// Interactive streaming session (JSON-line or TUI)
+    /// Interactive streaming session
+    ///
+    /// Default: Python-interpreter-style shell (type VPL + events directly).
+    /// --json: JSON-line protocol for agents/MCP.
+    /// --tui: Split-pane terminal UI with topology, events, metrics.
     Interactive {
         /// Use JSON-line protocol on stdin/stdout (for agents/MCP)
         #[arg(long)]
         json: bool,
+
+        /// Use split-pane TUI (topology, events, input, metrics)
+        #[arg(long)]
+        tui: bool,
 
         /// VPL program file to auto-load
         #[arg(short, long)]
@@ -1331,12 +1339,14 @@ async fn main() -> Result<()> {
 
         Commands::Interactive {
             json,
+            tui,
             file,
             generate,
             rate,
             trace,
         } => {
             if json {
+                // Agent mode: structured JSON-line protocol
                 commands::interactive::jsonl::run_jsonl_session(
                     file.as_deref(),
                     generate.as_deref(),
@@ -1344,29 +1354,23 @@ async fn main() -> Result<()> {
                     trace,
                 )
                 .await?;
+            } else if tui {
+                // TUI mode: split-pane terminal UI
+                commands::interactive::tui::run_tui_session(
+                    file.as_deref(),
+                    generate.as_deref(),
+                    rate,
+                    trace,
+                )
+                .await?;
             } else {
-                #[cfg(feature = "tui")]
-                {
-                    commands::interactive::tui::run_tui_session(
-                        file.as_deref(),
-                        generate.as_deref(),
-                        rate,
-                        trace,
-                    )
-                    .await?;
-                }
-                #[cfg(not(feature = "tui"))]
-                {
-                    eprintln!("TUI mode requires the 'tui' feature. Using JSON-line mode.");
-                    eprintln!("Rebuild with: cargo build --features tui");
-                    commands::interactive::jsonl::run_jsonl_session(
-                        file.as_deref(),
-                        generate.as_deref(),
-                        rate,
-                        trace,
-                    )
-                    .await?;
-                }
+                // Default: Python-interpreter-style shell
+                commands::interactive::shell::run_shell(
+                    file.as_deref(),
+                    generate.as_deref(),
+                    rate,
+                    trace,
+                )?;
             }
         }
     }
