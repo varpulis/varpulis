@@ -121,6 +121,10 @@ cd starters/fraud && docker compose up  # Fraud detection with forecasting
 
 ## Example: Multi-Source Correlation
 
+<p align="center">
+  <img src="docs/assets/recordings/multi-source-correlation.svg" alt="Multi-source correlation demo" width="800">
+</p>
+
 Connect MQTT sensors and Kafka transactions, correlate them in real-time:
 
 ```python
