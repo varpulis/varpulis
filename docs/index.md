@@ -37,6 +37,20 @@ features:
     details: Declarative domain-specific language for event patterns, aggregations, joins, and connectors.
 ---
 
+## What's New in v0.9.0
+
+- **Interactive shell** — type VPL + events directly like a Python interpreter (`varpulis interactive`)
+- **TUI mode** — split-pane terminal UI with topology, event stream, and metrics (`--tui`)
+- **Pipeline trace** — explain mode showing per-event operator pass/block (`--trace`)
+- **Schema inference** — generate event declarations from sample data (`varpulis infer`)
+- **Watch mode** — auto-reload simulation on file changes (`--watch`)
+- **`.alert()` operator** — webhook notifications with `{field}` template interpolation
+- **Connector discovery** — `varpulis connector list/info/test`
+- **Agent integration** — JSON-line protocol + MCP tools for AI-driven stream analysis
+- **Pipeline graph API** — VPL-to-graph and graph-to-VPL endpoints for visual builders
+
+[Full changelog](/development/STATUS) | [Getting started](/tutorials/getting-started)
+
 ## Why Varpulis?
 
 **Varpulis** is a next-generation streaming analytics engine built in Rust for low-latency complex event processing.

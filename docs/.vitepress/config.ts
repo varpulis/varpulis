@@ -81,12 +81,14 @@ export default defineConfig({
           text: 'Getting Started',
           items: [
             { text: 'Quick Start', link: '/tutorials/getting-started' },
+            { text: 'Interactive Shell', link: '/tutorials/interactive-shell-tutorial' },
             { text: 'VPL Language Tutorial', link: '/tutorials/language-tutorial' },
           ]
         },
         {
           text: 'Core Features',
           items: [
+            { text: 'Alert Notifications', link: '/tutorials/alert-tutorial' },
             { text: 'Contexts & Parallelism', link: '/tutorials/contexts-tutorial' },
             { text: 'Cluster Mode', link: '/tutorials/cluster-tutorial' },
             { text: 'Outer Joins', link: '/tutorials/outer-joins-tutorial' },
@@ -167,6 +169,7 @@ export default defineConfig({
           text: 'Reference',
           items: [
             { text: 'CLI Reference', link: '/reference/cli-reference' },
+            { text: 'Interactive Protocol', link: '/reference/interactive-protocol' },
             { text: 'Windows & Aggregations', link: '/reference/windows-aggregations' },
             { text: 'Joins', link: '/reference/joins' },
             { text: 'Enrichment', link: '/reference/enrichment' },
@@ -181,6 +184,8 @@ export default defineConfig({
           text: 'Guides',
           items: [
             { text: 'Configuration', link: '/guides/configuration' },
+            { text: 'Debugging Pipelines', link: '/guides/debugging-pipelines' },
+            { text: 'Schema Inference', link: '/guides/schema-inference' },
             { text: 'Performance Tuning', link: '/guides/performance-tuning' },
             { text: 'Contexts', link: '/guides/contexts' },
             { text: 'SASE Patterns', link: '/guides/sase-patterns' },
