@@ -277,6 +277,131 @@ Event rate:       810,373.2 events/sec
 
 ---
 
+### `varpulis simulate --trace`
+
+Pipeline explain mode. Shows how each event flows through the pipeline: which streams
+matched, which operators passed or blocked, pattern state, and emitted events.
+
+```bash
+varpulis simulate --trace -p pipeline.vpl -e events.evt -w 1
+```
+
+Forces single-threaded mode for clear sequential output. Each event is traced with
+colored PASS (green) / BLOCK (red) indicators:
+
+```
+EVENT [1/5] SensorReading { sensor_id="S1", temperature=105 }
+  -> stream HighTemp matched on SensorReading
+     | Filter PASS
+  <- HighTemp emitted { sensor="S1", temp=105 }
+
+EVENT [2/5] SensorReading { sensor_id="S2", temperature=50 }
+  -> stream HighTemp matched on SensorReading
+     | Filter BLOCK
+```
+
+---
+
+### `varpulis interactive`
+
+Interactive streaming session with two modes: TUI for humans and JSON-line for agents.
+
+#### JSON-line Mode (for agents/MCP)
+
+```bash
+varpulis interactive --json --file pipeline.vpl --trace
+```
+
+Reads JSON commands from stdin, writes JSON responses to stdout (one per line).
+Tracing logs go to stderr so agents can cleanly parse stdout.
+
+**Commands:**
+```json
+{"cmd": "load_vpl", "vpl": "event T:\n    x: int\nstream S = T .where(x > 10)"}
+{"cmd": "inject", "event_type": "T", "data": {"x": 42}}
+{"cmd": "generate", "schema": "fraud", "rate": 1000, "duration": 60}
+{"cmd": "stop_generate"}
+{"cmd": "get_streams"}
+{"cmd": "get_topology"}
+{"cmd": "get_metrics"}
+{"cmd": "set_trace", "enabled": true}
+{"cmd": "subscribe", "stream": "S"}
+{"cmd": "quit"}
+```
+
+**Responses:**
+```json
+{"type": "ready", "version": "0.9.0"}
+{"type": "loaded", "streams": ["S"], "added": ["S"], "removed": [], "preserved": []}
+{"type": "output", "stream": "S", "event": {"x": 42}, "timestamp": "..."}
+{"type": "topology", "nodes": [...], "edges": [...]}
+{"type": "bye"}
+```
+
+#### TUI Mode (for humans)
+
+```bash
+varpulis interactive --file pipeline.vpl --generate iot --trace
+```
+
+> Requires the `tui` feature: `cargo build --features tui`
+
+Split-pane terminal UI with:
+- **Top-left**: Pipeline topology (ASCII graph)
+- **Top-right**: Scrolling event stream + trace log
+- **Bottom-left**: VPL input / command area
+- **Bottom-right**: Live metrics dashboard
+
+**Key bindings:**
+
+| Key | Action |
+|-----|--------|
+| Tab | Switch pane focus |
+| Ctrl+G | Toggle datagen |
+| Ctrl+T | Toggle trace |
+| Ctrl+Q | Quit |
+| Up/Down | Scroll event log |
+| Enter | Submit VPL or command from input pane |
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--json` | disabled | JSON-line protocol on stdin/stdout |
+| `-f, --file <PATH>` | none | VPL program to auto-load |
+| `--generate <SCHEMA>` | none | Start datagen (fraud, iot, trading) |
+| `--rate <N>` | `1000` | Datagen rate (events/sec) |
+| `--trace` | disabled | Enable trace mode |
+
+---
+
+### `varpulis repl`
+
+Interactive VPL shell for testing pipelines event-by-event.
+
+> Requires the `repl` feature: `cargo build --features repl`
+
+```bash
+varpulis repl --file pipeline.vpl
+```
+
+**Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `:load <file.vpl>` | Load a VPL program |
+| `:event EventType { field: value }` | Inject and process a single event |
+| `:events <file.evt>` | Process an entire event file |
+| `:streams` | List loaded streams |
+| `:reset` | Re-create engine (clears state) |
+| `:help` | Show commands |
+| `:quit` | Exit |
+
+Bare text (not starting with `:`) is parsed as VPL and hot-reloaded into the engine.
+History is saved to `~/.varpulis_history`.
+
+---
+
 ### `varpulis config-gen`
 
 Generate an example configuration file.
@@ -631,6 +756,22 @@ terminal (or IDE with LSP), see results update instantly in another.
 | `VARPULIS_SMTP_DANGEROUS` | `server` | Disable SMTP TLS verification (dev only) |
 | `VARPULIS_CREDENTIALS` | All | Path to credentials YAML file |
 | `VARPULIS_MASTER_KEY` | All | Encryption master key (hex) |
+
+---
+
+## Feature Flags
+
+The CLI binary supports optional features that enable additional commands:
+
+| Feature | Commands | Build Flag |
+|---------|----------|------------|
+| `repl` | `varpulis repl` | `cargo build --features repl` |
+| `tui` | `varpulis interactive` (TUI mode) | `cargo build --features tui` |
+| `kafka` | Kafka connector support | `cargo build --features kafka` |
+| `onnx` | ML scoring with `.score()` | `cargo build --features onnx` |
+
+Without a feature flag, the corresponding command falls back gracefully (error
+message suggesting the flag, or JSON-line mode for interactive).
 
 ---
 
