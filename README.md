@@ -52,39 +52,27 @@ curl -sSf https://raw.githubusercontent.com/varpulis/varpulis/main/scripts/insta
 varpulis interactive
 ```
 
-The interactive shell opens a split-pane TUI where you type VPL and events directly — like a Python interpreter, but with live topology, streaming events, and metrics:
+### Interactive Shell
+
+<p align="center">
+  <img src="docs/assets/recordings/interactive-shell.svg" alt="Varpulis interactive shell" width="800">
+</p>
+
+Type VPL declarations and events directly — like a Python interpreter. Define event types, create streams, inject events, see results instantly. Save your session as a `.vpl` file when done.
 
 ```bash
-varpulis interactive
+varpulis interactive           # TUI with topology, events, metrics panes
+varpulis interactive --no-tui  # Plain text shell (shown above)
+varpulis interactive --json    # JSON-line protocol for AI agents
 ```
 
-Type declarations, inject events, see results instantly:
-
-```
-vpl> event Sensor:
-...>     temperature: float
-...>     zone: str
-
-vpl> stream HighTemp = Sensor .where(temperature > 100) .emit(zone: zone, temp: temperature)
-✓ 1 stream loaded: HighTemp
-
-vpl> Sensor { temperature: 150, zone: "A" }
-→ HighTemp: {"zone":"A","temp":150}
-
-vpl> Sensor { temperature: 50, zone: "B" }
-(filtered)
-
-vpl> :save my_pipeline.vpl
-✓ Saved 4 lines to my_pipeline.vpl
-```
-
-### Pipeline Trace (Explain Mode)
+### Pipeline Trace
 
 <p align="center">
   <img src="docs/assets/recordings/trace-mode.svg" alt="Pipeline trace mode" width="800">
 </p>
 
-See exactly how each event flows through your pipeline — which operators pass or block — with `--trace`.
+See exactly how each event flows — which operators **pass** or **block** — with `--trace`.
 
 Or run from files:
 
