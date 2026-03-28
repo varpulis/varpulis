@@ -1,0 +1,23 @@
+[package]
+name = "varpulis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Detect temporal patterns in event streams — in Rust, in milliseconds, in 10 lines. Install with: cargo install varpulis-cli"
+readme = "../../README.md"
+keywords = ["cep", "event-processing", "pattern-matching", "streaming", "sase"]
+categories = ["command-line-utilities", "data-structures"]
+
+# This is a meta-crate for crates.io discoverability.
+# The actual CLI binary is `varpulis-cli`:
+#   cargo install varpulis-cli
+
+[lib]
+name = "varpulis"
+path = "src/lib.rs"
+
+[dependencies]
+varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
+varpulis-runtime = { version = "0.9.0", path = "../varpulis-runtime" }
