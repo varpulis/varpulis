@@ -33,6 +33,7 @@ members = [
     "crates/varpulis-simd",
     "crates/varpulis-dead-letter",
     "crates/varpulis",
+    "crates/varpulis-engine-wasm",
 ]
 
 [workspace.package]

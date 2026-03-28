@@ -12,12 +12,14 @@ use rustc_hash::FxHashMap;
 use tracing::{debug, info, warn};
 use varpulis_core::ast::{Expr, StreamOp, StreamSource};
 
+#[cfg(feature = "async-runtime")]
+use super::types::ConcurrentConfig;
 use super::types::{
-    AlertConfig, ConcurrentConfig, DistinctState, EmitConfig, EmitExprConfig, EnrichConfig,
-    FieldAggregateInfo, ForecastConfig, LimitState, LogConfig, MergeSource,
-    PartitionedAggregatorState, PartitionedSlidingCountWindowState, PartitionedWindowState,
-    PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig, SourceBinding,
-    StreamDefinition, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
+    AlertConfig, DistinctState, EmitConfig, EmitExprConfig, EnrichConfig, FieldAggregateInfo,
+    ForecastConfig, LimitState, LogConfig, MergeSource, PartitionedAggregatorState,
+    PartitionedSlidingCountWindowState, PartitionedWindowState, PatternConfig, PrintConfig,
+    RuntimeOp, RuntimeSource, SelectConfig, SourceBinding, StreamDefinition, TimerConfig, ToConfig,
+    TrendAggregateConfig, WindowType,
 };
 use super::{compiler, pattern_analyzer, Engine};
 use crate::aggregation::Aggregator;
@@ -36,12 +38,19 @@ impl Engine {
         ops: &[StreamOp],
     ) -> Result<(), super::error::EngineError> {
         // Extract context assignments from stream ops
+        #[allow(unused_variables)]
         for (emit_idx, op) in ops.iter().enumerate() {
             match op {
+                #[cfg(feature = "async-runtime")]
                 StreamOp::Context(ctx_name) => {
                     self.context_map
                         .assign_stream(name.to_string(), ctx_name.clone());
                 }
+                #[cfg(not(feature = "async-runtime"))]
+                StreamOp::Context(_) => {
+                    // Context assignments require async-runtime
+                }
+                #[cfg(feature = "async-runtime")]
                 StreamOp::Emit {
                     target_context: Some(ctx),
                     ..
@@ -329,7 +338,8 @@ impl Engine {
         // Log source description before moving
         let source_desc = runtime_source.describe();
 
-        // Build enrichment provider if any .enrich() ops reference a connector
+        // Build enrichment provider if any .enrich() ops reference a connector (async-runtime only)
+        #[cfg(feature = "async-runtime")]
         let enrichment = {
             let enrich_op = runtime_ops.iter().find_map(|op| {
                 if let RuntimeOp::Enrich(config) = op {
@@ -381,7 +391,9 @@ impl Engine {
                 shared_hamlet_ref: None,
                 pst_forecaster,
                 last_raw_event: None,
+                #[cfg(feature = "async-runtime")]
                 enrichment,
+                #[cfg(feature = "async-runtime")]
                 buffer_config: None,
             },
         );
@@ -1014,6 +1026,7 @@ impl Engine {
                             .into(),
                     ));
                 }
+                #[cfg(feature = "async-runtime")]
                 StreamOp::Concurrent(ref args) => {
                     let mut workers = std::thread::available_parallelism()
                         .map(|n| n.get())
@@ -1055,6 +1068,12 @@ impl Engine {
                         partition_key,
                         thread_pool,
                     }));
+                }
+                #[cfg(not(feature = "async-runtime"))]
+                StreamOp::Concurrent(_) => {
+                    return Err(super::error::EngineError::Compilation(
+                        ".concurrent() requires async-runtime feature (rayon thread pool)".into(),
+                    ));
                 }
                 StreamOp::OrderBy(_) => {
                     return Err(super::error::EngineError::Compilation(

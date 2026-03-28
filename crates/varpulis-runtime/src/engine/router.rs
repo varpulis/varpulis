@@ -59,6 +59,7 @@ impl EventRouter {
     }
 
     /// Clear all routes (used during hot reload)
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.routes.clear();
     }

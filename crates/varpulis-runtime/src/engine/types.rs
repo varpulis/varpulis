@@ -100,6 +100,7 @@ pub struct NamedPattern {
 // =============================================================================
 
 /// Runtime stream definition
+#[allow(dead_code)]
 pub struct StreamDefinition {
     pub name: String,
     /// Cached `Arc<str>` of the stream name — avoids repeated `String→Arc<str>` conversions
@@ -122,12 +123,14 @@ pub struct StreamDefinition {
     /// Last raw event that entered the pipeline (used by Forecast op to learn
     /// from every event even when the Sequence op clears current_events).
     pub last_raw_event: Option<crate::event::SharedEvent>,
-    /// Enrichment provider + cache (when .enrich() is used)
+    /// Enrichment provider + cache (when .enrich() is used, async-runtime only)
+    #[cfg(feature = "async-runtime")]
     pub enrichment: Option<(
         Arc<dyn crate::enrichment::EnrichmentProvider>,
         Arc<crate::enrichment::EnrichmentCache>,
     )>,
-    /// Optional backpressure buffer configuration for this stream's input channel
+    /// Optional backpressure buffer configuration for this stream's input channel (async-runtime only)
+    #[cfg(feature = "async-runtime")]
     #[allow(dead_code)]
     pub buffer_config: Option<crate::backpressure::StageBufferConfig>,
 }
@@ -169,6 +172,7 @@ pub struct TimerConfig {
 }
 
 /// A source in a merge construct with optional filter
+#[allow(dead_code)]
 pub struct MergeSource {
     pub name: String,
     pub event_type: String,
@@ -176,6 +180,7 @@ pub struct MergeSource {
 }
 
 /// Runtime operations that can be applied to a stream
+#[allow(dead_code)]
 pub enum RuntimeOp {
     /// Filter with closure (for sequence filters with context)
     WhereClosure(Box<dyn Fn(&SharedEvent) -> bool + Send + Sync>),
@@ -224,7 +229,8 @@ pub enum RuntimeOp {
     Distinct(DistinctState),
     /// Pass at most N events, then stop the stream
     Limit(LimitState),
-    /// Parallel processing: partition events across a Rayon thread pool
+    /// Parallel processing: partition events across a Rayon thread pool (async-runtime only)
+    #[cfg(feature = "async-runtime")]
     Concurrent(ConcurrentConfig),
 }
 
@@ -258,6 +264,7 @@ impl RuntimeOp {
             Self::Alert(_) => "Alert",
             Self::Distinct(_) => "Distinct",
             Self::Limit(_) => "Limit",
+            #[cfg(feature = "async-runtime")]
             Self::Concurrent(_) => "Concurrent",
         }
     }
@@ -267,6 +274,8 @@ impl RuntimeOp {
 ///
 /// Production-ready, opt-in via `.concurrent()` in VPL.  Creates a rayon
 /// thread pool that partitions events across workers by key or round-robin.
+/// Only available with async-runtime (requires rayon).
+#[cfg(feature = "async-runtime")]
 pub struct ConcurrentConfig {
     pub workers: usize,
     pub partition_key: Option<String>,
@@ -326,6 +335,7 @@ pub struct AlertConfig {
 }
 
 /// Configuration for external connector enrichment
+#[allow(dead_code)]
 pub struct EnrichConfig {
     /// Name of the connector to use for lookups
     pub connector_name: String,
@@ -352,6 +362,7 @@ pub struct ScoreConfig {
 }
 
 /// Topic specification for `.to()` operations — static or dynamic
+#[allow(dead_code)]
 pub enum TopicSpec {
     /// Static topic string resolved at compile time (current behavior)
     Static(String),
@@ -360,6 +371,7 @@ pub enum TopicSpec {
 }
 
 /// Configuration for .to() connector routing
+#[allow(dead_code)]
 pub struct ToConfig {
     pub connector_name: String,
     /// Topic specification: static string, dynamic expression, or None (use connector default)
@@ -551,6 +563,7 @@ pub struct EmitExprConfig {
 }
 
 /// Configuration for late data handling in watermark-based windowing.
+#[allow(dead_code)]
 pub struct LateDataConfig {
     /// How much lateness to tolerate beyond the watermark.
     /// Events arriving within this window after watermark advancement are still processed.

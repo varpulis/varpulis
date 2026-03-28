@@ -3,6 +3,7 @@
 //! This module provides the core engine that processes events and executes
 //! stream definitions written in VPL.
 
+#[cfg(feature = "async-runtime")]
 mod builder;
 mod compilation;
 pub mod compiler;
@@ -15,6 +16,7 @@ pub mod physical_plan;
 mod pipeline;
 pub mod planner;
 mod router;
+#[cfg(feature = "async-runtime")]
 mod sink_factory;
 pub mod topology;
 pub mod topology_builder;
@@ -24,12 +26,15 @@ mod types;
 // Re-export public types
 use std::sync::Arc;
 
+#[cfg(feature = "async-runtime")]
 pub use builder::EngineBuilder;
 use chrono::{DateTime, Duration, Utc};
 // Re-export evaluator for use by other modules (e.g., SASE+)
 pub use evaluator::eval_filter_expr;
 use rustc_hash::{FxHashMap, FxHashSet};
+#[cfg(feature = "async-runtime")]
 pub use sink_factory::SinkConnectorAdapter;
+#[cfg(feature = "async-runtime")]
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 // Re-export NamedPattern from types
@@ -40,9 +45,12 @@ use types::{RuntimeOp, RuntimeSource, StreamDefinition, WindowType};
 use varpulis_core::ast::{ConfigItem, Program, Stmt};
 use varpulis_core::Value;
 
+#[cfg(feature = "async-runtime")]
 use crate::connector;
+#[cfg(feature = "async-runtime")]
 use crate::context::ContextMap;
 use crate::event::{Event, SharedEvent};
+#[cfg(feature = "async-runtime")]
 use crate::metrics::Metrics;
 use crate::sase_persistence::SaseCheckpointExt;
 use crate::sequence::SequenceContext;
@@ -50,7 +58,9 @@ use crate::udf::UdfRegistry;
 use crate::watermark::PerSourceWatermarkTracker;
 use crate::window::CountWindow;
 
-/// Output channel type enumeration for zero-copy or owned event sending
+/// Output channel type enumeration for zero-copy or owned event sending.
+/// Only available with async-runtime (requires tokio mpsc channels).
+#[cfg(feature = "async-runtime")]
 #[derive(Debug)]
 pub(super) enum OutputChannel {
     /// Legacy channel that requires cloning (for backwards compatibility)
@@ -75,20 +85,29 @@ pub struct Engine {
     pub(super) variables: FxHashMap<String, Value>,
     /// Tracks which variables are declared as mutable (var vs let)
     pub(super) mutable_vars: FxHashSet<String>,
-    /// Declared connectors from VPL
+    /// Declared connectors from VPL (async-runtime only)
+    #[cfg(feature = "async-runtime")]
     pub(super) connectors: FxHashMap<String, connector::ConnectorConfig>,
     /// Source connector bindings from .from() declarations
     pub(super) source_bindings: Vec<SourceBinding>,
-    /// Sink registry for .to() operations
+    /// Sink registry for .to() operations (async-runtime only)
+    #[cfg(feature = "async-runtime")]
     pub(super) sinks: sink_factory::SinkRegistry,
-    /// Output event sender (None for benchmark/quiet mode - skips cloning overhead)
+    /// Output event sender (None for benchmark/quiet mode - skips cloning overhead).
+    /// Only available with async-runtime (requires tokio mpsc channels).
+    #[cfg(feature = "async-runtime")]
     pub(super) output_channel: Option<OutputChannel>,
+    /// Collected output events buffer for sync-only/WASM mode (no mpsc channel).
+    #[cfg(not(feature = "async-runtime"))]
+    pub(super) collected_outputs: Vec<Event>,
     /// Metrics
     pub(super) events_processed: u64,
     pub(super) output_events_emitted: u64,
-    /// Prometheus metrics
+    /// Prometheus metrics (async-runtime only)
+    #[cfg(feature = "async-runtime")]
     pub(super) metrics: Option<Metrics>,
-    /// Context assignments for multi-threaded execution
+    /// Context assignments for multi-threaded execution (async-runtime only)
+    #[cfg(feature = "async-runtime")]
     pub(super) context_map: ContextMap,
     /// Per-source watermark tracker for event-time processing
     pub(super) watermark_tracker: Option<PerSourceWatermarkTracker>,
@@ -105,7 +124,8 @@ pub struct Engine {
         Vec<std::sync::Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     /// Auto-checkpointing manager (None = checkpointing disabled)
     pub(super) checkpoint_manager: Option<crate::persistence::CheckpointManager>,
-    /// Connector credentials store for secure profile resolution
+    /// Connector credentials store for secure profile resolution (async-runtime only)
+    #[cfg(feature = "async-runtime")]
     pub(super) credentials_store: Option<Arc<connector::credentials::CredentialsStore>>,
     /// Custom DLQ file path (defaults to "varpulis-dlq.jsonl")
     pub(super) dlq_path: Option<std::path::PathBuf>,
@@ -123,15 +143,16 @@ pub struct Engine {
 
 impl std::fmt::Debug for Engine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Engine")
-            .field("streams", &self.streams.keys().collect::<Vec<_>>())
+        let mut s = f.debug_struct("Engine");
+        s.field("streams", &self.streams.keys().collect::<Vec<_>>())
             .field("functions", &self.functions.keys().collect::<Vec<_>>())
             .field("patterns", &self.patterns.keys().collect::<Vec<_>>())
-            .field("configs", &self.configs.keys().collect::<Vec<_>>())
-            .field("connectors", &self.connectors.keys().collect::<Vec<_>>())
-            .field("events_processed", &self.events_processed)
+            .field("configs", &self.configs.keys().collect::<Vec<_>>());
+        #[cfg(feature = "async-runtime")]
+        s.field("connectors", &self.connectors.keys().collect::<Vec<_>>())
+            .field("context_map", &self.context_map);
+        s.field("events_processed", &self.events_processed)
             .field("output_events_emitted", &self.output_events_emitted)
-            .field("context_map", &self.context_map)
             .field("context_name", &self.context_name)
             .field("topic_prefix", &self.topic_prefix)
             .finish_non_exhaustive()
@@ -139,78 +160,51 @@ impl std::fmt::Debug for Engine {
 }
 
 impl Engine {
-    /// Create an [`EngineBuilder`] for fluent engine construction.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use varpulis_runtime::Engine;
-    /// use tokio::sync::mpsc;
-    ///
-    /// let (tx, _rx) = mpsc::channel(100);
-    /// let mut engine = Engine::builder()
-    ///     .output(tx)
-    ///     .build();
-    /// ```
+    /// Create an [`EngineBuilder`] for fluent engine construction (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub fn builder() -> EngineBuilder {
         EngineBuilder::new()
     }
 
+    /// Create engine with an owned output channel (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub fn new(output_tx: mpsc::Sender<Event>) -> Self {
-        Self {
-            streams: FxHashMap::default(),
-            router: router::EventRouter::new(),
-            functions: FxHashMap::default(),
-            patterns: FxHashMap::default(),
-            configs: FxHashMap::default(),
-            variables: FxHashMap::default(),
-            mutable_vars: FxHashSet::default(),
-            connectors: FxHashMap::default(),
-            source_bindings: Vec::new(),
-            sinks: sink_factory::SinkRegistry::new(),
-            output_channel: Some(OutputChannel::Owned(output_tx)),
-            events_processed: 0,
-            output_events_emitted: 0,
-            metrics: None,
-            context_map: ContextMap::new(),
-            watermark_tracker: None,
-            last_applied_watermark: None,
-            late_data_configs: FxHashMap::default(),
-            context_name: None,
-            topic_prefix: None,
-            shared_hamlet_aggregators: Vec::new(),
-            checkpoint_manager: None,
-            credentials_store: None,
-            dlq_path: None,
-            dlq_config: crate::dead_letter::DlqConfig::default(),
-            dlq: None,
-            physical_plan: None,
-            udf_registry: UdfRegistry::new(),
-            trace_collector: trace::TraceCollector::new(),
+        Self::new_internal(Some(OutputChannel::Owned(output_tx)))
+    }
+
+    /// Create engine without output channel (for benchmarking - skips Event cloning overhead).
+    /// Available in both async and WASM builds.
+    pub fn new_benchmark() -> Self {
+        #[cfg(feature = "async-runtime")]
+        {
+            Self::new_internal(None)
+        }
+        #[cfg(not(feature = "async-runtime"))]
+        {
+            Self::new_sync()
         }
     }
 
-    /// Create engine without output channel (for benchmarking - skips Event cloning overhead)
-    pub fn new_benchmark() -> Self {
-        Self::new_internal(None)
-    }
-
-    /// Create engine with optional output channel (legacy API, requires cloning)
+    /// Create engine with optional output channel (async-runtime only, legacy API).
+    #[cfg(feature = "async-runtime")]
     pub fn new_with_optional_output(output_tx: Option<mpsc::Sender<Event>>) -> Self {
         Self::new_internal(output_tx.map(OutputChannel::Owned))
     }
 
-    /// Create engine with zero-copy SharedEvent output channel (PERF: avoids cloning)
+    /// Create engine with zero-copy SharedEvent output channel (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub fn new_shared(output_tx: mpsc::Sender<SharedEvent>) -> Self {
         Self::new_internal(Some(OutputChannel::Shared(output_tx)))
     }
 
-    /// Set the connector credentials store for profile resolution.
+    /// Set the connector credentials store for profile resolution (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub fn set_credentials_store(&mut self, store: Arc<connector::credentials::CredentialsStore>) {
         self.credentials_store = Some(store);
     }
 
-    /// Internal constructor
+    /// Internal constructor for async-runtime builds with output channel support.
+    #[cfg(feature = "async-runtime")]
     fn new_internal(output_channel: Option<OutputChannel>) -> Self {
         Self {
             streams: FxHashMap::default(),
@@ -245,7 +239,39 @@ impl Engine {
         }
     }
 
-    /// Clone the output channel for use in engine reload
+    /// Constructor for sync-only / WASM builds (no tokio, no output channel).
+    #[cfg(not(feature = "async-runtime"))]
+    pub fn new_sync() -> Self {
+        Self {
+            streams: FxHashMap::default(),
+            router: router::EventRouter::new(),
+            functions: FxHashMap::default(),
+            patterns: FxHashMap::default(),
+            configs: FxHashMap::default(),
+            variables: FxHashMap::default(),
+            mutable_vars: FxHashSet::default(),
+            source_bindings: Vec::new(),
+            collected_outputs: Vec::new(),
+            events_processed: 0,
+            output_events_emitted: 0,
+            watermark_tracker: None,
+            last_applied_watermark: None,
+            late_data_configs: FxHashMap::default(),
+            context_name: None,
+            topic_prefix: None,
+            shared_hamlet_aggregators: Vec::new(),
+            checkpoint_manager: None,
+            dlq_path: None,
+            dlq_config: crate::dead_letter::DlqConfig::default(),
+            dlq: None,
+            physical_plan: None,
+            udf_registry: UdfRegistry::new(),
+            trace_collector: trace::TraceCollector::new(),
+        }
+    }
+
+    /// Clone the output channel for use in engine reload (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     fn clone_output_channel(&self) -> Option<OutputChannel> {
         match &self.output_channel {
             Some(OutputChannel::Owned(tx)) => Some(OutputChannel::Owned(tx.clone())),
@@ -257,6 +283,7 @@ impl Engine {
     /// Send an output event to the output channel (if configured).
     /// In benchmark mode (no output channel), this is a no-op to avoid cloning overhead.
     /// PERF: Uses zero-copy for SharedEvent channels, clones only for legacy Owned channels.
+    #[cfg(feature = "async-runtime")]
     #[inline]
     pub(super) fn send_output_shared(&mut self, event: &SharedEvent) {
         match &self.output_channel {
@@ -279,8 +306,16 @@ impl Engine {
         }
     }
 
+    /// Collect output event into internal buffer (WASM/sync-only mode).
+    #[cfg(not(feature = "async-runtime"))]
+    #[inline]
+    pub(super) fn send_output_shared(&mut self, event: &SharedEvent) {
+        self.collected_outputs.push((**event).clone());
+    }
+
     /// Send an output event to the output channel (if configured).
     /// In benchmark mode (no output channel), this is a no-op to avoid cloning overhead.
+    #[cfg(feature = "async-runtime")]
     #[inline]
     pub(super) fn send_output(&mut self, event: Event) {
         match &self.output_channel {
@@ -299,6 +334,26 @@ impl Engine {
                 // Benchmark mode: skip sending entirely
             }
         }
+    }
+
+    /// Collect output event into internal buffer (WASM/sync-only mode).
+    #[cfg(not(feature = "async-runtime"))]
+    #[inline]
+    #[allow(dead_code)]
+    pub(super) fn send_output(&mut self, event: Event) {
+        self.collected_outputs.push(event);
+    }
+
+    /// Process events synchronously and return collected outputs directly.
+    /// Used by WASM builds where mpsc channels are not available.
+    #[cfg(not(feature = "async-runtime"))]
+    pub fn process_batch_sync_collect(
+        &mut self,
+        events: Vec<Event>,
+    ) -> Result<Vec<Event>, error::EngineError> {
+        self.collected_outputs.clear();
+        self.process_batch_sync(events)?;
+        Ok(std::mem::take(&mut self.collected_outputs))
     }
 
     /// Set the context name for this engine instance.
@@ -364,12 +419,14 @@ impl Engine {
         self.configs.get(name)
     }
 
-    /// Get a declared connector by name
+    /// Get a declared connector by name (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub fn get_connector(&self, name: &str) -> Option<&connector::ConnectorConfig> {
         self.connectors.get(name)
     }
 
-    /// Get all declared connector configs (for building a ManagedConnectorRegistry).
+    /// Get all declared connector configs (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub const fn connector_configs(&self) -> &FxHashMap<String, connector::ConnectorConfig> {
         &self.connectors
     }
@@ -400,17 +457,20 @@ impl Engine {
         &self.variables
     }
 
-    /// Get the context map (for orchestrator setup)
+    /// Get the context map (for orchestrator setup, async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub const fn context_map(&self) -> &ContextMap {
         &self.context_map
     }
 
-    /// Check if the loaded program declares any contexts
+    /// Check if the loaded program declares any contexts (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub fn has_contexts(&self) -> bool {
         self.context_map.has_contexts()
     }
 
-    /// Enable Prometheus metrics
+    /// Enable Prometheus metrics (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub fn with_metrics(mut self, metrics: Metrics) -> Self {
         self.metrics = Some(metrics);
         self
@@ -608,6 +668,7 @@ impl Engine {
                     info!("Assigned variable: {} = {:?}", name, new_value);
                     self.variables.insert(name.clone(), new_value);
                 }
+                #[cfg(feature = "async-runtime")]
                 Stmt::ContextDecl { name, cores } => {
                     use crate::context::ContextConfig;
                     info!("Registered context: {} (cores: {:?})", name, cores);
@@ -616,6 +677,11 @@ impl Engine {
                         cores: cores.clone(),
                     });
                 }
+                #[cfg(not(feature = "async-runtime"))]
+                Stmt::ContextDecl { .. } => {
+                    warn!("Context declarations require async-runtime feature; ignoring");
+                }
+                #[cfg(feature = "async-runtime")]
                 Stmt::ConnectorDecl {
                     name,
                     connector_type,
@@ -652,71 +718,82 @@ impl Engine {
 
                     self.connectors.insert(name.clone(), config);
                 }
+                #[cfg(not(feature = "async-runtime"))]
+                Stmt::ConnectorDecl { name, .. } => {
+                    warn!(
+                        "Connector '{}' declarations require async-runtime feature; ignoring",
+                        name
+                    );
+                }
                 _ => {
                     tracing::debug!("Skipping statement: {:?}", stmt.node);
                 }
             }
         }
 
-        // Collect all sink_keys actually referenced by stream operations
-        let mut referenced_sink_keys: FxHashSet<String> = FxHashSet::default();
-        let mut topic_overrides: Vec<(String, String, String)> = Vec::new();
-        for stream in self.streams.values() {
-            for op in &stream.operations {
-                if let RuntimeOp::To(to_config) = op {
-                    referenced_sink_keys.insert(to_config.sink_key.clone());
-                    match &to_config.topic {
-                        Some(types::TopicSpec::Static(topic)) => {
-                            topic_overrides.push((
-                                to_config.sink_key.clone(),
-                                to_config.connector_name.clone(),
-                                topic.clone(),
-                            ));
+        // Build sinks and connectors (async-runtime only — requires tokio for async I/O)
+        #[cfg(feature = "async-runtime")]
+        {
+            // Collect all sink_keys actually referenced by stream operations
+            let mut referenced_sink_keys: FxHashSet<String> = FxHashSet::default();
+            let mut topic_overrides: Vec<(String, String, String)> = Vec::new();
+            for stream in self.streams.values() {
+                for op in &stream.operations {
+                    if let RuntimeOp::To(to_config) = op {
+                        referenced_sink_keys.insert(to_config.sink_key.clone());
+                        match &to_config.topic {
+                            Some(types::TopicSpec::Static(topic)) => {
+                                topic_overrides.push((
+                                    to_config.sink_key.clone(),
+                                    to_config.connector_name.clone(),
+                                    topic.clone(),
+                                ));
+                            }
+                            Some(types::TopicSpec::Dynamic(_)) => {
+                                // Dynamic topics use the base connector — ensure it's registered
+                                referenced_sink_keys.insert(to_config.connector_name.clone());
+                            }
+                            None => {}
                         }
-                        Some(types::TopicSpec::Dynamic(_)) => {
-                            // Dynamic topics use the base connector — ensure it's registered
-                            referenced_sink_keys.insert(to_config.connector_name.clone());
-                        }
-                        None => {}
                     }
                 }
             }
-        }
 
-        // Build sinks using the registry
-        self.sinks.build_from_connectors(
-            &self.connectors,
-            &referenced_sink_keys,
-            &topic_overrides,
-            self.context_name.as_deref(),
-            self.topic_prefix.as_deref(),
-        );
+            // Build sinks using the registry
+            self.sinks.build_from_connectors(
+                &self.connectors,
+                &referenced_sink_keys,
+                &topic_overrides,
+                self.context_name.as_deref(),
+                self.topic_prefix.as_deref(),
+            );
 
-        // Wrap sinks with circuit breaker + DLQ when sink operations exist
-        if !self.sinks.cache().is_empty() {
-            let dlq_path = self
-                .dlq_path
-                .clone()
-                .unwrap_or_else(|| std::path::PathBuf::from("varpulis-dlq.jsonl"));
-            let dlq = crate::dead_letter::DeadLetterQueue::open_with_config(
-                &dlq_path,
-                self.dlq_config.clone(),
-            )
-            .map(Arc::new)
-            .ok();
-            if dlq.is_some() {
-                tracing::info!(
-                    "Dead letter queue enabled at {} for {} sink(s)",
-                    dlq_path.display(),
-                    self.sinks.cache().len()
+            // Wrap sinks with circuit breaker + DLQ when sink operations exist
+            if !self.sinks.cache().is_empty() {
+                let dlq_path = self
+                    .dlq_path
+                    .clone()
+                    .unwrap_or_else(|| std::path::PathBuf::from("varpulis-dlq.jsonl"));
+                let dlq = crate::dead_letter::DeadLetterQueue::open_with_config(
+                    &dlq_path,
+                    self.dlq_config.clone(),
+                )
+                .map(Arc::new)
+                .ok();
+                if dlq.is_some() {
+                    tracing::info!(
+                        "Dead letter queue enabled at {} for {} sink(s)",
+                        dlq_path.display(),
+                        self.sinks.cache().len()
+                    );
+                }
+                self.dlq = dlq.clone();
+                self.sinks.wrap_with_resilience(
+                    crate::circuit_breaker::CircuitBreakerConfig::default(),
+                    dlq,
+                    self.metrics.clone(),
                 );
             }
-            self.dlq = dlq.clone();
-            self.sinks.wrap_with_resilience(
-                crate::circuit_breaker::CircuitBreakerConfig::default(),
-                dlq,
-                self.metrics.clone(),
-            );
         }
 
         // Phase 2: Detect multi-query Hamlet sharing opportunities
@@ -918,7 +995,8 @@ impl Engine {
         }
     }
 
-    /// Connect all sinks that require explicit connection.
+    /// Connect all sinks that require explicit connection (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     #[tracing::instrument(skip(self))]
     pub async fn connect_sinks(&self) -> Result<(), error::EngineError> {
         self.sinks
@@ -927,17 +1005,20 @@ impl Engine {
             .map_err(error::EngineError::Pipeline)
     }
 
-    /// Inject a pre-built sink into the engine's registry.
+    /// Inject a pre-built sink into the engine's registry (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub fn inject_sink(&mut self, key: &str, sink: Arc<dyn crate::sink::Sink>) {
         self.sinks.insert(key.to_string(), sink);
     }
 
-    /// Check whether a given key has a registered sink.
+    /// Check whether a given key has a registered sink (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub fn has_sink(&self, key: &str) -> bool {
         self.sinks.cache().contains_key(key)
     }
 
-    /// Return all sink keys that belong to a given connector name.
+    /// Return all sink keys that belong to a given connector name (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub fn sink_keys_for_connector(&self, connector_name: &str) -> Vec<String> {
         let prefix = format!("{connector_name}::");
         self.sinks
@@ -1139,7 +1220,8 @@ impl Engine {
     // Hot Reload
     // =========================================================================
 
-    /// Reload program without losing state where possible.
+    /// Reload program without losing state where possible (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     pub fn reload(&mut self, program: &Program) -> Result<ReloadReport, error::EngineError> {
         let mut report = ReloadReport::default();
 
@@ -1541,7 +1623,8 @@ impl Engine {
         }
     }
 
-    /// Advance the watermark from an external source (e.g., upstream context).
+    /// Advance the watermark from an external source (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     #[tracing::instrument(skip(self))]
     pub async fn advance_external_watermark(
         &mut self,
@@ -1563,7 +1646,8 @@ impl Engine {
         Ok(())
     }
 
-    /// Check if two runtime sources are compatible for state preservation
+    /// Check if two runtime sources are compatible for state preservation (used by reload).
+    #[cfg(feature = "async-runtime")]
     fn sources_compatible(a: &RuntimeSource, b: &RuntimeSource) -> bool {
         match (a, b) {
             (RuntimeSource::EventType(a), RuntimeSource::EventType(b)) => a == b,

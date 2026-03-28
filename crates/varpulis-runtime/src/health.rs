@@ -152,12 +152,14 @@ impl Default for HealthRegistry {
 }
 
 /// Adapter that converts a [`ConnectorHealthReport`](crate::connector::ConnectorHealthReport)
-/// into the health monitoring system.
+/// into the health monitoring system (async-runtime only).
+#[cfg(feature = "async-runtime")]
 pub struct ConnectorHealthAdapter {
     name: String,
     health_fn: Box<dyn Fn() -> crate::connector::ConnectorHealthReport + Send + Sync>,
 }
 
+#[cfg(feature = "async-runtime")]
 impl std::fmt::Debug for ConnectorHealthAdapter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ConnectorHealthAdapter")
@@ -166,6 +168,7 @@ impl std::fmt::Debug for ConnectorHealthAdapter {
     }
 }
 
+#[cfg(feature = "async-runtime")]
 impl ConnectorHealthAdapter {
     pub fn new<F>(name: String, health_fn: F) -> Self
     where
@@ -178,6 +181,7 @@ impl ConnectorHealthAdapter {
     }
 }
 
+#[cfg(feature = "async-runtime")]
 impl HealthReporter for ConnectorHealthAdapter {
     fn health(&self) -> ComponentHealth {
         let report = (self.health_fn)();

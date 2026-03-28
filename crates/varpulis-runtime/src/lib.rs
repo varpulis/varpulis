@@ -104,22 +104,19 @@
 //! - [`varpulis_parser`](../varpulis_parser): Parsing VPL
 //! - [`varpulis_cli`](../varpulis_cli): Command-line interface
 
+// ---- Core modules (always available, no async runtime needed) ----
 pub mod aggregation;
-pub mod backpressure;
 pub mod codec;
 pub mod columnar;
-pub mod context;
+pub mod limits;
 pub use varpulis_dead_letter as dead_letter;
 pub mod engine;
-pub mod interactive;
-pub use varpulis_enrichment as enrichment;
 pub mod event;
 pub mod event_file;
 pub mod greta;
 pub use varpulis_hamlet as hamlet;
 pub mod health;
 pub mod join;
-pub mod metrics;
 pub mod persistence;
 pub use varpulis_pst as pst;
 pub use varpulis_sase as sase;
@@ -127,54 +124,84 @@ pub mod sase_persistence;
 pub mod scoring;
 pub mod sequence;
 pub use varpulis_simd as simd;
-pub mod simulator;
-pub mod sink;
-pub mod stream;
-pub mod tenant;
-pub mod testing;
-pub mod timer;
 pub mod udf;
 pub mod vpl_test;
 pub mod watermark;
 pub mod window;
-pub mod worker_pool;
 pub mod zdd_unified;
 
-// Re-export from varpulis-connectors for backwards compatibility
-// Columnar storage for SIMD-optimized aggregations
+// ---- Async-runtime modules (require tokio, not available in WASM) ----
+#[cfg(feature = "async-runtime")]
+pub mod backpressure;
+#[cfg(feature = "async-runtime")]
+pub mod context;
+#[cfg(feature = "async-runtime")]
+pub use varpulis_enrichment as enrichment;
+#[cfg(feature = "async-runtime")]
+pub mod interactive;
+#[cfg(feature = "async-runtime")]
+pub mod metrics;
+#[cfg(feature = "async-runtime")]
+pub mod simulator;
+#[cfg(feature = "async-runtime")]
+pub mod sink;
+#[cfg(feature = "async-runtime")]
+pub mod stream;
+#[cfg(feature = "async-runtime")]
+pub mod tenant;
+#[cfg(feature = "async-runtime")]
+pub mod testing;
+#[cfg(feature = "async-runtime")]
+pub mod timer;
+#[cfg(feature = "async-runtime")]
+pub mod worker_pool;
+
+// ---- Core re-exports (always available) ----
 pub use columnar::{Column, ColumnarAccess, ColumnarBuffer, ColumnarCheckpoint};
-pub use context::{
-    CheckpointAck, CheckpointBarrier, CheckpointCoordinator, ContextConfig, ContextMap,
-    ContextMessage, ContextOrchestrator, ContextRuntime, DispatchError, EventTypeRouter,
-};
 pub use engine::error::EngineError;
-pub use engine::{Engine, EngineBuilder, ReloadReport, SourceBinding};
+pub use engine::{Engine, ReloadReport, SourceBinding};
 pub use event::{Event, SharedEvent};
 pub use event_file::StreamingEventReader;
-pub use metrics::Metrics;
 // Persistence exports (always available, RocksDB impl requires "persistence" feature)
 #[cfg(feature = "persistence")]
 pub use persistence::RocksDbStore;
 pub use persistence::{
     Checkpoint, CheckpointConfig, CheckpointManager, FileStore, MemoryStore, StateStore, StoreError,
 };
-pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink};
-pub use stream::Stream;
-// Multi-tenant SaaS support
-pub use tenant::{
-    hash_api_key, shared_tenant_manager, shared_tenant_manager_with_store, Pipeline,
-    PipelineSnapshot, PipelineStatus, SharedTenantManager, Tenant, TenantError, TenantId,
-    TenantManager, TenantQuota, TenantSnapshot, TenantUsage,
-};
-pub use timer::{spawn_timer, TimerManager};
-pub use varpulis_connectors as connector;
-pub use varpulis_connectors::{circuit_breaker, converter, limits, Sink, SinkError};
 pub use window::{
     CountWindow, DelayBuffer, IncrementalAggregates, IncrementalSlidingWindow,
     PartitionedDelayBuffer, PartitionedPreviousValueTracker, PartitionedSessionWindow,
     PartitionedSlidingWindow, PartitionedTumblingWindow, PreviousValueTracker, SessionWindow,
     SlidingCountWindow, SlidingWindow, TumblingWindow,
 };
+
+// ---- Async-runtime re-exports (require tokio) ----
+#[cfg(feature = "async-runtime")]
+pub use context::{
+    CheckpointAck, CheckpointBarrier, CheckpointCoordinator, ContextConfig, ContextMap,
+    ContextMessage, ContextOrchestrator, ContextRuntime, DispatchError, EventTypeRouter,
+};
+#[cfg(feature = "async-runtime")]
+pub use engine::EngineBuilder;
+#[cfg(feature = "async-runtime")]
+pub use metrics::Metrics;
+#[cfg(feature = "async-runtime")]
+pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink};
+#[cfg(feature = "async-runtime")]
+pub use stream::Stream;
+#[cfg(feature = "async-runtime")]
+pub use tenant::{
+    hash_api_key, shared_tenant_manager, shared_tenant_manager_with_store, Pipeline,
+    PipelineSnapshot, PipelineStatus, SharedTenantManager, Tenant, TenantError, TenantId,
+    TenantManager, TenantQuota, TenantSnapshot, TenantUsage,
+};
+#[cfg(feature = "async-runtime")]
+pub use timer::{spawn_timer, TimerManager};
+#[cfg(feature = "async-runtime")]
+pub use varpulis_connectors as connector;
+#[cfg(feature = "async-runtime")]
+pub use varpulis_connectors::{circuit_breaker, converter, Sink, SinkError};
+#[cfg(feature = "async-runtime")]
 pub use worker_pool::{
     BackpressureStrategy, PoolBackpressureError, WorkerPool, WorkerPoolConfig, WorkerPoolMetrics,
     WorkerState, WorkerStatus,

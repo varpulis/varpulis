@@ -50,6 +50,7 @@ impl SkipFlags {
     }
 
     /// For join result processing - skip non-partitioned windows and sequence/pattern ops
+    #[allow(dead_code)]
     pub fn for_join() -> Self {
         Self {
             window: true,
@@ -60,6 +61,7 @@ impl SkipFlags {
     }
 
     /// For post-window processing - skip all windows, where closures, sequence/pattern ops
+    #[allow(dead_code)]
     pub fn for_post_window() -> Self {
         Self {
             all_windows: true,
@@ -71,12 +73,15 @@ impl SkipFlags {
     }
 }
 
-/// Execute operations `stream.operations[start_idx..]` on the given events.
+/// Execute operations `stream.operations[start_idx..]` on the given events (async version).
 ///
 /// This is the single unified pipeline that replaces:
 /// - `process_stream_with_functions` (start_idx = 0, SkipFlags::none())
 /// - `process_join_result` (start_idx = 0, SkipFlags::for_join())
 /// - `process_post_window` (start_idx = window_idx + 1, SkipFlags::for_post_window())
+///
+/// Requires async-runtime for `.to()` and `.enrich()` operations.
+#[cfg(feature = "async-runtime")]
 pub async fn execute_pipeline(
     stream: &mut StreamDefinition,
     initial_events: Vec<SharedEvent>,
@@ -180,6 +185,7 @@ const fn should_skip_op(op: &RuntimeOp, flags: SkipFlags) -> bool {
 ///
 /// Handles `RuntimeOp::To` and `RuntimeOp::Enrich` (which require `.await`),
 /// then delegates all other ops to [`execute_op_common`].
+#[cfg(feature = "async-runtime")]
 #[allow(clippy::too_many_arguments)]
 async fn execute_op(
     op: &mut RuntimeOp,
@@ -1214,6 +1220,7 @@ fn execute_op_common(
             state.count += current_events.len();
         }
 
+        #[cfg(feature = "async-runtime")]
         RuntimeOp::Concurrent(config) => {
             // Parallel processing: partition events across rayon thread pool,
             // process through remaining ops independently, then merge results.

@@ -1,0 +1,30 @@
+[package]
+name = "varpulis-engine-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Full Varpulis CEP engine compiled to WebAssembly — parse VPL, process events, get outputs"
+readme = "../../README.md"
+keywords = ["cep", "event-processing", "wasm", "pattern-matching", "streaming"]
+categories = ["wasm", "data-structures"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
+varpulis-parser = { version = "0.9.0", path = "../varpulis-parser" }
+varpulis-runtime = { version = "0.9.0", path = "../varpulis-runtime", default-features = false, features = ["wasm"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wasm-bindgen = "0.2"
+chrono = { workspace = true }
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[lints]
+workspace = true

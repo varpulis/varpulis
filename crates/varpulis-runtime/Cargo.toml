@@ -9,17 +9,14 @@ documentation.workspace = true
 description = "Runtime execution engine for Varpulis"
 
 [dependencies]
-varpulis-connectors = { version = "0.9.0", path = "../varpulis-connectors" }
 varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
 varpulis-parser = { version = "0.9.0", path = "../varpulis-parser" }
 varpulis-sase = { version = "0.9.0", path = "../varpulis-sase" }
 varpulis-zdd = { version = "0.9.0", path = "../varpulis-zdd" }
 varpulis-pst = { version = "0.9.0", path = "../varpulis-pst" }
 varpulis-hamlet = { version = "0.9.0", path = "../varpulis-hamlet" }
-varpulis-enrichment = { version = "0.9.0", path = "../varpulis-enrichment" }
 varpulis-simd = { version = "0.9.0", path = "../varpulis-simd" }
 varpulis-dead-letter = { version = "0.9.0", path = "../varpulis-dead-letter" }
-tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -27,18 +24,23 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 indexmap = { workspace = true }
 rand = { workspace = true }
-prometheus = { workspace = true }
 rustc-hash = { workspace = true }
-async-trait = "0.1"
-rayon = "1.10"
 smallvec = "1.13"
 hashlink = "0.11"
-reqwest = { workspace = true }
-futures = "0.3"
-uuid = { version = "1", features = ["v4"] }
 sha2 = { workspace = true }
 hex = { workspace = true }
-core_affinity = "0.8"
+
+# async-runtime: dependencies that require a tokio async runtime (not WASM-compatible)
+varpulis-connectors = { version = "0.9.0", path = "../varpulis-connectors", optional = true }
+varpulis-enrichment = { version = "0.9.0", path = "../varpulis-enrichment", optional = true }
+tokio = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+prometheus = { workspace = true, optional = true }
+async-trait = { version = "0.1", optional = true }
+rayon = { version = "1.10", optional = true }
+futures = { version = "0.3", optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+core_affinity = { version = "0.8", optional = true }
 
 # ONNX Runtime — no stable 2.x exists (all versions are RC); pinned for reproducibility
 ort = { version = "=2.0.0-rc.12", features = ["load-dynamic"], optional = true }
@@ -57,27 +59,36 @@ rmp-serde = { version = "1.3", optional = true }
 varpulis-datagen = { version = "0.9.0", path = "../varpulis-datagen", optional = true }
 
 [features]
-default = []
-mqtt = ["varpulis-connectors/mqtt"]
-kafka = ["varpulis-connectors/kafka"]
-postgres = ["varpulis-connectors/postgres"]
-mysql = ["varpulis-connectors/mysql"]
-sqlite = ["varpulis-connectors/sqlite"]
-database = ["varpulis-connectors/database", "varpulis-enrichment/database"]
-redis = ["varpulis-connectors/redis", "varpulis-enrichment/redis"]
+default = ["async-runtime"]
+# Full async runtime with tokio, connectors, metrics, and all async infrastructure.
+# Disable this (use --no-default-features) for WASM or pure-sync builds.
+async-runtime = [
+    "tokio", "reqwest", "prometheus", "async-trait", "rayon", "futures",
+    "uuid", "core_affinity",
+    "varpulis-connectors", "varpulis-enrichment",
+]
+# Pure synchronous engine for wasm32-unknown-unknown. No tokio, no connectors.
+wasm = []
+mqtt = ["varpulis-connectors/mqtt", "async-runtime"]
+kafka = ["varpulis-connectors/kafka", "async-runtime"]
+postgres = ["varpulis-connectors/postgres", "async-runtime"]
+mysql = ["varpulis-connectors/mysql", "async-runtime"]
+sqlite = ["varpulis-connectors/sqlite", "async-runtime"]
+database = ["varpulis-connectors/database", "varpulis-enrichment/database", "async-runtime"]
+redis = ["varpulis-connectors/redis", "varpulis-enrichment/redis", "async-runtime"]
 persistence = ["rocksdb"]
-kinesis = ["varpulis-connectors/kinesis"]
-s3 = ["varpulis-connectors/s3"]
-nats = ["varpulis-connectors/nats"]
-elasticsearch = ["varpulis-connectors/elasticsearch"]
-pulsar = ["varpulis-connectors/pulsar"]
+kinesis = ["varpulis-connectors/kinesis", "async-runtime"]
+s3 = ["varpulis-connectors/s3", "async-runtime"]
+nats = ["varpulis-connectors/nats", "async-runtime"]
+elasticsearch = ["varpulis-connectors/elasticsearch", "async-runtime"]
+pulsar = ["varpulis-connectors/pulsar", "async-runtime"]
 onnx = ["ort"]
 gpu = ["onnx"]
 binary-codec = ["rmp-serde"]
 encryption = ["aes-gcm", "argon2"]
-cdc = ["varpulis-connectors/cdc"]
-csv-converter = ["varpulis-connectors/csv-converter"]
-interactive = ["varpulis-datagen"]
+cdc = ["varpulis-connectors/cdc", "async-runtime"]
+csv-converter = ["varpulis-connectors/csv-converter", "async-runtime"]
+interactive = ["varpulis-datagen", "async-runtime"]
 all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch", "pulsar"]
 
 [dev-dependencies]

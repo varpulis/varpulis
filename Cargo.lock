@@ -3017,11 +3017,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0de51e6874e94e7bf76d726fc5d13ba782deca734ff60d5bb2fb2607c7406555"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
  "rand_core 0.10.0",
  "wasip2",
  "wasip3",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -8417,6 +8419,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ba6f5989077681266825251a52748b8c1d8a4ad098cc37e440103d0ea717fc0"
 
 [[package]]
+name = "varpulis"
+version = "0.9.0"
+dependencies = [
+ "varpulis-core",
+ "varpulis-runtime",
+]
+
+[[package]]
 name = "varpulis-actors"
 version = "0.9.0"
 dependencies = [
@@ -8814,6 +8824,21 @@ dependencies = [
  "serde_json",
  "tracing",
  "varpulis-core",
+]
+
+[[package]]
+name = "varpulis-engine-wasm"
+version = "0.9.0"
+dependencies = [
+ "chrono",
+ "getrandom 0.4.2",
+ "serde",
+ "serde_json",
+ "varpulis-core",
+ "varpulis-parser",
+ "varpulis-runtime",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
