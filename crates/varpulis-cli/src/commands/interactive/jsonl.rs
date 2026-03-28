@@ -20,7 +20,6 @@ pub async fn run_jsonl_session(
     trace: bool,
 ) -> anyhow::Result<()> {
     let mut session = InteractiveSession::new();
-    let mut response_rx = session.subscribe();
 
     // Auto-load VPL file if provided
     if let Some(path) = file {
@@ -89,11 +88,6 @@ pub async fn run_jsonl_session(
                         }
                     }
                     None => break, // EOF
-                }
-            }
-            resp = response_rx.recv() => {
-                if let Ok(resp) = resp {
-                    write_response(&resp);
                 }
             }
             _ = generator_interval.tick() => {

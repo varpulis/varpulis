@@ -189,8 +189,16 @@ impl InteractiveSession {
         };
 
         let mut events = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         while let Ok(event) = rx.try_recv() {
-            events.push(event);
+            // Deduplicate — MQTT managed connectors may deliver messages
+            // twice when multiple topics are subscribed on the same connection.
+            // Use event_type + timestamp nanoseconds as dedup key.
+            let ts_nanos = event.timestamp.timestamp_nanos_opt().unwrap_or(0);
+            let key = (event.event_type.clone(), ts_nanos);
+            if seen.insert(key) {
+                events.push(event);
+            }
         }
 
         if events.is_empty() {
@@ -224,15 +232,18 @@ impl InteractiveSession {
         }
 
         // Shutdown any existing connectors
+        // Use block_in_place to avoid "cannot block from within a runtime" panic
         if let Some(mut old_registry) = self.connector_registry.take() {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(old_registry.shutdown());
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(old_registry.shutdown())
+            });
         }
 
         let mut registry = ManagedConnectorRegistry::from_configs(self.engine.connector_configs())
             .map_err(|e| format!("Registry build error: {e}"))?;
 
-        let rt = tokio::runtime::Handle::current();
+        let mut started_topics: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
         for binding in &bindings {
             let config = self.engine.get_connector(&binding.connector_name).cloned();
             let Some(config) = config else { continue };
@@ -243,12 +254,20 @@ impl InteractiveSession {
                 .or(config.topic.as_deref())
                 .unwrap_or("varpulis/events/#");
 
-            rt.block_on(registry.start_source(
-                &binding.connector_name,
-                topic,
-                self.connector_tx.clone(),
-                &binding.extra_params,
-            ))
+            // Skip if already started this connector+topic combo
+            let key = (binding.connector_name.clone(), topic.to_string());
+            if !started_topics.insert(key) {
+                continue;
+            }
+
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(registry.start_source(
+                    &binding.connector_name,
+                    topic,
+                    self.connector_tx.clone(),
+                    &binding.extra_params,
+                ))
+            })
             .map_err(|e| format!("Source start error for '{}': {e}", binding.connector_name))?;
         }
 
@@ -661,6 +680,11 @@ impl InteractiveSession {
             let _ = self.broadcast_tx.send(resp.clone());
             responses.push(resp);
         }
+
+        // Note: stream chaining (e.g., `HotDevices as h -> LargePayments as p`)
+        // is handled by the engine's internal routing — output events from one
+        // stream are automatically available as input to sequence patterns that
+        // reference that stream name.
 
         // Drain trace entries
         let trace_entries = self.engine.drain_trace();
