@@ -40,7 +40,7 @@ const MAX_EVENT_LOG: usize = 5000;
 /// Application state for the TUI.
 struct TuiApp {
     session: InteractiveSession,
-    response_rx: tokio::sync::broadcast::Receiver<SessionResponse>,
+    // response_rx removed — polling via poll_connectors/poll_generator is sufficient
     /// Scrolling log of output events and trace entries.
     event_log: Vec<LogEntry>,
     /// Current scroll offset in the event log (0 = bottom/latest).
@@ -74,10 +74,8 @@ struct LogEntry {
 impl TuiApp {
     fn new() -> Self {
         let session = InteractiveSession::new();
-        let response_rx = session.subscribe();
         Self {
             session,
-            response_rx,
             event_log: Vec::new(),
             event_log_offset: 0,
             topology_lines: vec!["(no program loaded)".into()],
@@ -894,11 +892,6 @@ pub async fn run_tui_session(
                             app.running = false;
                         }
                         _ => {}
-                    }
-                }
-                resp = app.response_rx.recv() => {
-                    if let Ok(resp) = resp {
-                        app.handle_response(resp);
                     }
                 }
                 _ = generator_interval.tick() => {
