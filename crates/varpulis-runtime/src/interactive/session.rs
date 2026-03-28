@@ -48,6 +48,13 @@ pub struct InteractiveSession {
     generator_handle: Option<tokio::task::JoinHandle<()>>,
     /// Receiver for generated events (populated when a generator is running).
     generator_rx: Option<mpsc::Receiver<Event>>,
+    // Connector state
+    /// Sender for connector-sourced events.
+    connector_tx: mpsc::Sender<Event>,
+    /// Receiver for connector-sourced events (polled like generator).
+    connector_rx: Option<mpsc::Receiver<Event>>,
+    /// Managed connector registry (owns live connections).
+    connector_registry: Option<crate::connector::ManagedConnectorRegistry>,
     // Subscriptions (None = all streams)
     subscribed_streams: Option<HashSet<String>>,
 }
@@ -64,6 +71,7 @@ impl std::fmt::Debug for InteractiveSession {
                 "generator_count",
                 &self.generator_count.load(Ordering::Relaxed),
             )
+            .field("connector_active", &self.connector_registry.is_some())
             .field("subscribed_streams", &self.subscribed_streams)
             .finish_non_exhaustive()
     }
@@ -81,6 +89,7 @@ impl InteractiveSession {
         let (output_tx, output_rx) = mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
         let engine = Engine::new(output_tx);
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        let (connector_tx, connector_rx) = mpsc::channel::<Event>(8192);
 
         Self {
             engine,
@@ -93,6 +102,9 @@ impl InteractiveSession {
             generator_count: Arc::new(AtomicU64::new(0)),
             generator_handle: None,
             generator_rx: None,
+            connector_tx,
+            connector_rx: Some(connector_rx),
+            connector_registry: None,
             subscribed_streams: None,
         }
     }
@@ -165,6 +177,85 @@ impl InteractiveSession {
         self.drain_outputs_and_trace()
     }
 
+    /// Poll the connector channel, processing any buffered connector-sourced
+    /// events through the engine and returning output responses.
+    ///
+    /// Callers should invoke this periodically (alongside `poll_generator`)
+    /// when connectors have been auto-started from `.from()` bindings.
+    pub fn poll_connectors(&mut self) -> Vec<SessionResponse> {
+        let rx = match &mut self.connector_rx {
+            Some(rx) => rx,
+            None => return vec![],
+        };
+
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+
+        if events.is_empty() {
+            return vec![];
+        }
+
+        if let Err(e) = self.engine.process_batch_sync(events) {
+            return vec![SessionResponse::Error {
+                message: format!("Connector event processing error: {e}"),
+            }];
+        }
+
+        self.drain_outputs_and_trace()
+    }
+
+    /// Whether the loaded program has source connector bindings.
+    pub fn has_source_bindings(&self) -> bool {
+        !self.engine.source_bindings().is_empty()
+    }
+
+    /// Start source connectors for the current program's `.from()` bindings.
+    ///
+    /// Must be called from an async context (uses `tokio::runtime::Handle`).
+    /// Shuts down any previously running connectors first.
+    pub fn start_connectors(&mut self) -> Result<(), String> {
+        use crate::connector::ManagedConnectorRegistry;
+
+        let bindings = self.engine.source_bindings().to_vec();
+        if bindings.is_empty() {
+            return Ok(());
+        }
+
+        // Shutdown any existing connectors
+        if let Some(mut old_registry) = self.connector_registry.take() {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(old_registry.shutdown());
+        }
+
+        let mut registry = ManagedConnectorRegistry::from_configs(self.engine.connector_configs())
+            .map_err(|e| format!("Registry build error: {e}"))?;
+
+        let rt = tokio::runtime::Handle::current();
+        for binding in &bindings {
+            let config = self.engine.get_connector(&binding.connector_name).cloned();
+            let Some(config) = config else { continue };
+
+            let topic = binding
+                .topic_override
+                .as_deref()
+                .or(config.topic.as_deref())
+                .unwrap_or("varpulis/events/#");
+
+            rt.block_on(registry.start_source(
+                &binding.connector_name,
+                topic,
+                self.connector_tx.clone(),
+                &binding.extra_params,
+            ))
+            .map_err(|e| format!("Source start error for '{}': {e}", binding.connector_name))?;
+        }
+
+        self.connector_registry = Some(registry);
+        Ok(())
+    }
+
     // =========================================================================
     // Command handlers
     // =========================================================================
@@ -179,7 +270,7 @@ impl InteractiveSession {
             }
         };
 
-        if self.program_loaded {
+        let mut responses = if self.program_loaded {
             // Hot reload
             match self.engine.reload(&program) {
                 Ok(report) => {
@@ -198,9 +289,11 @@ impl InteractiveSession {
                         preserved: report.state_preserved,
                     }]
                 }
-                Err(e) => vec![SessionResponse::Error {
-                    message: format!("Reload error: {e}"),
-                }],
+                Err(e) => {
+                    return vec![SessionResponse::Error {
+                        message: format!("Reload error: {e}"),
+                    }];
+                }
             }
         } else {
             // First load
@@ -223,11 +316,24 @@ impl InteractiveSession {
                         preserved: vec![],
                     }]
                 }
-                Err(e) => vec![SessionResponse::Error {
-                    message: format!("Load error: {e}"),
-                }],
+                Err(e) => {
+                    return vec![SessionResponse::Error {
+                        message: format!("Load error: {e}"),
+                    }];
+                }
+            }
+        };
+
+        // Auto-start source connectors if any .from() bindings exist
+        if self.has_source_bindings() {
+            if let Err(e) = self.start_connectors() {
+                responses.push(SessionResponse::Error {
+                    message: format!("Connector error: {e}"),
+                });
             }
         }
+
+        responses
     }
 
     /// Append VPL declarations to the accumulated buffer and recompile.
