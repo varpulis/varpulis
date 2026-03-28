@@ -5,7 +5,7 @@
 <p align="center"><strong>Detect temporal patterns in event streams.</strong><br>In Rust, in milliseconds, in 10 lines.</p>
 
 [![CI](https://github.com/varpulis/varpulis/actions/workflows/ci.yml/badge.svg)](https://github.com/varpulis/varpulis/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/varpulis.svg)](https://crates.io/crates/varpulis)
+[![crates.io](https://img.shields.io/crates/v/varpulis-cli.svg)](https://crates.io/crates/varpulis-cli)
 [![docs.rs](https://docs.rs/varpulis-core/badge.svg)](https://docs.rs/varpulis-core)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 
