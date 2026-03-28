@@ -60,6 +60,10 @@ pub async fn run_jsonl_session(
     let mut generator_interval = tokio::time::interval(std::time::Duration::from_millis(10));
     generator_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // Connector poll interval (same cadence as generator)
+    let mut connector_interval = tokio::time::interval(std::time::Duration::from_millis(10));
+    connector_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     loop {
         tokio::select! {
             line = lines.next_line() => {
@@ -94,6 +98,12 @@ pub async fn run_jsonl_session(
             }
             _ = generator_interval.tick() => {
                 let responses = session.poll_generator();
+                for resp in &responses {
+                    write_response(resp);
+                }
+            }
+            _ = connector_interval.tick() => {
+                let responses = session.poll_connectors();
                 for resp in &responses {
                     write_response(resp);
                 }

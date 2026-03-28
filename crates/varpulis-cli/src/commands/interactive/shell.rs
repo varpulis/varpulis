@@ -335,10 +335,7 @@ pub fn evt_fields_to_json(input: &str) -> String {
         // Convert unquoted keys: `field:` → `"field":`
         if ch == ':' && !result.ends_with('"') {
             // Find the start of the key (go back to last separator)
-            let key_start = result
-                .rfind(|c: char| c == '{' || c == ',')
-                .map(|p| p + 1)
-                .unwrap_or(0);
+            let key_start = result.rfind(['{', ',']).map(|p| p + 1).unwrap_or(0);
             let key = result[key_start..].trim().to_string();
             result.truncate(key_start);
             result.push_str(&format!(" \"{key}\""));
@@ -367,9 +364,8 @@ pub fn evt_fields_to_json(input: &str) -> String {
                 i += 4;
                 prev_char = 'l';
                 continue;
-            } else {
-                result.push(ch);
             }
+            result.push(ch);
         } else {
             result.push(ch);
         }

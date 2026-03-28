@@ -90,7 +90,7 @@ impl TuiApp {
             cursor_pos: 0,
             active_pane: PANE_INPUT,
             running: true,
-            status: "Ready. Type VPL or :help for commands.".into(),
+            status: "Enter = newline, blank Enter = submit | Tab = switch pane | :help".into(),
             generator_running: false,
             trace_enabled: false,
         }
@@ -317,9 +317,18 @@ impl TuiApp {
             (_, KeyCode::End) if self.active_pane == PANE_INPUT => {
                 self.cursor_pos = self.input_buffer.len();
             }
-            // Enter: submit input
+            // Enter: newline in input buffer; blank Enter (double-Enter) submits
             (_, KeyCode::Enter) if self.active_pane == PANE_INPUT => {
-                self.submit_input();
+                let last_line_empty =
+                    self.input_buffer.ends_with('\n') || self.input_buffer.trim().is_empty();
+                if last_line_empty && !self.input_buffer.trim().is_empty() {
+                    self.submit_input();
+                } else if self.input_buffer.trim().is_empty() {
+                    // Don't add newlines to empty buffer
+                } else {
+                    self.input_buffer.push('\n');
+                    self.cursor_pos = self.input_buffer.len();
+                }
             }
             // Escape: clear input
             (_, KeyCode::Esc) if self.active_pane == PANE_INPUT => {
@@ -628,17 +637,34 @@ impl TuiApp {
                 height: 1,
             };
 
-            // Render input with cursor indicator
-            let prompt = "> ";
-            let display = format!("{prompt}{}", self.input_buffer);
-            let input_line = Paragraph::new(display).wrap(Wrap { trim: false });
-            f.render_widget(input_line, input_area);
+            // Render multi-line input with per-line prompts
+            let lines_text: Vec<&str> = if self.input_buffer.is_empty() {
+                vec![""]
+            } else {
+                self.input_buffer.split('\n').collect()
+            };
+            let display_lines: Vec<Line> = lines_text
+                .iter()
+                .enumerate()
+                .map(|(i, line)| {
+                    let prompt = if i == 0 { "> " } else { "... " };
+                    Line::from(format!("{prompt}{line}"))
+                })
+                .collect();
+            let input_paragraph = Paragraph::new(display_lines).wrap(Wrap { trim: false });
+            f.render_widget(input_paragraph, input_area);
 
             // Show cursor position if this pane is active
             if self.active_pane == PANE_INPUT {
-                let cursor_x = inner.x + (prompt.len() + self.cursor_pos) as u16;
-                let cursor_y = inner.y;
-                if cursor_x < inner.x + inner.width {
+                // Find which line the cursor is on and the column within that line
+                let before_cursor = &self.input_buffer[..self.cursor_pos];
+                let cursor_line = before_cursor.matches('\n').count();
+                let last_newline = before_cursor.rfind('\n').map(|p| p + 1).unwrap_or(0);
+                let col_in_line = self.cursor_pos - last_newline;
+                let prompt_len = if cursor_line == 0 { 2 } else { 4 }; // "> " or "... "
+                let cursor_x = inner.x + (prompt_len + col_in_line) as u16;
+                let cursor_y = inner.y + cursor_line as u16;
+                if cursor_x < inner.x + inner.width && cursor_y < inner.y + input_area.height {
                     f.set_cursor_position((cursor_x, cursor_y));
                 }
             }
@@ -842,6 +868,10 @@ pub async fn run_tui_session(
     let mut generator_interval = tokio::time::interval(std::time::Duration::from_millis(50));
     generator_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // Connector poll interval (same cadence as generator)
+    let mut connector_interval = tokio::time::interval(std::time::Duration::from_millis(50));
+    connector_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     // Metrics refresh interval (every 1s)
     let mut metrics_interval = tokio::time::interval(std::time::Duration::from_secs(1));
     metrics_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -875,8 +905,12 @@ pub async fn run_tui_session(
                     let responses = app.session.poll_generator();
                     app.process_responses(responses);
                 }
+                _ = connector_interval.tick() => {
+                    let responses = app.session.poll_connectors();
+                    app.process_responses(responses);
+                }
                 _ = metrics_interval.tick() => {
-                    if app.generator_running {
+                    if app.generator_running || app.session.has_source_bindings() {
                         app.refresh_metrics();
                     }
                 }
