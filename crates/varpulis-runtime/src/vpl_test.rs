@@ -406,53 +406,100 @@ pub fn run_fixture(fixture: &VplTestFixture) -> VplTestResult {
         }
     };
 
-    // Create engine
-    let (tx, mut rx) = tokio::sync::mpsc::channel(10_000);
-    let mut engine = Engine::new(tx);
-    if let Err(e) = engine.load(&program) {
-        return VplTestResult {
-            name,
-            passed: false,
-            failure: Some(format!("Engine load error: {e}")),
-            output_events: Vec::new(),
-        };
-    }
-
-    // Parse and process input events
-    let timed_events = match EventFileParser::parse(&fixture.input) {
-        Ok(events) => events,
-        Err(e) => {
+    // Create engine and process events
+    #[cfg(feature = "async-runtime")]
+    #[allow(unused_variables)]
+    let (engine, output_events) = {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(10_000);
+        let mut engine = Engine::new(tx);
+        if let Err(e) = engine.load(&program) {
             return VplTestResult {
                 name,
                 passed: false,
-                failure: Some(format!("Input event parse error: {e}")),
+                failure: Some(format!("Engine load error: {e}")),
                 output_events: Vec::new(),
             };
         }
+
+        // Parse and process input events
+        let timed_events = match EventFileParser::parse(&fixture.input) {
+            Ok(events) => events,
+            Err(e) => {
+                return VplTestResult {
+                    name,
+                    passed: false,
+                    failure: Some(format!("Input event parse error: {e}")),
+                    output_events: Vec::new(),
+                };
+            }
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let process_result = rt.block_on(async {
+            for timed in &timed_events {
+                engine.process(timed.event.clone()).await?;
+            }
+            Ok::<(), crate::engine::error::EngineError>(())
+        });
+
+        if let Err(e) = process_result {
+            return VplTestResult {
+                name,
+                passed: false,
+                failure: Some(format!("Event processing error: {e}")),
+                output_events: Vec::new(),
+            };
+        }
+
+        // Collect output events
+        let mut output_events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            output_events.push(event_to_output(&event));
+        }
+        (engine, output_events)
     };
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let process_result = rt.block_on(async {
-        for timed in &timed_events {
-            engine.process(timed.event.clone()).await?;
+    #[cfg(not(feature = "async-runtime"))]
+    #[allow(unused_variables, unused_mut)]
+    let (mut engine, output_events) = {
+        let mut engine = Engine::new_benchmark();
+        if let Err(e) = engine.load(&program) {
+            return VplTestResult {
+                name,
+                passed: false,
+                failure: Some(format!("Engine load error: {e}")),
+                output_events: Vec::new(),
+            };
         }
-        Ok::<(), crate::engine::error::EngineError>(())
-    });
 
-    if let Err(e) = process_result {
-        return VplTestResult {
-            name,
-            passed: false,
-            failure: Some(format!("Event processing error: {e}")),
-            output_events: Vec::new(),
+        let timed_events = match EventFileParser::parse(&fixture.input) {
+            Ok(events) => events,
+            Err(e) => {
+                return VplTestResult {
+                    name,
+                    passed: false,
+                    failure: Some(format!("Input event parse error: {e}")),
+                    output_events: Vec::new(),
+                };
+            }
         };
-    }
 
-    // Collect output events
-    let mut output_events = Vec::new();
-    while let Ok(event) = rx.try_recv() {
-        output_events.push(event_to_output(&event));
-    }
+        let events: Vec<crate::event::Event> = timed_events.into_iter().map(|t| t.event).collect();
+        let collected = match engine.process_batch_sync_collect(events) {
+            Ok(c) => c,
+            Err(e) => {
+                return VplTestResult {
+                    name,
+                    passed: false,
+                    failure: Some(format!("Event processing error: {e}")),
+                    output_events: Vec::new(),
+                };
+            }
+        };
+
+        let output_events: Vec<_> = collected.iter().map(event_to_output).collect();
+        (engine, output_events)
+    };
 
     // Run assertions
     let mut failures = Vec::new();
@@ -566,8 +613,13 @@ fn run_error_fixture(fixture: &VplTestFixture, expected_error: &str) -> VplTestR
     };
 
     // Try to load (compile)
-    let (tx, _rx) = tokio::sync::mpsc::channel(10_000);
-    let mut engine = Engine::new(tx);
+    #[cfg(feature = "async-runtime")]
+    let mut engine = {
+        let (tx, _rx) = tokio::sync::mpsc::channel(10_000);
+        Engine::new(tx)
+    };
+    #[cfg(not(feature = "async-runtime"))]
+    let mut engine = Engine::new_benchmark();
     match engine.load(&program) {
         Ok(()) => VplTestResult {
             name,

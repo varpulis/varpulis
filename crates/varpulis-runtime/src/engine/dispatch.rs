@@ -7,27 +7,30 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+#[cfg(feature = "async-runtime")]
 use chrono::{DateTime, Utc};
 use rustc_hash::FxHashMap;
 use tracing::debug;
 
 use super::trace::TraceEntry;
-use super::types::{
-    RuntimeOp, RuntimeSource, StreamDefinition, StreamProcessResult, UserFunction, WindowType,
-};
+#[cfg(feature = "async-runtime")]
+use super::types::WindowType;
+use super::types::{RuntimeOp, RuntimeSource, StreamDefinition, StreamProcessResult, UserFunction};
 use super::{evaluator, pipeline, Engine};
 use crate::event::{Event, SharedEvent};
 use crate::sequence::SequenceContext;
 
 impl Engine {
-    /// Process an incoming event
+    /// Process an incoming event (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     #[tracing::instrument(level = "trace", skip(self))]
     pub async fn process(&mut self, event: Event) -> Result<(), super::error::EngineError> {
         self.events_processed += 1;
         self.process_inner(Arc::new(event)).await
     }
 
-    /// Process a pre-wrapped SharedEvent (zero-copy path for context pipelines)
+    /// Process a pre-wrapped SharedEvent (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     #[tracing::instrument(level = "trace", skip(self))]
     pub async fn process_shared(
         &mut self,
@@ -37,7 +40,8 @@ impl Engine {
         self.process_inner(event).await
     }
 
-    /// Internal processing logic shared by process() and process_shared()
+    /// Internal processing logic shared by process() and process_shared() (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     #[tracing::instrument(level = "trace", skip(self))]
     async fn process_inner(&mut self, event: SharedEvent) -> Result<(), super::error::EngineError> {
         // Record incoming event in Prometheus
@@ -225,11 +229,8 @@ impl Engine {
         Ok(())
     }
 
-    /// Process a batch of events for improved throughput.
-    /// More efficient than calling process() repeatedly because:
-    /// - Pre-allocates SharedEvents in bulk
-    /// - Collects output events and sends in batches
-    /// - Amortizes async overhead
+    /// Process a batch of events for improved throughput (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     #[tracing::instrument(level = "trace", skip(self))]
     pub async fn process_batch(
         &mut self,
@@ -539,7 +540,8 @@ impl Engine {
         )
     }
 
-    /// Process a batch of pre-wrapped SharedEvents (zero-copy path for context pipelines)
+    /// Process a batch of pre-wrapped SharedEvents (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     #[tracing::instrument(level = "trace", skip(self))]
     pub async fn process_batch_shared(
         &mut self,
@@ -646,6 +648,7 @@ impl Engine {
         Ok(())
     }
 
+    #[cfg(feature = "async-runtime")]
     async fn process_stream_with_functions(
         stream: &mut StreamDefinition,
         event: SharedEvent,
@@ -764,7 +767,8 @@ impl Engine {
         .await
     }
 
-    /// Process a join result through the stream operations (skipping join-specific handling)
+    /// Process a join result (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     async fn process_join_result(
         stream: &mut StreamDefinition,
         correlated_event: SharedEvent,
@@ -787,8 +791,8 @@ impl Engine {
     // Session Window Sweep
     // =========================================================================
 
-    /// Flush all expired session windows and process the resulting events
-    /// through the remaining pipeline stages (aggregate, having, select, emit, etc.).
+    /// Flush all expired session windows (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     #[tracing::instrument(skip(self))]
     pub async fn flush_expired_sessions(&mut self) -> Result<(), super::error::EngineError> {
         let now = chrono::Utc::now();
@@ -857,8 +861,8 @@ impl Engine {
         Ok(())
     }
 
-    /// Process events through the pipeline operations that come after the window
-    /// at `window_idx`. This runs aggregate, having, select, emit, etc.
+    /// Process events through the pipeline operations after the window (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     async fn process_post_window(
         stream: &mut StreamDefinition,
         events: Vec<SharedEvent>,
@@ -878,7 +882,8 @@ impl Engine {
         .await
     }
 
-    /// Apply a watermark advance to all windows, triggering closure of expired windows.
+    /// Apply a watermark advance to all windows (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     #[tracing::instrument(skip(self))]
     pub(super) async fn apply_watermark_to_windows(
         &mut self,

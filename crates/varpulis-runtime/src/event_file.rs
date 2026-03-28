@@ -25,16 +25,21 @@
 //! ```
 
 use std::cell::RefCell;
+#[cfg(feature = "async-runtime")]
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+#[cfg(feature = "async-runtime")]
 use std::time::Duration;
 
 use indexmap::IndexMap;
 use rustc_hash::{FxBuildHasher, FxHashMap};
+#[cfg(feature = "async-runtime")]
 use tokio::sync::mpsc;
+#[cfg(feature = "async-runtime")]
 use tokio::time;
+#[cfg(feature = "async-runtime")]
 use tracing::{debug, info};
 use varpulis_core::Value;
 
@@ -594,13 +599,15 @@ impl<R: std::io::BufRead> Iterator for StreamingEventReader<R> {
     }
 }
 
-/// Event file player - sends events to engine with timing
+/// Event file player - sends events to engine with timing (async-runtime only).
+#[cfg(feature = "async-runtime")]
 #[derive(Debug)]
 pub struct EventFilePlayer {
     events: Vec<TimedEvent>,
     sender: mpsc::Sender<Event>,
 }
 
+#[cfg(feature = "async-runtime")]
 impl EventFilePlayer {
     pub const fn new(events: Vec<TimedEvent>, sender: mpsc::Sender<Event>) -> Self {
         Self { events, sender }

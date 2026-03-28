@@ -1,7 +1,9 @@
 //! Typed error hierarchy for the Varpulis engine.
 
+#[cfg(feature = "async-runtime")]
 use varpulis_connectors::SinkError;
 
+#[cfg(feature = "async-runtime")]
 use crate::enrichment::EnrichmentError;
 use crate::persistence::StoreError;
 
@@ -16,11 +18,13 @@ pub enum EngineError {
     #[error("stream not found: {0}")]
     StreamNotFound(String),
 
-    /// Sink I/O or protocol error.
+    /// Sink I/O or protocol error (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     #[error("sink error: {0}")]
     Sink(#[from] SinkError),
 
-    /// Enrichment lookup error.
+    /// Enrichment lookup error (async-runtime only).
+    #[cfg(feature = "async-runtime")]
     #[error("enrichment error: {0}")]
     Enrichment(#[from] EnrichmentError),
 
