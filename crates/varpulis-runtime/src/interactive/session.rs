@@ -235,7 +235,7 @@ impl InteractiveSession {
         // Use block_in_place to avoid "cannot block from within a runtime" panic
         if let Some(mut old_registry) = self.connector_registry.take() {
             tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(old_registry.shutdown())
+                tokio::runtime::Handle::current().block_on(old_registry.shutdown());
             });
         }
 

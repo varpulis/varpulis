@@ -1,4 +1,0 @@
-event Sensor:
-    temperature: float
-    zone: str
-stream Hot = Sensor .where(temperature > 100) .emit(zone: zone, temp: temperature)
