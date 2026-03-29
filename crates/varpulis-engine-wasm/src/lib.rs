@@ -23,9 +23,7 @@
 //! // outputs: [{"stream":"Hot","event":{"zone":"A","temp":150},"timestamp":"..."}]
 //! ```
 
-use std::sync::Arc;
-
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use varpulis_runtime::engine::graph::program_to_graph;
 use varpulis_runtime::Engine;
 use wasm_bindgen::prelude::*;
@@ -39,6 +37,24 @@ pub struct WasmEngine {
     engine: Engine,
     program_source: String,
     program_loaded: bool,
+}
+
+impl std::fmt::Debug for WasmEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WasmEngine")
+            .field("program_loaded", &self.program_loaded)
+            .finish()
+    }
+}
+
+impl Default for WasmEngine {
+    fn default() -> Self {
+        Self {
+            engine: Engine::new_sync(),
+            program_source: String::new(),
+            program_loaded: false,
+        }
+    }
 }
 
 /// JSON result for load/reload operations.
@@ -72,11 +88,7 @@ impl WasmEngine {
     /// Create a new engine instance.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        Self {
-            engine: Engine::new_sync(),
-            program_source: String::new(),
-            program_loaded: false,
-        }
+        Self::default()
     }
 
     /// Load a VPL program.  Returns JSON: `{ ok, streams, error? }`.
@@ -241,7 +253,7 @@ impl WasmEngine {
         let entries = self.engine.drain_trace();
         let json_entries: Vec<serde_json::Value> = entries
             .into_iter()
-            .map(|e| serde_json::to_value(&format!("{e:?}")).unwrap_or_default())
+            .map(|e| serde_json::to_value(format!("{e:?}")).unwrap_or_default())
             .collect();
         serde_json::to_string(&json_entries).unwrap_or_else(|_| "[]".into())
     }
@@ -302,15 +314,10 @@ fn json_value_to_core_value(v: &serde_json::Value) -> Option<varpulis_core::Valu
     match v {
         serde_json::Value::Null => Some(varpulis_core::Value::Null),
         serde_json::Value::Bool(b) => Some(varpulis_core::Value::Bool(*b)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Some(varpulis_core::Value::Int(i))
-            } else if let Some(f) = n.as_f64() {
-                Some(varpulis_core::Value::Float(f))
-            } else {
-                None
-            }
-        }
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(varpulis_core::Value::Int)
+            .or_else(|| n.as_f64().map(varpulis_core::Value::Float)),
         serde_json::Value::String(s) => Some(varpulis_core::Value::str(s)),
         _ => None,
     }
