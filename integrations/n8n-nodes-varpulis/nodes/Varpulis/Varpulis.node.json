@@ -1,0 +1,18 @@
+{
+  "node": "n8n-nodes-varpulis.varpulis",
+  "nodeVersion": "1.0",
+  "codexVersion": "1.0",
+  "categories": ["Data & Storage"],
+  "subcategories": {
+    "Data & Storage": ["Data Transformation"]
+  },
+  "resources": {
+    "primaryDocumentation": [
+      {
+        "url": "https://www.varpulis-cep.com/docs/"
+      }
+    ]
+  },
+  "alias": ["cep", "pattern", "event", "temporal", "sequence", "stream"],
+  "iconUrl": ""
+}
