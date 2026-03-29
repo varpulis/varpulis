@@ -1,0 +1,58 @@
+# Energy Anomaly Detection
+# Detects: Power consumption spike sustained for 30+ minutes
+#
+# A single high power reading could be normal (microwave, kettle). But sustained
+# high draw for 30 minutes suggests something unusual: a stuck relay, malfunctioning
+# appliance, or space heater someone forgot about. This pattern requires TWO high
+# readings separated by at least 30 minutes to confirm sustained consumption.
+#
+# Customize: Adjust the watt threshold (2000W) based on your home's baseline.
+# Run: varpulis simulate -p recipes/energy-anomaly.vpl -e tests/energy-anomaly.evt -v -w 1
+
+# =============================================================================
+# Connector: Home Assistant MQTT
+# =============================================================================
+
+connector HaMqtt = mqtt(
+    host: "homeassistant.local",
+    port: 1883,
+    client_id: "varpulis-energy"
+)
+
+# =============================================================================
+# Event Definitions
+# =============================================================================
+
+event PowerEvent:
+    entity_id: str
+    watts: float
+
+# =============================================================================
+# Input Streams
+# =============================================================================
+
+stream Power = PowerEvent
+    .from(HaMqtt, topic: "homeassistant/sensor/+_power/state")
+
+# =============================================================================
+# Pattern: Sustained High Power Consumption
+# High power reading -> another high power reading on the same entity within 45m
+# The .within(45m) window combined with both readings being high confirms
+# sustained consumption rather than a momentary spike.
+# =============================================================================
+
+stream EnergyAnomaly = PowerEvent as spike
+    -> PowerEvent where entity_id == spike.entity_id and watts > 2000.0 as sustained
+    .within(45m)
+    .where(spike.watts > 2000.0)
+    .alert(
+        webhook: "http://homeassistant.local:8123/api/services/notify/mobile_app",
+        message: "Sustained high power draw detected on an appliance!"
+    )
+    .emit(
+        alert_type: "energy_anomaly",
+        severity: "warning",
+        appliance: spike.entity_id,
+        initial_watts: spike.watts,
+        sustained_watts: sustained.watts
+    )

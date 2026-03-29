@@ -1,0 +1,59 @@
+# Comfort Swing Detection
+# Detects: Temperature drops 5+ degrees within 15 minutes
+#
+# A rapid temperature drop in a room usually means someone left a window open in
+# winter, or the HVAC failed. By detecting the rate of change rather than an
+# absolute threshold, this works regardless of your thermostat setpoint.
+#
+# Customize: Adjust the 5-degree threshold and 15-minute window for your climate.
+# Run: varpulis simulate -p recipes/comfort-swing.vpl -e tests/comfort-swing.evt -v -w 1
+
+# =============================================================================
+# Connector: Home Assistant MQTT
+# =============================================================================
+
+connector HaMqtt = mqtt(
+    host: "homeassistant.local",
+    port: 1883,
+    client_id: "varpulis-comfort"
+)
+
+# =============================================================================
+# Event Definitions
+# =============================================================================
+
+event TemperatureEvent:
+    entity_id: str
+    temp_c: float
+    zone: str
+
+# =============================================================================
+# Input Streams
+# =============================================================================
+
+stream Temperatures = TemperatureEvent
+    .from(HaMqtt, topic: "homeassistant/sensor/+_temperature/state")
+
+# =============================================================================
+# Pattern: Rapid Temperature Drop
+# Temperature reading -> lower reading from same sensor within 15 minutes
+# where the drop exceeds 5 degrees Celsius
+# =============================================================================
+
+stream ComfortSwing = TemperatureEvent as baseline
+    -> TemperatureEvent where entity_id == baseline.entity_id as current
+    .within(15m)
+    .where(baseline.temp_c - current.temp_c > 5.0)
+    .alert(
+        webhook: "http://homeassistant.local:8123/api/services/notify/mobile_app",
+        message: "Rapid temperature drop detected! Check for open windows or HVAC issues."
+    )
+    .emit(
+        alert_type: "comfort_swing",
+        severity: "warning",
+        zone: baseline.zone,
+        sensor: baseline.entity_id,
+        initial_temp: baseline.temp_c,
+        current_temp: current.temp_c,
+        drop_degrees: baseline.temp_c - current.temp_c
+    )

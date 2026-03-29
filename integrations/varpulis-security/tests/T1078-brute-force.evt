@@ -1,0 +1,63 @@
+# T1078.001 -- Brute Force: Password Guessing
+# Tests for: rules/initial-access/T1078-brute-force-success.vpl
+#
+# Expected results:
+#   - POSITIVE: 1 BruteForceSuccess alert for attacker IP 10.0.0.50
+#   - NEGATIVE: No alert for the legitimate user (only 1 failure + success)
+
+# =============================================================================
+# POSITIVE CASE: 5 failed logins then success from 10.0.0.50
+# Expected: 1 alert
+# =============================================================================
+
+BATCH 0
+AuthEvent { source_ip: "10.0.0.50", username: "admin", status: "failed", target_host: "dc01" }
+
+BATCH 10000
+AuthEvent { source_ip: "10.0.0.50", username: "admin", status: "failed", target_host: "dc01" }
+
+BATCH 20000
+AuthEvent { source_ip: "10.0.0.50", username: "admin", status: "failed", target_host: "dc01" }
+
+BATCH 30000
+AuthEvent { source_ip: "10.0.0.50", username: "admin", status: "failed", target_host: "dc01" }
+
+BATCH 40000
+AuthEvent { source_ip: "10.0.0.50", username: "admin", status: "failed", target_host: "dc01" }
+
+BATCH 50000
+AuthEvent { source_ip: "10.0.0.50", username: "admin", status: "success", target_host: "dc01" }
+
+# =============================================================================
+# NEGATIVE CASE: Legitimate user -- 1 typo then success (different IP)
+# Expected: No alert (only 1 failure, not 5)
+# =============================================================================
+
+BATCH 300000
+AuthEvent { source_ip: "192.168.1.10", username: "jsmith", status: "failed", target_host: "web01" }
+
+BATCH 305000
+AuthEvent { source_ip: "192.168.1.10", username: "jsmith", status: "success", target_host: "web01" }
+
+# =============================================================================
+# NEGATIVE CASE: Failures from different IPs (distributed, not brute force)
+# Expected: No alert (no single IP has 5+ failures)
+# =============================================================================
+
+BATCH 400000
+AuthEvent { source_ip: "172.16.0.1", username: "root", status: "failed", target_host: "dc01" }
+
+BATCH 410000
+AuthEvent { source_ip: "172.16.0.2", username: "root", status: "failed", target_host: "dc01" }
+
+BATCH 420000
+AuthEvent { source_ip: "172.16.0.3", username: "root", status: "failed", target_host: "dc01" }
+
+BATCH 430000
+AuthEvent { source_ip: "172.16.0.4", username: "root", status: "failed", target_host: "dc01" }
+
+BATCH 440000
+AuthEvent { source_ip: "172.16.0.5", username: "root", status: "failed", target_host: "dc01" }
+
+BATCH 450000
+AuthEvent { source_ip: "172.16.0.6", username: "root", status: "success", target_host: "dc01" }

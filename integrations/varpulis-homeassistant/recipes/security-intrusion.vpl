@@ -1,0 +1,71 @@
+# Security Intrusion Detection
+# Detects: Door opens while nobody is home, followed by motion within 2 minutes
+#
+# Typical HA automations can check "is the door open?" but cannot easily express
+# "door opened WHILE nobody was home AND THEN motion was detected within 2 minutes."
+# This temporal sequence catches break-ins that single-trigger automations miss.
+#
+# Customize: Change entity_id values in test events to match your sensors.
+# Run: varpulis simulate -p recipes/security-intrusion.vpl -e tests/security-intrusion.evt -v -w 1
+
+# =============================================================================
+# Connector: Home Assistant MQTT
+# =============================================================================
+
+connector HaMqtt = mqtt(
+    host: "homeassistant.local",
+    port: 1883,
+    client_id: "varpulis-security"
+)
+
+# =============================================================================
+# Event Definitions (matching HA state change payloads)
+# =============================================================================
+
+event PresenceEvent:
+    entity_id: str
+    state: str
+
+event DoorEvent:
+    entity_id: str
+    state: str
+
+event MotionEvent:
+    entity_id: str
+    state: str
+
+# =============================================================================
+# Input Streams
+# =============================================================================
+
+stream Presence = PresenceEvent
+    .from(HaMqtt, topic: "homeassistant/person/+/state")
+
+stream Doors = DoorEvent
+    .from(HaMqtt, topic: "homeassistant/binary_sensor/+_door/state")
+
+stream Motion = MotionEvent
+    .from(HaMqtt, topic: "homeassistant/binary_sensor/+_motion/state")
+
+# =============================================================================
+# Pattern: Intrusion Sequence
+# Nobody home -> door opens -> motion detected (all within 2 minutes)
+# =============================================================================
+
+stream IntrusionAlert = PresenceEvent as away
+    -> DoorEvent where state == "open" as door
+    -> MotionEvent where state == "on" as motion
+    .within(2m)
+    .where(away.state == "not_home")
+    .alert(
+        webhook: "http://homeassistant.local:8123/api/services/notify/mobile_app",
+        message: "Intrusion detected! Door opened while away, motion detected."
+    )
+    .emit(
+        alert_type: "intrusion",
+        severity: "critical",
+        presence: away.state,
+        door_sensor: door.entity_id,
+        door_state: door.state,
+        motion_sensor: motion.entity_id
+    )

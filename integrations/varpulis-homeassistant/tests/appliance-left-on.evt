@@ -1,0 +1,47 @@
+# Appliance Left On Test Events
+# Expected: 1 alert when person leaves and oven is still drawing power
+# Expected: 0 alerts when person leaves and power is low (appliance off)
+
+# =============================================================================
+# SCENARIO 1: Left home with oven on
+# Expected: 1 appliance_left_on alert
+# =============================================================================
+
+BATCH 0
+PresenceEvent { entity_id: "person.john", state: "not_home" }
+
+BATCH 360000
+PowerEvent { entity_id: "sensor.oven_power", watts: 2200.0 }
+
+# =============================================================================
+# SCENARIO 2: Left home, appliance already off (low power = standby)
+# Expected: 0 alerts (watts below 50W threshold)
+# =============================================================================
+
+BATCH 900000
+PresenceEvent { entity_id: "person.jane", state: "not_home" }
+
+BATCH 1200000
+PowerEvent { entity_id: "sensor.washing_machine_power", watts: 3.5 }
+
+# =============================================================================
+# SCENARIO 3: Home, appliance on — no problem
+# Expected: 0 alerts (person is home)
+# =============================================================================
+
+BATCH 1800000
+PresenceEvent { entity_id: "person.john", state: "home" }
+
+BATCH 2100000
+PowerEvent { entity_id: "sensor.oven_power", watts: 2200.0 }
+
+# =============================================================================
+# SCENARIO 4: Left home, appliance reading arrives too late (>10 min)
+# Expected: 0 alerts (outside the 10-minute window)
+# =============================================================================
+
+BATCH 3000000
+PresenceEvent { entity_id: "person.john", state: "not_home" }
+
+BATCH 3660000
+PowerEvent { entity_id: "sensor.space_heater_power", watts: 1500.0 }

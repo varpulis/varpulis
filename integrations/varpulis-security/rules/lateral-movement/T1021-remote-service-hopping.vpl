@@ -1,0 +1,40 @@
+# MITRE ATT&CK: T1021 -- Remote Services
+# Tactic: Lateral Movement (TA0008)
+# URL: https://attack.mitre.org/techniques/T1021/
+#
+# Detects: An attacker connects to host A via RDP/SSH, then from host A
+# a new remote connection is made to host B within 15 minutes. This
+# "hop" pattern is characteristic of lateral movement through a network.
+#
+# Data sources:
+#   - Windows Event Log: EventID 4624 Type 10 (RDP), EventID 4648 (explicit creds)
+#   - Linux: sshd auth logs
+#   - Network: Zeek conn.log, firewall logs (port 3389, 22)
+#
+# Severity: High
+# False positive rate: Medium (IT admins may hop legitimately -- tune with exclusion lists)
+#
+# Test events (should trigger):
+#   RemoteLogin { source_ip: "10.0.0.5", target_host: "server-a", user: "attacker", protocol: "rdp" }
+#   RemoteLogin { source_ip: "server-a", target_host: "server-b", user: "attacker", protocol: "rdp" }
+
+event RemoteLogin:
+    source_ip: str
+    target_host: str
+    user: str
+    protocol: str
+
+stream RemoteServiceHopping = RemoteLogin as hop1
+    -> RemoteLogin where source_ip == hop1.target_host as hop2
+    .within(15m)
+    .emit(
+        technique: "T1021",
+        tactic: "lateral_movement",
+        severity: "high",
+        attacker_origin: hop1.source_ip,
+        first_hop: hop1.target_host,
+        second_hop: hop2.target_host,
+        user: hop1.user,
+        protocol: hop1.protocol,
+        description: "Remote service hopping detected: lateral movement through two hosts"
+    )

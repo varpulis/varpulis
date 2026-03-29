@@ -1,0 +1,47 @@
+# Energy Anomaly Test Events
+# Expected: 1 alert for sustained high power on the same appliance
+# Expected: 0 alerts for normal power or different appliances
+
+# =============================================================================
+# SCENARIO 1: Space heater drawing 2500W for 35 minutes
+# Expected: 1 energy_anomaly alert
+# =============================================================================
+
+BATCH 0
+PowerEvent { entity_id: "sensor.space_heater_power", watts: 2500.0 }
+
+BATCH 2100000
+PowerEvent { entity_id: "sensor.space_heater_power", watts: 2450.0 }
+
+# =============================================================================
+# SCENARIO 2: Microwave spike — high but brief (3 minutes)
+# Expected: 0 alerts (normal short usage, second reading is low)
+# =============================================================================
+
+BATCH 4000000
+PowerEvent { entity_id: "sensor.microwave_power", watts: 1200.0 }
+
+BATCH 4180000
+PowerEvent { entity_id: "sensor.microwave_power", watts: 5.0 }
+
+# =============================================================================
+# SCENARIO 3: Normal baseline — appliance under threshold
+# Expected: 0 alerts (watts below 2000W)
+# =============================================================================
+
+BATCH 6000000
+PowerEvent { entity_id: "sensor.fridge_power", watts: 150.0 }
+
+BATCH 8100000
+PowerEvent { entity_id: "sensor.fridge_power", watts: 155.0 }
+
+# =============================================================================
+# SCENARIO 4: Two different appliances, both high
+# Expected: 0 alerts (different entity_id, not the same appliance sustained)
+# =============================================================================
+
+BATCH 10000000
+PowerEvent { entity_id: "sensor.oven_power", watts: 3000.0 }
+
+BATCH 12100000
+PowerEvent { entity_id: "sensor.dryer_power", watts: 2800.0 }

@@ -1,0 +1,42 @@
+# MITRE ATT&CK: T1550.002 -- Use Alternate Authentication Material: Pass the Hash
+# Tactic: Lateral Movement (TA0008)
+# URL: https://attack.mitre.org/techniques/T1550/002/
+#
+# Detects: Failed NTLM authentication followed by a successful authentication
+# using different credentials from the same source host within 5 minutes.
+# This pattern suggests the attacker dumped hashes and is replaying them
+# to authenticate as a different (likely more privileged) user.
+#
+# Data sources:
+#   - Windows Event Log: EventID 4625 (failed NTLM), 4624 (success, LogonType 3)
+#   - Windows Security Log: EventID 4648 (explicit credentials)
+#   - EDR: NTLM authentication telemetry
+#
+# Severity: Critical
+# False positive rate: Low (different creds succeeding after failure is suspicious)
+#
+# Test events (should trigger):
+#   NtlmAuth { source_host: "ws-compromised", target_host: "dc01", username: "user1", status: "failed", auth_type: "ntlm" }
+#   NtlmAuth { source_host: "ws-compromised", target_host: "dc01", username: "domain_admin", status: "success", auth_type: "ntlm" }
+
+event NtlmAuth:
+    source_host: str
+    target_host: str
+    username: str
+    status: str
+    auth_type: str
+
+stream PassTheHash = NtlmAuth where status == "failed" and auth_type == "ntlm" as failed
+    -> NtlmAuth where status == "success" and auth_type == "ntlm" as success
+    .within(5m)
+    .where(failed.source_host == success.source_host and failed.username != success.username)
+    .emit(
+        technique: "T1550.002",
+        tactic: "lateral_movement",
+        severity: "critical",
+        source_host: failed.source_host,
+        target_host: failed.target_host,
+        failed_username: failed.username,
+        success_username: success.username,
+        description: "Pass-the-hash: failed as one user then succeeded as another from same host"
+    )

@@ -1,0 +1,41 @@
+# T1566 -- Phishing Kill Chain
+# Tests for: rules/initial-access/T1566-phishing-chain.vpl
+#
+# Expected results:
+#   - POSITIVE: 1 PhishingChain alert for recipient jdoe
+#   - NEGATIVE: No alert for user msmith (email received but no click)
+
+# =============================================================================
+# POSITIVE CASE: Full phishing chain -- email, click, download, execute
+# Expected: 1 alert
+# =============================================================================
+
+BATCH 0
+EmailReceived { recipient: "jdoe", sender: "hr-department@evil-corp.com", subject: "Urgent: Review Compensation", has_link: true }
+
+BATCH 60000
+LinkClicked { user: "jdoe", url: "https://evil-corp.com/compensation-review.exe", source: "email" }
+
+BATCH 120000
+FileDownloaded { user: "jdoe", host: "ws-jdoe", filename: "compensation-review.exe", path: "C:\\Users\\jdoe\\Downloads" }
+
+BATCH 180000
+ProcessStarted { host: "ws-jdoe", process_name: "compensation-review.exe", parent: "chrome.exe", user: "jdoe" }
+
+# =============================================================================
+# NEGATIVE CASE: Email received but user does not click
+# Expected: No alert (chain is incomplete)
+# =============================================================================
+
+BATCH 600000
+EmailReceived { recipient: "msmith", sender: "ceo@phishing.com", subject: "Wire Transfer Needed", has_link: true }
+
+# msmith is security-aware and does not click the link -- no further events
+
+# =============================================================================
+# NEGATIVE CASE: Email without link (legitimate email, partial match)
+# Expected: No alert (has_link is false, does not match initial filter)
+# =============================================================================
+
+BATCH 900000
+EmailReceived { recipient: "abrown", sender: "it@company.com", subject: "System Maintenance Tonight", has_link: false }

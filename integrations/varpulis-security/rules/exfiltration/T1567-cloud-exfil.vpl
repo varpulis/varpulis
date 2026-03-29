@@ -1,0 +1,47 @@
+# MITRE ATT&CK: T1567 -- Exfiltration Over Web Service
+# Tactic: Exfiltration (TA0010)
+# URL: https://attack.mitre.org/techniques/T1567/
+#
+# Detects: Multiple large uploads to cloud storage services (OneDrive, Google
+# Drive, Dropbox, S3, etc.) from the same user within 30 minutes. A single
+# upload may be normal; a burst of large uploads suggests data exfiltration
+# via a legitimate service to bypass network controls.
+#
+# Data sources:
+#   - Web proxy logs (URL filtering)
+#   - CASB (Cloud Access Security Broker) logs
+#   - DLP alerts
+#   - Endpoint: browser/app network telemetry
+#
+# Severity: High
+# False positive rate: Medium (users may legitimately upload large files -- tune size thresholds)
+#
+# Test events (should trigger):
+#   CloudUpload { user: "jdoe", host: "ws-jdoe", service: "onedrive", filename: "dump1.zip", size_bytes: 104857600, dest_url: "https://onedrive.live.com/upload" }
+#   CloudUpload { user: "jdoe", host: "ws-jdoe", service: "onedrive", filename: "dump2.zip", size_bytes: 209715200, dest_url: "https://onedrive.live.com/upload" }
+#   CloudUpload { user: "jdoe", host: "ws-jdoe", service: "onedrive", filename: "dump3.zip", size_bytes: 157286400, dest_url: "https://onedrive.live.com/upload" }
+
+event CloudUpload:
+    user: str
+    host: str
+    service: str
+    filename: str
+    size_bytes: int
+    dest_url: str
+
+stream CloudExfiltration = CloudUpload as upload1
+    -> CloudUpload where user == upload1.user as upload2
+    -> CloudUpload where user == upload1.user as upload3
+    .within(30m)
+    .emit(
+        technique: "T1567",
+        tactic: "exfiltration",
+        severity: "high",
+        user: upload1.user,
+        host: upload1.host,
+        service: upload1.service,
+        file_count: 3,
+        first_file: upload1.filename,
+        total_description: "3+ large cloud uploads in 30 minutes",
+        description: "Bulk cloud storage exfiltration detected"
+    )

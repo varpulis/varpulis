@@ -1,0 +1,62 @@
+# MITRE ATT&CK: T1048 -- Exfiltration Over Alternative Protocol
+# Tactic: Exfiltration (TA0010)
+# URL: https://attack.mitre.org/techniques/T1048/
+#
+# Detects: The classic data exfiltration chain -- large file access on a
+# sensitive share, followed by compression/archiving of that data, followed
+# by an outbound network transfer to an unusual (non-corporate) IP.
+# All within 1 hour on the same host.
+#
+# Data sources:
+#   - File access logs: Windows EventID 4663, Sysmon EventID 11
+#   - Process creation: Sysmon EventID 1 (7z, rar, zip, tar commands)
+#   - Network: Firewall/proxy logs, Zeek conn.log, Sysmon EventID 3
+#   - DLP: Data loss prevention alerts
+#
+# Severity: Critical
+# False positive rate: Medium (legitimate backups may match -- exclude known backup IPs)
+#
+# Test events (should trigger):
+#   LargeFileAccess { host: "ws-finance-01", user: "jdoe", path: "\\\\fileserver\\confidential\\report.xlsx", size_bytes: 52428800 }
+#   CompressionEvent { host: "ws-finance-01", user: "jdoe", tool: "7z.exe", output_file: "C:\\temp\\archive.7z", size_bytes: 48000000 }
+#   OutboundTransfer { host: "ws-finance-01", dest_ip: "185.220.100.42", dest_port: 443, bytes_sent: 48000000, protocol: "https" }
+
+event LargeFileAccess:
+    host: str
+    user: str
+    path: str
+    size_bytes: int
+
+event CompressionEvent:
+    host: str
+    user: str
+    tool: str
+    output_file: str
+    size_bytes: int
+
+event OutboundTransfer:
+    host: str
+    dest_ip: str
+    dest_port: int
+    bytes_sent: int
+    protocol: str
+
+stream DataStagingAndExfil = LargeFileAccess as access
+    -> CompressionEvent where host == access.host as compress
+    -> OutboundTransfer where host == access.host as transfer
+    .within(1h)
+    .emit(
+        technique: "T1048",
+        tactic: "exfiltration",
+        severity: "critical",
+        host: access.host,
+        user: access.user,
+        source_file: access.path,
+        source_size_bytes: access.size_bytes,
+        compression_tool: compress.tool,
+        archive_file: compress.output_file,
+        dest_ip: transfer.dest_ip,
+        bytes_exfiltrated: transfer.bytes_sent,
+        protocol: transfer.protocol,
+        description: "Data staging and exfiltration: file access, compression, outbound transfer"
+    )

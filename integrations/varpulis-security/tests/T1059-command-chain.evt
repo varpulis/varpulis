@@ -1,0 +1,45 @@
+# T1059 -- Command and Scripting Interpreter Chain
+# Tests for: rules/execution/T1059-command-chain.vpl
+#
+# Expected results:
+#   - POSITIVE: 1 CommandChain alert on host ws-jdoe
+#   - NEGATIVE: No alert for shell without network activity
+
+# =============================================================================
+# POSITIVE CASE: PowerShell spawns, connects outbound, writes file
+# Expected: 1 alert
+# =============================================================================
+
+BATCH 0
+ShellSpawn { host: "ws-jdoe", process_name: "powershell.exe", parent: "winword.exe", user: "jdoe", command_line: "powershell -enc SQBFAFgAKABOAGUAdwAtAE8AYgBqAGUAYwB0AA==" }
+
+BATCH 15000
+NetConnect { host: "ws-jdoe", process_name: "powershell.exe", dest_ip: "185.220.100.42", dest_port: 443, direction: "outbound" }
+
+BATCH 30000
+FileWrite { host: "ws-jdoe", process_name: "powershell.exe", file_path: "C:\\Users\\jdoe\\AppData\\Local\\Temp\\payload.exe", size_bytes: 245760 }
+
+# =============================================================================
+# NEGATIVE CASE: Shell spawn with no network activity (normal dev work)
+# Expected: No alert (sequence incomplete -- no NetConnect)
+# =============================================================================
+
+BATCH 600000
+ShellSpawn { host: "ws-dev-01", process_name: "bash", parent: "terminal", user: "developer", command_line: "bash --login" }
+
+BATCH 615000
+FileWrite { host: "ws-dev-01", process_name: "bash", file_path: "/home/developer/project/output.txt", size_bytes: 1024 }
+
+# =============================================================================
+# NEGATIVE CASE: Network connection is inbound, not outbound
+# Expected: No alert (direction filter requires "outbound")
+# =============================================================================
+
+BATCH 900000
+ShellSpawn { host: "web-server", process_name: "bash", parent: "sshd", user: "deploy", command_line: "bash -c deploy.sh" }
+
+BATCH 910000
+NetConnect { host: "web-server", process_name: "nginx", dest_ip: "10.0.0.1", dest_port: 80, direction: "inbound" }
+
+BATCH 920000
+FileWrite { host: "web-server", process_name: "bash", file_path: "/var/www/html/index.html", size_bytes: 4096 }

@@ -1,0 +1,65 @@
+# Water Leak Early Detection
+# Detects: Humidity spike followed by water sensor trigger within 10 minutes
+#
+# A water leak often causes a humidity spike BEFORE the water reaches a leak sensor.
+# By detecting the humidity-then-water sequence, you get earlier warning than waiting
+# for the leak sensor alone. This buys critical minutes to prevent floor damage.
+#
+# Customize: Adjust humidity threshold (75%) for your bathroom/kitchen baseline.
+# Run: varpulis simulate -p recipes/water-leak-sequence.vpl -e tests/water-leak-sequence.evt -v -w 1
+
+# =============================================================================
+# Connector: Home Assistant MQTT
+# =============================================================================
+
+connector HaMqtt = mqtt(
+    host: "homeassistant.local",
+    port: 1883,
+    client_id: "varpulis-leak"
+)
+
+# =============================================================================
+# Event Definitions
+# =============================================================================
+
+event HumidityEvent:
+    entity_id: str
+    humidity: float
+    zone: str
+
+event WaterLeakEvent:
+    entity_id: str
+    state: str
+    zone: str
+
+# =============================================================================
+# Input Streams
+# =============================================================================
+
+stream Humidity = HumidityEvent
+    .from(HaMqtt, topic: "homeassistant/sensor/+_humidity/state")
+
+stream WaterLeak = WaterLeakEvent
+    .from(HaMqtt, topic: "homeassistant/binary_sensor/+_water_leak/state")
+
+# =============================================================================
+# Pattern: Humidity Spike Then Water Detected
+# Humidity rises above 75% -> water sensor triggers within 10 minutes
+# =============================================================================
+
+stream LeakAlert = HumidityEvent as humid
+    -> WaterLeakEvent where state == "on" and zone == humid.zone as leak
+    .within(10m)
+    .where(humid.humidity > 75.0)
+    .alert(
+        webhook: "http://homeassistant.local:8123/api/services/notify/mobile_app",
+        message: "Water leak detected! Humidity spiked then water sensor triggered."
+    )
+    .emit(
+        alert_type: "water_leak",
+        severity: "critical",
+        zone: humid.zone,
+        humidity_sensor: humid.entity_id,
+        humidity_value: humid.humidity,
+        leak_sensor: leak.entity_id
+    )

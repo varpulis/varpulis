@@ -1,0 +1,46 @@
+# Water Leak Sequence Test Events
+# Expected: 1 alert when humidity spikes then water sensor triggers
+# Expected: 0 alerts when humidity is normal or water sensor never triggers
+
+# =============================================================================
+# SCENARIO 1: Kitchen leak — humidity spike then water detected
+# Expected: 1 water_leak alert
+# =============================================================================
+
+BATCH 0
+HumidityEvent { entity_id: "sensor.kitchen_humidity", humidity: 82.0, zone: "kitchen" }
+
+BATCH 300000
+WaterLeakEvent { entity_id: "binary_sensor.kitchen_water_leak", state: "on", zone: "kitchen" }
+
+# =============================================================================
+# SCENARIO 2: Normal humidity, water sensor triggers (e.g., condensation)
+# Expected: 0 alerts (humidity below 75% threshold)
+# =============================================================================
+
+BATCH 900000
+HumidityEvent { entity_id: "sensor.bathroom_humidity", humidity: 55.0, zone: "bathroom" }
+
+BATCH 1200000
+WaterLeakEvent { entity_id: "binary_sensor.bathroom_water_leak", state: "on", zone: "bathroom" }
+
+# =============================================================================
+# SCENARIO 3: High humidity but no water sensor trigger
+# Expected: 0 alerts (sequence incomplete)
+# =============================================================================
+
+BATCH 1800000
+HumidityEvent { entity_id: "sensor.laundry_humidity", humidity: 88.0, zone: "laundry" }
+
+# No water leak event follows
+
+# =============================================================================
+# SCENARIO 4: Different zones — humidity in kitchen, water in bathroom
+# Expected: 0 alerts (zone mismatch in the followed_by filter)
+# =============================================================================
+
+BATCH 2700000
+HumidityEvent { entity_id: "sensor.kitchen_humidity", humidity: 90.0, zone: "kitchen" }
+
+BATCH 3000000
+WaterLeakEvent { entity_id: "binary_sensor.bathroom_water_leak", state: "on", zone: "bathroom" }

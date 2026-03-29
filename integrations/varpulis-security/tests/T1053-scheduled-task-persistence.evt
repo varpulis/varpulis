@@ -1,0 +1,47 @@
+# T1053.005 -- Scheduled Task Persistence
+# Tests for: rules/execution/T1053-scheduled-task-persistence.vpl
+#
+# Expected results:
+#   - POSITIVE: 1 ScheduledTaskPersistence alert on host ws-jdoe
+#   - NEGATIVE: No alert for legitimate software installation
+
+# =============================================================================
+# POSITIVE CASE: Malware creates scheduled task, task executes
+# Expected: 1 alert
+# =============================================================================
+
+BATCH 0
+ProcessCreate { host: "ws-jdoe", process_name: "malware.exe", pid: 4567, user: "jdoe", command_line: "malware.exe --install" }
+
+BATCH 10000
+TaskCreated { host: "ws-jdoe", task_name: "WindowsUpdate_Check", creator_pid: 4567, command: "C:\\Windows\\Temp\\svchost.exe", schedule: "daily" }
+
+BATCH 120000
+TaskExecuted { host: "ws-jdoe", task_name: "WindowsUpdate_Check", process_name: "svchost.exe", exit_code: 0 }
+
+# =============================================================================
+# NEGATIVE CASE: Legitimate software creates a task (incomplete -- no execution within window)
+# Expected: No alert (task does not execute within 1 hour of creation)
+# =============================================================================
+
+BATCH 3600000
+ProcessCreate { host: "ws-msmith", process_name: "chrome_installer.exe", pid: 8901, user: "msmith", command_line: "chrome_installer.exe /silent" }
+
+BATCH 3610000
+TaskCreated { host: "ws-msmith", task_name: "GoogleUpdateTaskMachineUA", creator_pid: 8901, command: "C:\\Program Files\\Google\\Update\\GoogleUpdate.exe", schedule: "hourly" }
+
+# Task does not execute within the test window
+
+# =============================================================================
+# NEGATIVE CASE: Task execution on different host
+# Expected: No alert (host mismatch between task creation and execution)
+# =============================================================================
+
+BATCH 7200000
+ProcessCreate { host: "server-01", process_name: "deploy.exe", pid: 1111, user: "deploy", command_line: "deploy.exe --schedule" }
+
+BATCH 7210000
+TaskCreated { host: "server-01", task_name: "NightlyBackup", creator_pid: 1111, command: "backup.sh", schedule: "daily" }
+
+BATCH 7220000
+TaskExecuted { host: "server-02", task_name: "NightlyBackup", process_name: "backup.sh", exit_code: 0 }

@@ -1,0 +1,65 @@
+# MITRE ATT&CK: T1566 -- Phishing
+# Tactic: Initial Access (TA0001)
+# URL: https://attack.mitre.org/techniques/T1566/
+#
+# Detects: Full phishing kill chain -- email received with link or attachment,
+# user clicks the link, a file is downloaded to disk, and a new process is
+# spawned from that file. All within 30 minutes from the same user/host.
+#
+# Data sources:
+#   - Email gateway logs (O365, Proofpoint, Mimecast)
+#   - Web proxy / URL click tracking
+#   - EDR file creation events (Sysmon EventID 11)
+#   - Process creation events (Sysmon EventID 1, Windows 4688)
+#
+# Severity: Critical
+# False positive rate: Very low (full 4-stage chain is highly specific)
+#
+# Test events (should trigger):
+#   EmailReceived { recipient: "jdoe", sender: "hr@evil.com", subject: "Urgent", has_link: true }
+#   LinkClicked   { user: "jdoe", url: "https://evil.com/doc.exe", source: "email" }
+#   FileDownloaded { user: "jdoe", host: "ws-jdoe", filename: "doc.exe", path: "C:\\Users\\jdoe\\Downloads" }
+#   ProcessStarted { host: "ws-jdoe", process_name: "doc.exe", parent: "chrome.exe", user: "jdoe" }
+
+event EmailReceived:
+    recipient: str
+    sender: str
+    subject: str
+    has_link: bool
+
+event LinkClicked:
+    user: str
+    url: str
+    source: str
+
+event FileDownloaded:
+    user: str
+    host: str
+    filename: str
+    path: str
+
+event ProcessStarted:
+    host: str
+    process_name: str
+    parent: str
+    user: str
+
+stream PhishingChain = EmailReceived where has_link == true as email
+    -> LinkClicked where user == email.recipient as click
+    -> FileDownloaded where user == email.recipient as download
+    -> ProcessStarted where user == email.recipient as proc
+    .within(30m)
+    .emit(
+        technique: "T1566",
+        tactic: "initial_access",
+        severity: "critical",
+        recipient: email.recipient,
+        sender: email.sender,
+        subject: email.subject,
+        clicked_url: click.url,
+        downloaded_file: download.filename,
+        spawned_process: proc.process_name,
+        parent_process: proc.parent,
+        host: download.host,
+        description: "Full phishing chain: email to execution"
+    )

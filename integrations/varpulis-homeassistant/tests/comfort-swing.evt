@@ -1,0 +1,58 @@
+# Comfort Swing Test Events
+# Expected: 1 alert when temperature drops 5+ degrees in 15 minutes
+# Expected: 0 alerts for gradual changes or temperature increases
+
+# =============================================================================
+# SCENARIO 1: Window left open — 22C drops to 15C in 10 minutes
+# Expected: 1 comfort_swing alert (7-degree drop)
+# =============================================================================
+
+BATCH 0
+TemperatureEvent { entity_id: "sensor.living_room_temperature", temp_c: 22.0, zone: "living_room" }
+
+BATCH 600000
+TemperatureEvent { entity_id: "sensor.living_room_temperature", temp_c: 15.0, zone: "living_room" }
+
+# =============================================================================
+# SCENARIO 2: Normal fluctuation — 21C to 19C (only 2-degree drop)
+# Expected: 0 alerts (below 5-degree threshold)
+# =============================================================================
+
+BATCH 2000000
+TemperatureEvent { entity_id: "sensor.bedroom_temperature", temp_c: 21.0, zone: "bedroom" }
+
+BATCH 2600000
+TemperatureEvent { entity_id: "sensor.bedroom_temperature", temp_c: 19.0, zone: "bedroom" }
+
+# =============================================================================
+# SCENARIO 3: Temperature rising — not a comfort swing
+# Expected: 0 alerts (temperature went up, not down)
+# =============================================================================
+
+BATCH 4000000
+TemperatureEvent { entity_id: "sensor.kitchen_temperature", temp_c: 18.0, zone: "kitchen" }
+
+BATCH 4600000
+TemperatureEvent { entity_id: "sensor.kitchen_temperature", temp_c: 24.0, zone: "kitchen" }
+
+# =============================================================================
+# SCENARIO 4: Slow drop over 30 minutes (outside 15-minute window)
+# Expected: 0 alerts (outside the .within(15m) window)
+# =============================================================================
+
+BATCH 6000000
+TemperatureEvent { entity_id: "sensor.office_temperature", temp_c: 23.0, zone: "office" }
+
+BATCH 7800000
+TemperatureEvent { entity_id: "sensor.office_temperature", temp_c: 16.0, zone: "office" }
+
+# =============================================================================
+# SCENARIO 5: Different sensors in same zone
+# Expected: 0 alerts (entity_id mismatch in the pattern)
+# =============================================================================
+
+BATCH 9000000
+TemperatureEvent { entity_id: "sensor.garage_temperature_1", temp_c: 20.0, zone: "garage" }
+
+BATCH 9600000
+TemperatureEvent { entity_id: "sensor.garage_temperature_2", temp_c: 12.0, zone: "garage" }

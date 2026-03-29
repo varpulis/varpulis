@@ -1,0 +1,47 @@
+# T1048 -- Data Staging and Exfiltration
+# Tests for: rules/exfiltration/T1048-data-staging-and-exfil.vpl
+#
+# Expected results:
+#   - POSITIVE: 1 DataStagingAndExfil alert on host ws-finance-01
+#   - NEGATIVE: No alert when chain is incomplete
+
+# =============================================================================
+# POSITIVE CASE: File access -> compression -> outbound transfer on same host
+# Expected: 1 alert
+# =============================================================================
+
+BATCH 0
+LargeFileAccess { host: "ws-finance-01", user: "jdoe", path: "\\\\fileserver\\confidential\\q4-results.xlsx", size_bytes: 52428800 }
+
+BATCH 300000
+CompressionEvent { host: "ws-finance-01", user: "jdoe", tool: "7z.exe", output_file: "C:\\temp\\archive.7z", size_bytes: 48000000 }
+
+BATCH 600000
+OutboundTransfer { host: "ws-finance-01", dest_ip: "185.220.100.42", dest_port: 443, bytes_sent: 48000000, protocol: "https" }
+
+# =============================================================================
+# NEGATIVE CASE: File access and compression, but no outbound transfer
+# Expected: No alert (sequence incomplete)
+# =============================================================================
+
+BATCH 3600000
+LargeFileAccess { host: "ws-legal-02", user: "msmith", path: "\\\\fileserver\\legal\\contracts.docx", size_bytes: 10485760 }
+
+BATCH 3900000
+CompressionEvent { host: "ws-legal-02", user: "msmith", tool: "zip.exe", output_file: "C:\\temp\\backup.zip", size_bytes: 9000000 }
+
+# No outbound transfer follows -- chain is broken
+
+# =============================================================================
+# NEGATIVE CASE: Transfer from a different host than the file access
+# Expected: No alert (host mismatch between stages)
+# =============================================================================
+
+BATCH 7200000
+LargeFileAccess { host: "ws-eng-01", user: "kbrown", path: "\\\\fileserver\\engineering\\designs.dwg", size_bytes: 104857600 }
+
+BATCH 7500000
+CompressionEvent { host: "ws-eng-02", user: "kbrown", tool: "tar", output_file: "/tmp/designs.tar.gz", size_bytes: 90000000 }
+
+BATCH 7800000
+OutboundTransfer { host: "ws-eng-03", dest_ip: "93.184.216.34", dest_port: 22, bytes_sent: 90000000, protocol: "sftp" }

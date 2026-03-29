@@ -1,0 +1,58 @@
+# Security Intrusion Detection Test Events
+# Expected: 1 intrusion alert for the "away + door + motion" sequence
+# Expected: 0 alerts for the "home + door + motion" sequence (person is home)
+
+# =============================================================================
+# SCENARIO 1: Intrusion — Nobody home, door opens, motion detected
+# Expected: 1 intrusion alert
+# =============================================================================
+
+BATCH 0
+PresenceEvent { entity_id: "person.john", state: "not_home" }
+
+BATCH 30000
+DoorEvent { entity_id: "binary_sensor.front_door", state: "open" }
+
+BATCH 60000
+MotionEvent { entity_id: "binary_sensor.hallway_motion", state: "on" }
+
+# =============================================================================
+# SCENARIO 2: Normal activity — Person is home, door opens, motion detected
+# Expected: 0 alerts (person is home, not "not_home")
+# =============================================================================
+
+BATCH 300000
+PresenceEvent { entity_id: "person.john", state: "home" }
+
+BATCH 330000
+DoorEvent { entity_id: "binary_sensor.front_door", state: "open" }
+
+BATCH 360000
+MotionEvent { entity_id: "binary_sensor.hallway_motion", state: "on" }
+
+# =============================================================================
+# SCENARIO 3: Door but no motion — Nobody home, door opens, no motion follows
+# Expected: 0 alerts (sequence incomplete, motion never triggers)
+# =============================================================================
+
+BATCH 600000
+PresenceEvent { entity_id: "person.jane", state: "not_home" }
+
+BATCH 630000
+DoorEvent { entity_id: "binary_sensor.back_door", state: "open" }
+
+# No motion event — sequence does not complete
+
+# =============================================================================
+# SCENARIO 4: Motion too late — Nobody home, door opens, motion 5 min later
+# Expected: 0 alerts (outside the 2-minute window)
+# =============================================================================
+
+BATCH 900000
+PresenceEvent { entity_id: "person.john", state: "not_home" }
+
+BATCH 930000
+DoorEvent { entity_id: "binary_sensor.garage_door", state: "open" }
+
+BATCH 1230000
+MotionEvent { entity_id: "binary_sensor.garage_motion", state: "on" }

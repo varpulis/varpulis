@@ -1,0 +1,151 @@
+# Varpulis Home Assistant Configuration
+#
+# Option 1: Add to your existing docker-compose.yml alongside Home Assistant
+# Option 2: Run standalone with Docker
+#
+# Prerequisites:
+#   - Home Assistant with MQTT integration enabled
+#   - MQTT broker (Mosquitto add-on or external)
+#   - Varpulis container image
+
+# =============================================================================
+# Docker Compose (add alongside your HA stack)
+# =============================================================================
+#
+# services:
+#   homeassistant:
+#     image: ghcr.io/home-assistant/home-assistant:stable
+#     volumes:
+#       - ./ha-config:/config
+#     network_mode: host
+#     restart: unless-stopped
+#
+#   mosquitto:
+#     image: eclipse-mosquitto:2
+#     ports:
+#       - "1883:1883"
+#     volumes:
+#       - ./mosquitto/config:/mosquitto/config
+#       - ./mosquitto/data:/mosquitto/data
+#     restart: unless-stopped
+#
+#   # Run one Varpulis instance per recipe, or combine them into one VPL file
+#   varpulis-security:
+#     image: ghcr.io/varpulis/varpulis:latest
+#     command: run --file /config/recipes/security-intrusion.vpl
+#     environment:
+#       - MQTT_HOST=mosquitto
+#       - MQTT_PORT=1883
+#     volumes:
+#       - ./recipes:/config/recipes
+#     depends_on:
+#       - mosquitto
+#     restart: unless-stopped
+#
+#   varpulis-appliance:
+#     image: ghcr.io/varpulis/varpulis:latest
+#     command: run --file /config/recipes/appliance-left-on.vpl
+#     environment:
+#       - MQTT_HOST=mosquitto
+#       - MQTT_PORT=1883
+#     volumes:
+#       - ./recipes:/config/recipes
+#     depends_on:
+#       - mosquitto
+#     restart: unless-stopped
+#
+#   varpulis-leak:
+#     image: ghcr.io/varpulis/varpulis:latest
+#     command: run --file /config/recipes/water-leak-sequence.vpl
+#     environment:
+#       - MQTT_HOST=mosquitto
+#       - MQTT_PORT=1883
+#     volumes:
+#       - ./recipes:/config/recipes
+#     depends_on:
+#       - mosquitto
+#     restart: unless-stopped
+#
+#   varpulis-energy:
+#     image: ghcr.io/varpulis/varpulis:latest
+#     command: run --file /config/recipes/energy-anomaly.vpl
+#     environment:
+#       - MQTT_HOST=mosquitto
+#       - MQTT_PORT=1883
+#     volumes:
+#       - ./recipes:/config/recipes
+#     depends_on:
+#       - mosquitto
+#     restart: unless-stopped
+#
+#   varpulis-comfort:
+#     image: ghcr.io/varpulis/varpulis:latest
+#     command: run --file /config/recipes/comfort-swing.vpl
+#     environment:
+#       - MQTT_HOST=mosquitto
+#       - MQTT_PORT=1883
+#     volumes:
+#       - ./recipes:/config/recipes
+#     depends_on:
+#       - mosquitto
+#     restart: unless-stopped
+
+# =============================================================================
+# Standalone Docker Run (single recipe)
+# =============================================================================
+#
+# docker run -d \
+#   --name varpulis-ha \
+#   -e MQTT_HOST=192.168.1.100 \
+#   -e MQTT_PORT=1883 \
+#   -v $(pwd)/recipes:/config/recipes \
+#   ghcr.io/varpulis/varpulis:latest \
+#   run --file /config/recipes/security-intrusion.vpl
+
+# =============================================================================
+# Home Assistant Webhook Configuration
+# =============================================================================
+#
+# To receive Varpulis alerts in HA, create a webhook automation:
+#
+# automation:
+#   - alias: "Varpulis Intrusion Alert"
+#     trigger:
+#       - platform: webhook
+#         webhook_id: varpulis_intrusion
+#         local_only: true
+#     action:
+#       - service: notify.mobile_app_your_phone
+#         data:
+#           title: "Security Alert"
+#           message: "{{ trigger.json.message }}"
+#           data:
+#             priority: high
+#             ttl: 0
+
+# =============================================================================
+# Home Assistant MQTT Configuration
+# =============================================================================
+#
+# Ensure HA publishes state changes to MQTT. In configuration.yaml:
+#
+# mqtt:
+#   broker: localhost
+#   port: 1883
+#   discovery: true
+#
+# For entity state publishing, use the MQTT Statestream integration:
+#
+# mqtt_statestream:
+#   base_topic: homeassistant
+#   publish_attributes: true
+#   publish_timestamps: true
+#   include:
+#     entity_globs:
+#       - binary_sensor.*_door
+#       - binary_sensor.*_motion
+#       - binary_sensor.*_water_leak
+#       - sensor.*_temperature
+#       - sensor.*_humidity
+#       - sensor.*_power
+#       - person.*

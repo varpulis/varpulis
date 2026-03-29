@@ -1,0 +1,64 @@
+# MITRE ATT&CK: T1053.005 -- Scheduled Task/Job: Scheduled Task
+# Tactic: Execution (TA0002), Persistence (TA0003)
+# URL: https://attack.mitre.org/techniques/T1053/005/
+#
+# Detects: A process creates a scheduled task, and that task executes
+# within 1 hour. This is a common persistence mechanism: malware creates
+# a scheduled task to survive reboots and maintain access.
+#
+# The sequence: suspicious process runs -> task is registered -> task fires.
+# The time gap between creation and execution distinguishes this from
+# legitimate one-off task scheduling.
+#
+# Data sources:
+#   - Windows Event Log: EventID 4698 (task created), 4702 (task updated)
+#   - Windows Task Scheduler: EventID 106 (task registered), 200/201 (task executed)
+#   - Sysmon: EventID 1 (schtasks.exe or at.exe process creation)
+#   - Linux: crontab modifications, systemd timer creation
+#
+# Severity: Medium
+# False positive rate: Medium (software installers and updates use scheduled tasks)
+#
+# Test events (should trigger):
+#   ProcessCreate { host: "ws-jdoe", process_name: "malware.exe", pid: 4567, user: "jdoe", command_line: "malware.exe --install" }
+#   TaskCreated { host: "ws-jdoe", task_name: "WindowsUpdate_Check", creator_pid: 4567, command: "C:\\Windows\\Temp\\svchost.exe", schedule: "daily" }
+#   TaskExecuted { host: "ws-jdoe", task_name: "WindowsUpdate_Check", process_name: "svchost.exe", exit_code: 0 }
+
+event ProcessCreate:
+    host: str
+    process_name: str
+    pid: int
+    user: str
+    command_line: str
+
+event TaskCreated:
+    host: str
+    task_name: str
+    creator_pid: int
+    command: str
+    schedule: str
+
+event TaskExecuted:
+    host: str
+    task_name: str
+    process_name: str
+    exit_code: int
+
+stream ScheduledTaskPersistence = ProcessCreate as creator
+    -> TaskCreated where host == creator.host as task
+    -> TaskExecuted where host == creator.host and task_name == task.task_name as execution
+    .within(1h)
+    .emit(
+        technique: "T1053.005",
+        tactic: "execution",
+        severity: "medium",
+        host: creator.host,
+        creator_process: creator.process_name,
+        creator_user: creator.user,
+        creator_command: creator.command_line,
+        task_name: task.task_name,
+        task_command: task.command,
+        task_schedule: task.schedule,
+        execution_exit_code: execution.exit_code,
+        description: "Process created scheduled task that subsequently executed"
+    )

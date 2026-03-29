@@ -1,0 +1,63 @@
+# MITRE ATT&CK: T1059 -- Command and Scripting Interpreter
+# Tactic: Execution (TA0002)
+# URL: https://attack.mitre.org/techniques/T1059/
+#
+# Detects: A command interpreter (PowerShell, cmd, bash, wscript) spawns,
+# followed by an outbound network connection from the same host, followed
+# by a file write on the same host. All within 5 minutes.
+#
+# This pattern captures the classic "download and execute" behavior:
+# shell spawns -> connects to C2/download server -> drops payload to disk.
+#
+# Data sources:
+#   - Process creation: Sysmon EventID 1, Windows 4688
+#   - Network: Sysmon EventID 3, firewall logs
+#   - File creation: Sysmon EventID 11
+#
+# Severity: High
+# False positive rate: Medium (developer tools, package managers may match)
+#
+# Test events (should trigger):
+#   ShellSpawn { host: "ws-jdoe", process_name: "powershell.exe", parent: "winword.exe", user: "jdoe", command_line: "powershell -enc SQBFAFgA..." }
+#   NetConnect { host: "ws-jdoe", process_name: "powershell.exe", dest_ip: "185.220.100.42", dest_port: 443, direction: "outbound" }
+#   FileWrite { host: "ws-jdoe", process_name: "powershell.exe", file_path: "C:\\Users\\jdoe\\AppData\\Local\\Temp\\payload.exe", size_bytes: 245760 }
+
+event ShellSpawn:
+    host: str
+    process_name: str
+    parent: str
+    user: str
+    command_line: str
+
+event NetConnect:
+    host: str
+    process_name: str
+    dest_ip: str
+    dest_port: int
+    direction: str
+
+event FileWrite:
+    host: str
+    process_name: str
+    file_path: str
+    size_bytes: int
+
+stream CommandChain = ShellSpawn as shell
+    -> NetConnect where host == shell.host and direction == "outbound" as net
+    -> FileWrite where host == shell.host as file
+    .within(5m)
+    .emit(
+        technique: "T1059",
+        tactic: "execution",
+        severity: "high",
+        host: shell.host,
+        user: shell.user,
+        shell_process: shell.process_name,
+        parent_process: shell.parent,
+        command_line: shell.command_line,
+        dest_ip: net.dest_ip,
+        dest_port: net.dest_port,
+        dropped_file: file.file_path,
+        file_size: file.size_bytes,
+        description: "Shell spawn, network connection, file write: download-and-execute chain"
+    )

@@ -1,0 +1,50 @@
+# T1550.002 -- Pass the Hash
+# Tests for: rules/lateral-movement/T1075-pass-the-hash.vpl
+#
+# Expected results:
+#   - POSITIVE: 1 PassTheHash alert (failed as user1, success as domain_admin from same host)
+#   - NEGATIVE: No alert for normal retry (same username)
+
+# =============================================================================
+# POSITIVE CASE: Failed NTLM as user1, then success as domain_admin from same host
+# Expected: 1 alert
+# =============================================================================
+
+BATCH 0
+NtlmAuth { source_host: "ws-compromised", target_host: "dc01", username: "user1", status: "failed", auth_type: "ntlm" }
+
+BATCH 30000
+NtlmAuth { source_host: "ws-compromised", target_host: "dc01", username: "domain_admin", status: "success", auth_type: "ntlm" }
+
+# =============================================================================
+# NEGATIVE CASE: Failed then success with SAME username (password retry, not PtH)
+# Expected: No alert (same username, not a credential swap)
+# =============================================================================
+
+BATCH 300000
+NtlmAuth { source_host: "ws-finance-02", target_host: "file-server", username: "analyst", status: "failed", auth_type: "ntlm" }
+
+BATCH 310000
+NtlmAuth { source_host: "ws-finance-02", target_host: "file-server", username: "analyst", status: "success", auth_type: "ntlm" }
+
+# =============================================================================
+# NEGATIVE CASE: Different source hosts (not the same compromised machine)
+# Expected: No alert (different source_host values)
+# =============================================================================
+
+BATCH 600000
+NtlmAuth { source_host: "ws-dev-01", target_host: "dc01", username: "dev1", status: "failed", auth_type: "ntlm" }
+
+BATCH 610000
+NtlmAuth { source_host: "ws-dev-02", target_host: "dc01", username: "admin", status: "success", auth_type: "ntlm" }
+
+# =============================================================================
+# NEGATIVE CASE: Kerberos auth (not NTLM -- different auth type)
+# Expected: No alert (auth_type filter excludes kerberos)
+# =============================================================================
+
+BATCH 900000
+NtlmAuth { source_host: "ws-hr-01", target_host: "dc01", username: "hr_user", status: "failed", auth_type: "kerberos" }
+
+BATCH 910000
+NtlmAuth { source_host: "ws-hr-01", target_host: "dc01", username: "hr_admin", status: "success", auth_type: "kerberos" }

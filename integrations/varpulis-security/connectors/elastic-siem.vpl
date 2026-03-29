@@ -1,0 +1,76 @@
+# Elasticsearch SIEM Connector Configuration
+# ============================================
+#
+# Reusable connector definitions for ingesting security events from
+# Elasticsearch / Elastic SIEM. Import this file from any detection rule:
+#
+#   import "connectors/elastic-siem.vpl"
+#
+#   stream AuthEvents = AuthEvent.from(ElasticSIEM, topic: "winlogbeat-*")
+#
+# Configuration assumes:
+#   - Elasticsearch at localhost:9200 (override with environment-specific config)
+#   - Security indices follow Elastic Common Schema (ECS)
+#   - Authentication via API key (configure in Varpulis connector settings)
+#
+# For production, adjust URLs, credentials, and index patterns to match
+# your environment.
+
+# =============================================================================
+# Elasticsearch Connector
+# =============================================================================
+
+connector ElasticSIEM = http(
+    url: "https://localhost:9200",
+    method: "POST"
+)
+
+# =============================================================================
+# Kafka Connector (for Elastic Agent -> Kafka -> Varpulis pipeline)
+# =============================================================================
+#
+# Many production Elastic deployments stream events through Kafka before
+# indexing. This connector reads directly from the Kafka topics that
+# Elastic Agent / Filebeat / Winlogbeat produce to.
+
+connector ElasticKafka = kafka(
+    brokers: ["kafka:9092"],
+    group_id: "varpulis-security"
+)
+
+# =============================================================================
+# Alert Output Connectors
+# =============================================================================
+
+# Send alerts to Elasticsearch for dashboarding
+connector AlertIndex = http(
+    url: "https://localhost:9200/varpulis-alerts/_doc",
+    method: "POST"
+)
+
+# Send critical alerts to a webhook (Slack, PagerDuty, etc.)
+connector AlertWebhook = http(
+    url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+    method: "POST"
+)
+
+# =============================================================================
+# Example: Wire up a detection rule with these connectors
+# =============================================================================
+#
+# event AuthEvent:
+#     source_ip: str
+#     username: str
+#     status: str
+#     target_host: str
+#
+# stream AuthStream = AuthEvent.from(ElasticKafka, topic: "winlogbeat-auth")
+#
+# stream BruteForceAlerts = AuthStream
+#     .where(status == "failed") as f1
+#     -> AuthStream.where(status == "success") as success
+#     .within(10m)
+#     .where(f1.source_ip == success.source_ip)
+#     .emit(technique: "T1078", severity: "high")
+#     .to(AlertIndex)
+#     .to(AlertWebhook)

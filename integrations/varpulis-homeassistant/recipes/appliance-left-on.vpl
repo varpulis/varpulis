@@ -1,0 +1,63 @@
+# Appliance Left On Detection
+# Detects: Person leaves home but appliance is still drawing power after 5 minutes
+#
+# The pattern: presence changes to "not_home", then a power reading above threshold
+# arrives more than 5 minutes later. This catches forgotten ovens, irons, space
+# heaters -- anything with a smart plug reporting wattage.
+#
+# Customize: Adjust the power threshold (50 watts) for your appliances.
+# Run: varpulis simulate -p recipes/appliance-left-on.vpl -e tests/appliance-left-on.evt -v -w 1
+
+# =============================================================================
+# Connector: Home Assistant MQTT
+# =============================================================================
+
+connector HaMqtt = mqtt(
+    host: "homeassistant.local",
+    port: 1883,
+    client_id: "varpulis-appliance"
+)
+
+# =============================================================================
+# Event Definitions
+# =============================================================================
+
+event PresenceEvent:
+    entity_id: str
+    state: str
+
+event PowerEvent:
+    entity_id: str
+    watts: float
+
+# =============================================================================
+# Input Streams
+# =============================================================================
+
+stream Presence = PresenceEvent
+    .from(HaMqtt, topic: "homeassistant/person/+/state")
+
+stream Power = PowerEvent
+    .from(HaMqtt, topic: "homeassistant/sensor/+_power/state")
+
+# =============================================================================
+# Pattern: Left Home With Appliance Running
+# Person leaves -> appliance still drawing significant power within 10 minutes
+# The 10m window gives time for the power reading to arrive after departure.
+# =============================================================================
+
+stream ApplianceLeftOn = PresenceEvent as departure
+    -> PowerEvent where watts > 50.0 as appliance
+    .within(10m)
+    .where(departure.state == "not_home")
+    .alert(
+        webhook: "http://homeassistant.local:8123/api/services/notify/mobile_app",
+        message: "You left home but an appliance is still on!"
+    )
+    .emit(
+        alert_type: "appliance_left_on",
+        severity: "warning",
+        person: departure.entity_id,
+        appliance: appliance.entity_id,
+        power_watts: appliance.watts
+    )

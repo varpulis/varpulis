@@ -1,0 +1,42 @@
+# T1567 -- Exfiltration Over Web Service (Cloud)
+# Tests for: rules/exfiltration/T1567-cloud-exfil.vpl
+#
+# Expected results:
+#   - POSITIVE: 1 CloudExfiltration alert for user jdoe
+#   - NEGATIVE: No alert for single upload or uploads from different users
+
+# =============================================================================
+# POSITIVE CASE: 3 large uploads from same user within 30 minutes
+# Expected: 1 alert
+# =============================================================================
+
+BATCH 0
+CloudUpload { user: "jdoe", host: "ws-jdoe", service: "onedrive", filename: "dump1.zip", size_bytes: 104857600, dest_url: "https://onedrive.live.com/upload" }
+
+BATCH 300000
+CloudUpload { user: "jdoe", host: "ws-jdoe", service: "onedrive", filename: "dump2.zip", size_bytes: 209715200, dest_url: "https://onedrive.live.com/upload" }
+
+BATCH 600000
+CloudUpload { user: "jdoe", host: "ws-jdoe", service: "onedrive", filename: "dump3.zip", size_bytes: 157286400, dest_url: "https://onedrive.live.com/upload" }
+
+# =============================================================================
+# NEGATIVE CASE: Single upload (not bulk)
+# Expected: No alert (only 1 upload, sequence needs 3)
+# =============================================================================
+
+BATCH 3600000
+CloudUpload { user: "msmith", host: "ws-msmith", service: "gdrive", filename: "presentation.pptx", size_bytes: 52428800, dest_url: "https://drive.google.com/upload" }
+
+# =============================================================================
+# NEGATIVE CASE: 3 uploads but from different users
+# Expected: No alert (user equality check fails)
+# =============================================================================
+
+BATCH 7200000
+CloudUpload { user: "alice", host: "ws-alice", service: "dropbox", filename: "report1.pdf", size_bytes: 31457280, dest_url: "https://dropbox.com/upload" }
+
+BATCH 7500000
+CloudUpload { user: "bob", host: "ws-bob", service: "dropbox", filename: "report2.pdf", size_bytes: 41943040, dest_url: "https://dropbox.com/upload" }
+
+BATCH 7800000
+CloudUpload { user: "charlie", host: "ws-charlie", service: "dropbox", filename: "report3.pdf", size_bytes: 20971520, dest_url: "https://dropbox.com/upload" }
