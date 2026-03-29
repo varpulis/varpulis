@@ -5,11 +5,11 @@
 <p align="center"><strong>Detect temporal patterns in event streams.</strong><br>In Rust, in milliseconds, in 10 lines.</p>
 
 [![CI](https://github.com/varpulis/varpulis/actions/workflows/ci.yml/badge.svg)](https://github.com/varpulis/varpulis/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/varpulis.svg)](https://crates.io/crates/varpulis)
+[![crates.io](https://img.shields.io/crates/v/varpulis-cli.svg)](https://crates.io/crates/varpulis-cli)
 [![docs.rs](https://docs.rs/varpulis-core/badge.svg)](https://docs.rs/varpulis-core)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 
-[Documentation](https://www.varpulis-cep.com/docs/) · [Quick Start](#quick-start) · [Examples](examples/) · [Benchmarks](docs/PERFORMANCE_ANALYSIS.md)
+[Documentation](https://www.varpulis-cep.com/docs/) · [Live Demo](https://demo.varpulis-cep.com) · [Quick Start](#quick-start) · [Examples](examples/) · [Benchmarks](docs/PERFORMANCE_ANALYSIS.md)
 
 ---
 
@@ -59,7 +59,9 @@ The default `varpulis interactive` opens a split-pane TUI with topology, live ev
 | **Predictive forecasting** | `.forecast()` built-in | No | No | No |
 | **Deployment** | Single binary (15 MB) | JVM cluster | Embedded JVM | Embedded JVM |
 | **DSL** | VPL (dedicated) | Java API | EPL | SiddhiQL |
-| **Throughput** | 1.5M evt/s (single core) | ~500K evt/s | ~1M evt/s | ~300K evt/s |
+| **Throughput** | 1.5M evt/s (single core) | ~500K evt/s¹ | ~1M evt/s¹ | ~300K evt/s¹ |
+
+¹ Approximate figures from published benchmarks and vendor documentation; workload-dependent.
 
 **`.forecast()` is unique.** It uses Probabilistic Suffix Trees to predict that a pattern is *about to* complete — before the final event arrives. Combined with Hawkes process intensity estimation and conformal prediction intervals, it turns reactive CEP into proactive alerting.
 
@@ -133,6 +135,10 @@ Each connector is an independent crate. The default binary includes all; build w
 | [Forecasting Architecture](docs/architecture/forecasting.md) | [CLI Reference](docs/reference/cli-reference.md) |
 | [Cluster Tutorial](docs/tutorials/cluster-tutorial.md) | [Production Deployment](docs/PRODUCTION_DEPLOYMENT.md) |
 | [System Architecture](docs/architecture/system.md) | [All Tutorials →](docs/tutorials/) |
+
+## Contributing
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

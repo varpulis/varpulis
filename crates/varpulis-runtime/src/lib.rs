@@ -158,33 +158,26 @@ pub mod worker_pool;
 
 // ---- Core re-exports (always available) ----
 pub use columnar::{Column, ColumnarAccess, ColumnarBuffer, ColumnarCheckpoint};
-pub use engine::error::EngineError;
-pub use engine::{Engine, ReloadReport, SourceBinding};
-pub use event::{Event, SharedEvent};
-pub use event_file::StreamingEventReader;
-// Persistence exports (always available, RocksDB impl requires "persistence" feature)
-#[cfg(feature = "persistence")]
-pub use persistence::RocksDbStore;
-pub use persistence::{
-    Checkpoint, CheckpointConfig, CheckpointManager, FileStore, MemoryStore, StateStore, StoreError,
-};
-pub use window::{
-    CountWindow, DelayBuffer, IncrementalAggregates, IncrementalSlidingWindow,
-    PartitionedDelayBuffer, PartitionedPreviousValueTracker, PartitionedSessionWindow,
-    PartitionedSlidingWindow, PartitionedTumblingWindow, PreviousValueTracker, SessionWindow,
-    SlidingCountWindow, SlidingWindow, TumblingWindow,
-};
-
 // ---- Async-runtime re-exports (require tokio) ----
 #[cfg(feature = "async-runtime")]
 pub use context::{
     CheckpointAck, CheckpointBarrier, CheckpointCoordinator, ContextConfig, ContextMap,
     ContextMessage, ContextOrchestrator, ContextRuntime, DispatchError, EventTypeRouter,
 };
+pub use engine::error::EngineError;
 #[cfg(feature = "async-runtime")]
 pub use engine::EngineBuilder;
+pub use engine::{Engine, ReloadReport, SourceBinding};
+pub use event::{Event, SharedEvent};
+pub use event_file::StreamingEventReader;
 #[cfg(feature = "async-runtime")]
 pub use metrics::Metrics;
+// Persistence exports (always available, RocksDB impl requires "persistence" feature)
+#[cfg(feature = "persistence")]
+pub use persistence::RocksDbStore;
+pub use persistence::{
+    Checkpoint, CheckpointConfig, CheckpointManager, FileStore, MemoryStore, StateStore, StoreError,
+};
 #[cfg(feature = "async-runtime")]
 pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink};
 #[cfg(feature = "async-runtime")]
@@ -201,6 +194,12 @@ pub use timer::{spawn_timer, TimerManager};
 pub use varpulis_connectors as connector;
 #[cfg(feature = "async-runtime")]
 pub use varpulis_connectors::{circuit_breaker, converter, Sink, SinkError};
+pub use window::{
+    CountWindow, DelayBuffer, IncrementalAggregates, IncrementalSlidingWindow,
+    PartitionedDelayBuffer, PartitionedPreviousValueTracker, PartitionedSessionWindow,
+    PartitionedSlidingWindow, PartitionedTumblingWindow, PreviousValueTracker, SessionWindow,
+    SlidingCountWindow, SlidingWindow, TumblingWindow,
+};
 #[cfg(feature = "async-runtime")]
 pub use worker_pool::{
     BackpressureStrategy, PoolBackpressureError, WorkerPool, WorkerPoolConfig, WorkerPoolMetrics,

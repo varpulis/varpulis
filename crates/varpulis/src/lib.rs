@@ -26,6 +26,5 @@
 
 /// Core types: AST, values, types, validation.
 pub use varpulis_core as core;
-
 /// Runtime engine: streams, patterns, windows, aggregations.
 pub use varpulis_runtime as runtime;

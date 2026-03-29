@@ -26,10 +26,9 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
-
 use varpulis_runtime::engine::graph::program_to_graph;
 use varpulis_runtime::Engine;
+use wasm_bindgen::prelude::*;
 
 /// WASM-accessible VPL engine.
 ///

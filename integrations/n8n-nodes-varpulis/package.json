@@ -1,5 +1,5 @@
 {
-  "name": "n8n-nodes-varpulis",
+  "name": "@varpulis/n8n-nodes-varpulis",
   "version": "0.1.0",
   "description": "Temporal pattern detection for n8n — powered by Varpulis CEP engine (WASM)",
   "keywords": [
@@ -23,7 +23,7 @@
     ]
   },
   "dependencies": {
-    "varpulis-engine-wasm": "file:../../packages/npm/pkg"
+    "@varpulis/engine": "^0.9.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

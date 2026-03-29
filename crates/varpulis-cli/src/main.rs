@@ -10,8 +10,7 @@ use comfy_table::{Cell, Table};
 use varpulis_cli::auth::AuthConfig;
 use varpulis_cli::client::VarpulisClient;
 use varpulis_cli::config::Config;
-use varpulis_cli::output;
-use varpulis_cli::{rate_limit, security, users};
+use varpulis_cli::{output, rate_limit, security, users};
 
 mod commands;
 

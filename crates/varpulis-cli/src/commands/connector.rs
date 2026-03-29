@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Subcommand;
-use comfy_table::{presets::UTF8_FULL, ContentArrangement, Table};
+use comfy_table::presets::UTF8_FULL;
+use comfy_table::{ContentArrangement, Table};
 use owo_colors::OwoColorize;
 use varpulis_connector_api::component;
 
