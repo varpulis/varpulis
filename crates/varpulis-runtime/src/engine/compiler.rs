@@ -242,6 +242,28 @@ pub fn compile_to_sase_pattern_with_resolver(
                 alias: Some(alias.clone()),
             });
         }
+        StreamSource::IdentWithFilterAndAlias {
+            name,
+            filter,
+            alias,
+        } => {
+            // Inline filter becomes a SASE predicate
+            let (event_type, mut predicate) = if let Some(info) = stream_resolver(name) {
+                let pred = info.filter.as_ref().and_then(expr_to_sase_predicate);
+                (info.event_type, pred)
+            } else {
+                (name.clone(), None)
+            };
+            // The inline filter takes precedence / merges with derived stream filter
+            if let Some(inline_pred) = expr_to_sase_predicate(filter) {
+                predicate = Some(inline_pred);
+            }
+            steps.push(SasePattern::Event {
+                event_type,
+                predicate,
+                alias: alias.clone(),
+            });
+        }
         StreamSource::AllWithAlias { name, alias } => {
             // Check if this is a derived stream
             let (event_type, predicate) = if let Some(info) = stream_resolver(name) {

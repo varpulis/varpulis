@@ -985,6 +985,7 @@ impl ContextOrchestrator {
         match source {
             StreamSource::Ident(name) => vec![name.clone()],
             StreamSource::IdentWithAlias { name, .. } => vec![name.clone()],
+            StreamSource::IdentWithFilterAndAlias { name, .. } => vec![name.clone()],
             StreamSource::AllWithAlias { name, .. } => vec![name.clone()],
             StreamSource::FromConnector { event_type, .. } => vec![event_type.clone()],
             StreamSource::Merge(decls) => decls.iter().map(|d| d.source.clone()).collect(),

@@ -123,9 +123,9 @@ fn translate_source(source: &StreamSource) -> Result<LogicalSource, String> {
     match source {
         StreamSource::Ident(name) => Ok(LogicalSource::EventType(name.clone())),
 
-        StreamSource::IdentWithAlias { name, .. } | StreamSource::AllWithAlias { name, .. } => {
-            Ok(LogicalSource::EventType(name.clone()))
-        }
+        StreamSource::IdentWithAlias { name, .. }
+        | StreamSource::IdentWithFilterAndAlias { name, .. }
+        | StreamSource::AllWithAlias { name, .. } => Ok(LogicalSource::EventType(name.clone())),
 
         StreamSource::FromConnector {
             event_type,

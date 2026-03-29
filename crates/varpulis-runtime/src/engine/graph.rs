@@ -136,6 +136,17 @@ fn source_to_node_info(
             "source".to_string(),
             serde_json::json!({ "event_type": name, "alias": alias, "stream_name": stream_name }),
         ),
+        StreamSource::IdentWithFilterAndAlias { name, alias, .. } => {
+            let label = match alias {
+                Some(a) => format!("{stream_name} = {name} where ... as {a}"),
+                None => format!("{stream_name} = {name} where ..."),
+            };
+            (
+                label,
+                "source".to_string(),
+                serde_json::json!({ "event_type": name, "has_filter": true, "alias": alias, "stream_name": stream_name }),
+            )
+        }
         StreamSource::AllWithAlias { name, alias } => {
             let label = match alias {
                 Some(a) => format!("{stream_name} = all {name} as {a}"),

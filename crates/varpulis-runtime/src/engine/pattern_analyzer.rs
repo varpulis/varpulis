@@ -21,6 +21,7 @@ pub fn extract_event_types(source: &StreamSource, followed_by: &[FollowedByClaus
     match source {
         StreamSource::Ident(name)
         | StreamSource::IdentWithAlias { name, .. }
+        | StreamSource::IdentWithFilterAndAlias { name, .. }
         | StreamSource::AllWithAlias { name, .. } => {
             types.push(name.clone());
         }

@@ -293,7 +293,9 @@ fn check_stream_source(v: &mut Validator, source: &StreamSource, span: Span) {
         StreamSource::Ident(name) => {
             check_source_name(v, name, span);
         }
-        StreamSource::IdentWithAlias { name, .. } | StreamSource::AllWithAlias { name, .. } => {
+        StreamSource::IdentWithAlias { name, .. }
+        | StreamSource::IdentWithFilterAndAlias { name, .. }
+        | StreamSource::AllWithAlias { name, .. } => {
             check_source_name(v, name, span);
         }
         StreamSource::FromConnector {
@@ -382,6 +384,13 @@ fn check_stream_ops(
         }
         StreamSource::IdentWithAlias { name, alias } => {
             alias_to_event.insert(alias.clone(), name.clone());
+        }
+        StreamSource::IdentWithFilterAndAlias { name, alias, .. } => {
+            if let Some(a) = alias {
+                alias_to_event.insert(a.clone(), name.clone());
+            } else {
+                alias_to_event.insert(name.clone(), name.clone());
+            }
         }
         StreamSource::AllWithAlias { name, alias } => {
             if let Some(a) = alias {

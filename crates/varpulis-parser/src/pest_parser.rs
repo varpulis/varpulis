@@ -816,6 +816,18 @@ fn parse_stream_source(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamS
             let alias = inner_iter.next().map(|p| p.as_str().to_string());
             Ok(StreamSource::AllWithAlias { name, alias })
         }
+        Rule::filtered_source => {
+            let mut inner_iter = inner.into_inner();
+            let name = inner_iter.expect_next("event type")?.as_str().to_string();
+            let filter_pair = inner_iter.expect_next("filter expression")?;
+            let filter = parse_filter_expr(filter_pair)?;
+            let alias = inner_iter.next().map(|p| p.as_str().to_string());
+            Ok(StreamSource::IdentWithFilterAndAlias {
+                name,
+                filter,
+                alias,
+            })
+        }
         Rule::aliased_source => {
             let mut inner_iter = inner.into_inner();
             let name = inner_iter.expect_next("event name")?.as_str().to_string();

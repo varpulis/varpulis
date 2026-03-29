@@ -588,6 +588,71 @@ fn test_all_source_without_alias() {
 }
 
 #[test]
+fn test_filtered_source_with_alias() {
+    let stmt = parse_first_stmt("stream S = Events where status == \"failed\" as f1");
+    match stmt {
+        Stmt::StreamDecl { source, .. } => match source {
+            StreamSource::IdentWithFilterAndAlias {
+                name,
+                filter,
+                alias,
+            } => {
+                assert_eq!(name, "Events");
+                assert!(matches!(filter, Expr::Binary { .. }));
+                assert_eq!(alias, Some("f1".to_string()));
+            }
+            other => panic!("Expected IdentWithFilterAndAlias, got {other:?}"),
+        },
+        other => panic!("Expected StreamDecl, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_filtered_source_without_alias() {
+    let stmt = parse_first_stmt("stream S = Events where x > 0");
+    match stmt {
+        Stmt::StreamDecl { source, .. } => match source {
+            StreamSource::IdentWithFilterAndAlias {
+                name,
+                filter,
+                alias,
+            } => {
+                assert_eq!(name, "Events");
+                assert!(matches!(filter, Expr::Binary { .. }));
+                assert!(alias.is_none());
+            }
+            other => panic!("Expected IdentWithFilterAndAlias, got {other:?}"),
+        },
+        other => panic!("Expected StreamDecl, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_filtered_source_in_sequence() {
+    let result = parse("stream S = Events where x > 0 as a -> Events where y > 0 as b .within(5m)");
+    assert!(result.is_ok(), "Failed: {:?}", result.err());
+    let program = result.unwrap();
+    if let Stmt::StreamDecl { source, ops, .. } = &program.statements[0].node {
+        match source {
+            StreamSource::IdentWithFilterAndAlias { name, alias, .. } => {
+                assert_eq!(name, "Events");
+                assert_eq!(*alias, Some("a".to_string()));
+            }
+            other => panic!("Expected IdentWithFilterAndAlias, got {other:?}"),
+        }
+        let fb = ops.iter().find(|op| matches!(op, StreamOp::FollowedBy(_)));
+        assert!(fb.is_some(), "Expected FollowedBy op");
+        if let StreamOp::FollowedBy(clause) = fb.unwrap() {
+            assert_eq!(clause.event_type, "Events");
+            assert!(clause.filter.is_some());
+            assert_eq!(clause.alias, Some("b".to_string()));
+        }
+    } else {
+        panic!("Expected StreamDecl");
+    }
+}
+
+#[test]
 fn test_followed_by_match_all() {
     let result = parse("stream S = A as a -> all B where b.id == a.id as b");
     assert!(result.is_ok(), "Failed: {:?}", result.err());

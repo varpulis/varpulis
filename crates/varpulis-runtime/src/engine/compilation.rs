@@ -74,7 +74,10 @@ impl Engine {
                     }
                     let source_et = match source {
                         StreamSource::Ident(s) => Some(s.as_str()),
-                        StreamSource::IdentWithAlias { name: et, .. } => Some(et.as_str()),
+                        StreamSource::IdentWithAlias { name: et, .. }
+                        | StreamSource::IdentWithFilterAndAlias { name: et, .. } => {
+                            Some(et.as_str())
+                        }
                         StreamSource::FromConnector { event_type, .. } => Some(event_type.as_str()),
                         _ => None,
                     };
@@ -165,6 +168,9 @@ impl Engine {
                 }
             }
             StreamSource::IdentWithAlias {
+                name: event_type, ..
+            }
+            | StreamSource::IdentWithFilterAndAlias {
                 name: event_type, ..
             } => {
                 // Register for the event type (alias is handled in sequence)
@@ -434,6 +440,22 @@ impl Engine {
         let mut forecast_spec: Option<varpulis_core::ast::ForecastSpec> = None;
         let mut forecast_insert_idx: Option<usize> = None;
 
+        // Prepend inline filter from IdentWithFilterAndAlias source — but ONLY
+        // for non-sequence streams. For sequence patterns, the filter becomes a
+        // SASE predicate on the first step (handled in compiler.rs), not a
+        // stream-level WhereExpr that would block ALL events including later steps.
+        let has_sequence_ops = ops.iter().any(|op| {
+            matches!(
+                op,
+                StreamOp::FollowedBy(_) | StreamOp::Not(_) | StreamOp::Within(_)
+            )
+        });
+        if let StreamSource::IdentWithFilterAndAlias { filter, .. } = source {
+            if !has_sequence_ops {
+                runtime_ops.push(RuntimeOp::WhereExpr(filter.clone()));
+            }
+        }
+
         // Helper closure to resolve a stream/event name to the underlying event type
         let resolve_event_type = |name: &str| -> String {
             if let Some(stream_def) = self.streams.get(name) {
@@ -489,7 +511,9 @@ impl Engine {
                     sequence_event_types.push(resolved);
                 }
             }
-            StreamSource::IdentWithAlias { name, .. } | StreamSource::AllWithAlias { name, .. }
+            StreamSource::IdentWithAlias { name, .. }
+            | StreamSource::IdentWithFilterAndAlias { name, .. }
+            | StreamSource::AllWithAlias { name, .. }
                 if has_sequence_ops =>
             {
                 let resolved = resolve_event_type(name);
@@ -1201,6 +1225,15 @@ impl Engine {
                     type_indices_map.insert(alias.clone(), *idx);
                 }
             }
+            StreamSource::IdentWithFilterAndAlias {
+                name,
+                alias: Some(alias),
+                ..
+            } => {
+                if let Some(idx) = type_indices_map.get(name) {
+                    type_indices_map.insert(alias.clone(), *idx);
+                }
+            }
             StreamSource::AllWithAlias {
                 name,
                 alias: Some(alias),
@@ -1287,6 +1320,13 @@ impl Engine {
             std::collections::HashMap::new();
         match source {
             StreamSource::IdentWithAlias { name, alias } => {
+                alias_to_event_type.insert(alias.clone(), name.clone());
+            }
+            StreamSource::IdentWithFilterAndAlias {
+                name,
+                alias: Some(alias),
+                ..
+            } => {
                 alias_to_event_type.insert(alias.clone(), name.clone());
             }
             StreamSource::AllWithAlias {

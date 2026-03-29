@@ -87,6 +87,7 @@ stream_source = {
     | sequence_source
     | timer_source
     | all_source
+    | filtered_source
     | aliased_source
     | identifier
 }
@@ -103,6 +104,7 @@ sequence_source = { "sequence" ~ "(" ~ sequence_decl ~ ")" }
 timer_source = { "timer" ~ "(" ~ timer_args ~ ")" }
 timer_args = { expr ~ ("," ~ named_arg)? }
 all_source = { "all" ~ identifier ~ ("as" ~ identifier)? }
+filtered_source = { identifier ~ "where" ~ filter_expr ~ ("as" ~ identifier)? }
 aliased_source = { identifier ~ "as" ~ identifier }
 
 inline_stream_list = { inline_stream ~ ("," ~ inline_stream)* }

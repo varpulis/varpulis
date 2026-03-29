@@ -241,6 +241,16 @@ pub enum StreamSource {
         /// Alias for the source.
         alias: String,
     },
+    /// Source event type with inline filter and optional alias.
+    /// Example: `EventType where status == "failed" as f1`
+    IdentWithFilterAndAlias {
+        /// Event type or stream name.
+        name: String,
+        /// Inline filter expression.
+        filter: Expr,
+        /// Optional alias for the source.
+        alias: Option<String>,
+    },
     /// Event type with all quantifier and optional alias: `all EventType as alias`
     AllWithAlias {
         /// Event type name.
