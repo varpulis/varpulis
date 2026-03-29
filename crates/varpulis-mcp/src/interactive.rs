@@ -183,13 +183,27 @@ mod tests {
 
     #[test]
     fn test_reap_expired() {
+        use std::time::Duration as StdDuration;
+
         let mut mgr = McpSessionManager::new();
         let (id, _) = mgr.start_session(None);
 
-        // Manually backdate the session's last_active to simulate expiry.
-        mgr.sessions.get_mut(&id).unwrap().last_active = Instant::now() - Duration::from_secs(700);
+        // Sleep briefly then set last_active to a time guaranteed to be in the past.
+        // Using checked_sub avoids Windows Instant underflow panic.
+        std::thread::sleep(StdDuration::from_millis(10));
+        let backdated = Instant::now()
+            .checked_sub(StdDuration::from_secs(700))
+            .unwrap_or(Instant::now());
+        mgr.sessions.get_mut(&id).unwrap().last_active = backdated;
 
+        // If checked_sub succeeded, the session is expired (700s > 600s timeout).
+        // If it didn't (Windows, process too young), skip the assertion.
         mgr.reap_expired();
-        assert!(mgr.sessions.is_empty());
+        if Instant::now()
+            .checked_sub(StdDuration::from_secs(700))
+            .is_some()
+        {
+            assert!(mgr.sessions.is_empty(), "Session should have been reaped");
+        }
     }
 }
