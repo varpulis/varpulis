@@ -52,9 +52,12 @@ const PARSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Parse a VPL source string into a Program AST.
 ///
-/// Runs pest parsing in a dedicated thread with a 16 MB stack and a wall-clock
-/// timeout to guard against stack overflow and exponential backtracking on
-/// adversarial inputs.
+/// On native targets: runs pest parsing in a dedicated thread with a 16 MB
+/// stack and a wall-clock timeout to guard against stack overflow and
+/// exponential backtracking on adversarial inputs.
+///
+/// On WASM: calls the parser directly (no threads, no timeout).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn parse(source: &str) -> ParseResult<Program> {
     let source = source.to_string();
     let handle = std::thread::Builder::new()
@@ -88,6 +91,12 @@ pub fn parse(source: &str) -> ParseResult<Program> {
         }
         std::thread::sleep(std::time::Duration::from_millis(5).min(remaining));
     }
+}
+
+/// WASM fallback: parse directly without thread spawning or timeout.
+#[cfg(target_arch = "wasm32")]
+pub fn parse(source: &str) -> ParseResult<Program> {
+    parse_inner(source)
 }
 
 /// Maximum bracket nesting depth allowed before pest parsing.
