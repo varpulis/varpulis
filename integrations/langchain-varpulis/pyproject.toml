@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langchain-varpulis"
+version = "0.1.0"
+description = "LangChain tool for real-time event pattern detection with Varpulis CEP engine"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+keywords = ["langchain", "varpulis", "cep", "pattern-matching", "event-processing", "ai-agents"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "langchain-core>=0.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/varpulis/varpulis"
+Documentation = "https://www.varpulis-cep.com/docs/"
+Repository = "https://github.com/varpulis/varpulis/tree/main/integrations/langchain-varpulis"
