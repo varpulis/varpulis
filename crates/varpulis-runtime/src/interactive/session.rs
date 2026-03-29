@@ -1,6 +1,6 @@
 //! Interactive session core.
 //!
-//! [`InteractiveSession`] wraps a Varpulis [`Engine`](crate::Engine) and
+//! [`InteractiveSession`] wraps a Varpulis [`Engine`] and
 //! exposes a command/response API for interactive use. Transports (JSON-line,
 //! TUI, MCP) call [`handle_command`](InteractiveSession::handle_command) and
 //! receive a [`broadcast::Receiver`] for asynchronous output events.

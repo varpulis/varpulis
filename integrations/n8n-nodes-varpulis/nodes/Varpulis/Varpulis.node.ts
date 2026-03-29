@@ -92,12 +92,12 @@ export class Varpulis implements INodeType {
 		}};
 
 		try {
-			const wasmModule = require('varpulis-engine-wasm');
+			const wasmModule = require('@varpulis/engine');
 			WasmEngine = wasmModule.WasmEngine;
 		} catch (err) {
 			throw new NodeOperationError(
 				this.getNode(),
-				'Failed to load Varpulis WASM engine. Ensure the varpulis-engine-wasm package is installed correctly.',
+				'Failed to load Varpulis WASM engine. Ensure the @varpulis/engine package is installed correctly.',
 				{ description: String(err) },
 			);
 		}

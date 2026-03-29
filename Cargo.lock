@@ -8898,7 +8898,6 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "varpulis-core",
- "varpulis-datagen",
  "varpulis-parser",
  "varpulis-runtime",
 ]

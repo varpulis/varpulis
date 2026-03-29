@@ -31,6 +31,22 @@ ignore = [
     # rustls-webpki 0.102.x: CRL distributionPoint bypass. Transitive via async-nats 0.46.
     # async-nats pins rustls-webpki 0.102; fix requires >=0.103.10. No upstream fix yet.
     { id = "RUSTSEC-2026-0049", reason = "transitive via async-nats 0.46, no upstream fix yet" },
+
+    # instant: unmaintained, replaced by web-time. Transitive via notify → varpulis-cli.
+    # No safe upgrade: notify-types 1.0 still depends on instant.
+    { id = "RUSTSEC-2024-0384", reason = "transitive via notify-types, no upstream fix" },
+
+    # lru: IterMut unsound (Stacked Borrows). Transitive via ratatui 0.29 → varpulis-cli.
+    # ratatui pins lru 0.12; fix requires lru >=0.16.3. Waiting on ratatui upgrade.
+    { id = "RUSTSEC-2026-0002", reason = "transitive via ratatui 0.29, pinned to lru 0.12" },
+
+    # number_prefix: unmaintained. Transitive via indicatif → varpulis-cli.
+    # No safe upgrade available.
+    { id = "RUSTSEC-2025-0119", reason = "transitive via indicatif, no upstream fix" },
+
+    # paste: unmaintained (dtolnay archived). Transitive via ratatui → varpulis-cli.
+    # No safe upgrade: ratatui 0.29 depends on paste.
+    { id = "RUSTSEC-2024-0436", reason = "transitive via ratatui 0.29, no upstream fix" },
 ]
 
 # ---------------------------------------------------------------------------
