@@ -6,7 +6,7 @@ on:
       dry_run:
         description: 'Dry run (do not actually publish)'
         type: boolean
-        default: true
+        default: false
       crate:
         description: 'Publish a single crate (leave empty for all)'
         type: choice
@@ -40,9 +40,11 @@ on:
           - varpulis-lsp
           - varpulis-mcp
           - varpulis-wasm
+          - varpulis-engine-wasm
           - varpulis-runtime
           - varpulis-cluster
           - varpulis-cli
+          - varpulis
         default: 'all'
   release:
     types: [published]
@@ -133,9 +135,12 @@ jobs:
             "varpulis-lsp"
             "varpulis-mcp"
             "varpulis-wasm"
+            "varpulis-engine-wasm"
             "varpulis-runtime"
             "varpulis-cluster"
             "varpulis-cli"
+            # Level 4: meta-crate (depends on core + runtime)
+            "varpulis"
           )
 
           publish_crate() {
