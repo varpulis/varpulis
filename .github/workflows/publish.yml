@@ -128,19 +128,22 @@ jobs:
             "varpulis-connector-database"
             "varpulis-connector-http"
             "varpulis-connector-cdc"
-            # Level 3: convenience re-export crate (depends on all connectors)
-            "varpulis-connectors"
-            "varpulis-sase"
-            "varpulis-enrichment"
+            # Level 3: aggregation crates
+            "varpulis-connectors"    # depends on all connector crates
+            "varpulis-sase"          # depends on core, zdd
+            "varpulis-enrichment"    # depends on core, connectors
+            # Level 4: LSP + WASM (depend on core + parser, no runtime)
             "varpulis-lsp"
-            "varpulis-mcp"
             "varpulis-wasm"
-            "varpulis-engine-wasm"
+            # Level 5: runtime (depends on core, parser, sase, connectors, enrichment, etc.)
             "varpulis-runtime"
-            "varpulis-cluster"
-            "varpulis-cli"
-            # Level 4: meta-crate (depends on core + runtime)
-            "varpulis"
+            # Level 6: crates that depend on runtime
+            "varpulis-mcp"           # depends on core, parser, runtime
+            "varpulis-engine-wasm"   # depends on core, parser, runtime
+            "varpulis-cluster"       # depends on core, parser, runtime
+            "varpulis-cli"           # depends on everything
+            # Level 7: meta-crate
+            "varpulis"               # depends on core, runtime
           )
 
           publish_crate() {
