@@ -1,0 +1,103 @@
+{
+  "name": "Stripe Churn Detection with Varpulis",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stripe-webhook",
+        "responseMode": "onReceived",
+        "responseCode": 200
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Stripe Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "vplPattern": "event Payment:\n    customer_id: string\n    status: string\n    amount: float\n    plan: string\n\nstream ChurnRisk =\n    Payment as downgrade -> Payment as failed -> Payment as cancel\n    .where(downgrade.status == \"downgrade\"\n       AND failed.status == \"failed\"\n       AND cancel.status == \"canceled\"\n       AND failed.customer_id == downgrade.customer_id\n       AND cancel.customer_id == downgrade.customer_id)\n    .within(30m)\n    .emit(\n        customer: downgrade.customer_id,\n        original_plan: downgrade.plan,\n        failed_amount: failed.amount,\n        risk_level: \"high\"\n    )",
+        "eventType": "Payment"
+      },
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Varpulis CEP",
+      "type": "n8n-nodes-varpulis.varpulis",
+      "typeVersion": 1,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#alerts",
+        "text": "=Churn risk detected for customer {{$json.customer}} (plan: {{$json.original_plan}}, failed amount: ${{$json.failed_amount}})",
+        "otherOptions": {}
+      },
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [720, 220]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "churn_events",
+        "columns": "customer_id,original_plan,failed_amount,risk_level,detected_at",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Log to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [720, 400]
+    }
+  ],
+  "connections": {
+    "Stripe Webhook": {
+      "main": [
+        [
+          {
+            "node": "Varpulis CEP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Varpulis CEP": {
+      "main": [
+        [
+          {
+            "node": "Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "varpulis",
+      "id": "1"
+    },
+    {
+      "name": "fraud-detection",
+      "id": "2"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-26T00:00:00.000Z",
+  "versionId": "1"
+}

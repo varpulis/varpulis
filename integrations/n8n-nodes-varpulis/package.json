@@ -1,0 +1,36 @@
+{
+  "name": "n8n-nodes-varpulis",
+  "version": "0.1.0",
+  "description": "Temporal pattern detection for n8n — powered by Varpulis CEP engine (WASM)",
+  "keywords": [
+    "n8n-community-node-package",
+    "cep",
+    "pattern-matching",
+    "temporal",
+    "event-processing"
+  ],
+  "license": "MIT",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "nodes": [
+      "dist/nodes/Varpulis/Varpulis.node.js"
+    ]
+  },
+  "dependencies": {
+    "varpulis-engine-wasm": "file:../../packages/npm/pkg"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "n8n-workflow": "*",
+    "typescript": "~5.7.0"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "name": "IoT Anomaly Detection with Varpulis",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "mqtt://broker.local:1883",
+        "topic": "sensors/+/reading",
+        "options": {}
+      },
+      "id": "b1b2c3d4-0001-4000-8000-000000000001",
+      "name": "MQTT Trigger",
+      "type": "n8n-nodes-base.mqttTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "vplPattern": "event Sensor:\n    zone: string\n    temperature: float\n    pressure: float\n    humidity: float\n\nstream TempSpike =\n    Sensor as reading\n    .where(reading.temperature > 85)\n    .emit(zone: reading.zone, temp: reading.temperature)\n\nstream TempPressureAnomaly =\n    Sensor as hot -> Sensor as drop\n    .where(hot.temperature > 80\n       AND drop.pressure < 30\n       AND drop.zone == hot.zone)\n    .within(2m)\n    .emit(\n        zone: hot.zone,\n        peak_temp: hot.temperature,\n        low_pressure: drop.pressure,\n        severity: \"critical\"\n    )",
+        "eventType": "Sensor"
+      },
+      "id": "b1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Varpulis CEP",
+      "type": "n8n-nodes-varpulis.varpulis",
+      "typeVersion": 1,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://hooks.slack.com/services/xxx/yyy/zzz",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "=ANOMALY in zone {{$json.zone}}: temp={{$json.peak_temp}}C, pressure={{$json.low_pressure}}bar ({{$json.severity}})"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Alert Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 220]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "collection": "sensor_anomalies",
+        "fields": "zone,peak_temp,low_pressure,severity,detected_at",
+        "options": {}
+      },
+      "id": "b1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Store Anomaly",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.1,
+      "position": [720, 400]
+    },
+    {
+      "parameters": {},
+      "id": "b1b2c3d4-0005-4000-8000-000000000005",
+      "name": "Continue Processing",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [720, 500]
+    }
+  ],
+  "connections": {
+    "MQTT Trigger": {
+      "main": [
+        [
+          {
+            "node": "Varpulis CEP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Varpulis CEP": {
+      "main": [
+        [
+          {
+            "node": "Alert Webhook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Store Anomaly",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Continue Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "varpulis",
+      "id": "1"
+    },
+    {
+      "name": "iot",
+      "id": "2"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-26T00:00:00.000Z",
+  "versionId": "1"
+}
