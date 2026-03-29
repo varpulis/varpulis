@@ -97,8 +97,7 @@ pub struct Engine {
     /// Only available with async-runtime (requires tokio mpsc channels).
     #[cfg(feature = "async-runtime")]
     pub(super) output_channel: Option<OutputChannel>,
-    /// Collected output events buffer for sync-only/WASM mode (no mpsc channel).
-    #[cfg(not(feature = "async-runtime"))]
+    /// Collected output events buffer for sync/WASM mode (used by process_batch_sync_collect).
     pub(super) collected_outputs: Vec<Event>,
     /// Metrics
     pub(super) events_processed: u64,
@@ -236,37 +235,47 @@ impl Engine {
             physical_plan: None,
             udf_registry: UdfRegistry::new(),
             trace_collector: trace::TraceCollector::new(),
+            collected_outputs: Vec::new(),
         }
     }
 
     /// Constructor for sync-only / WASM builds (no tokio, no output channel).
-    #[cfg(not(feature = "async-runtime"))]
+    /// Outputs are collected internally and returned via `process_batch_sync_collect()`.
     pub fn new_sync() -> Self {
-        Self {
-            streams: FxHashMap::default(),
-            router: router::EventRouter::new(),
-            functions: FxHashMap::default(),
-            patterns: FxHashMap::default(),
-            configs: FxHashMap::default(),
-            variables: FxHashMap::default(),
-            mutable_vars: FxHashSet::default(),
-            source_bindings: Vec::new(),
-            collected_outputs: Vec::new(),
-            events_processed: 0,
-            output_events_emitted: 0,
-            watermark_tracker: None,
-            last_applied_watermark: None,
-            late_data_configs: FxHashMap::default(),
-            context_name: None,
-            topic_prefix: None,
-            shared_hamlet_aggregators: Vec::new(),
-            checkpoint_manager: None,
-            dlq_path: None,
-            dlq_config: crate::dead_letter::DlqConfig::default(),
-            dlq: None,
-            physical_plan: None,
-            udf_registry: UdfRegistry::new(),
-            trace_collector: trace::TraceCollector::new(),
+        #[cfg(feature = "async-runtime")]
+        {
+            let mut engine = Self::new_internal(None);
+            engine.collected_outputs = Vec::new();
+            engine
+        }
+        #[cfg(not(feature = "async-runtime"))]
+        {
+            Self {
+                streams: FxHashMap::default(),
+                router: router::EventRouter::new(),
+                functions: FxHashMap::default(),
+                patterns: FxHashMap::default(),
+                configs: FxHashMap::default(),
+                variables: FxHashMap::default(),
+                mutable_vars: FxHashSet::default(),
+                source_bindings: Vec::new(),
+                collected_outputs: Vec::new(),
+                events_processed: 0,
+                output_events_emitted: 0,
+                watermark_tracker: None,
+                last_applied_watermark: None,
+                late_data_configs: FxHashMap::default(),
+                context_name: None,
+                topic_prefix: None,
+                shared_hamlet_aggregators: Vec::new(),
+                checkpoint_manager: None,
+                dlq_path: None,
+                dlq_config: crate::dead_letter::DlqConfig::default(),
+                dlq: None,
+                physical_plan: None,
+                udf_registry: UdfRegistry::new(),
+                trace_collector: trace::TraceCollector::new(),
+            }
         }
     }
 
@@ -301,7 +310,8 @@ impl Engine {
                 }
             }
             None => {
-                // Benchmark mode: skip sending entirely - no clone!
+                // No channel: collect into buffer for sync_collect
+                self.collected_outputs.push((**event).clone());
             }
         }
     }
@@ -314,7 +324,7 @@ impl Engine {
     }
 
     /// Send an output event to the output channel (if configured).
-    /// In benchmark mode (no output channel), this is a no-op to avoid cloning overhead.
+    /// When no channel (benchmark/sync mode), collects into internal buffer.
     #[cfg(feature = "async-runtime")]
     #[inline]
     pub(super) fn send_output(&mut self, event: Event) {
@@ -331,7 +341,8 @@ impl Engine {
                 }
             }
             None => {
-                // Benchmark mode: skip sending entirely
+                // No channel: collect into buffer for sync_collect
+                self.collected_outputs.push(event);
             }
         }
     }
@@ -345,8 +356,7 @@ impl Engine {
     }
 
     /// Process events synchronously and return collected outputs directly.
-    /// Used by WASM builds where mpsc channels are not available.
-    #[cfg(not(feature = "async-runtime"))]
+    /// Used by WASM builds and tests where mpsc channels are not needed.
     pub fn process_batch_sync_collect(
         &mut self,
         events: Vec<Event>,
