@@ -5,83 +5,95 @@ test.use({
   viewport: { width: 1400, height: 900 },
 });
 
-test('Varpulis n8n node demo', async ({ page }) => {
-  await page.goto('http://localhost:5678');
-  await page.waitForTimeout(2000);
+test('Varpulis n8n workflow demo', async ({ page }) => {
+  // 1. Login
+  await page.goto('http://localhost:5678/signin');
+  await page.waitForTimeout(1500);
+  await page.locator('input[autocomplete="email"]').first().fill('demo@varpulis.com');
+  await page.locator('input[type="password"]').first().fill('VarpulisDemo123!');
+  await page.locator('button:has-text("Sign in")').click();
+  await page.waitForTimeout(3000);
 
-  // Handle login if needed
-  const signIn = page.locator('button:has-text("Sign in")');
-  if (await signIn.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await page.locator('input[name="email"], input[autocomplete="email"]').first().fill('demo@varpulis.com');
-    await page.locator('input[name="password"], input[type="password"]').first().fill('VarpulisDemo123!');
-    await signIn.click();
-    await page.waitForTimeout(3000);
-  }
-
-  // Handle setup if needed (first run)
-  const setupEmail = page.locator('text=Set up owner account');
-  if (await setupEmail.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await page.locator('input[name="email"]').fill('demo@varpulis.com');
-    await page.locator('input[name="firstName"]').fill('Varpulis');
-    await page.locator('input[name="lastName"]').fill('Demo');
-    await page.locator('input[type="password"]').fill('VarpulisDemo123!');
-    await page.locator('button:has-text("Next")').click();
-    await page.waitForTimeout(3000);
-    // Skip additional steps
-    for (let i = 0; i < 3; i++) {
-      const skip = page.locator('button:has-text("Skip"), button:has-text("Get started")');
-      if (await skip.first().isVisible({ timeout: 2000 }).catch(() => false)) {
-        await skip.first().click();
-        await page.waitForTimeout(1000);
-      }
+  // Handle onboarding survey if present
+  for (let i = 0; i < 5; i++) {
+    const getStarted = page.locator('button:has-text("Get started"), button:has-text("Skip")');
+    if (await getStarted.first().isVisible({ timeout: 2000 }).catch(() => false)) {
+      await getStarted.first().click();
+      await page.waitForTimeout(1500);
+    } else {
+      break;
     }
   }
-
   await page.waitForTimeout(1000);
-  await page.screenshot({ path: 'test-results/01-logged-in.png' });
 
-  // Click "Start from scratch" or "+" to create a workflow
+  // 2. Create new workflow — click "Start from scratch" or "+"
   const startScratch = page.locator('text=Start from scratch');
   if (await startScratch.isVisible({ timeout: 3000 }).catch(() => false)) {
     await startScratch.click();
     await page.waitForTimeout(2000);
   }
 
-  // Or click the + button in sidebar
-  const plusNav = page.locator('[data-test-id="side-menu-item-new-workflow"], a[href*="workflow/new"]');
-  if (await plusNav.first().isVisible({ timeout: 2000 }).catch(() => false)) {
-    await plusNav.first().click();
+  await page.screenshot({ path: 'test-results/01-empty-canvas.png' });
+
+  // 3. Click "Add first step..." to open trigger panel
+  const addStep = page.locator('text=Add first step');
+  if (await addStep.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await addStep.click();
+    await page.waitForTimeout(1000);
+  }
+
+  // 4. Search for Manual Trigger
+  await page.keyboard.type('Manual', { delay: 60 });
+  await page.waitForTimeout(1500);
+  const manualTrigger = page.locator('text=Manual Trigger').first();
+  if (await manualTrigger.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await manualTrigger.click();
     await page.waitForTimeout(2000);
   }
 
-  await page.screenshot({ path: 'test-results/02-canvas.png' });
+  await page.screenshot({ path: 'test-results/02-manual-trigger-added.png' });
 
-  // Open node panel - click the + on canvas
-  const canvasPlus = page.locator('[data-test-id="canvas-plus-button"]');
-  if (await canvasPlus.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await canvasPlus.click();
+  // Close any open panel
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
+
+  // 5. Add Varpulis node — click the + on the right side of the trigger
+  // Find the + button that appears after the trigger node
+  const plusOnNode = page.locator('[data-test-id="canvas-node-creator-button"], .plus-endpoint, [data-test-id="canvas-add-button"]');
+  if (await plusOnNode.first().isVisible({ timeout: 3000 }).catch(() => false)) {
+    await plusOnNode.first().click();
     await page.waitForTimeout(1000);
   } else {
-    // Try Tab key to open node selector
+    // Fallback: press Tab to open node creator
     await page.keyboard.press('Tab');
     await page.waitForTimeout(1000);
   }
 
-  await page.screenshot({ path: 'test-results/03-node-panel.png' });
-
-  // Type "Varpulis" to search
+  // 6. Search for Varpulis
   await page.keyboard.type('Varpulis', { delay: 80 });
   await page.waitForTimeout(2000);
 
-  await page.screenshot({ path: 'test-results/04-search.png' });
+  await page.screenshot({ path: 'test-results/03-search-varpulis.png' });
 
-  // Click on result if found
-  const vNode = page.locator('[data-test-id*="varpulis"], text=Varpulis Pattern');
-  if (await vNode.first().isVisible({ timeout: 3000 }).catch(() => false)) {
-    await vNode.first().click();
+  // Click on Varpulis CEP
+  const varpulisResult = page.locator('text=Varpulis CEP');
+  if (await varpulisResult.first().isVisible({ timeout: 3000 }).catch(() => false)) {
+    await varpulisResult.first().click();
     await page.waitForTimeout(2000);
   }
 
-  await page.screenshot({ path: 'test-results/05-final.png' });
+  await page.screenshot({ path: 'test-results/04-varpulis-added.png' });
+
+  // 7. The node config panel should open — check for VPL Pattern field
+  const vplField = page.locator('text=VPL Pattern, label:has-text("VPL Pattern")');
+  if (await vplField.first().isVisible({ timeout: 3000 }).catch(() => false)) {
+    await page.screenshot({ path: 'test-results/05-varpulis-config.png' });
+  }
+
+  // Close config
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
+
+  await page.screenshot({ path: 'test-results/06-workflow-complete.png' });
   await page.waitForTimeout(2000);
 });
