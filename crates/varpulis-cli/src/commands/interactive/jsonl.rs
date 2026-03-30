@@ -4,7 +4,8 @@
 //! [`SessionResponse`] to stdout (one JSON object per line). Designed for
 //! programmatic drivers (agents, MCP servers, test harnesses).
 
-use tokio::io::{AsyncBufReadExt, BufReader};
+// Stdin is read synchronously on a blocking thread (see spawn_blocking below)
+// because tokio's async stdin doesn't work reliably with piped processes.
 use varpulis_runtime::interactive::{InteractiveSession, SessionCommand, SessionResponse};
 
 /// Run the JSON-line interactive session.
@@ -52,21 +53,34 @@ pub async fn run_jsonl_session(
         version: env!("CARGO_PKG_VERSION").to_string(),
     });
 
-    let stdin = BufReader::new(tokio::io::stdin());
-    let mut lines = stdin.lines();
+    // Use a sync stdin reader on a blocking thread — tokio's async stdin
+    // doesn't work reliably with piped processes (Python subprocess, Node.js).
+    let (line_tx, mut line_rx) = tokio::sync::mpsc::channel::<String>(64);
+    tokio::task::spawn_blocking(move || {
+        use std::io::BufRead;
+        let stdin = std::io::stdin();
+        for line in stdin.lock().lines() {
+            match line {
+                Ok(line) => {
+                    if line_tx.blocking_send(line).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
 
-    // Generator poll interval (10ms)
+    // Poll intervals for generator and connector events
     let mut generator_interval = tokio::time::interval(std::time::Duration::from_millis(10));
     generator_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-    // Connector poll interval (same cadence as generator)
     let mut connector_interval = tokio::time::interval(std::time::Duration::from_millis(10));
     connector_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
         tokio::select! {
-            line = lines.next_line() => {
-                match line? {
+            line = line_rx.recv() => {
+                match line {
                     Some(line) if line.trim().is_empty() => continue,
                     Some(line) => {
                         match serde_json::from_str::<SessionCommand>(&line) {
@@ -87,7 +101,7 @@ pub async fn run_jsonl_session(
                             }
                         }
                     }
-                    None => break, // EOF
+                    None => break, // EOF / stdin closed
                 }
             }
             _ = generator_interval.tick() => {
@@ -113,9 +127,13 @@ pub async fn run_jsonl_session(
 }
 
 /// Serialize a response to a single JSON line on stdout.
+/// Uses write! + flush to ensure pipe consumers get responses immediately.
 fn write_response(resp: &SessionResponse) {
+    use std::io::Write;
     if let Ok(json) = serde_json::to_string(resp) {
-        println!("{json}");
+        let mut stdout = std::io::stdout().lock();
+        let _ = writeln!(stdout, "{json}");
+        let _ = stdout.flush();
     }
 }
 

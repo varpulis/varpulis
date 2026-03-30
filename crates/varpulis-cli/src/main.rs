@@ -645,7 +645,17 @@ async fn main() -> Result<()> {
         if cli.otel_endpoint.is_some() {
             eprintln!("Warning: --otel-endpoint requires the 'otel' feature. Rebuild with: cargo build --features otel");
         }
-        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+        // In interactive JSON mode, tracing MUST go to stderr to avoid
+        // corrupting the JSON-line protocol on stdout.
+        let use_stderr = matches!(&cli.command, Commands::Interactive { json: true, .. });
+        if use_stderr {
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .with_writer(std::io::stderr)
+                .init();
+        } else {
+            tracing_subscriber::fmt().with_env_filter(env_filter).init();
+        }
     }
 
     // Load credentials store if --credentials is provided
