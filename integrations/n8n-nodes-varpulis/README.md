@@ -2,6 +2,14 @@
 
 **Add temporal pattern detection to any n8n workflow.**
 
+<p align="center">
+  <img src="docs/n8n-demo.gif" alt="Varpulis node in n8n" width="720">
+</p>
+
+<p align="center">
+  <img src="docs/n8n-varpulis-search.png" alt="Varpulis CEP node in n8n search" width="500">
+</p>
+
 This community node brings the [Varpulis CEP engine](https://www.varpulis-cep.com/) into n8n. It runs entirely inside your n8n instance via WebAssembly -- no sidecar process, no external service, no network calls. Define patterns in Varpulis Pattern Language (VPL), feed events from any n8n trigger, and route detected matches to downstream nodes.
 
 ## What it does
