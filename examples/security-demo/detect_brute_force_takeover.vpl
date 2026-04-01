@@ -1,0 +1,36 @@
+# Brute Force -> Account Takeover with Kleene Sequence
+# MITRE ATT&CK: T1110 -> T1078
+#
+# UNIQUE CAPABILITY: Detects ANY number of failed logins from the
+# same IP followed by a successful login, then privilege escalation.
+# Unlike the existing T1078 rule (hardcodes exactly 5 failures),
+# this catches 3, 15, or 1000 failures identically.
+#
+# Sigma must hardcode a fixed count. This rule adapts to the attack.
+
+event AuthEvent:
+    source_ip: str
+    username: str
+    status: str
+    target_host: str
+
+# Kleene+ pattern: 3+ failed logins -> success from same IP
+# Uses SEQ() with Kleene+ for unbounded failure accumulation
+pattern BruteForceChain = SEQ(
+    AuthEvent where status == "failed" as first,
+    AuthEvent+ where status == "failed" as fails,
+    AuthEvent where status == "success" as success
+) within 30m partition by source_ip
+
+stream BruteForceTakeover = BruteForceChain
+    .emit(
+        event_type: "KillChainAlert",
+        rule: "brute_force_takeover",
+        mitre: "T1110,T1078",
+        severity: "critical",
+        source_ip: first.source_ip,
+        target_host: success.target_host,
+        username: success.username,
+        failed_count: len(fails) + 1,
+        summary: "Brute force succeeded: multiple failed logins followed by success from same IP"
+    )

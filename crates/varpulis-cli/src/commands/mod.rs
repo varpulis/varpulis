@@ -2,6 +2,7 @@ pub mod analyze;
 pub mod connector;
 pub mod coordinator;
 pub mod demo;
+pub mod deploy_rules;
 pub mod detect;
 pub mod federation;
 pub mod generate;
@@ -10,6 +11,7 @@ pub mod interactive;
 #[cfg(feature = "repl")]
 pub mod repl;
 pub mod run;
+pub mod security_init;
 pub mod server;
 pub mod simulate;
 pub mod validate;

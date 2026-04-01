@@ -263,6 +263,32 @@ enum Commands {
         format: String,
     },
 
+    /// Initialize a security deployment directory with rules, docker-compose, and config
+    SecurityInit {
+        /// Directory to create (default: ./varpulis-security)
+        #[arg(short, long, default_value = "varpulis-security")]
+        dir: PathBuf,
+    },
+
+    /// Deploy a directory of VPL security rules to a running Varpulis server
+    DeployRules {
+        /// Server URL (e.g. http://localhost:9000). Also reads from .varpulis.toml
+        #[arg(long, env = "VARPULIS_SERVER")]
+        server: Option<String>,
+
+        /// Tenant API key. Also reads from .varpulis.toml
+        #[arg(long, env = "VARPULIS_API_KEY")]
+        api_key: Option<String>,
+
+        /// Directory containing .vpl files to deploy
+        #[arg(short, long)]
+        dir: PathBuf,
+
+        /// Undeploy all existing pipelines before deploying
+        #[arg(long)]
+        undeploy_existing: bool,
+    },
+
     /// Detect kill chains and attack patterns in event logs (blue mode)
     ///
     /// Runs one or more VPL detection rules against a JSONL event file
@@ -998,6 +1024,31 @@ async fn main() -> Result<()> {
                     anyhow::bail!("Deploy failed: {e}");
                 }
             }
+        }
+
+        Commands::SecurityInit { dir } => {
+            commands::security_init::run_security_init(&dir)?;
+        }
+
+        Commands::DeployRules {
+            server,
+            api_key,
+            dir,
+            undeploy_existing,
+        } => {
+            let project = varpulis_cli::config::ProjectConfig::discover_cwd().unwrap_or_default();
+            let server = project.resolve_url(server.as_deref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No server URL. Use --server, VARPULIS_SERVER env, or .varpulis.toml"
+                )
+            })?;
+            let api_key = project.resolve_api_key(api_key.as_deref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No API key. Use --api-key, VARPULIS_API_KEY env, or .varpulis.toml"
+                )
+            })?;
+            commands::deploy_rules::run_deploy_rules(&dir, &server, &api_key, undeploy_existing)
+                .await?;
         }
 
         Commands::Pipelines { server, api_key } => {

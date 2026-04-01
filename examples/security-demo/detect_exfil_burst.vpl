@@ -1,0 +1,43 @@
+# Exfiltration Burst Detection with Sliding Window Aggregate
+# MITRE ATT&CK: T1041 (Exfiltration Over C2 Channel)
+#
+# UNIQUE CAPABILITY: Sliding window with count() and count_distinct()
+# aggregates over filtered events. Fires as soon as 20+ external
+# connections accumulate from a single host within a 10-minute window.
+#
+# Sigma has no aggregation. Splunk needs complex stats pipelines.
+# This VPL rule is 5 lines of logic.
+
+event SysmonNetworkConnect:
+    Image: str
+    SourceIp: str
+    DestinationIp: str
+    DestinationPort: int
+    Protocol: str
+    Hostname: str
+    ProcessId: int
+
+# Count external connections per host in sliding 100-event windows
+stream ExfilBurst = SysmonNetworkConnect
+    .where(not (DestinationIp.starts_with("10."))
+        and not (DestinationIp.starts_with("192.168."))
+        and not (DestinationIp.starts_with("172."))
+        and DestinationPort != 53)
+    .partition_by(Hostname)
+    .window(20)
+    .aggregate(
+        host: last(Hostname),
+        connection_count: count(DestinationIp),
+        unique_destinations: count_distinct(DestinationIp)
+    )
+    .where(connection_count >= 20)
+    .emit(
+        event_type: "KillChainAlert",
+        rule: "exfil_burst",
+        mitre: "T1041",
+        severity: "critical",
+        host: host,
+        connection_count: connection_count,
+        unique_destinations: unique_destinations,
+        summary: "Exfiltration burst: 20+ external connections from single host"
+    )

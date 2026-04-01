@@ -1,0 +1,79 @@
+# Predictive Kill Chain Detection with PST Forecasting
+# MITRE ATT&CK: T1059 -> T1003 -> T1021 -> T1041
+#
+# UNIQUE CAPABILITY: .forecast() alerts BEFORE the attack completes.
+# After steps 1-3 match, the PST model predicts whether step 4
+# (exfiltration) will follow, with a probability score.
+#
+# No SIEM, no Sigma, no Splunk can predict attack completion.
+
+event SysmonProcessCreate:
+    Image: str
+    CommandLine: str
+    ParentImage: str
+    User: str
+    Hostname: str
+    ProcessId: int
+    ParentProcessId: int
+
+event SysmonProcessAccess:
+    SourceImage: str
+    TargetImage: str
+    GrantedAccess: str
+    CallTrace: str
+    Hostname: str
+    ProcessId: int
+
+event SysmonNetworkConnect:
+    Image: str
+    SourceIp: str
+    DestinationIp: str
+    DestinationPort: int
+    Protocol: str
+    Hostname: str
+    ProcessId: int
+
+# Step 1: Scripting engine execution
+stream ScriptExec = SysmonProcessCreate
+    .where(Image.contains("powershell") or Image.contains("cscript") or Image.contains("wscript") or Image.contains("mshta"))
+
+# Step 2: Credential access (LSASS)
+stream CredAccess = SysmonProcessAccess
+    .where(TargetImage.contains("lsass.exe")
+        and (GrantedAccess == "0x1010" or GrantedAccess == "0x1410" or GrantedAccess == "0x1438" or GrantedAccess == "0x1fffff")
+        and not (SourceImage.contains("wininit.exe"))
+        and not (SourceImage.contains("csrss.exe"))
+        and not (SourceImage.contains("lsass.exe")))
+
+# Step 3: Lateral movement (SMB)
+stream SMBLateral = SysmonNetworkConnect
+    .where(DestinationPort == 445)
+
+# Step 4: External exfiltration
+stream ExternalExfil = SysmonNetworkConnect
+    .where(not (DestinationIp.starts_with("10."))
+        and not (DestinationIp.starts_with("192.168."))
+        and not (DestinationIp.starts_with("172."))
+        and DestinationPort != 53)
+
+# Predictive kill chain: forecast fires BEFORE step 4 completes
+stream PredictiveKillChain = ScriptExec as script
+    -> CredAccess as cred
+    -> SMBLateral as lateral
+    -> ExternalExfil as exfil
+    .within(4h)
+    .forecast(confidence: 0.3, warmup: 10, horizon: 2h)
+    .where(forecast_probability > 0.3)
+    .emit(
+        event_type: "KillChainForecast",
+        rule: "predictive_killchain",
+        mitre: "T1059,T1003.001,T1021.002,T1041",
+        severity: if forecast_probability > 0.8 then "critical" else "high",
+        host: script.Hostname,
+        initial_process: script.Image,
+        cred_source: cred.SourceImage,
+        lateral_dest: lateral.DestinationIp,
+        probability: forecast_probability,
+        expected_time: forecast_time,
+        summary: "Kill chain predicted: exfiltration likely within forecast window"
+    )

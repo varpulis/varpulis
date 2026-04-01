@@ -1,0 +1,79 @@
+# Living-off-the-Land 5-Step Chain with Forecasting
+# MITRE ATT&CK: T1105 -> T1218 -> T1053 -> T1016 -> T1041
+#
+# UNIQUE CAPABILITY: 5-step temporal sequence + .forecast().
+# Each tool is legitimate on its own (certutil, rundll32, schtasks,
+# net.exe are built-in Windows tools). Only the ordered combination
+# within 2 hours indicates an attack.
+#
+# The .forecast() predicts exfiltration after the first 3-4 steps,
+# giving SOC analysts time to intervene before data leaves.
+#
+# Even Splunk SPL would need 50+ lines for a 5-step temporal join
+# and cannot predict completion.
+
+event SysmonProcessCreate:
+    Image: str
+    CommandLine: str
+    ParentImage: str
+    User: str
+    Hostname: str
+    ProcessId: int
+    ParentProcessId: int
+
+event SysmonNetworkConnect:
+    Image: str
+    SourceIp: str
+    DestinationIp: str
+    DestinationPort: int
+    Protocol: str
+    Hostname: str
+    ProcessId: int
+
+# Step 1: Download payload via certutil (LOLBin: T1105)
+stream CertutilDownload = SysmonProcessCreate
+    .where(Image.contains("certutil") and CommandLine.contains("urlcache"))
+
+# Step 2: Execute via rundll32 (LOLBin: T1218.011)
+stream Rundll32Exec = SysmonProcessCreate
+    .where(Image.contains("rundll32"))
+
+# Step 3: Persist via scheduled task (T1053.005)
+stream SchtasksPersist = SysmonProcessCreate
+    .where(Image.contains("schtasks") and CommandLine.contains("/create"))
+
+# Step 4: Network discovery (T1016/T1018)
+stream NetDiscovery = SysmonProcessCreate
+    .where((Image.contains("net.exe") or Image.contains("net1.exe"))
+        and (CommandLine.contains("view") or CommandLine.contains("user") or CommandLine.contains("group")))
+
+# Step 5: External exfiltration
+stream ExternalConn = SysmonNetworkConnect
+    .where(not (DestinationIp.starts_with("10."))
+        and not (DestinationIp.starts_with("192.168."))
+        and not (DestinationIp.starts_with("172."))
+        and DestinationPort != 53)
+
+# 5-step LOLBin chain with predictive forecasting
+stream LOTLForecast = CertutilDownload as download
+    -> Rundll32Exec as execute
+    -> SchtasksPersist as persist
+    -> NetDiscovery as discover
+    -> ExternalConn as exfil
+    .within(2h)
+    .forecast(confidence: 0.3, warmup: 10, horizon: 1h)
+    .where(forecast_probability > 0.3)
+    .emit(
+        event_type: "KillChainForecast",
+        rule: "lotl_forecast",
+        mitre: "T1105,T1218.011,T1053.005,T1016,T1041",
+        severity: if forecast_probability > 0.7 then "critical" else "high",
+        host: download.Hostname,
+        download_cmd: download.CommandLine,
+        persist_cmd: persist.CommandLine,
+        discover_cmd: discover.CommandLine,
+        probability: forecast_probability,
+        expected_time: forecast_time,
+        user: download.User,
+        summary: "LOLBin kill chain predicted: 5-step living-off-the-land attack likely to complete"
+    )

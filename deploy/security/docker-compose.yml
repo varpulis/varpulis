@@ -1,0 +1,34 @@
+services:
+  varpulis:
+    image: ghcr.io/varpulis/varpulis:latest
+    command: ["server", "--bind", "0.0.0.0", "--port", "9000", "--api-key", "${VARPULIS_API_KEY:-changeme}", "--metrics"]
+    ports:
+      - "9000:9000"    # REST API + WebSocket
+      - "9090:9090"    # Prometheus metrics
+    volumes:
+      - varpulis-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/health"]
+      interval: 10s
+      retries: 3
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9091:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  varpulis-data:
