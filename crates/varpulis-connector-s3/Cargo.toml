@@ -12,7 +12,7 @@ description = "AWS S3 connector for Varpulis CEP engine"
 varpulis-connector-api = { version = "0.9.0", path = "../varpulis-connector-api" }
 varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
 aws-config = "1.8"
-aws-sdk-s3 = "1.124"
+aws-sdk-s3 = "1.126"
 tokio = { workspace = true }
 serde = { workspace = true }
 schemars = { workspace = true }
