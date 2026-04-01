@@ -1,0 +1,26 @@
+# Sigma-equivalent VPL: Detect persistence via Run/RunOnce keys ONLY
+# This rule demonstrates Sigma's approach: static path matching on registry keys.
+# It will MISS persistence via IFEO, Winlogon, COM hijacking, TaskCache, and
+# 13 other autostart locations.
+#
+# Mirrors: registry_set_win_persistence_run_key.yml from SigmaHQ
+
+event SysmonRegistryValueSet:
+    Image: str
+    EventType: str
+    TargetObject: str
+    Details: str
+    Hostname: str
+    ProcessId: int
+
+stream SigmaStyleRunKey = SysmonRegistryValueSet
+    .where(TargetObject.contains("CurrentVersion\Run"))
+    .emit(
+        event_type: "SigmaAlert",
+        rule: "sigma_persistence_run_key",
+        mitre: "T1547.001",
+        host: Hostname,
+        image: Image,
+        registry_key: TargetObject,
+        registry_value: Details
+    )

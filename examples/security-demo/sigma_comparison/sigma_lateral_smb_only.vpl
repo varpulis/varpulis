@@ -1,0 +1,35 @@
+# Sigma-equivalent VPL: Detect lateral movement via SMB/PsExec pattern ONLY
+# This rule watches for services.exe spawning child processes — the behavioral
+# signature of remote service creation (PsExec, smbexec, CrackMapExec, etc.)
+#
+# It MISSES lateral movement via WMI, WinRM, DCOM, and scheduled tasks because
+# those techniques use different parent processes (WmiPrvSE.exe, wsmprovhost.exe,
+# mmc.exe, svchost.exe).
+#
+# MITRE ATT&CK: T1021.002 (SMB/Windows Admin Shares)
+
+event SysmonProcessCreate:
+    Image: str
+    CommandLine: str
+    ParentImage: str
+    User: str
+    Hostname: str
+    ProcessId: int
+    ParentProcessId: int
+
+stream SigmaLateralSMB = SysmonProcessCreate
+    .where(ParentImage.ends_with("\services.exe")
+        and (Image.ends_with("\cmd.exe")
+            or Image.ends_with("\powershell.exe")
+            or Image.ends_with("\rundll32.exe")))
+    .emit(
+        event_type: "SigmaAlert",
+        rule: "sigma_lateral_smb_only",
+        mitre: "T1021.002",
+        severity: "high",
+        host: Hostname,
+        parent: ParentImage,
+        image: Image,
+        cmdline: CommandLine,
+        user: User
+    )

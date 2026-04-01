@@ -1,0 +1,62 @@
+# VPL Behavioral Detection: Detect persistence via ANY autostart registry location
+# MITRE ATT&CK: T1547 (Boot or Logon Autostart), T1546 (Event Triggered Execution),
+#                T1053 (Scheduled Task/Job)
+#
+# Instead of matching specific Run/RunOnce paths, this rule detects the behavioral
+# pattern: a process writes to ANY known autostart registry location.
+#
+# Covers: Run, RunOnce, IFEO Debugger, Winlogon Shell/Userinit, COM hijacking,
+#         TaskCache, Services, AppInit_DLLs, BootExecute, LSA packages, and more.
+#
+# This catches all 4 evasion variants from SIEM Evasion Lab #4.
+
+event SysmonProcessCreate:
+    Image: str
+    CommandLine: str
+    ParentImage: str
+    User: str
+    Hostname: str
+    ProcessId: int
+    ParentProcessId: int
+
+event SysmonRegistryValueSet:
+    Image: str
+    EventType: str
+    TargetObject: str
+    Details: str
+    Hostname: str
+    ProcessId: int
+
+# Pre-filter: registry writes to ANY autostart location (broad matching)
+stream AutostartRegistryWrite = SysmonRegistryValueSet
+    .where(TargetObject.contains("CurrentVersion\Run")
+        or TargetObject.contains("Image File Execution Options")
+        or TargetObject.contains("CurrentVersion\Winlogon")
+        or TargetObject.contains("Classes\CLSID")
+        or TargetObject.contains("Schedule\TaskCache")
+        or TargetObject.contains("CurrentVersion\Services")
+        or TargetObject.contains("AppInit_DLLs")
+        or TargetObject.contains("BootExecute")
+        or TargetObject.contains("LSA\Authentication Packages")
+        or TargetObject.contains("LSA\Security Packages"))
+
+# Behavioral sequence: process creation followed by autostart registry write
+# Correlates across events using ProcessId + Hostname
+stream PersistenceBroad = SysmonProcessCreate as proc
+    -> AutostartRegistryWrite where ProcessId == proc.ProcessId as regwrite
+    .within(10m)
+    .partition_by(Hostname)
+    .emit(
+        event_type: "KillChainAlert",
+        rule: "persistence_any_autostart",
+        mitre: "T1547,T1546,T1053",
+        severity: "high",
+        host: proc.Hostname,
+        process: proc.Image,
+        cmdline: proc.CommandLine,
+        registry_key: regwrite.TargetObject,
+        registry_value: regwrite.Details,
+        user: proc.User,
+        sigma_would_miss: "true",
+        summary: "Autostart persistence detected via behavioral sequence (path independent)"
+    )

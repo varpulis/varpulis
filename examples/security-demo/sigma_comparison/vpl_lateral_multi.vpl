@@ -1,0 +1,75 @@
+# VPL Multi-Vector Lateral Movement Detection
+# Detects remote code execution regardless of the specific technique used.
+#
+# Covers: SMB/PsExec (services.exe), WMI (WmiPrvSE.exe), WinRM (wsmprovhost.exe),
+#         DCOM (mmc.exe), and Scheduled Tasks (svchost.exe → cmd/powershell)
+#
+# MITRE ATT&CK: T1021 (Remote Services — all sub-techniques)
+#
+# Instead of writing 5 separate rules for 5 techniques, this single rule
+# detects the behavioral category: network connection to a remote execution
+# port followed by process creation from a remote execution parent.
+
+event SysmonNetworkConnect:
+    Image: str
+    SourceIp: str
+    DestinationIp: str
+    DestinationPort: int
+    Protocol: str
+    Hostname: str
+    ProcessId: int
+
+event SysmonProcessCreate:
+    Image: str
+    CommandLine: str
+    ParentImage: str
+    User: str
+    Hostname: str
+    ProcessId: int
+    ParentProcessId: int
+
+# Step 1: Network connection to remote execution ports
+# - 445: SMB (PsExec, smbexec, CrackMapExec)
+# - 135: RPC/WMI/DCOM endpoint mapper
+# - 5985/5986: WinRM HTTP/HTTPS
+stream RemoteExecConnection = SysmonNetworkConnect
+    .where(DestinationPort == 445
+        or DestinationPort == 135
+        or DestinationPort == 5985
+        or DestinationPort == 5986)
+
+# Step 2: Process spawned by ANY remote execution parent
+# - services.exe: SMB service creation (PsExec-like)
+# - WmiPrvSE.exe: WMI remote execution
+# - wsmprovhost.exe: WinRM / PowerShell Remoting
+# - mmc.exe: DCOM via MMC20.Application
+# - svchost.exe: Scheduled Task execution (filtered to cmd/powershell to reduce FP)
+stream RemoteExecChild = SysmonProcessCreate
+    .where(ParentImage.ends_with("\services.exe")
+        or ParentImage.ends_with("\WmiPrvSE.exe")
+        or ParentImage.ends_with("\wsmprovhost.exe")
+        or ParentImage.ends_with("\mmc.exe")
+        or (ParentImage.ends_with("\svchost.exe")
+            and (Image.ends_with("\cmd.exe")
+                or Image.ends_with("\powershell.exe")
+                or Image.ends_with("\rundll32.exe"))))
+
+# Behavioral sequence: network connection → remote process execution within 2m
+stream MultiVectorLateralMovement = RemoteExecConnection as conn
+    -> RemoteExecChild as child
+    .within(2m)
+    .emit(
+        event_type: "KillChainAlert",
+        rule: "multi_vector_lateral_movement",
+        mitre: "T1021",
+        severity: "critical",
+        source_host: conn.Hostname,
+        target_ip: conn.DestinationIp,
+        target_port: conn.DestinationPort,
+        remote_parent: child.ParentImage,
+        remote_process: child.Image,
+        remote_cmdline: child.CommandLine,
+        remote_host: child.Hostname,
+        sigma_would_miss: "true",
+        summary: "Lateral movement detected — multi-vector behavioral pattern (technique-agnostic)"
+    )

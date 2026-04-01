@@ -43,6 +43,7 @@ impl Default for GeneratorConfig {
 pub enum SchemaType {
     Fraud,
     Iot,
+    Sysmon,
     Trading,
 }
 
@@ -52,9 +53,10 @@ impl std::str::FromStr for SchemaType {
         match s.to_lowercase().as_str() {
             "fraud" => Ok(Self::Fraud),
             "iot" => Ok(Self::Iot),
+            "sysmon" => Ok(Self::Sysmon),
             "trading" => Ok(Self::Trading),
             other => Err(format!(
-                "Unknown schema: {other}. Available: fraud, iot, trading"
+                "Unknown schema: {other}. Available: fraud, iot, sysmon, trading"
             )),
         }
     }
@@ -65,6 +67,7 @@ impl std::fmt::Display for SchemaType {
         match self {
             Self::Fraud => write!(f, "fraud"),
             Self::Iot => write!(f, "iot"),
+            Self::Sysmon => write!(f, "sysmon"),
             Self::Trading => write!(f, "trading"),
         }
     }
@@ -98,6 +101,7 @@ pub fn create_schema(schema_type: SchemaType, seed: Option<u64>) -> Box<dyn Even
     match schema_type {
         SchemaType::Fraud => Box::new(schemas::fraud::FraudSchema::new(seed)),
         SchemaType::Iot => Box::new(schemas::iot::IotSchema::new(seed)),
+        SchemaType::Sysmon => Box::new(schemas::sysmon::SysmonSchema::new(seed)),
         SchemaType::Trading => Box::new(schemas::trading::TradingSchema::new(seed)),
     }
 }
