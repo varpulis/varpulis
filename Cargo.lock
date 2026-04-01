@@ -5500,9 +5500,9 @@ dependencies = [
 
 [[package]]
 name = "pulsar"
-version = "6.7.0"
+version = "6.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4493cb89dac20434cceeab8c1d21b59f703892a033e64e1de06a1a5d8f88169f"
+checksum = "e2367cb38f1b65857bc11dd13b2adf13b7a1d991ef1cd43572f1420958c56cc2"
 dependencies = [
  "async-channel",
  "async-trait",
