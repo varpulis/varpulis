@@ -13,7 +13,6 @@ varpulis-connector-api = { version = "0.9.0", path = "../varpulis-connector-api"
 varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
 axum = { workspace = true }
 tokio = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }

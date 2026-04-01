@@ -12,8 +12,6 @@ description = "Syslog CEF/LEEF connector for Varpulis kill chain detection engin
 varpulis-connector-api = { version = "0.9.0", path = "../varpulis-connector-api" }
 varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
 tokio = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
 tracing = { workspace = true }
 inventory = { workspace = true }
 async-trait = "0.1"

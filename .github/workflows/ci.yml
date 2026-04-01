@@ -185,6 +185,10 @@ jobs:
           - encryption
           - oidc
           - smartmodule
+          - syslog
+          - slack
+          - splunk
+          - enterprise
           - all-connectors
     steps:
       - uses: actions/checkout@v6
