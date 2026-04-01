@@ -113,10 +113,11 @@ impl EventFileParser {
             }
 
             // Check for @Ns timing prefix: @0s EventType { ... }
-            let (time_offset, event_line) = if line.starts_with('@') {
-                Self::parse_timing_prefix(line)?
+            let (time_offset, event_line, has_explicit_timing) = if line.starts_with('@') {
+                let (t, e) = Self::parse_timing_prefix(line)?;
+                (t, e, true)
             } else {
-                (current_batch_time, line)
+                (current_batch_time, line, current_batch_time > 0)
             };
 
             // Parse event - try JSONL first, then .evt format
@@ -129,10 +130,14 @@ impl EventFileParser {
             };
 
             // Apply timing offset to event timestamp so time-based windows
-            // and watermarks work correctly with .evt files
+            // and watermarks work correctly with .evt files.
+            // For JSONL with embedded timestamps (e.g. Sysmon @timestamp),
+            // preserve the parsed timestamp when no explicit timing directive is used.
             let mut event = event;
-            event.timestamp =
-                chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(time_offset as i64);
+            if has_explicit_timing {
+                event.timestamp = chrono::DateTime::UNIX_EPOCH
+                    + chrono::Duration::milliseconds(time_offset as i64);
+            }
 
             events.push(TimedEvent {
                 event,
@@ -425,10 +430,11 @@ impl EventFileParser {
             line
         };
 
-        // Try JSONL format first: {"event_type": "X", "data": {...}}
+        // Try JSONL format first: {"event_type": "X", "data": {...}} or Sysmon flat JSON
         if line.starts_with('{') {
-            let mut event = Self::parse_jsonl_line(line)?;
-            event.timestamp = chrono::Utc::now();
+            let event = Self::parse_jsonl_line(line)?;
+            // Preserve timestamp if extracted from JSON (e.g. Sysmon @timestamp);
+            // only override with wall-clock time for native JSONL without embedded timestamps.
             return Ok(Some(event));
         }
 
@@ -438,7 +444,13 @@ impl EventFileParser {
         Ok(Some(event))
     }
 
-    /// Parse a JSONL line
+    /// Parse a JSONL line.
+    ///
+    /// Supports two formats:
+    /// 1. **Varpulis native**: `{"event_type": "X", "data": {...}}`
+    /// 2. **Sysmon / flat JSONL**: `{"EventID": 1, "Channel": "...", "Image": "...", ...}`
+    ///    Auto-detected when `event_type` is absent but `EventID` + `Channel` are present.
+    ///    Also supports generic flat JSONL with a `type` field as event_type.
     fn parse_jsonl_line(line: &str) -> Result<Event, String> {
         // Enforce payload size limit before parsing
         if line.len() > crate::limits::MAX_EVENT_PAYLOAD_BYTES {
@@ -452,22 +464,118 @@ impl EventFileParser {
         let json: serde_json::Value =
             serde_json::from_str(line).map_err(|e| format!("Invalid JSON: {e}"))?;
 
-        let event_type = json
-            .get("event_type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "Missing event_type field".to_string())?;
-
-        let mut event = Event::new(event_type);
-
-        if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
-            for (key, value) in data.iter().take(crate::limits::MAX_FIELDS_PER_EVENT) {
-                event
-                    .data
-                    .insert(key.as_str().into(), Self::json_to_value(value));
+        // 1. Varpulis native format: {"event_type": "X", "data": {...}}
+        if let Some(event_type) = json.get("event_type").and_then(|v| v.as_str()) {
+            let mut event = Event::new(event_type);
+            if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
+                for (key, value) in data.iter().take(crate::limits::MAX_FIELDS_PER_EVENT) {
+                    event
+                        .data
+                        .insert(key.as_str().into(), Self::json_to_value(value));
+                }
             }
+            return Ok(event);
         }
 
-        Ok(event)
+        // 2. Sysmon / Windows Event Log format: {"EventID": N, "Channel": "...", ...}
+        if let Some(event_id) = json.get("EventID").and_then(|v| v.as_i64()) {
+            let channel = json.get("Channel").and_then(|v| v.as_str()).unwrap_or("");
+            let event_type = if channel.contains("Sysmon") {
+                match event_id {
+                    1 => "SysmonProcessCreate".to_string(),
+                    2 => "SysmonFileCreateTime".to_string(),
+                    3 => "SysmonNetworkConnect".to_string(),
+                    5 => "SysmonProcessTerminate".to_string(),
+                    7 => "SysmonImageLoad".to_string(),
+                    8 => "SysmonCreateRemoteThread".to_string(),
+                    10 => "SysmonProcessAccess".to_string(),
+                    11 => "SysmonFileCreate".to_string(),
+                    12 => "SysmonRegistryAddDel".to_string(),
+                    13 => "SysmonRegistryValueSet".to_string(),
+                    15 => "SysmonFileCreateStreamHash".to_string(),
+                    17 => "SysmonPipeCreated".to_string(),
+                    18 => "SysmonPipeConnected".to_string(),
+                    22 => "SysmonDnsQuery".to_string(),
+                    23 => "SysmonFileDelete".to_string(),
+                    other => format!("Sysmon{other}"),
+                }
+            } else {
+                format!("WinEvent{event_id}")
+            };
+
+            let mut event = Event::new(&*event_type);
+
+            // Extract timestamp from Sysmon/Windows fields
+            Self::apply_json_timestamp(&json, &mut event);
+
+            // Promote all top-level fields except metadata
+            Self::promote_flat_json_fields(&json, &mut event);
+
+            return Ok(event);
+        }
+
+        // 3. Generic flat JSONL with "type" field
+        if let Some(event_type) = json.get("type").and_then(|v| v.as_str()) {
+            let mut event = Event::new(event_type);
+            Self::apply_json_timestamp(&json, &mut event);
+            Self::promote_flat_json_fields(&json, &mut event);
+            return Ok(event);
+        }
+
+        Err(
+            "Missing event_type field (expected 'event_type', 'EventID'+'Channel', or 'type')"
+                .to_string(),
+        )
+    }
+
+    /// Extract and apply a timestamp from JSON fields.
+    /// Tries `@timestamp` (RFC3339), `UtcTime` (Sysmon), `TimeCreated` in order.
+    /// On success, sets `event.timestamp`; on failure, leaves it unchanged.
+    fn apply_json_timestamp(json: &serde_json::Value, event: &mut Event) {
+        let ts_str = json
+            .get("@timestamp")
+            .or_else(|| json.get("UtcTime"))
+            .or_else(|| json.get("TimeCreated"))
+            .and_then(|v| v.as_str());
+
+        if let Some(s) = ts_str {
+            // Try RFC3339 first: "2020-10-18T07:50:05.917Z"
+            if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(s) {
+                event.timestamp = ts.with_timezone(&chrono::Utc);
+                return;
+            }
+            // Try Sysmon format: "2020-10-18 07:50:05.917"
+            if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f") {
+                event.timestamp = naive.and_utc();
+                return;
+            }
+            // Try without fractional seconds: "2020-10-18 07:50:05"
+            if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+                event.timestamp = naive.and_utc();
+            }
+        }
+    }
+
+    /// Promote all top-level JSON keys as event fields, skipping metadata keys.
+    fn promote_flat_json_fields(json: &serde_json::Value, event: &mut Event) {
+        static SKIP_KEYS: &[&str] = &[
+            "EventID",
+            "Channel",
+            "@timestamp",
+            "@version",
+            "type",
+            "event_type",
+        ];
+
+        if let Some(obj) = json.as_object() {
+            for (key, value) in obj.iter().take(crate::limits::MAX_FIELDS_PER_EVENT) {
+                if !SKIP_KEYS.contains(&key.as_str()) {
+                    event
+                        .data
+                        .insert(intern_field_name(key), Self::json_to_value(value));
+                }
+            }
+        }
     }
 
     /// Convert serde_json::Value to varpulis Value (depth-bounded to prevent stack overflow)
@@ -1052,5 +1160,162 @@ mod tests {
 
         let count = player.play_immediate().await.unwrap();
         assert_eq!(count, 0);
+    }
+
+    // =========================================================================
+    // Sysmon / flat JSONL parsing tests
+    // =========================================================================
+    use chrono::{Datelike, Timelike};
+
+    #[test]
+    fn test_parse_sysmon_process_create() {
+        let line = r#"{"EventID": 1, "Channel": "Microsoft-Windows-Sysmon/Operational", "Image": "C:\\Windows\\System32\\cmd.exe", "CommandLine": "cmd.exe /c whoami", "ParentImage": "C:\\Windows\\explorer.exe", "User": "CORP\\admin", "Hostname": "WS01", "ProcessId": 1234}"#;
+        let event = EventFileParser::parse_jsonl_line(line).unwrap();
+        assert_eq!(event.event_type.as_ref(), "SysmonProcessCreate");
+        assert_eq!(
+            event.get_str("Image"),
+            Some("C:\\Windows\\System32\\cmd.exe")
+        );
+        assert_eq!(event.get_str("CommandLine"), Some("cmd.exe /c whoami"));
+        assert_eq!(
+            event.get_str("ParentImage"),
+            Some("C:\\Windows\\explorer.exe")
+        );
+        assert_eq!(event.get_str("User"), Some("CORP\\admin"));
+        assert_eq!(event.get_str("Hostname"), Some("WS01"));
+        assert_eq!(event.get_int("ProcessId"), Some(1234));
+        // Metadata keys should NOT be promoted
+        assert!(event.data.get("EventID").is_none());
+        assert!(event.data.get("Channel").is_none());
+    }
+
+    #[test]
+    fn test_parse_sysmon_network_connect() {
+        let line = r#"{"EventID": 3, "Channel": "Microsoft-Windows-Sysmon/Operational", "Image": "C:\\Windows\\System32\\svchost.exe", "SourceIp": "10.0.0.5", "DestinationIp": "192.168.1.100", "DestinationPort": 445, "Protocol": "tcp", "Hostname": "WS01"}"#;
+        let event = EventFileParser::parse_jsonl_line(line).unwrap();
+        assert_eq!(event.event_type.as_ref(), "SysmonNetworkConnect");
+        assert_eq!(event.get_str("SourceIp"), Some("10.0.0.5"));
+        assert_eq!(event.get_str("DestinationIp"), Some("192.168.1.100"));
+        assert_eq!(event.get_int("DestinationPort"), Some(445));
+        assert_eq!(event.get_str("Protocol"), Some("tcp"));
+    }
+
+    #[test]
+    fn test_parse_sysmon_process_access() {
+        let line = r#"{"EventID": 10, "Channel": "Microsoft-Windows-Sysmon/Operational", "SourceImage": "C:\\tools\\mimikatz.exe", "TargetImage": "C:\\Windows\\System32\\lsass.exe", "GrantedAccess": "0x1010"}"#;
+        let event = EventFileParser::parse_jsonl_line(line).unwrap();
+        assert_eq!(event.event_type.as_ref(), "SysmonProcessAccess");
+        assert_eq!(
+            event.get_str("TargetImage"),
+            Some("C:\\Windows\\System32\\lsass.exe")
+        );
+        assert_eq!(event.get_str("GrantedAccess"), Some("0x1010"));
+    }
+
+    #[test]
+    fn test_parse_sysmon_file_create() {
+        let line = r#"{"EventID": 11, "Channel": "Microsoft-Windows-Sysmon/Operational", "Image": "C:\\Windows\\System32\\cmd.exe", "TargetFilename": "C:\\temp\\data.zip"}"#;
+        let event = EventFileParser::parse_jsonl_line(line).unwrap();
+        assert_eq!(event.event_type.as_ref(), "SysmonFileCreate");
+        assert_eq!(event.get_str("TargetFilename"), Some("C:\\temp\\data.zip"));
+    }
+
+    #[test]
+    fn test_parse_sysmon_registry_value_set() {
+        let line = r#"{"EventID": 13, "Channel": "Microsoft-Windows-Sysmon/Operational", "Image": "C:\\Windows\\regedit.exe", "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\\backdoor", "Details": "C:\\malware\\payload.exe"}"#;
+        let event = EventFileParser::parse_jsonl_line(line).unwrap();
+        assert_eq!(event.event_type.as_ref(), "SysmonRegistryValueSet");
+        assert!(event.get_str("TargetObject").unwrap().contains("\\Run\\"));
+    }
+
+    #[test]
+    fn test_parse_sysmon_unknown_event_id() {
+        let line = r#"{"EventID": 99, "Channel": "Microsoft-Windows-Sysmon/Operational", "SomeField": "value"}"#;
+        let event = EventFileParser::parse_jsonl_line(line).unwrap();
+        assert_eq!(event.event_type.as_ref(), "Sysmon99");
+        assert_eq!(event.get_str("SomeField"), Some("value"));
+    }
+
+    #[test]
+    fn test_parse_winevent_non_sysmon() {
+        let line = r#"{"EventID": 4624, "Channel": "Security", "LogonType": 3, "TargetUserName": "admin"}"#;
+        let event = EventFileParser::parse_jsonl_line(line).unwrap();
+        assert_eq!(event.event_type.as_ref(), "WinEvent4624");
+        assert_eq!(event.get_int("LogonType"), Some(3));
+        assert_eq!(event.get_str("TargetUserName"), Some("admin"));
+    }
+
+    #[test]
+    fn test_parse_sysmon_timestamp_rfc3339() {
+        let line = r#"{"EventID": 1, "Channel": "Microsoft-Windows-Sysmon/Operational", "@timestamp": "2020-10-18T07:50:05.917Z", "Image": "cmd.exe"}"#;
+        let event = EventFileParser::parse_jsonl_line(line).unwrap();
+        assert_eq!(event.timestamp.year(), 2020);
+        assert_eq!(event.timestamp.month(), 10);
+        assert_eq!(event.timestamp.day(), 18);
+        assert_eq!(event.timestamp.hour(), 7);
+        assert_eq!(event.timestamp.minute(), 50);
+    }
+
+    #[test]
+    fn test_parse_sysmon_timestamp_utctime() {
+        let line = r#"{"EventID": 1, "Channel": "Microsoft-Windows-Sysmon/Operational", "UtcTime": "2020-10-18 07:50:05.917", "Image": "cmd.exe"}"#;
+        let event = EventFileParser::parse_jsonl_line(line).unwrap();
+        assert_eq!(event.timestamp.year(), 2020);
+        assert_eq!(event.timestamp.month(), 10);
+        assert_eq!(event.timestamp.day(), 18);
+    }
+
+    #[test]
+    fn test_parse_flat_jsonl_with_type_field() {
+        let line = r#"{"type": "Login", "user": "admin", "ip": "10.0.0.1"}"#;
+        let event = EventFileParser::parse_jsonl_line(line).unwrap();
+        assert_eq!(event.event_type.as_ref(), "Login");
+        assert_eq!(event.get_str("user"), Some("admin"));
+        assert_eq!(event.get_str("ip"), Some("10.0.0.1"));
+        // "type" should be skipped
+        assert!(event.data.get("type").is_none());
+    }
+
+    #[test]
+    fn test_parse_jsonl_missing_all_type_fields() {
+        let line = r#"{"foo": "bar"}"#;
+        let result = EventFileParser::parse_jsonl_line(line);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing event_type field"));
+    }
+
+    #[test]
+    fn test_sysmon_timestamp_preserved_in_parse() {
+        // When JSONL has embedded timestamps and no BATCH/@ prefix,
+        // the parsed timestamp should be preserved (not overridden with UNIX_EPOCH)
+        let source = r#"{"EventID": 1, "Channel": "Microsoft-Windows-Sysmon/Operational", "@timestamp": "2020-10-18T07:50:05.000Z", "Image": "cmd.exe"}
+{"EventID": 1, "Channel": "Microsoft-Windows-Sysmon/Operational", "@timestamp": "2020-10-18T07:55:10.000Z", "Image": "powershell.exe"}"#;
+        let events = EventFileParser::parse(source).unwrap();
+        assert_eq!(events.len(), 2);
+        // Timestamps should be from the JSON, not UNIX_EPOCH
+        assert_eq!(events[0].event.timestamp.year(), 2020);
+        assert_eq!(events[1].event.timestamp.year(), 2020);
+        // Second event is 5 minutes later
+        let diff = events[1].event.timestamp - events[0].event.timestamp;
+        assert_eq!(diff.num_seconds(), 305); // 5min 5sec
+    }
+
+    #[test]
+    fn test_sysmon_timestamp_overridden_by_batch() {
+        // When BATCH directive is used, it should override the parsed timestamp
+        let source = "BATCH 1000\n{\"EventID\": 1, \"Channel\": \"Microsoft-Windows-Sysmon/Operational\", \"@timestamp\": \"2020-10-18T07:50:05.000Z\", \"Image\": \"cmd.exe\"}";
+        let events = EventFileParser::parse(source).unwrap();
+        assert_eq!(events.len(), 1);
+        // Should be UNIX_EPOCH + 1000ms, not the parsed timestamp
+        assert_eq!(events[0].event.timestamp.year(), 1970);
+    }
+
+    #[test]
+    fn test_native_jsonl_still_works() {
+        // Existing Varpulis JSONL format should continue working
+        let source = r#"{"event_type": "StockTick", "data": {"symbol": "AAPL", "price": 150.5}}"#;
+        let events = EventFileParser::parse(source).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event.event_type.as_ref(), "StockTick");
     }
 }

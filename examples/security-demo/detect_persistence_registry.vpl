@@ -1,0 +1,45 @@
+# Persistence Detection: Registry Run Key Modification
+# MITRE ATT&CK: T1547.001 (Boot or Logon Autostart: Registry Run Keys)
+#
+# Detects a process creating or modifying Run/RunOnce registry keys
+# for persistence. Sequence: process creation followed by registry modification.
+
+event SysmonProcessCreate:
+    Image: str
+    CommandLine: str
+    ParentImage: str
+    User: str
+    Hostname: str
+    ProcessId: int
+    ParentProcessId: int
+
+event SysmonRegistryValueSet:
+    Image: str
+    TargetObject: str
+    Details: str
+    Hostname: str
+    ProcessId: int
+
+# Pre-filter: registry writes to Run/RunOnce keys
+# Note: VPL strings use single backslash for literal backslash
+stream RunKeyWrites = SysmonRegistryValueSet
+    .where(TargetObject.contains("CurrentVersion\Run"))
+
+# Sequence: process creation followed by persistence via registry
+stream PersistenceRegistry = SysmonProcessCreate as proc
+    -> RunKeyWrites where ProcessId == proc.ProcessId as regwrite
+    .within(10m)
+    .partition_by(Hostname)
+    .emit(
+        event_type: "KillChainAlert",
+        rule: "persistence_registry",
+        mitre: "T1547.001",
+        severity: "high",
+        host: proc.Hostname,
+        process: proc.Image,
+        cmdline: proc.CommandLine,
+        registry_key: regwrite.TargetObject,
+        registry_value: regwrite.Details,
+        user: proc.User,
+        summary: "Registry Run key persistence detected"
+    )

@@ -1,0 +1,46 @@
+# APT29 Kill Chain Detection: Scripting Engine -> Discovery
+# MITRE ATT&CK: T1059.001 (PowerShell) -> T1057 (Process Discovery)
+#
+# Detects a scripting engine (PowerShell, cscript, wscript) spawning
+# reconnaissance commands (whoami, ipconfig, tasklist, net user, systeminfo).
+
+event SysmonProcessCreate:
+    Image: str
+    CommandLine: str
+    ParentImage: str
+    User: str
+    Hostname: str
+    ProcessId: int
+    ParentProcessId: int
+
+# Pre-filter: scripting engine processes
+stream ScriptingEngines = SysmonProcessCreate
+    .where(Image.contains("powershell") or Image.contains("cscript") or Image.contains("wscript"))
+
+# Pre-filter: discovery/recon commands
+stream DiscoveryCommands = SysmonProcessCreate
+    .where(CommandLine.contains("whoami")
+        or CommandLine.contains("ipconfig")
+        or CommandLine.contains("tasklist")
+        or CommandLine.contains("net user")
+        or CommandLine.contains("systeminfo")
+        or CommandLine.contains("net group")
+        or CommandLine.contains("nltest"))
+
+# Sequence: scripting engine followed by discovery command from the same parent process
+stream ScriptToDiscovery = ScriptingEngines as script
+    -> DiscoveryCommands where ParentProcessId == script.ProcessId as recon
+    .within(5m)
+    .partition_by(Hostname)
+    .emit(
+        event_type: "KillChainAlert",
+        rule: "scripting_to_discovery",
+        mitre: "T1059.001,T1057",
+        severity: "high",
+        host: script.Hostname,
+        parent_process: script.Image,
+        parent_cmdline: script.CommandLine,
+        recon_process: recon.Image,
+        recon_cmdline: recon.CommandLine,
+        user: script.User
+    )

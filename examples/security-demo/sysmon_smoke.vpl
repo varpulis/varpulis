@@ -1,0 +1,22 @@
+# Sysmon Smoke Test — verify Sysmon JSONL ingestion works
+# Filters for suspicious process creation events (PowerShell, cmd.exe)
+
+event SysmonProcessCreate:
+    Image: str
+    CommandLine: str
+    ParentImage: str
+    User: str
+    Hostname: str
+    ProcessId: int
+    ParentProcessId: int
+
+stream SuspiciousProcesses = SysmonProcessCreate
+    .where(Image.contains("powershell") or Image.contains("cmd.exe"))
+    .emit(
+        event_type: "SuspiciousProcess",
+        image: Image,
+        cmdline: CommandLine,
+        parent: ParentImage,
+        host: Hostname,
+        user: User
+    )

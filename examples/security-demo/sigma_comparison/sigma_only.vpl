@@ -1,0 +1,23 @@
+# Sigma-equivalent VPL: Detect PsExec by filename (same as Sigma rule)
+# This rule demonstrates Sigma's approach: static string matching on binary name.
+# It will MISS renamed PsExec binaries.
+
+event SysmonProcessCreate:
+    Image: str
+    CommandLine: str
+    ParentImage: str
+    User: str
+    Hostname: str
+    ProcessId: int
+    ParentProcessId: int
+
+stream SigmaStylePsExec = SysmonProcessCreate
+    .where(Image.ends_with("\PsExec.exe") or Image.ends_with("\PsExec64.exe"))
+    .emit(
+        event_type: "SigmaAlert",
+        rule: "sigma_psexec",
+        host: Hostname,
+        image: Image,
+        cmdline: CommandLine,
+        user: User
+    )

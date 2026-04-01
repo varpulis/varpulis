@@ -154,7 +154,7 @@ followed_by_op = { "->" ~ match_all_keyword? ~ identifier ~ ("where" ~ filter_ex
 filter_expr = { filter_or_expr }
 filter_or_expr = { filter_and_expr ~ ("or" ~ filter_and_expr)* }
 filter_and_expr = { filter_not_expr ~ ("and" ~ filter_not_expr)* }
-filter_not_expr = { "not"? ~ filter_comparison_expr }
+filter_not_expr = { not_keyword ~ filter_comparison_expr | filter_comparison_expr }
 filter_comparison_expr = { filter_additive_expr ~ (comparison_op ~ filter_additive_expr)? }
 filter_additive_expr = { filter_multiplicative_expr ~ (additive_op ~ filter_multiplicative_expr)* }
 filter_multiplicative_expr = { filter_unary_expr ~ (multiplicative_op ~ filter_unary_expr)* }
@@ -200,7 +200,7 @@ pattern_body = { lambda_expr | pattern_or_expr }
 pattern_or_expr = { pattern_and_expr ~ ("or" ~ pattern_and_expr)* }
 pattern_and_expr = { pattern_xor_expr ~ ("and" ~ pattern_xor_expr)* }
 pattern_xor_expr = { pattern_unary_expr ~ ("xor" ~ pattern_unary_expr)* }
-pattern_unary_expr = { "not"? ~ pattern_primary }
+pattern_unary_expr = { not_keyword ~ pattern_primary | pattern_primary }
 pattern_primary = { "(" ~ pattern_or_expr ~ ")" | pattern_sequence }
 pattern_sequence = { identifier ~ ("->" ~ identifier)* }
 concurrent_op = { "concurrent" ~ "(" ~ named_arg_list ~ ")" }
@@ -283,7 +283,7 @@ pattern_partition_clause = { "partition" ~ "by" ~ identifier }
 sase_pattern_expr = { sase_or_expr }
 sase_or_expr = { sase_and_expr ~ ("OR" ~ sase_and_expr)* }
 sase_and_expr = { sase_not_expr ~ ("AND" ~ sase_not_expr)* }
-sase_not_expr = { "NOT"? ~ sase_primary_expr }
+sase_not_expr = { sase_not_keyword ~ sase_primary_expr | sase_primary_expr }
 
 sase_primary_expr = {
     sase_seq_expr
@@ -420,7 +420,7 @@ range_op = { "..=" | ".." }
 // Logical operators
 or_expr = { and_expr ~ ("or" ~ and_expr)* }
 and_expr = { not_expr ~ ("and" ~ not_expr)* }
-not_expr = { "not"? ~ comparison_expr }
+not_expr = { not_keyword ~ comparison_expr | comparison_expr }
 
 // Comparison
 comparison_expr = { bitwise_or_expr ~ (comparison_op ~ bitwise_or_expr)? }
@@ -527,3 +527,7 @@ context_keyword = {
     | "collect" | "concurrent" | "fork" | "any" | "first" | "sliding" | "policy"
     | "desc" | "asc" | "sequence" | "emit"
 }
+
+// Named rule so pest includes it in into_inner() (anonymous literals are dropped)
+not_keyword = { "not" }
+sase_not_keyword = { "NOT" }

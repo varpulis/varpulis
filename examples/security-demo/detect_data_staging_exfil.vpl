@@ -1,0 +1,53 @@
+# Data Staging and Exfiltration Detection
+# MITRE ATT&CK: T1560 (Archive Collected Data) -> T1041 (Exfiltration Over C2 Channel)
+#
+# Detects creation of archive files (zip, 7z, rar) followed by outbound network
+# connection to external IP addresses — a classic exfiltration pattern.
+
+event SysmonFileCreate:
+    Image: str
+    TargetFilename: str
+    Hostname: str
+    ProcessId: int
+
+event SysmonNetworkConnect:
+    Image: str
+    SourceIp: str
+    DestinationIp: str
+    DestinationPort: int
+    Protocol: str
+    Hostname: str
+    ProcessId: int
+
+# Pre-filter: archive file creation
+stream ArchiveCreation = SysmonFileCreate
+    .where(TargetFilename.contains(".zip")
+        or TargetFilename.contains(".7z")
+        or TargetFilename.contains(".rar")
+        or TargetFilename.contains(".tar"))
+
+# Pre-filter: outbound connections to non-internal IPs (external C2/exfil)
+stream ExternalConnections = SysmonNetworkConnect
+    .where(not (DestinationIp.starts_with("10."))
+        and not (DestinationIp.starts_with("192.168."))
+        and not (DestinationIp.starts_with("172."))
+        and DestinationPort != 53)
+
+# Sequence: data staging followed by exfiltration
+stream DataStagingExfil = ArchiveCreation as archive
+    -> ExternalConnections as exfil
+    .within(30m)
+    .partition_by(Hostname)
+    .emit(
+        event_type: "KillChainAlert",
+        rule: "data_staging_exfil",
+        mitre: "T1560,T1041",
+        severity: "critical",
+        host: archive.Hostname,
+        archive_file: archive.TargetFilename,
+        archive_process: archive.Image,
+        exfil_dest: exfil.DestinationIp,
+        exfil_port: exfil.DestinationPort,
+        exfil_process: exfil.Image,
+        summary: "Data staging followed by external exfiltration detected"
+    )

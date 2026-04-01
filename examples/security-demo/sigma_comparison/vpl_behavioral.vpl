@@ -1,0 +1,55 @@
+# VPL Behavioral Detection: Detect PsExec-like BEHAVIOR regardless of binary name
+# MITRE ATT&CK: T1021.002 (SMB/Windows Admin Shares), T1036.003 (Rename System Utilities)
+#
+# Instead of matching the tool name, this rule detects the behavioral pattern:
+# 1. Outbound SMB connection to port 445 (service pipe)
+# 2. Followed by a process spawned by services.exe on the target (remote service execution)
+#
+# This catches PsExec, renamed PsExec, custom tools, and any future tool
+# that uses the same remote service execution mechanism.
+
+event SysmonNetworkConnect:
+    Image: str
+    SourceIp: str
+    DestinationIp: str
+    DestinationPort: int
+    Protocol: str
+    Hostname: str
+    ProcessId: int
+
+event SysmonProcessCreate:
+    Image: str
+    CommandLine: str
+    ParentImage: str
+    User: str
+    Hostname: str
+    ProcessId: int
+    ParentProcessId: int
+
+# Step 1: SMB connection (PsExec uses port 445 to create a remote service)
+stream SMBServicePipe = SysmonNetworkConnect
+    .where(DestinationPort == 445)
+
+# Step 2: Process spawned by services.exe (remote service execution indicator)
+stream RemoteServiceExec = SysmonProcessCreate
+    .where(ParentImage.ends_with("\services.exe"))
+
+# Behavioral sequence: SMB connection followed by remote service execution
+stream BehavioralPsExec = SMBServicePipe as smb
+    -> RemoteServiceExec as remote_exec
+    .within(2m)
+    .emit(
+        event_type: "KillChainAlert",
+        rule: "behavioral_psexec",
+        mitre: "T1021.002,T1036.003",
+        severity: "critical",
+        source_host: smb.Hostname,
+        target_ip: smb.DestinationIp,
+        source_image: smb.Image,
+        remote_parent: remote_exec.ParentImage,
+        remote_process: remote_exec.Image,
+        remote_cmdline: remote_exec.CommandLine,
+        remote_host: remote_exec.Hostname,
+        sigma_would_miss: "true",
+        summary: "PsExec-like lateral movement detected via behavioral analysis (binary name independent)"
+    )

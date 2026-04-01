@@ -1,0 +1,52 @@
+# Lateral Movement Detection: SMB + Remote Service Execution
+# MITRE ATT&CK: T1021.002 (Remote Services: SMB/Windows Admin Shares)
+#
+# Detects outbound SMB connection (port 445) followed by a remote process
+# execution via services.exe. This is the behavioral signature of PsExec,
+# WMI remote exec, and similar tools — regardless of binary name.
+
+event SysmonNetworkConnect:
+    Image: str
+    SourceIp: str
+    DestinationIp: str
+    DestinationPort: int
+    Protocol: str
+    Hostname: str
+    ProcessId: int
+
+event SysmonProcessCreate:
+    Image: str
+    CommandLine: str
+    ParentImage: str
+    User: str
+    Hostname: str
+    ProcessId: int
+    ParentProcessId: int
+
+# Pre-filter: SMB connections (port 445)
+stream SMBConnections = SysmonNetworkConnect
+    .where(DestinationPort == 445)
+
+# Pre-filter: processes spawned by services.exe (remote service execution)
+stream RemoteServiceExec = SysmonProcessCreate
+    .where(ParentImage.contains("services.exe"))
+
+# Sequence: SMB connection followed by remote command execution
+# NOTE: No partition_by since events span different hosts
+stream LateralMovement = SMBConnections as smb
+    -> RemoteServiceExec as remote_exec
+    .within(2m)
+    .emit(
+        event_type: "KillChainAlert",
+        rule: "lateral_movement_smb",
+        mitre: "T1021.002",
+        severity: "critical",
+        source_host: smb.Hostname,
+        target_ip: smb.DestinationIp,
+        source_image: smb.Image,
+        remote_parent: remote_exec.ParentImage,
+        remote_process: remote_exec.Image,
+        remote_cmdline: remote_exec.CommandLine,
+        remote_host: remote_exec.Hostname,
+        summary: "SMB lateral movement detected - remote service execution"
+    )

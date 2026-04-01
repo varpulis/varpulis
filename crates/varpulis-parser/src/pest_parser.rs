@@ -635,7 +635,7 @@ fn parse_sase_not_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePat
     let mut inner = pair.into_inner();
     let first = inner.expect_next("NOT or primary expression")?;
 
-    if first.as_str() == "NOT" {
+    if first.as_rule() == Rule::sase_not_keyword {
         let expr = parse_sase_primary_expr(inner.expect_next("expression after NOT")?)?;
         Ok(SasePatternExpr::Not(Box::new(expr)))
     } else {
@@ -2090,7 +2090,7 @@ fn parse_pattern_unary_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult
     let mut inner = pair.into_inner();
     let first = inner.expect_next("unary expression or operand")?;
 
-    if first.as_str() == "not" {
+    if first.as_rule() == Rule::not_keyword {
         let expr = parse_pattern_primary_as_expr(inner.expect_next("pattern expression")?)?;
         Ok(Expr::Unary {
             op: UnaryOp::Not,
@@ -2169,7 +2169,7 @@ fn parse_filter_not_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr>
     let mut inner = pair.into_inner();
     let first = inner.expect_next("not or expression")?;
 
-    if first.as_str() == "not" {
+    if first.as_rule() == Rule::not_keyword {
         let expr = parse_filter_comparison_expr(inner.expect_next("expression after not")?)?;
         Ok(Expr::Unary {
             op: UnaryOp::Not,
@@ -2401,7 +2401,7 @@ fn parse_not_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
     let first = inner.expect_next("not keyword or expression")?;
 
-    if first.as_str() == "not" {
+    if first.as_rule() == Rule::not_keyword {
         let expr = parse_expr_inner(inner.expect_next("expression after not")?)?;
         Ok(Expr::Unary {
             op: UnaryOp::Not,

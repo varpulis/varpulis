@@ -1,0 +1,77 @@
+# Full APT Kill Chain Detection (4-step sequence)
+# MITRE ATT&CK: T1059 -> T1003 -> T1021 -> T1041
+#
+# Detects the complete kill chain:
+# 1. Initial execution via scripting engine (T1059)
+# 2. Credential dumping via LSASS access (T1003.001)
+# 3. Lateral movement via SMB (T1021.002)
+# 4. Data exfiltration via external connection (T1041)
+
+event SysmonProcessCreate:
+    Image: str
+    CommandLine: str
+    ParentImage: str
+    User: str
+    Hostname: str
+    ProcessId: int
+    ParentProcessId: int
+
+event SysmonProcessAccess:
+    SourceImage: str
+    TargetImage: str
+    GrantedAccess: str
+    CallTrace: str
+    Hostname: str
+    ProcessId: int
+
+event SysmonNetworkConnect:
+    Image: str
+    SourceIp: str
+    DestinationIp: str
+    DestinationPort: int
+    Protocol: str
+    Hostname: str
+    ProcessId: int
+
+# Step 1: Scripting engine execution
+stream ScriptExec = SysmonProcessCreate
+    .where(Image.contains("powershell") or Image.contains("cscript") or Image.contains("wscript") or Image.contains("mshta"))
+
+# Step 2: Credential access (LSASS)
+stream CredAccess = SysmonProcessAccess
+    .where(TargetImage.contains("lsass.exe")
+        and (GrantedAccess == "0x1010" or GrantedAccess == "0x1410" or GrantedAccess == "0x1438"))
+
+# Step 3: Lateral movement (SMB)
+stream SMBLateral = SysmonNetworkConnect
+    .where(DestinationPort == 445)
+
+# Step 4: External exfiltration
+stream ExternalExfil = SysmonNetworkConnect
+    .where(not (DestinationIp.starts_with("10."))
+        and not (DestinationIp.starts_with("192.168."))
+        and not (DestinationIp.starts_with("172."))
+        and DestinationPort != 53)
+
+# Full 4-step kill chain sequence
+stream FullKillChain = ScriptExec as script
+    -> CredAccess as cred
+    -> SMBLateral as lateral
+    -> ExternalExfil as exfil
+    .within(4h)
+    .emit(
+        event_type: "KillChainAlert",
+        rule: "full_killchain",
+        mitre: "T1059,T1003.001,T1021.002,T1041",
+        severity: "critical",
+        initial_host: script.Hostname,
+        initial_process: script.Image,
+        initial_cmdline: script.CommandLine,
+        cred_source: cred.SourceImage,
+        cred_target: cred.TargetImage,
+        lateral_dest: lateral.DestinationIp,
+        exfil_dest: exfil.DestinationIp,
+        exfil_port: exfil.DestinationPort,
+        user: script.User,
+        summary: "Full APT kill chain detected: execution -> credential theft -> lateral movement -> exfiltration"
+    )
