@@ -243,9 +243,3 @@ opt-level = 1
 [profile.release]
 lto = true
 codegen-units = 1
-
-# PGO instrumentation profile (faster build for throwaway instrumented binary)
-[profile.release-instrumented]
-inherits = "release"
-lto = "thin"
-codegen-units = 4
