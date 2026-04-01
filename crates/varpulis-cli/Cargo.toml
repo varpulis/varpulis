@@ -103,7 +103,7 @@ tui = []  # TUI is now always available; kept for backwards compatibility
 otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry", "varpulis-cluster/otel"]
 
 [dev-dependencies]
-tempfile = "3.10"
+tempfile = "3.27"
 
 [lints]
 workspace = true
