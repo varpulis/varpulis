@@ -6,6 +6,12 @@ about **temporal patterns**, not isolated events.
 This demo processes Sysmon logs from an APT29-style attack and detects every
 stage of the kill chain in real-time.
 
+## Demo Recording
+
+Watch the full demo (58 seconds): `asciinema play examples/security-demo/demo.cast`
+
+Or record a fresh one: `asciinema rec -c "bash examples/security-demo/record_demo.sh" demo.cast`
+
 ## Quick Start
 
 ```bash
