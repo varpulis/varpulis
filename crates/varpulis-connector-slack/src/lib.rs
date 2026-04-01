@@ -290,10 +290,11 @@ inventory::submit! { &SlackFactory as &dyn ConnectorFactory }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use chrono::Utc;
     use varpulis_core::event::Event;
     use varpulis_core::value::FxIndexMap;
+
+    use super::*;
 
     #[test]
     fn test_slack_payload_structure() {
