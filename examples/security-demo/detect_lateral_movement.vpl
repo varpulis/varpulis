@@ -27,9 +27,10 @@ event SysmonProcessCreate:
 stream SMBConnections = SysmonNetworkConnect
     .where(DestinationPort == 445)
 
-# Pre-filter: processes spawned by services.exe (remote service execution)
+# Pre-filter: processes spawned by services.exe or PSEXESVC.exe (remote service execution)
+# PSEXESVC.exe is PsExec's remote service agent, spawned by services.exe on the target
 stream RemoteServiceExec = SysmonProcessCreate
-    .where(ParentImage.contains("services.exe"))
+    .where(ParentImage.contains("services.exe") or ParentImage.contains("PSEXESVC.exe"))
 
 # Sequence: SMB connection followed by remote command execution
 # NOTE: No partition_by since events span different hosts

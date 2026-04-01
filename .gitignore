@@ -79,3 +79,4 @@ docs/.vitepress/dist/
 docs/.vitepress/cache/
 docs/node_modules/
 .claude/worktrees/
+examples/security-demo/data/mordor/

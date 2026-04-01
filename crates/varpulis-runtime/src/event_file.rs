@@ -557,6 +557,9 @@ impl EventFileParser {
     }
 
     /// Promote all top-level JSON keys as event fields, skipping metadata keys.
+    /// String values that look like pure integers (e.g. "8524") are coerced to
+    /// `Value::Int` so VPL comparisons like `DestinationPort == 445` work with
+    /// data sources that serialize numbers as strings (e.g. NXLog/MORDOR).
     fn promote_flat_json_fields(json: &serde_json::Value, event: &mut Event) {
         static SKIP_KEYS: &[&str] = &[
             "EventID",
@@ -570,12 +573,26 @@ impl EventFileParser {
         if let Some(obj) = json.as_object() {
             for (key, value) in obj.iter().take(crate::limits::MAX_FIELDS_PER_EVENT) {
                 if !SKIP_KEYS.contains(&key.as_str()) {
-                    event
-                        .data
-                        .insert(intern_field_name(key), Self::json_to_value(value));
+                    let v = Self::json_to_value_coerced(value);
+                    event.data.insert(intern_field_name(key), v);
                 }
             }
         }
+    }
+
+    /// Like `json_to_value` but coerces string values that look like pure
+    /// integers (e.g. "8524", "-1") to `Value::Int`. Hex strings like "0x1010"
+    /// and floats like "3.14" are kept as strings to preserve their format.
+    fn json_to_value_coerced(v: &serde_json::Value) -> Value {
+        if let Some(s) = v.as_str() {
+            if !s.is_empty() && s.len() <= 19 {
+                if let Ok(n) = s.parse::<i64>() {
+                    return Value::Int(n);
+                }
+            }
+            return Self::json_to_value(v);
+        }
+        Self::json_to_value(v)
     }
 
     /// Convert serde_json::Value to varpulis Value (depth-bounded to prevent stack overflow)
@@ -1308,6 +1325,21 @@ mod tests {
         assert_eq!(events.len(), 1);
         // Should be UNIX_EPOCH + 1000ms, not the parsed timestamp
         assert_eq!(events[0].event.timestamp.year(), 1970);
+    }
+
+    #[test]
+    fn test_sysmon_string_to_int_coercion() {
+        // MORDOR/NXLog serializes numeric fields as strings: "8524", "445"
+        // The parser should coerce these to Value::Int for VPL comparisons
+        let line = r#"{"EventID": 3, "Channel": "Microsoft-Windows-Sysmon/Operational", "DestinationPort": "445", "ProcessId": "8524", "SourceIp": "10.0.0.5", "GrantedAccess": "0x1010", "Hostname": "WS01"}"#;
+        let event = EventFileParser::parse_jsonl_line(line).unwrap();
+        // Pure numeric strings → Int
+        assert_eq!(event.get_int("DestinationPort"), Some(445));
+        assert_eq!(event.get_int("ProcessId"), Some(8524));
+        // Hex string stays as Str (not pure decimal)
+        assert_eq!(event.get_str("GrantedAccess"), Some("0x1010"));
+        // IP address stays as Str
+        assert_eq!(event.get_str("SourceIp"), Some("10.0.0.5"));
     }
 
     #[test]

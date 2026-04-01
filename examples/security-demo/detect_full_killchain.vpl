@@ -40,7 +40,10 @@ stream ScriptExec = SysmonProcessCreate
 # Step 2: Credential access (LSASS)
 stream CredAccess = SysmonProcessAccess
     .where(TargetImage.contains("lsass.exe")
-        and (GrantedAccess == "0x1010" or GrantedAccess == "0x1410" or GrantedAccess == "0x1438"))
+        and (GrantedAccess == "0x1010" or GrantedAccess == "0x1410" or GrantedAccess == "0x1438" or GrantedAccess == "0x1fffff")
+        and not (SourceImage.contains("wininit.exe"))
+        and not (SourceImage.contains("csrss.exe"))
+        and not (SourceImage.contains("lsass.exe")))
 
 # Step 3: Lateral movement (SMB)
 stream SMBLateral = SysmonNetworkConnect
