@@ -2,7 +2,7 @@
   <img src="docs/assets/logo.png" width="320" alt="Varpulis">
 </p>
 
-<p align="center"><strong>Detect temporal patterns in event streams.</strong><br>In Rust, in milliseconds, in 10 lines.</p>
+<p align="center"><strong>Detect kill chains your SIEM misses.</strong><br>Behavioral sequence detection in Rust. Dual red/blue mode.</p>
 
 [![CI](https://github.com/varpulis/varpulis/actions/workflows/ci.yml/badge.svg)](https://github.com/varpulis/varpulis/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/varpulis-cli.svg)](https://crates.io/crates/varpulis-cli)
@@ -50,6 +50,30 @@ Copy-paste. 30 seconds. No files, no connectors, no Docker.
 </p>
 
 The default `varpulis interactive` opens a split-pane TUI with topology, live events, input, and metrics. Add `--no-tui` for a plain text shell, `--json` for agent automation.
+
+## Security: Kill Chain Detection
+
+Varpulis detects **multi-step attack sequences** that single-event SIEM rules miss. Renamed PsExec? Different C2 tool? Doesn't matter — behavioral patterns catch what signature rules can't.
+
+```bash
+# Blue mode: detect kill chains in Sysmon logs
+varpulis detect --rules rules/ --events sysmon.jsonl
+
+# Red mode: test which rules survive evasion
+varpulis analyze --rules rules/ --baseline normal.jsonl --evasion evasion.jsonl
+```
+
+```
+┌───────────────────┬─────────────────────┬────────────┬────────────┬───────────┐
+│ Rule              ┆ MITRE               ┆ Baseline   ┆ Evasion    ┆ Verdict   │
+╞═══════════════════╪═════════════════════╪════════════╪════════════╪═══════════╡
+│ sigma_psexec      ┆ T1021.002           ┆ DETECT (1) ┆ MISS       ┆ EVADABLE  │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
+│ behavioral_psexec ┆ T1021.002,T1036.003 ┆ DETECT (1) ┆ DETECT (1) ┆ RESILIENT │
+└───────────────────┴─────────────────────┴────────────┴────────────┴───────────┘
+```
+
+Validated against real [MORDOR APT29](https://securitydatasets.com/) datasets at 25K+ events/sec. See the [SIEM Evasion Lab](docs/siem-evasion-lab-01-psexec.md) series for deep-dives on Sigma blind spots.
 
 ## Why Varpulis?
 

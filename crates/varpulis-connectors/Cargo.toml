@@ -20,6 +20,9 @@ varpulis-connector-kinesis = { version = "0.9.0", path = "../varpulis-connector-
 varpulis-connector-s3 = { version = "0.9.0", path = "../varpulis-connector-s3", optional = true }
 varpulis-connector-database = { version = "0.9.0", path = "../varpulis-connector-database", optional = true }
 varpulis-connector-http = { version = "0.9.0", path = "../varpulis-connector-http" }
+varpulis-connector-slack = { version = "0.9.0", path = "../varpulis-connector-slack", optional = true }
+varpulis-connector-splunk = { version = "0.9.0", path = "../varpulis-connector-splunk", optional = true }
+varpulis-connector-syslog = { version = "0.9.0", path = "../varpulis-connector-syslog", optional = true }
 varpulis-connector-cdc = { version = "0.9.0", path = "../varpulis-connector-cdc", optional = true }
 varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
 tokio = { workspace = true }
@@ -56,10 +59,13 @@ postgres = ["varpulis-connector-database"]
 mysql = ["varpulis-connector-database"]
 sqlite = ["varpulis-connector-database"]
 http = []
+slack = ["varpulis-connector-slack"]
+splunk = ["varpulis-connector-splunk"]
+syslog = ["varpulis-connector-syslog"]
 cdc = ["varpulis-connector-cdc"]
 csv-converter = []
 encryption = ["aes-gcm", "base64"]
-all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch", "pulsar", "http", "cdc"]
+all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch", "pulsar", "http", "slack", "splunk", "syslog", "cdc"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

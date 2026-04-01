@@ -120,7 +120,7 @@ fn test_lateral_movement() {
     ));
     let outputs = run_sync(&vpl, events);
     assert!(
-        outputs.len() >= 1,
+        !outputs.is_empty(),
         "Expected 1+ lateral movement alerts, got {}",
         outputs.len()
     );
@@ -160,7 +160,7 @@ fn test_data_staging_exfil() {
     ));
     let outputs = run_sync(&vpl, events);
     assert!(
-        outputs.len() >= 1,
+        !outputs.is_empty(),
         "Expected 1+ data staging/exfil alert, got {}",
         outputs.len()
     );
@@ -182,7 +182,7 @@ fn test_full_killchain() {
     ));
     let outputs = run_sync(&vpl, events);
     assert!(
-        outputs.len() >= 1,
+        !outputs.is_empty(),
         "Expected 1+ full kill chain alert, got {}",
         outputs.len()
     );
@@ -227,7 +227,7 @@ fn test_vpl_catches_renamed_psexec() {
     ));
     let outputs = run_sync(&vpl, events);
     assert!(
-        outputs.len() >= 1,
+        !outputs.is_empty(),
         "VPL behavioral rule should catch renamed PsExec, got {} alerts",
         outputs.len()
     );
@@ -251,15 +251,95 @@ fn test_both_catch_normal_psexec() {
 
     let sigma_outputs = run_sync(&sigma_vpl, events.clone());
     assert!(
-        sigma_outputs.len() >= 1,
+        !sigma_outputs.is_empty(),
         "Sigma should detect normal PsExec, got {} alerts",
         sigma_outputs.len()
     );
 
     let vpl_outputs = run_sync(&vpl_behavioral, events);
     assert!(
-        vpl_outputs.len() >= 1,
+        !vpl_outputs.is_empty(),
         "VPL should detect normal PsExec, got {} alerts",
         vpl_outputs.len()
+    );
+}
+
+// =========================================================================
+// Phase 5: Multi-Rule Detection (directory mode)
+// =========================================================================
+
+#[test]
+fn test_multi_rule_full_chain_detection() {
+    // Simulates the detect command: run multiple rule files independently
+    // against the same dataset and collect all alerts.
+    let rule_files = [
+        "examples/security-demo/detect_credential_dumping.vpl",
+        "examples/security-demo/detect_lateral_movement.vpl",
+        "examples/security-demo/detect_full_killchain.vpl",
+    ];
+    let events = parse_jsonl_events(&load_file(
+        "examples/security-demo/data/apt29_full_chain.jsonl",
+    ));
+
+    let mut all_alerts = Vec::new();
+    for rule_path in &rule_files {
+        let vpl = load_file(rule_path);
+        let outputs = run_sync(&vpl, events.clone());
+        all_alerts.extend(outputs);
+    }
+
+    // Should get alerts from credential dumping, lateral movement, and full killchain
+    assert!(
+        all_alerts.len() >= 3,
+        "Expected 3+ alerts from multi-rule detection, got {}",
+        all_alerts.len()
+    );
+
+    // Verify we got different rule names
+    let rules: std::collections::HashSet<String> = all_alerts
+        .iter()
+        .filter_map(|e| {
+            e.data.get("rule").map(|v| match v {
+                Value::Str(s) => s.to_string(),
+                other => other.to_string(),
+            })
+        })
+        .collect();
+    assert!(
+        rules.len() >= 2,
+        "Expected alerts from 2+ different rules, got: {:?}",
+        rules
+    );
+}
+
+#[test]
+fn test_evasion_coverage_matrix() {
+    // Simulates the analyze command: run rules against both baseline
+    // and evasion datasets, verify the expected coverage pattern.
+    let sigma_vpl = load_file("examples/security-demo/sigma_comparison/sigma_only.vpl");
+    let behavioral_vpl = load_file("examples/security-demo/sigma_comparison/vpl_behavioral.vpl");
+    let baseline_events = parse_jsonl_events(&load_file(
+        "examples/security-demo/sigma_comparison/normal_dataset.jsonl",
+    ));
+    let evasion_events = parse_jsonl_events(&load_file(
+        "examples/security-demo/sigma_comparison/evasion_dataset.jsonl",
+    ));
+
+    // Sigma: detects baseline, misses evasion
+    let sigma_baseline = run_sync(&sigma_vpl, baseline_events.clone());
+    let sigma_evasion = run_sync(&sigma_vpl, evasion_events.clone());
+    assert!(!sigma_baseline.is_empty(), "Sigma should detect baseline");
+    assert!(sigma_evasion.is_empty(), "Sigma should miss evasion");
+
+    // Behavioral: detects both
+    let behavioral_baseline = run_sync(&behavioral_vpl, baseline_events);
+    let behavioral_evasion = run_sync(&behavioral_vpl, evasion_events);
+    assert!(
+        !behavioral_baseline.is_empty(),
+        "Behavioral should detect baseline"
+    );
+    assert!(
+        !behavioral_evasion.is_empty(),
+        "Behavioral should detect evasion"
     );
 }

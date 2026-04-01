@@ -17,6 +17,9 @@ members = [
     "crates/varpulis-connector-pulsar",
     "crates/varpulis-connector-redis",
     "crates/varpulis-connector-s3",
+    "crates/varpulis-connector-slack",
+    "crates/varpulis-connector-splunk",
+    "crates/varpulis-connector-syslog",
     "crates/varpulis-connectors",
     "crates/varpulis-core",
     "crates/varpulis-parser",
@@ -48,7 +51,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/varpulis/varpulis"
 homepage = "https://www.varpulis-cep.com"
 documentation = "https://docs.varpulis-cep.com"
-description = "A modern streaming analytics engine with advanced pattern detection"
+description = "Kill chain detection engine — behavioral sequence matching for security and streaming analytics"
 
 [workspace.dependencies]
 # Parsing
@@ -240,3 +243,9 @@ opt-level = 1
 [profile.release]
 lto = true
 codegen-units = 1
+
+# PGO instrumentation profile (faster build for throwaway instrumented binary)
+[profile.release-instrumented]
+inherits = "release"
+lto = "thin"
+codegen-units = 4

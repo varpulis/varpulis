@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "CLI for Varpulis streaming analytics engine"
+description = "CLI for Varpulis kill chain detection & streaming analytics engine"
 
 [lib]
 name = "varpulis_cli"
@@ -94,6 +94,10 @@ persistent = ["raft", "varpulis-cluster/persistent"]
 saas = ["varpulis-db", "lettre"]
 oidc = ["openidconnect"]
 encryption = ["varpulis-connectors/encryption"]
+syslog = ["varpulis-connectors/syslog"]
+slack = ["varpulis-connectors/slack"]
+splunk = ["varpulis-connectors/splunk"]
+enterprise = ["syslog", "slack", "splunk"]
 repl = ["rustyline"]
 tui = []  # TUI is now always available; kept for backwards compatibility
 otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry", "varpulis-cluster/otel"]

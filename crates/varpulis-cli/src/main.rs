@@ -21,7 +21,7 @@ use commands::federation::FederationAction;
 #[command(name = "varpulis")]
 #[command(author = "Varpulis Contributors")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
-#[command(about = "Varpulis - Modern streaming analytics engine", long_about = None)]
+#[command(about = "Varpulis - Kill chain detection & streaming analytics engine", long_about = None)]
 struct Cli {
     /// Path to configuration file (YAML or TOML)
     #[arg(short, long, global = true, env = "VARPULIS_CONFIG")]
@@ -239,6 +239,54 @@ enum Commands {
         /// Show detailed trace of event processing through the pipeline
         #[arg(long)]
         trace: bool,
+    },
+
+    /// Analyze rule coverage against evasion variants (red mode)
+    ///
+    /// Runs detection rules against both a baseline and an evasion dataset,
+    /// producing a coverage matrix showing which rules are resilient vs evadable.
+    Analyze {
+        /// Path to VPL rule file or directory of .vpl files
+        #[arg(short, long)]
+        rules: PathBuf,
+
+        /// Path to baseline event file (normal attack traffic where rules should fire)
+        #[arg(short, long)]
+        baseline: PathBuf,
+
+        /// Path to evasion event file (modified attack traffic with evasion techniques)
+        #[arg(short, long)]
+        evasion: PathBuf,
+
+        /// Output format: table, json, markdown
+        #[arg(short, long, default_value = "table")]
+        format: String,
+    },
+
+    /// Detect kill chains and attack patterns in event logs (blue mode)
+    ///
+    /// Runs one or more VPL detection rules against a JSONL event file
+    /// and produces structured security alerts with MITRE ATT&CK mappings.
+    Detect {
+        /// Path to VPL rule file or directory of .vpl files
+        #[arg(short, long)]
+        rules: PathBuf,
+
+        /// Path to the event file (JSONL or .evt)
+        #[arg(short, long)]
+        events: PathBuf,
+
+        /// Output format: table, json, cef
+        #[arg(short, long, default_value = "table")]
+        format: String,
+
+        /// Number of worker threads (default: CPU cores)
+        #[arg(long, short = 'w')]
+        workers: Option<usize>,
+
+        /// Show each alert as it is detected
+        #[arg(short, long)]
+        verbose: bool,
     },
 
     /// Generate example configuration file
@@ -863,6 +911,38 @@ async fn main() -> Result<()> {
                 )
                 .await?;
             }
+        }
+
+        Commands::Analyze {
+            rules,
+            baseline,
+            evasion,
+            format,
+        } => {
+            let format: commands::analyze::AnalyzeFormat =
+                format.parse().map_err(|e: String| anyhow::anyhow!(e))?;
+            commands::analyze::run_analyze(&rules, &baseline, &evasion, format, credentials_store)
+                .await?;
+        }
+
+        Commands::Detect {
+            rules,
+            events,
+            format,
+            workers,
+            verbose,
+        } => {
+            let format: commands::detect::OutputFormat =
+                format.parse().map_err(|e: String| anyhow::anyhow!(e))?;
+            commands::detect::run_detect(
+                &rules,
+                &events,
+                format,
+                workers,
+                credentials_store,
+                verbose,
+            )
+            .await?;
         }
 
         Commands::ConfigGen { format, output } => {

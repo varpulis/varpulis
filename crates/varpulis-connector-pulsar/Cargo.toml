@@ -11,7 +11,7 @@ description = "Apache Pulsar connector for Varpulis CEP engine"
 [dependencies]
 varpulis-connector-api = { version = "0.9.0", path = "../varpulis-connector-api" }
 varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
-pulsar = { version = "6", features = ["tokio-runtime"] }
+pulsar = { version = "6", default-features = false, features = ["tokio-rustls-runtime-ring"] }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,6 +1,8 @@
+pub mod analyze;
 pub mod connector;
 pub mod coordinator;
 pub mod demo;
+pub mod detect;
 pub mod federation;
 pub mod generate;
 pub mod infer;

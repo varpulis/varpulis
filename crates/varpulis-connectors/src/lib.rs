@@ -41,6 +41,17 @@ pub use rest_api::{RestApiClient, RestApiConfig, RestApiSink};
 // Sink trait, error, and adapter
 pub use sink::{Sink, SinkConnectorAdapter, SinkError};
 pub use types::{ConnectorConfig, ConnectorError, ConnectorHealth, SinkConnector, SourceConnector};
+// Slack webhook connector
+#[cfg(feature = "slack")]
+pub use varpulis_connector_slack::{event_to_slack_payload, SlackWebhookSink};
+// Splunk HEC connector
+#[cfg(feature = "splunk")]
+pub use varpulis_connector_splunk::{parse_hec_event, SplunkHecSource};
+// Syslog CEF connector
+#[cfg(feature = "syslog")]
+pub use varpulis_connector_syslog::{
+    event_to_cef, parse_syslog_line, SyslogCefSink, SyslogTcpSource, SyslogTransport,
+};
 // PostgreSQL CDC connector
 #[cfg(feature = "cdc")]
 pub use varpulis_connector_cdc as postgres_cdc;
