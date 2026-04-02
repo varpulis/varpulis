@@ -41,6 +41,9 @@ RUN cargo build --release -p varpulis-cli 2>/dev/null || true
 
 # Copy actual source code
 COPY crates/ crates/
+# Copy examples and deploy configs (needed by security_init include_str!)
+COPY examples/ examples/
+COPY deploy/security/ deploy/security/
 
 # Bust cache on every commit (GHA layer cache may serve stale cargo builds)
 ARG COMMIT_SHA=""
