@@ -53,6 +53,10 @@ pub(crate) fn eval_predicate(
             let ref_value = captured.get(ref_alias).and_then(|e| e.get(ref_field));
             match (event_value, ref_value) {
                 (Some(ev), Some(rv)) => compare_values(ev, rv, *op),
+                // Reference alias not yet captured: this is the first event entering
+                // a Kleene closure with a self-referencing predicate. Accept it —
+                // subsequent events will be compared against this one via captured[alias].
+                (Some(_), None) => !captured.contains_key(ref_alias),
                 _ => false,
             }
         }
@@ -181,6 +185,27 @@ pub fn classify_predicate(pred: &Predicate, alias: Option<&str>) -> PredicateCla
                 PredicateClass::Consistent
             }
         }
+    }
+}
+
+/// Check whether an inconsistent predicate truly needs deferred evaluation.
+///
+/// `CompareRef` self-references (e.g., `field > alias.field` where alias is
+/// the Kleene variable) can be evaluated eagerly because `captured[alias]`
+/// is updated to the last matched Kleene event by `push_at_kleene()`.
+///
+/// Only `Expr`-based cross-references need deferred evaluation via ZDD
+/// enumeration, since they may reference arbitrary positions in the closure.
+pub fn needs_deferred_evaluation(pred: &Predicate) -> bool {
+    match pred {
+        // CompareRef self-references: eager evaluation works (sliding window)
+        Predicate::Compare { .. } | Predicate::CompareRef { .. } => false,
+        // Expr-based: may reference arbitrary Kleene positions, must defer
+        Predicate::Expr(_) => true,
+        Predicate::And(l, r) | Predicate::Or(l, r) => {
+            needs_deferred_evaluation(l) || needs_deferred_evaluation(r)
+        }
+        Predicate::Not(inner) => needs_deferred_evaluation(inner),
     }
 }
 

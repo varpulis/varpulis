@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use super::and_op::{AndBranch, AndConfig, NegationInfo};
-use super::predicate::{classify_predicate, PredicateClass};
+use super::predicate::{classify_predicate, needs_deferred_evaluation, PredicateClass};
 use super::types::{Predicate, SasePattern};
 
 // ============================================================================
@@ -326,9 +326,15 @@ impl NfaCompiler {
                     state.state_type = StateType::Kleene;
                     state.self_loop = true;
                     // SIGMOD 2014 §5.2: Split predicate into eager vs postponed.
+                    // Self-referencing CompareRef predicates (e.g., field > alias.field)
+                    // are evaluated eagerly: captured[alias] tracks the last Kleene event
+                    // via push_at_kleene(), enabling sliding-window comparison.
+                    // Only Expr-based cross-references need deferred ZDD evaluation.
                     if let Some(ref pred) = state.predicate {
                         let alias = state.alias.as_deref();
-                        if classify_predicate(pred, alias) == PredicateClass::Inconsistent {
+                        if classify_predicate(pred, alias) == PredicateClass::Inconsistent
+                            && needs_deferred_evaluation(pred)
+                        {
                             state.postponed_predicate = state.predicate.take();
                         }
                     }
@@ -354,6 +360,15 @@ impl NfaCompiler {
                 if let Some(state) = self.nfa.states.get_mut(inner_end) {
                     state.state_type = StateType::Kleene;
                     state.self_loop = true;
+                    // Same eager evaluation fix as KleenePlus
+                    if let Some(ref pred) = state.predicate {
+                        let alias = state.alias.as_deref();
+                        if classify_predicate(pred, alias) == PredicateClass::Inconsistent
+                            && needs_deferred_evaluation(pred)
+                        {
+                            state.postponed_predicate = state.predicate.take();
+                        }
+                    }
                 }
 
                 // Add back-edge for loop

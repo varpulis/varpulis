@@ -1,5 +1,6 @@
 //! VPL-level E2E tests for Kleene+ and forecast scenarios.
 //! These test the full pipeline: VPL parse → engine → output events.
+#![allow(clippy::needless_raw_string_hashes)]
 
 use tokio::sync::mpsc;
 use varpulis_core::Value;
@@ -78,18 +79,9 @@ stream HighTemp = StrictlyRising
         1,
         "Should produce exactly 1 alert when temperature drops below baseline"
     );
-    assert_eq!(
-        outputs[0].get("sensor"),
-        Some(&Value::str("HVAC-01"))
-    );
-    assert_eq!(
-        outputs[0].get("baseline"),
-        Some(&Value::Int(22))
-    );
-    assert_eq!(
-        outputs[0].get("drop_to"),
-        Some(&Value::Int(20))
-    );
+    assert_eq!(outputs[0].get("sensor"), Some(&Value::str("HVAC-01")));
+    assert_eq!(outputs[0].get("baseline"), Some(&Value::Int(22)));
+    assert_eq!(outputs[0].get("drop_to"), Some(&Value::Int(20)));
 }
 
 #[test]
@@ -147,17 +139,61 @@ stream Alert = Rising
 "#;
 
     let events = vec![
-        temp_event("A", 20),       // A baseline
-        temp_event("B", 100),      // B baseline
-        temp_event("A", 30),       // A rising (30 > 20)
-        temp_event("B", 50),       // B: 50 < 100, NOT rising
-        temp_event("A", 10),       // A drop (10 < 20) → alert
-        temp_event("B", 90),       // B: 90 < 100, still not rising → no alert
+        temp_event("A", 20),  // A baseline
+        temp_event("B", 100), // B baseline
+        temp_event("A", 30),  // A rising (30 > 20)
+        temp_event("B", 50),  // B: 50 < 100, NOT rising
+        temp_event("A", 10),  // A drop (10 < 20) → alert
+        temp_event("B", 90),  // B: 90 < 100, still not rising → no alert
     ];
 
     let outputs = run_sync(vpl, events);
     assert_eq!(outputs.len(), 1, "Only sensor A should alert");
     assert_eq!(outputs[0].get("sensor"), Some(&Value::str("A")));
+}
+
+// =========================================================================
+// Strictly increasing with self-referencing Kleene predicate
+// =========================================================================
+
+#[test]
+fn test_vpl_strictly_increasing_with_self_ref() {
+    let vpl = r#"
+event TempReading:
+    sensor_id: str
+    temperature: int
+
+pattern StrictlyRising = SEQ(
+    TempReading as first,
+    TempReading+ where temperature > rising.temperature as rising,
+    TempReading where temperature < first.temperature as drop
+) within 5m partition by sensor_id
+
+stream Alert = StrictlyRising
+    .emit(sensor: first.sensor_id, baseline: first.temperature, peak: rising.temperature, drop_to: drop.temperature, num: count(rising))
+"#;
+
+    let events = vec![
+        temp_event("A", 20),
+        temp_event("A", 25),
+        temp_event("A", 30),
+        temp_event("A", 35),
+        temp_event("A", 10),
+    ];
+
+    let outputs = run_sync(vpl, events);
+    assert!(
+        !outputs.is_empty(),
+        "Strictly rising with self-referencing Kleene should produce results"
+    );
+
+    let best = outputs
+        .iter()
+        .max_by_key(|o| o.get("num").and_then(|v| v.as_int()).unwrap_or(0))
+        .unwrap();
+    assert_eq!(best.get("baseline"), Some(&Value::Int(20)));
+    assert_eq!(best.get("peak"), Some(&Value::Int(35)));
+    assert_eq!(best.get("drop_to"), Some(&Value::Int(10)));
 }
 
 // =========================================================================
@@ -285,9 +321,7 @@ stream Alert = BruteForce
 "#;
 
     // 3 failures + success → count(fails) = 2, below threshold
-    let mut events_few: Vec<Event> = (0..3)
-        .map(|_| login_event("10.0.0.1", "failed"))
-        .collect();
+    let mut events_few: Vec<Event> = (0..3).map(|_| login_event("10.0.0.1", "failed")).collect();
     events_few.push(login_event("10.0.0.1", "success"));
 
     let outputs = run_sync(vpl, events_few);
@@ -298,9 +332,7 @@ stream Alert = BruteForce
     );
 
     // 10 failures + success → count(fails) = 9, above threshold
-    let mut events_many: Vec<Event> = (0..10)
-        .map(|_| login_event("10.0.0.2", "failed"))
-        .collect();
+    let mut events_many: Vec<Event> = (0..10).map(|_| login_event("10.0.0.2", "failed")).collect();
     events_many.push(login_event("10.0.0.2", "success"));
 
     let outputs = run_sync(vpl, events_many);
