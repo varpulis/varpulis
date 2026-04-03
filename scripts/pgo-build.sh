@@ -60,30 +60,45 @@ fi
 ok "llvm-profdata: $LLVM_PROFDATA"
 
 # Detect BOLT (optional)
+# BOLT requires: llvm-bolt, merge-fdata, and libbolt runtime library.
+# On Ubuntu: sudo apt-get install bolt-19 libbolt-19-dev
 LLVM_BOLT=""
 MERGE_FDATA=""
+BOLT_RT_LIB=""
 if [[ -z "${PGO_SKIP_BOLT:-}" ]]; then
-    for cmd in llvm-bolt llvm-bolt-19 llvm-bolt-18 llvm-bolt-17; do
+    for cmd in llvm-bolt-19 llvm-bolt-20 llvm-bolt-18 llvm-bolt; do
         if command -v "$cmd" &>/dev/null; then
             LLVM_BOLT="$(command -v "$cmd")"
             break
         fi
     done
-    for cmd in merge-fdata merge-fdata-19 merge-fdata-18 merge-fdata-17; do
+    for cmd in merge-fdata-19 merge-fdata-20 merge-fdata-18 merge-fdata; do
         if command -v "$cmd" &>/dev/null; then
             MERGE_FDATA="$(command -v "$cmd")"
             break
         fi
     done
+    # Find BOLT instrumentation runtime library
+    for path in llvm-19/lib/libbolt_rt_instr.a llvm-20/lib/libbolt_rt_instr.a llvm-18/lib/libbolt_rt_instr.a; do
+        if [[ -f "/usr/lib/$path" ]]; then
+            BOLT_RT_LIB="$path"
+            break
+        fi
+    done
 fi
 
-if [[ -n "$LLVM_BOLT" && -n "$MERGE_FDATA" ]]; then
+if [[ -n "$LLVM_BOLT" && -n "$MERGE_FDATA" && -n "$BOLT_RT_LIB" ]]; then
     ok "llvm-bolt: $LLVM_BOLT"
     ok "merge-fdata: $MERGE_FDATA"
+    ok "bolt runtime: /usr/lib/$BOLT_RT_LIB"
 else
-    warn "BOLT not available (install llvm-19 for BOLT support). PGO-only build."
+    if [[ -n "$LLVM_BOLT" && -z "$BOLT_RT_LIB" ]]; then
+        warn "BOLT found but runtime library missing. Install libbolt-19-dev (or similar)."
+    fi
+    warn "BOLT not available. PGO-only build."
     LLVM_BOLT=""
     MERGE_FDATA=""
+    BOLT_RT_LIB=""
 fi
 
 # --- Step 1: Build instrumented binary ---
@@ -187,7 +202,7 @@ PGO_SIZE=$(du -h "$PGO_BIN" | cut -f1)
 ok "PGO binary: $PGO_BIN ($PGO_SIZE)"
 
 # --- Step 5: BOLT (optional) ---
-if [[ -n "$LLVM_BOLT" && -n "$MERGE_FDATA" ]]; then
+if [[ -n "$LLVM_BOLT" && -n "$MERGE_FDATA" && -n "$BOLT_RT_LIB" ]]; then
     info "Step 5/5: Applying BOLT optimization..."
 
     BOLT_PROFILE_DIR="target/bolt-profiles"
@@ -199,18 +214,23 @@ if [[ -n "$LLVM_BOLT" && -n "$MERGE_FDATA" ]]; then
     mkdir -p "$BOLT_PROFILE_DIR"
 
     # 5a: Instrument with BOLT
+    # -instrumentation-file-append-pid: separate profile per training run
+    # --runtime-instrumentation-lib: path to BOLT runtime (relative to /usr/lib/)
     info "  BOLT: instrumenting binary..."
     "$LLVM_BOLT" "$PGO_BIN" \
         -instrument \
         -instrumentation-file="$(pwd)/$BOLT_PROFILE_DIR/bolt.fdata" \
+        -instrumentation-file-append-pid \
+        --runtime-instrumentation-lib="$BOLT_RT_LIB" \
         -o "$BOLT_INST" 2>&1 | tail -3
 
     if [[ ! -x "$BOLT_INST" ]]; then
         warn "  BOLT instrumentation failed. Skipping BOLT."
     else
-        # 5b: Run BOLT training workloads (subset)
-        for scenario in $BOLT_SCENARIOS; do
-            vpl_file="$SCENARIOS_DIR/$scenario/varpulis.vpl"
+        # 5b: Run BOLT training workloads
+        for scenario_dir in "$SCENARIOS_DIR"/0*; do
+            scenario="$(basename "$scenario_dir")"
+            vpl_file="$scenario_dir/varpulis.vpl"
             evt_file="$DATA_DIR/${scenario}_bench.evt"
             if [[ -f "$vpl_file" && -f "$evt_file" ]]; then
                 info "  BOLT train: $scenario"
@@ -220,32 +240,39 @@ if [[ -n "$LLVM_BOLT" && -n "$MERGE_FDATA" ]]; then
             fi
         done
 
-        # 5c: Merge BOLT profiles
-        BOLT_FILES=$(find "$BOLT_PROFILE_DIR" -name '*.fdata' -size +0c 2>/dev/null)
-        if [[ -z "$BOLT_FILES" ]]; then
+        # 5c: Merge BOLT profiles (files have PID suffix: bolt.fdata.PID.fdata)
+        BOLT_FILE_COUNT=$(find "$BOLT_PROFILE_DIR" -name '*.fdata' -size +0c 2>/dev/null | wc -l)
+        if [[ "$BOLT_FILE_COUNT" -eq 0 ]]; then
             warn "  No BOLT profile data collected. Skipping BOLT."
         else
-            info "  BOLT: merging profiles..."
-            "$MERGE_FDATA" $BOLT_FILES > "$BOLT_MERGED" 2>/dev/null
+            info "  BOLT: merging $BOLT_FILE_COUNT profile files..."
+            "$MERGE_FDATA" "$BOLT_PROFILE_DIR"/*.fdata > "$BOLT_MERGED" 2>/dev/null
+            BOLT_LINES=$(wc -l < "$BOLT_MERGED")
 
-            # 5d: Optimize with BOLT
-            info "  BOLT: optimizing binary layout..."
-            "$LLVM_BOLT" "$PGO_BIN" \
-                -o "$BOLT_OUTPUT" \
-                -data="$BOLT_MERGED" \
-                -reorder-blocks=ext-tsp \
-                -reorder-functions=cdsort \
-                -split-functions \
-                -split-all-cold \
-                -icf=1 \
-                -use-gnu-stack \
-                -dyno-stats 2>&1
-
-            if [[ -x "$BOLT_OUTPUT" ]]; then
-                BOLT_SIZE=$(du -h "$BOLT_OUTPUT" | cut -f1)
-                ok "PGO+BOLT binary: $BOLT_OUTPUT ($BOLT_SIZE)"
+            if [[ "$BOLT_LINES" -eq 0 ]]; then
+                warn "  Merged BOLT profile is empty. Skipping BOLT."
             else
-                warn "  BOLT optimization failed. PGO-only binary available."
+                ok "  BOLT profile: $BOLT_LINES lines"
+
+                # 5d: Optimize with BOLT
+                info "  BOLT: optimizing binary layout..."
+                "$LLVM_BOLT" "$PGO_BIN" \
+                    -o "$BOLT_OUTPUT" \
+                    -data="$BOLT_MERGED" \
+                    -reorder-blocks=ext-tsp \
+                    -reorder-functions=cdsort \
+                    -split-functions \
+                    -split-all-cold \
+                    -icf=1 \
+                    -use-gnu-stack \
+                    -dyno-stats 2>&1
+
+                if [[ -x "$BOLT_OUTPUT" ]]; then
+                    BOLT_SIZE=$(du -h "$BOLT_OUTPUT" | cut -f1)
+                    ok "PGO+BOLT binary: $BOLT_OUTPUT ($BOLT_SIZE)"
+                else
+                    warn "  BOLT optimization failed. PGO-only binary available."
+                fi
             fi
         fi
     fi
