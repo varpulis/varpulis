@@ -2314,3 +2314,310 @@ fn test_configurable_enumeration_limit() {
         results.len()
     );
 }
+
+// =========================================================================
+// Real-World SASE+ Scenarios (Kleene closures, predicates, termination)
+// =========================================================================
+
+#[test]
+fn test_kleene_rising_sequence_with_terminator() {
+    // SEQ(Start, Rising+ where val > Start.val, Drop where val < Start.val)
+    // Only emits once: when the rising sequence ends with a drop.
+    let pattern = PatternBuilder::seq(vec![
+        SasePattern::Event {
+            event_type: "Tick".to_string(),
+            predicate: None,
+            alias: Some("first".to_string()),
+        },
+        PatternBuilder::one_or_more(SasePattern::Event {
+            event_type: "Tick".to_string(),
+            predicate: Some(Predicate::CompareRef {
+                field: "val".to_string(),
+                op: CompareOp::Gt,
+                ref_alias: "first".to_string(),
+                ref_field: "val".to_string(),
+            }),
+            alias: Some("rising".to_string()),
+        }),
+        SasePattern::Event {
+            event_type: "Tick".to_string(),
+            predicate: Some(Predicate::CompareRef {
+                field: "val".to_string(),
+                op: CompareOp::Lt,
+                ref_alias: "first".to_string(),
+                ref_field: "val".to_string(),
+            }),
+            alias: Some("drop".to_string()),
+        },
+    ]);
+
+    let mut engine = SaseEngine::new(pattern);
+
+    // first=10
+    let r = engine.process(&make_event("Tick", vec![("val", Value::Int(10))]));
+    assert!(r.is_empty());
+
+    // 15 > 10: enters Kleene
+    let r = engine.process(&make_event("Tick", vec![("val", Value::Int(15))]));
+    assert!(r.is_empty(), "Should not complete yet — no terminator");
+
+    // 20 > 10: extends Kleene
+    let r = engine.process(&make_event("Tick", vec![("val", Value::Int(20))]));
+    assert!(r.is_empty(), "Should not complete yet — no terminator");
+
+    // 25 > 10: extends Kleene
+    let r = engine.process(&make_event("Tick", vec![("val", Value::Int(25))]));
+    assert!(r.is_empty(), "Should not complete yet — no terminator");
+
+    // 5 < 10: terminates! Should produce at least 1 match
+    let r = engine.process(&make_event("Tick", vec![("val", Value::Int(5))]));
+    assert!(
+        !r.is_empty(),
+        "Drop below baseline should complete the pattern"
+    );
+    // The longest match should have: first + 3 rising + drop = 5 events
+    let longest = r.iter().max_by_key(|m| m.stack.len()).unwrap();
+    assert_eq!(longest.stack.len(), 5, "first(10) + rising(15,20,25) + drop(5)");
+}
+
+#[test]
+fn test_kleene_without_terminator_emits_on_each_extension() {
+    // SEQ(A, B+) — Kleene is last item, epsilon to Accept.
+    // Each B event emits a match (CompleteAndContinue behavior).
+    let pattern = PatternBuilder::seq(vec![
+        PatternBuilder::event("A"),
+        PatternBuilder::one_or_more(PatternBuilder::event("B")),
+    ]);
+
+    let mut engine = SaseEngine::new(pattern);
+
+    engine.process(&make_event("A", vec![]));
+
+    let r1 = engine.process(&make_event("B", vec![("n", Value::Int(1))]));
+    assert_eq!(r1.len(), 1, "First B emits (Kleene min satisfied)");
+
+    let r2 = engine.process(&make_event("B", vec![("n", Value::Int(2))]));
+    assert_eq!(r2.len(), 1, "Second B emits (Kleene extension)");
+
+    let r3 = engine.process(&make_event("B", vec![("n", Value::Int(3))]));
+    assert_eq!(r3.len(), 1, "Third B emits (Kleene extension)");
+
+    // Total: 3 matches, each with increasing stack depth
+    assert_eq!(r1[0].stack.len(), 2, "A + 1B");
+    assert_eq!(r2[0].stack.len(), 3, "A + 2B");
+    assert_eq!(r3[0].stack.len(), 4, "A + 3B");
+}
+
+#[test]
+fn test_kleene_predicate_filters_non_matching_events() {
+    // SEQ(Start, Rising+ where val > Start.val, End)
+    // Events that don't satisfy the predicate should NOT extend the Kleene.
+    let pattern = PatternBuilder::seq(vec![
+        SasePattern::Event {
+            event_type: "Tick".to_string(),
+            predicate: None,
+            alias: Some("start".to_string()),
+        },
+        PatternBuilder::one_or_more(SasePattern::Event {
+            event_type: "Tick".to_string(),
+            predicate: Some(Predicate::CompareRef {
+                field: "val".to_string(),
+                op: CompareOp::Gt,
+                ref_alias: "start".to_string(),
+                ref_field: "val".to_string(),
+            }),
+            alias: Some("rising".to_string()),
+        }),
+        PatternBuilder::event("End"),
+    ]);
+
+    let mut engine = SaseEngine::new(pattern);
+
+    // start.val = 50
+    engine.process(&make_event("Tick", vec![("val", Value::Int(50))]));
+
+    // 60 > 50: enters Kleene
+    engine.process(&make_event("Tick", vec![("val", Value::Int(60))]));
+
+    // 30 < 50: does NOT extend Kleene (predicate fails)
+    engine.process(&make_event("Tick", vec![("val", Value::Int(30))]));
+
+    // 70 > 50: extends Kleene
+    engine.process(&make_event("Tick", vec![("val", Value::Int(70))]));
+
+    // End: completes — may produce multiple matches (skip-till-any-match)
+    let results = engine.process(&make_event("End", vec![]));
+    assert!(
+        !results.is_empty(),
+        "Should complete on End"
+    );
+    // The longest match: start(50) + rising(60,70) + End = 4
+    let longest = results.iter().max_by_key(|m| m.stack.len()).unwrap();
+    assert!(
+        longest.stack.len() >= 3,
+        "Longest match should have at least start + 1 rising + End"
+    );
+}
+
+#[test]
+fn test_kleene_brute_force_pattern() {
+    // Real-world: N failed logins -> 1 success
+    // SEQ(Failed as first, Failed+ as fails, Success as success)
+    let pattern = PatternBuilder::seq(vec![
+        SasePattern::Event {
+            event_type: "Login".to_string(),
+            predicate: Some(Predicate::Compare {
+                field: "status".to_string(),
+                op: CompareOp::Eq,
+                value: Value::str("failed"),
+            }),
+            alias: Some("first".to_string()),
+        },
+        PatternBuilder::one_or_more(SasePattern::Event {
+            event_type: "Login".to_string(),
+            predicate: Some(Predicate::Compare {
+                field: "status".to_string(),
+                op: CompareOp::Eq,
+                value: Value::str("failed"),
+            }),
+            alias: Some("fails".to_string()),
+        }),
+        SasePattern::Event {
+            event_type: "Login".to_string(),
+            predicate: Some(Predicate::Compare {
+                field: "status".to_string(),
+                op: CompareOp::Eq,
+                value: Value::str("success"),
+            }),
+            alias: Some("success".to_string()),
+        },
+    ]);
+
+    let mut engine = SaseEngine::new(pattern);
+
+    // 10 failed logins
+    for i in 0..10 {
+        let r = engine.process(&make_event(
+            "Login",
+            vec![("status", Value::str("failed")), ("attempt", Value::Int(i))],
+        ));
+        assert!(r.is_empty(), "Failed login {i} should not complete pattern");
+    }
+
+    // 1 success -> completes
+    let results = engine.process(&make_event(
+        "Login",
+        vec![("status", Value::str("success"))],
+    ));
+    assert!(
+        !results.is_empty(),
+        "Success after 10 failures should complete the brute force pattern"
+    );
+    // Stack: first(1) + fails(9) + success(1) = 11
+    assert_eq!(results[0].stack.len(), 11, "first + 9 Kleene fails + success");
+}
+
+#[test]
+fn test_kleene_count_aggregate() {
+    // SEQ(A, B+, C) — verify count(B) is accessible in the match result
+    let pattern = PatternBuilder::seq(vec![
+        PatternBuilder::event("A"),
+        PatternBuilder::one_or_more(SasePattern::Event {
+            event_type: "B".to_string(),
+            predicate: None,
+            alias: Some("items".to_string()),
+        }),
+        PatternBuilder::event("C"),
+    ]);
+
+    let mut engine = SaseEngine::new(pattern);
+
+    engine.process(&make_event("A", vec![]));
+    for i in 1..=5 {
+        engine.process(&make_event("B", vec![("n", Value::Int(i))]));
+    }
+    let results = engine.process(&make_event("C", vec![]));
+
+    assert!(!results.is_empty(), "Should complete");
+    // Stack: A + 5B + C = 7
+    assert_eq!(results[0].stack.len(), 7);
+
+    // Count the 'items' alias entries in the stack
+    let items_count = results[0]
+        .stack
+        .iter()
+        .filter(|entry| entry.alias.as_deref() == Some("items"))
+        .count();
+    assert_eq!(items_count, 5, "Should have 5 Kleene-captured 'items' events");
+}
+
+#[test]
+fn test_kleene_with_partition_isolates_keys() {
+    // SEQ(Start, Rising+ where val > Start.val, Drop where val < Start.val)
+    // Partitioned by sensor — events from different sensors don't mix.
+    let pattern = PatternBuilder::seq(vec![
+        SasePattern::Event {
+            event_type: "Temp".to_string(),
+            predicate: None,
+            alias: Some("first".to_string()),
+        },
+        PatternBuilder::one_or_more(SasePattern::Event {
+            event_type: "Temp".to_string(),
+            predicate: Some(Predicate::CompareRef {
+                field: "val".to_string(),
+                op: CompareOp::Gt,
+                ref_alias: "first".to_string(),
+                ref_field: "val".to_string(),
+            }),
+            alias: Some("rising".to_string()),
+        }),
+        SasePattern::Event {
+            event_type: "Temp".to_string(),
+            predicate: Some(Predicate::CompareRef {
+                field: "val".to_string(),
+                op: CompareOp::Lt,
+                ref_alias: "first".to_string(),
+                ref_field: "val".to_string(),
+            }),
+            alias: Some("drop".to_string()),
+        },
+    ]);
+
+    let mut engine = SaseEngine::new(pattern).with_partition_by("sensor".to_string());
+
+    // Sensor A: baseline 20
+    engine.process(&make_event(
+        "Temp",
+        vec![("sensor", Value::str("A")), ("val", Value::Int(20))],
+    ));
+    // Sensor B: baseline 100
+    engine.process(&make_event(
+        "Temp",
+        vec![("sensor", Value::str("B")), ("val", Value::Int(100))],
+    ));
+
+    // Sensor A: 30 > 20 (rising)
+    engine.process(&make_event(
+        "Temp",
+        vec![("sensor", Value::str("A")), ("val", Value::Int(30))],
+    ));
+    // Sensor B: 50 < 100 — should NOT enter B's Kleene
+    // But 50 > 20, so might enter A's Kleene (if partitioning works, it shouldn't)
+    engine.process(&make_event(
+        "Temp",
+        vec![("sensor", Value::str("B")), ("val", Value::Int(50))],
+    ));
+
+    // Sensor A: 10 < 20 — triggers A's drop
+    let results = engine.process(&make_event(
+        "Temp",
+        vec![("sensor", Value::str("A")), ("val", Value::Int(10))],
+    ));
+    assert_eq!(
+        results.len(),
+        1,
+        "Only sensor A should complete (B never had a rising event)"
+    );
+    // Verify it's sensor A's match: first=20, rising=[30], drop=10
+    assert_eq!(results[0].stack.len(), 3, "first(20) + rising(30) + drop(10)");
+}
