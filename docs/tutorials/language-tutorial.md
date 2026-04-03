@@ -486,16 +486,15 @@ pattern SuccessfulOrder =
 Process patterns independently per partition key:
 
 ```vpl
-// Per-user pattern matching
-pattern UserFailures =
-    LoginFailed+ -> LoginSuccess
-    within 10m
-    partition by user_id
+// Per-user pattern matching: Kleene+ requires SEQ() syntax
+pattern UserFailures = SEQ(
+    LoginFailed as first,
+    LoginFailed+ as fails,
+    LoginSuccess as success
+) within 10m partition by user_id
 
-stream UserAttacks = LoginFailed+ as fails -> LoginSuccess
-    .within(10m)
-    .partition_by(user_id)
-    .emit(alert_type: "UserBruteForce", message: "User {user_id} had multiple failures")
+stream UserAttacks = UserFailures
+    .emit(alert_type: "UserBruteForce", user: first.user_id, failures: len(fails) + 1)
 ```
 
 ---
