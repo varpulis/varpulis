@@ -194,16 +194,16 @@ event ServiceError:
 
 -- 5+ distinct services failing against the same target within 2 minutes.
 -- Uses SEQ() with Kleene+ for unbounded error accumulation.
--- len() counts the matched events in the closure.
+-- count() returns the number of matched events in the closure.
 pattern ErrorBurst = SEQ(
     ServiceError as first,
     ServiceError+ as errors
 ) within 2m partition by targetSystem
 
 stream ErrorCascade = ErrorBurst
-    .where(len(errors) >= 4)
+    .where(count(errors) >= 4)
     .emit(target: first.targetSystem,
-          affected: len(errors) + 1)
+          affected: count(errors) + 1)
     .to(http(url: "https://ops.internal/circuit-break", method: "POST"))
 ```
 
@@ -297,9 +297,9 @@ pattern StuffingPattern = SEQ(
 ) within 5m partition by clientIp
 
 stream CredentialStuffing = StuffingPattern
-    .where(len(attempts) >= 9)
+    .where(count(attempts) >= 9)
     .emit(source_ip: first.clientIp,
-          attempt_count: len(attempts) + 1,
+          attempt_count: count(attempts) + 1,
           action: "block_ip")
     .to(http(url: "https://apigw.internal/blacklist", method: "POST"))
 
@@ -310,9 +310,9 @@ pattern EnumPattern = SEQ(
 ) within 1m partition by clientIp
 
 stream ApiEnumeration = EnumPattern
-    .where(len(probes) >= 49)
+    .where(count(probes) >= 49)
     .emit(source_ip: first.clientIp,
-          probe_count: len(probes) + 1,
+          probe_count: count(probes) + 1,
           action: "throttle")
     .to(http(url: "https://apigw.internal/throttle", method: "POST"))
 ```

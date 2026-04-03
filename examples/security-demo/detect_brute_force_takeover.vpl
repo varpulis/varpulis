@@ -31,6 +31,6 @@ stream BruteForceTakeover = BruteForceChain
         source_ip: first.source_ip,
         target_host: success.target_host,
         username: success.username,
-        failed_count: len(fails) + 1,
+        failed_count: count(fails) + 1,
         summary: "Brute force succeeded: multiple failed logins followed by success from same IP"
     )

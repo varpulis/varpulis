@@ -105,7 +105,7 @@ stream PriceSpikes = RisingSequence
         symbol: last.symbol,
         start_price: first.price,
         end_price: last.price,
-        spike_count: len(rising)
+        spike_count: count(rising)
     )
 ```
 

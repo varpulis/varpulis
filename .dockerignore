@@ -2,4 +2,5 @@
 **/dist
 **/dist-public
 target
+!target/release/varpulis
 .git

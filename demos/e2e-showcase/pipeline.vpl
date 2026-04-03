@@ -32,7 +32,7 @@ stream BreakoutSignals = Breakout
         symbol: last.symbol,
         start_price: first.price,
         end_price: last.price,
-        tick_count: len(rising)
+        tick_count: count(rising)
     )
     .to(kafka_signals, topic: "trading.breakouts")
 

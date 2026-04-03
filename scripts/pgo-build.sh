@@ -168,8 +168,13 @@ PROFILE_SIZE=$(du -h "$MERGED_PROFILE" | cut -f1)
 ok "Merged profile: $MERGED_PROFILE ($PROFILE_SIZE)"
 
 # --- Step 4: Rebuild with PGO ---
+# If BOLT is available, add --emit-relocs so BOLT can instrument the binary.
 info "Step 4/5: Building PGO-optimized binary (this takes a while with full LTO)..."
-RUSTFLAGS="-Cprofile-use=$(pwd)/$MERGED_PROFILE -Cllvm-args=-pgo-warn-missing-function" \
+PGO_RUSTFLAGS="-Cprofile-use=$(pwd)/$MERGED_PROFILE -Cllvm-args=-pgo-warn-missing-function"
+if [[ -n "$LLVM_BOLT" ]]; then
+    PGO_RUSTFLAGS="$PGO_RUSTFLAGS -Clink-arg=-Wl,--emit-relocs"
+fi
+RUSTFLAGS="$PGO_RUSTFLAGS" \
     cargo build --release -p "$PACKAGE" 2>&1
 
 PGO_BIN="target/release/$BINARY_NAME"

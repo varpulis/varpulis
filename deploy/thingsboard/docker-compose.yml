@@ -70,6 +70,7 @@ services:
       --bind 0.0.0.0
       --metrics
       --api-key ${VARPULIS_API_KEY:-varpulis-tb-demo}
+      --cors-origins "*"
     depends_on:
       mosquitto:
         condition: service_healthy

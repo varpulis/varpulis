@@ -78,14 +78,36 @@ jobs:
         if: runner.os == 'Linux' && !matrix.use_cross
         run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev protobuf-compiler
 
+      - name: Install LLVM tools for PGO+BOLT (Linux x86_64)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          rustup component add llvm-tools
+          sudo apt-get install -y llvm-bolt
+
+      - name: Build with PGO+BOLT (Linux x86_64)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          # PGO-optimized CLI binary (builds to target/release/)
+          ./scripts/pgo-build.sh
+          # Use BOLT binary if available, otherwise PGO-only
+          if [ -f target/release/varpulis-pgo-bolt ]; then
+            cp target/release/varpulis-pgo-bolt target/release/varpulis
+          fi
+          # Copy to target triple path expected by artifact step
+          mkdir -p target/${{ matrix.target }}/release
+          cp target/release/varpulis target/${{ matrix.target }}/release/varpulis
+          # LSP built with same PGO profile (benefits from shared runtime code)
+          RUSTFLAGS="-Cprofile-use=$(pwd)/target/pgo-merged.profdata" \
+            cargo build --release --target ${{ matrix.target }} -p varpulis-lsp
+
       - name: Build (cross)
         if: matrix.use_cross
         run: |
           cross build --release --target ${{ matrix.target }} -p varpulis-cli
           cross build --release --target ${{ matrix.target }} -p varpulis-lsp
 
-      - name: Build (native)
-        if: ${{ !matrix.use_cross }}
+      - name: Build (native, non-PGO)
+        if: ${{ !matrix.use_cross && matrix.target != 'x86_64-unknown-linux-gnu' }}
         run: |
           cargo build --release --target ${{ matrix.target }} -p varpulis-cli
           cargo build --release --target ${{ matrix.target }} -p varpulis-lsp

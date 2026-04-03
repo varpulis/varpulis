@@ -494,7 +494,7 @@ pattern UserFailures = SEQ(
 ) within 10m partition by user_id
 
 stream UserAttacks = UserFailures
-    .emit(alert_type: "UserBruteForce", user: first.user_id, failures: len(fails) + 1)
+    .emit(alert_type: "UserBruteForce", user: first.user_id, failures: count(fails) + 1)
 ```
 
 ---
