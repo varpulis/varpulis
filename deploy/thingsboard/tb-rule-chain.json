@@ -1,0 +1,81 @@
+{
+  "ruleChain": {
+    "name": "Varpulis CEP Bridge",
+    "type": "CORE",
+    "debugMode": false,
+    "configuration": null
+  },
+  "metadata": {
+    "firstNodeIndex": 0,
+    "nodes": [
+      {
+        "type": "org.thingsboard.rule.engine.metadata.TbGetAttributesNode",
+        "name": "Enrich Metadata",
+        "debugMode": false,
+        "configuration": {
+          "clientAttributeNames": [],
+          "sharedAttributeNames": [],
+          "serverAttributeNames": ["zone"],
+          "latestTsKeyNames": [],
+          "tellFailureIfAbsent": false,
+          "getLatestValueWithTs": false
+        },
+        "additionalInfo": {
+          "description": "Adds device server attributes (zone) to message metadata",
+          "layoutX": 300,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
+        "name": "Build CEP Payload",
+        "debugMode": false,
+        "configuration": {
+          "jsScript": "var data = JSON.parse(msg);\ndata.deviceName = metadata.deviceName;\ndata.deviceType = metadata.deviceType;\ndata.zone = metadata.ss_zone || 'default';\nreturn {msg: JSON.stringify(data), metadata: metadata, msgType: msgType};"
+        },
+        "additionalInfo": {
+          "description": "Injects deviceName, deviceType, and zone into the telemetry payload for Varpulis",
+          "layoutX": 550,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.mqtt.TbMqttNode",
+        "name": "Forward to Varpulis",
+        "debugMode": false,
+        "configuration": {
+          "topicPattern": "tb/telemetry/${deviceName}",
+          "host": "mosquitto",
+          "port": 1883,
+          "connectTimeoutSec": 10,
+          "clientId": "tb-cep-bridge",
+          "appendClientIdSuffix": false,
+          "cleanSession": true,
+          "retainedMessage": false,
+          "ssl": false,
+          "credentials": {
+            "type": "anonymous"
+          }
+        },
+        "additionalInfo": {
+          "description": "Publishes enriched telemetry to Mosquitto bridge broker on topic tb/telemetry/<deviceName>",
+          "layoutX": 800,
+          "layoutY": 200
+        }
+      }
+    ],
+    "connections": [
+      {
+        "fromIndex": 0,
+        "toIndex": 1,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 1,
+        "toIndex": 2,
+        "type": "Success"
+      }
+    ],
+    "ruleChainConnections": null
+  }
+}

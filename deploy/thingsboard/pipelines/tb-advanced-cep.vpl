@@ -1,0 +1,216 @@
+# Varpulis + ThingsBoard CE — Advanced CEP Patterns
+#
+# Patterns that are IMPOSSIBLE in ThingsBoard (CE or PE):
+#   1. Cross-device correlation
+#   2. Multi-step temporal sequences
+#   3. Predictive forecasting
+#   4. Kleene closure (repeated event patterns)
+#
+# Load alongside tb-bridge.vpl for the full CEP experience.
+
+# ─── Connectors ──────────────────────────────────────────────────
+
+connector TbBridge = mqtt (
+    host: "mosquitto",
+    port: 1883,
+    client_id: "varpulis-tb-advanced"
+)
+
+# ─── Event types ─────────────────────────────────────────────────
+
+event TbTelemetry:
+    deviceName: str
+    deviceType: str
+    zone: str
+    temperature: float
+    humidity: float
+    pressure: float
+    power_kw: float
+    ts: timestamp
+
+event TbDeviceEvent:
+    deviceName: str
+    deviceType: str
+    zone: str
+    event_type: str
+    severity: str
+    ts: timestamp
+
+# ─── Ingest ──────────────────────────────────────────────────────
+
+stream Telemetry = TbTelemetry
+    .from(TbBridge, topic: "tb/telemetry/#")
+
+stream DeviceEvents = TbDeviceEvent
+    .from(TbBridge, topic: "tb/events/#")
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Pattern 1: Cross-Device Correlation
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TB limitation: rule chains process one device at a time.
+# Varpulis: correlate events across devices in the same zone.
+#
+# Scenario: When one device in a zone overheats, check if
+# neighboring devices in the same zone show rising temperature.
+
+stream HotDevices = Telemetry
+    .where(temperature > 80.0)
+
+stream CascadeRisk = HotDevices as hot
+    -> Telemetry where zone == hot.zone
+                   and deviceName != hot.deviceName
+                   and temperature > 60.0 as neighbor
+    .within(10m)
+    .emit(
+        alert_type: "ZONE_CASCADE_RISK",
+        severity: "CRITICAL",
+        message: "Zone cascade: multiple devices overheating",
+        hot_device: hot.deviceName,
+        neighbor_device: neighbor.deviceName,
+        zone: hot.zone,
+        hot_temp: hot.temperature,
+        neighbor_temp: neighbor.temperature,
+        ts: neighbor.ts
+    )
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Pattern 2: Multi-Step Equipment Degradation Sequence
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TB limitation: no temporal sequence operators.
+# Varpulis: detect ordered event chains with time constraints.
+#
+# Scenario: High humidity → temperature spike → high pressure
+# within 2 hours on the same device = equipment stress sequence.
+
+stream HighHumidity = Telemetry
+    .where(humidity > 85.0)
+
+stream EquipmentStress = HighHumidity as step1
+    -> Telemetry where deviceName == step1.deviceName
+                   and temperature > 70.0 as step2
+    -> Telemetry where deviceName == step1.deviceName
+                   and pressure > 1050.0 as step3
+    .within(2h)
+    .partition_by(deviceName)
+    .emit(
+        alert_type: "EQUIPMENT_STRESS_SEQUENCE",
+        severity: "MAJOR",
+        message: "3-stage equipment stress detected",
+        deviceName: step1.deviceName,
+        zone: step1.zone,
+        humidity_start: step1.humidity,
+        temp_peak: step2.temperature,
+        pressure_final: step3.pressure,
+        ts: step3.ts
+    )
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Pattern 3: Predictive Forecasting
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TB limitation: purely reactive — can only alert AFTER the fact.
+# Varpulis: PST-based forecasting fires BEFORE pattern completes.
+#
+# Scenario: Predict equipment stress sequence completion after
+# seeing the first two steps, before the pressure spike occurs.
+
+stream StressForecast = HighHumidity as step1
+    -> Telemetry where deviceName == step1.deviceName
+                   and temperature > 70.0 as step2
+    -> Telemetry where deviceName == step1.deviceName
+                   and pressure > 1050.0 as step3
+    .within(2h)
+    .forecast(mode: "balanced", confidence: 0.5, horizon: 1h)
+    .where(forecast_probability > 0.6)
+    .emit(
+        alert_type: "EQUIPMENT_STRESS_FORECAST",
+        severity: "WARNING",
+        message: "Equipment stress predicted — take preventive action",
+        deviceName: step1.deviceName,
+        zone: step1.zone,
+        probability: forecast_probability,
+        confidence: forecast_confidence,
+        expected_in: forecast_time,
+        ts: step1.ts
+    )
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Pattern 4: Repeated Anomaly (Kleene Closure)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TB limitation: no Kleene operators for "one or more" events.
+# Varpulis: native A+ pattern matching.
+#
+# Scenario: A device sends 3+ over-temperature readings in a row
+# followed by a return-to-normal reading = transient spike event.
+
+pattern TransientSpikePattern = SEQ(
+    TbTelemetry where temperature > 75.0 as first_hot,
+    TbTelemetry+ where temperature > 75.0 as hot,
+    TbTelemetry where temperature <= 75.0 as normal
+) within 30m partition by deviceName
+
+stream TransientSpike = TransientSpikePattern
+    .emit(
+        alert_type: "TRANSIENT_TEMP_SPIKE",
+        severity: "WARNING",
+        message: "Device experienced transient overheating then recovered",
+        deviceName: first_hot.deviceName,
+        zone: first_hot.zone,
+        peak_temp: hot.temperature,
+        recovery_temp: normal.temperature,
+        ts: normal.ts
+    )
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Pattern 5: Zone-Level Statistical Anomaly
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TB limitation: no cross-device aggregation, no stddev, no percentiles.
+# Varpulis: zone-level sliding window with full statistical suite.
+
+stream ZoneStats = Telemetry
+    .partition_by(zone)
+    .window(10m, sliding: 2m)
+    .aggregate(
+        zone: last(zone),
+        device_count: count_distinct(deviceName),
+        avg_temp: avg(temperature),
+        stddev_temp: stddev(temperature),
+        p95_temp: percentile(temperature, 0.95),
+        max_temp: max(temperature),
+        min_temp: min(temperature),
+        avg_humidity: avg(humidity),
+        ts: last(ts)
+    )
+
+stream ZoneAnomaly = ZoneStats
+    .where(stddev_temp > 10.0 or p95_temp > 90.0)
+    .emit(
+        alert_type: "ZONE_STATISTICAL_ANOMALY",
+        severity: "MAJOR",
+        message: "Zone shows abnormal temperature distribution",
+        zone: zone,
+        device_count: device_count,
+        avg_temp: avg_temp,
+        stddev_temp: stddev_temp,
+        p95_temp: p95_temp,
+        ts: ts
+    )
+
+# ─── Output ──────────────────────────────────────────────────────
+
+stream CascadeOut = CascadeRisk
+    .to(TbBridge, topic: "tb/cep/alarms")
+
+stream StressOut = EquipmentStress
+    .to(TbBridge, topic: "tb/cep/alarms")
+
+stream ForecastOut = StressForecast
+    .to(TbBridge, topic: "tb/cep/alarms")
+
+stream TransientOut = TransientSpike
+    .to(TbBridge, topic: "tb/cep/alarms")
+
+stream ZoneAnomalyOut = ZoneAnomaly
+    .to(TbBridge, topic: "tb/cep/alarms")
+
+stream ZoneStatsOut = ZoneStats
+    .to(TbBridge, topic: "tb/cep/stats")

@@ -1,0 +1,124 @@
+# Varpulis + ThingsBoard CE — Telemetry Bridge Pipeline
+#
+# Ingests device telemetry forwarded from ThingsBoard via MQTT,
+# applies threshold alerts, windowed aggregation, and anomaly detection.
+#
+# ThingsBoard rule chain publishes to: tb/telemetry/<deviceName>
+# Varpulis subscribes, processes, and publishes alerts to: tb/cep/alarms
+
+# ─── Connectors ──────────────────────────────────────────────────
+
+connector TbBridge = mqtt (
+    host: "mosquitto",
+    port: 1883,
+    client_id: "varpulis-tb-cep"
+)
+
+# ─── Event types ─────────────────────────────────────────────────
+# ThingsBoard forwards telemetry as flat JSON:
+#   {"temperature": 25.5, "humidity": 60, "deviceName": "sensor-01", ...}
+# The rule chain injects deviceName and deviceType via metadata.
+
+event TbTelemetry:
+    deviceName: str
+    deviceType: str
+    temperature: float
+    humidity: float
+    ts: timestamp
+
+# ─── Ingest telemetry from ThingsBoard ───────────────────────────
+
+stream Telemetry = TbTelemetry
+    .from(TbBridge, topic: "tb/telemetry/#")
+
+# ─── Threshold alerts ───────────────────────────────────────────
+# Replaces ThingsBoard "Create Alarm" rule chain nodes.
+
+stream HighTemperature = Telemetry
+    .where(temperature > 85.0)
+    .emit(
+        deviceName: deviceName,
+        deviceType: deviceType,
+        alert_type: "HIGH_TEMPERATURE",
+        severity: if temperature > 100.0 then "CRITICAL" else "MAJOR",
+        message: "Temperature exceeded 85C threshold",
+        value: temperature,
+        ts: ts
+    )
+
+stream LowTemperature = Telemetry
+    .where(temperature < -20.0)
+    .emit(
+        deviceName: deviceName,
+        deviceType: deviceType,
+        alert_type: "LOW_TEMPERATURE",
+        severity: "MAJOR",
+        message: "Temperature below -20C threshold",
+        value: temperature,
+        ts: ts
+    )
+
+stream HighHumidity = Telemetry
+    .where(humidity > 95.0)
+    .emit(
+        deviceName: deviceName,
+        deviceType: deviceType,
+        alert_type: "HIGH_HUMIDITY",
+        severity: "WARNING",
+        message: "Humidity exceeded 95% threshold",
+        value: humidity,
+        ts: ts
+    )
+
+# ─── Windowed aggregation (free — TB requires PE license) ────────
+# 5-minute sliding window with statistics. Impossible in TB CE.
+
+stream Stats5m = Telemetry
+    .partition_by(deviceName)
+    .window(5m, sliding: 1m)
+    .aggregate(
+        deviceName: last(deviceName),
+        deviceType: last(deviceType),
+        readings: count(),
+        avg_temperature: avg(temperature),
+        max_temperature: max(temperature),
+        min_temperature: min(temperature),
+        avg_humidity: avg(humidity),
+        stddev_temperature: stddev(temperature),
+        ts: last(ts)
+    )
+
+# ─── Rapid temperature spike (SASE+ sequence) ───────────────────
+# Temperature rises >15C within 5 minutes — impossible in TB.
+
+stream TempSpike = Telemetry as t1
+    -> Telemetry where deviceName == t1.deviceName
+                   and temperature - t1.temperature > 15.0 as t2
+    .within(5m)
+    .emit(
+        deviceName: t1.deviceName,
+        deviceType: t1.deviceType,
+        alert_type: "RAPID_TEMP_SPIKE",
+        severity: "CRITICAL",
+        message: "Temperature rose >15C in 5 minutes",
+        value: t2.temperature,
+        delta: t2.temperature - t1.temperature,
+        ts: t2.ts
+    )
+
+# ─── Output alerts to MQTT ──────────────────────────────────────
+
+stream HighTempOut = HighTemperature
+    .to(TbBridge, topic: "tb/cep/alarms")
+
+stream LowTempOut = LowTemperature
+    .to(TbBridge, topic: "tb/cep/alarms")
+
+stream HumidityOut = HighHumidity
+    .to(TbBridge, topic: "tb/cep/alarms")
+
+stream SpikeOut = TempSpike
+    .to(TbBridge, topic: "tb/cep/alarms")
+
+stream StatsOut = Stats5m
+    .to(TbBridge, topic: "tb/cep/stats")

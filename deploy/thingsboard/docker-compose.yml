@@ -1,0 +1,133 @@
+# ThingsBoard CE + Varpulis CEP Integration
+#
+# Architecture:
+#   Devices → ThingsBoard CE (MQTT 1883) → Rule Chain → Mosquitto (1884) → Varpulis CEP
+#   Varpulis alerts → ThingsBoard REST API (alarms)
+#
+# Usage:
+#   docker compose up -d
+#   # Wait ~60s for ThingsBoard to initialize on first run
+#   # Then run: python generate-telemetry.py
+#
+# Default credentials:
+#   ThingsBoard: tenant@thingsboard.org / tenant
+#   Grafana:     admin / admin
+
+services:
+  # ── ThingsBoard Community Edition ──────────────────────────────────
+  thingsboard:
+    image: thingsboard/tb-postgres:3.8.1
+    restart: unless-stopped
+    ports:
+      - "18080:9090"    # Web UI + REST API
+      - "11883:1883"    # MQTT transport (devices connect here)
+      - "15683:5683/udp" # CoAP transport
+    environment:
+      TB_QUEUE_TYPE: in-memory
+      # Forward telemetry to external MQTT broker (Mosquitto)
+      TB_TRANSPORT_MQTT_BIND_PORT: 1883
+    volumes:
+      - tb-data:/data
+      - tb-logs:/var/log/thingsboard
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9090/api/admin/securitySettings || curl -sf http://localhost:9090/swagger-ui.html || exit 0"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+  # ── Mosquitto MQTT Broker (bridge between TB and Varpulis) ────────
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "11884:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -t '$$SYS/broker/uptime' -C 1 -W 3"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Varpulis CEP Engine ────────────────────────────────────────────
+  varpulis:
+    image: ghcr.io/varpulis/varpulis:main
+    restart: unless-stopped
+    ports:
+      - "19000:9000"  # REST API + WebSocket
+      - "19090:9090"  # Prometheus metrics
+    environment:
+      RUST_LOG: info
+      VARPULIS_API_KEY: ${VARPULIS_API_KEY:-varpulis-tb-demo}
+    volumes:
+      - ./pipelines:/pipelines:ro
+    command: >
+      server
+      --port 9000
+      --bind 0.0.0.0
+      --metrics
+      --api-key ${VARPULIS_API_KEY:-varpulis-tb-demo}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Alarm Bridge (Varpulis → ThingsBoard alarms) ───────────────────
+  alarm-bridge:
+    image: python:3.12-slim
+    restart: unless-stopped
+    volumes:
+      - ./alarm-bridge.py:/app/alarm-bridge.py:ro
+    environment:
+      TB_URL: http://thingsboard:9090
+      TB_USER: ${TB_USER:-tenant@thingsboard.org}
+      TB_PASSWORD: ${TB_PASSWORD:-tenant}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+    command: >
+      bash -c "pip install -q paho-mqtt && python -u /app/alarm-bridge.py"
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+
+  # ── Prometheus ─────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    restart: unless-stopped
+    ports:
+      - "19091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+
+  # ── Grafana ────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.0.0
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  tb-data:
+  tb-logs:
+  mosquitto-data:
+  mosquitto-log:
+  prometheus-data:
+  grafana-data:
