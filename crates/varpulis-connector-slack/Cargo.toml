@@ -9,8 +9,8 @@ documentation.workspace = true
 description = "Slack webhook connector for Varpulis kill chain detection engine"
 
 [dependencies]
-varpulis-connector-api = { version = "0.9.0", path = "../varpulis-connector-api" }
-varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
+varpulis-connector-api = { version = "0.10.0", path = "../varpulis-connector-api" }
+varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
 reqwest = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }

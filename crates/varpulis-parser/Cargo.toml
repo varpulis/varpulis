@@ -10,7 +10,7 @@ description = "Parser for VPL language"
 build = "build.rs"
 
 [dependencies]
-varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
+varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
 logos = { workspace = true }
 thiserror = { workspace = true }
 miette = { workspace = true }

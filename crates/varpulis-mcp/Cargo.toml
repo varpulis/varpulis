@@ -26,9 +26,9 @@ anyhow = { workspace = true }
 reqwest = { workspace = true }
 schemars = "1"
 uuid = { version = "1", features = ["v4"] }
-varpulis-parser = { version = "0.9.0", path = "../varpulis-parser" }
-varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
-varpulis-runtime = { version = "0.9.0", path = "../varpulis-runtime", features = ["interactive"] }
+varpulis-parser = { version = "0.10.0", path = "../varpulis-parser" }
+varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
+varpulis-runtime = { version = "0.10.0", path = "../varpulis-runtime", features = ["interactive"] }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

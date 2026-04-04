@@ -9,22 +9,22 @@ documentation.workspace = true
 description = "Connector implementations for Varpulis (MQTT, Kafka, NATS, HTTP, etc.)"
 
 [dependencies]
-varpulis-connector-api = { version = "0.9.0", path = "../varpulis-connector-api" }
-varpulis-connector-mqtt = { version = "0.9.0", path = "../varpulis-connector-mqtt", optional = true }
-varpulis-connector-kafka = { version = "0.9.0", path = "../varpulis-connector-kafka", optional = true }
-varpulis-connector-nats = { version = "0.9.0", path = "../varpulis-connector-nats", optional = true }
-varpulis-connector-redis = { version = "0.9.0", path = "../varpulis-connector-redis", optional = true }
-varpulis-connector-elasticsearch = { version = "0.9.0", path = "../varpulis-connector-elasticsearch", optional = true }
-varpulis-connector-pulsar = { version = "0.9.0", path = "../varpulis-connector-pulsar", optional = true }
-varpulis-connector-kinesis = { version = "0.9.0", path = "../varpulis-connector-kinesis", optional = true }
-varpulis-connector-s3 = { version = "0.9.0", path = "../varpulis-connector-s3", optional = true }
-varpulis-connector-database = { version = "0.9.0", path = "../varpulis-connector-database", optional = true }
-varpulis-connector-http = { version = "0.9.0", path = "../varpulis-connector-http" }
-varpulis-connector-slack = { version = "0.9.0", path = "../varpulis-connector-slack", optional = true }
-varpulis-connector-splunk = { version = "0.9.0", path = "../varpulis-connector-splunk", optional = true }
-varpulis-connector-syslog = { version = "0.9.0", path = "../varpulis-connector-syslog", optional = true }
-varpulis-connector-cdc = { version = "0.9.0", path = "../varpulis-connector-cdc", optional = true }
-varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
+varpulis-connector-api = { version = "0.10.0", path = "../varpulis-connector-api" }
+varpulis-connector-mqtt = { version = "0.10.0", path = "../varpulis-connector-mqtt", optional = true }
+varpulis-connector-kafka = { version = "0.10.0", path = "../varpulis-connector-kafka", optional = true }
+varpulis-connector-nats = { version = "0.10.0", path = "../varpulis-connector-nats", optional = true }
+varpulis-connector-redis = { version = "0.10.0", path = "../varpulis-connector-redis", optional = true }
+varpulis-connector-elasticsearch = { version = "0.10.0", path = "../varpulis-connector-elasticsearch", optional = true }
+varpulis-connector-pulsar = { version = "0.10.0", path = "../varpulis-connector-pulsar", optional = true }
+varpulis-connector-kinesis = { version = "0.10.0", path = "../varpulis-connector-kinesis", optional = true }
+varpulis-connector-s3 = { version = "0.10.0", path = "../varpulis-connector-s3", optional = true }
+varpulis-connector-database = { version = "0.10.0", path = "../varpulis-connector-database", optional = true }
+varpulis-connector-http = { version = "0.10.0", path = "../varpulis-connector-http" }
+varpulis-connector-slack = { version = "0.10.0", path = "../varpulis-connector-slack", optional = true }
+varpulis-connector-splunk = { version = "0.10.0", path = "../varpulis-connector-splunk", optional = true }
+varpulis-connector-syslog = { version = "0.10.0", path = "../varpulis-connector-syslog", optional = true }
+varpulis-connector-cdc = { version = "0.10.0", path = "../varpulis-connector-cdc", optional = true }
+varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

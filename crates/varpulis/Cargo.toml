@@ -19,5 +19,5 @@ name = "varpulis"
 path = "src/lib.rs"
 
 [dependencies]
-varpulis-core = { version = "0.9.0", path = "../varpulis-core" }
-varpulis-runtime = { version = "0.9.0", path = "../varpulis-runtime" }
+varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
+varpulis-runtime = { version = "0.10.0", path = "../varpulis-runtime" }
