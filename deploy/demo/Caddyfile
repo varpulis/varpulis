@@ -34,6 +34,13 @@ demo.varpulis-cep.com, www.varpulis-cep.com {
     @seo path /sitemap.xml /robots.txt
     reverse_proxy @seo docs:80
 
+    # Stream Builder (visual pipeline editor)
+    @streambuilder path /stream-builder /stream-builder/*
+    handle @streambuilder {
+        uri strip_prefix /stream-builder
+        reverse_proxy stream-builder:8080
+    }
+
     # Everything else -> web-ui (SPA with all routes: landing, auth, control plane)
     reverse_proxy /* web-ui:8080
 }

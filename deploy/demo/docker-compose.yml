@@ -30,6 +30,8 @@ services:
         condition: service_healthy
       web-ui:
         condition: service_healthy
+      stream-builder:
+        condition: service_healthy
       docs:
         condition: service_healthy
       coordinator-1:
@@ -72,6 +74,26 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Stream Builder (visual pipeline editor) ────────────────
+  stream-builder:
+    build:
+      context: ../../stream-builder
+    container_name: demo-stream-builder
+    expose:
+      - "8080"
+    depends_on:
+      coordinator-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
     networks:
       - varpulis-demo
