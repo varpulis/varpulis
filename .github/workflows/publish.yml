@@ -33,6 +33,9 @@ on:
           - varpulis-connector-s3
           - varpulis-connector-database
           - varpulis-connector-http
+          - varpulis-connector-slack
+          - varpulis-connector-splunk
+          - varpulis-connector-syslog
           - varpulis-connector-cdc
           - varpulis-connectors
           - varpulis-sase
@@ -127,6 +130,9 @@ jobs:
             "varpulis-connector-s3"
             "varpulis-connector-database"
             "varpulis-connector-http"
+            "varpulis-connector-slack"
+            "varpulis-connector-splunk"
+            "varpulis-connector-syslog"
             "varpulis-connector-cdc"
             # Level 3: aggregation crates
             "varpulis-connectors"    # depends on all connector crates
