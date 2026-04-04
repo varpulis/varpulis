@@ -6,7 +6,7 @@ use super::and_op::AndState;
 use super::enumeration::enumerate_with_filter;
 use super::kleene::{KleeneCapture, KleeneLimits};
 use super::nfa::{Nfa, State, StateType};
-use super::predicate::{eval_predicate, event_matches_state};
+use super::predicate::{eval_predicate, event_matches_state, predicate_references_alias};
 use super::run::Run;
 use super::types::{MatchResult, SelectionStrategy, SharedEvent};
 use crate::clock::Timestamp;
@@ -118,10 +118,32 @@ pub(crate) fn advance_run_shared(
 
     // KLEENE SELF-LOOP: accumulate additional events matching the Kleene state.
     // The first event enters via the transitions loop; subsequent events match here.
-    if current_state.state_type == StateType::Kleene
-        && current_state.self_loop
-        && event_matches_state(nfa, &event, current_state, &run.captured, evaluator)
-    {
+    //
+    // For self-referencing predicates (e.g., val > rising.val where "rising" is
+    // the Kleene alias), the first event has no previous value to compare against.
+    // We skip the predicate only when:
+    // 1. The Kleene alias is not yet in captured (first entry)
+    // 2. The predicate actually references the Kleene's own alias (self-reference)
+    let kleene_matches =
+        current_state.state_type == StateType::Kleene && current_state.self_loop && {
+            let is_self_ref_first_entry = current_state.alias.as_ref().is_some_and(|a| {
+                !run.captured.contains_key(a.as_str())
+                    && current_state
+                        .predicate
+                        .as_ref()
+                        .is_some_and(|p| predicate_references_alias(p, a))
+            });
+            if is_self_ref_first_entry {
+                // First Kleene entry with self-ref: check event type only
+                current_state
+                    .event_type
+                    .as_ref()
+                    .is_none_or(|et| *event.event_type == *et)
+            } else {
+                event_matches_state(nfa, &event, current_state, &run.captured, evaluator)
+            }
+        };
+    if kleene_matches {
         // Safety: check Kleene cap before accumulating (prevents 2^n blowup)
         if let Some(ref kc) = run.kleene_capture {
             if kc.next_var >= limits.max_events {
@@ -189,7 +211,28 @@ pub(crate) fn advance_run_shared(
             return advance_and_state(nfa, run, next_state, event, limits, evaluator);
         }
 
-        if event_matches_state(nfa, &event, next_state, &run.captured, evaluator) {
+        // For Kleene states with self-referencing predicates: the first event
+        // entering the Kleene has no previous value to compare against. Skip the
+        // predicate only when the predicate references the Kleene's own alias.
+        let matches = if next_state.state_type == StateType::Kleene
+            && next_state.self_loop
+            && next_state.alias.as_ref().is_some_and(|a| {
+                !run.captured.contains_key(a.as_str())
+                    && next_state
+                        .predicate
+                        .as_ref()
+                        .is_some_and(|p| predicate_references_alias(p, a))
+            }) {
+            // First Kleene entry with self-ref: match event type only
+            next_state
+                .event_type
+                .as_ref()
+                .is_none_or(|et| *event.event_type == *et)
+        } else {
+            event_matches_state(nfa, &event, next_state, &run.captured, evaluator)
+        };
+
+        if matches {
             run.current_state = next_id;
             run.push_at(Arc::clone(&event), next_state.alias.clone(), now);
 

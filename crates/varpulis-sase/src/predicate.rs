@@ -53,10 +53,6 @@ pub(crate) fn eval_predicate(
             let ref_value = captured.get(ref_alias).and_then(|e| e.get(ref_field));
             match (event_value, ref_value) {
                 (Some(ev), Some(rv)) => compare_values(ev, rv, *op),
-                // Reference alias not yet captured: this is the first event entering
-                // a Kleene closure with a self-referencing predicate. Accept it —
-                // subsequent events will be compared against this one via captured[alias].
-                (Some(_), None) => !captured.contains_key(ref_alias),
                 _ => false,
             }
         }
@@ -185,6 +181,19 @@ pub fn classify_predicate(pred: &Predicate, alias: Option<&str>) -> PredicateCla
                 PredicateClass::Consistent
             }
         }
+    }
+}
+
+/// Check if a predicate references a specific alias (used for Kleene self-reference detection).
+pub fn predicate_references_alias(pred: &Predicate, alias: &str) -> bool {
+    match pred {
+        Predicate::CompareRef { ref_alias, .. } => ref_alias == alias,
+        Predicate::And(l, r) | Predicate::Or(l, r) => {
+            predicate_references_alias(l, alias) || predicate_references_alias(r, alias)
+        }
+        Predicate::Not(inner) => predicate_references_alias(inner, alias),
+        Predicate::Expr(expr) => expr_references_alias(expr, alias),
+        Predicate::Compare { .. } => false,
     }
 }
 
