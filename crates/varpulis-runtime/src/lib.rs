@@ -106,6 +106,8 @@
 
 // ---- Core modules (always available, no async runtime needed) ----
 pub mod aggregation;
+#[cfg(feature = "arrow")]
+pub mod arrow_bridge;
 pub mod codec;
 pub mod columnar;
 pub mod limits;

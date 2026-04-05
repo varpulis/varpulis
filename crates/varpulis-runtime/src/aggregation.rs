@@ -151,6 +151,17 @@ pub trait AggregateFunc: Send + Sync {
         // Default: fall back to shared event access
         self.apply_shared(buffer.events(), field)
     }
+
+    /// Apply aggregation to an Arrow RecordBatch (vectorized via Arrow compute).
+    ///
+    /// Default falls back to `apply_shared` via batch-to-events conversion.
+    /// Override for Sum, Avg, Min, Max, Count to use Arrow compute kernels.
+    #[cfg(feature = "arrow")]
+    fn apply_arrow(&self, batch: &arrow_array::RecordBatch, field: Option<&str>) -> Value {
+        let event_type: std::sync::Arc<str> = "arrow_agg".into();
+        let events = crate::arrow_bridge::record_batch_to_events(batch, &event_type);
+        self.apply_shared(&events, field)
+    }
 }
 
 /// Count aggregation
@@ -172,6 +183,11 @@ impl AggregateFunc for Count {
 
     fn apply_columnar(&self, buffer: &mut ColumnarBuffer, _field: Option<&str>) -> Value {
         Value::Int(buffer.len() as i64)
+    }
+
+    #[cfg(feature = "arrow")]
+    fn apply_arrow(&self, batch: &arrow_array::RecordBatch, _field: Option<&str>) -> Value {
+        Value::Int(batch.num_rows() as i64)
     }
 }
 
@@ -206,6 +222,19 @@ impl AggregateFunc for Sum {
         // Filter NaN values for sum
         let valid: Vec<f64> = col.iter().copied().filter(|v| !v.is_nan()).collect();
         Value::Float(crate::simd::sum_f64(&valid))
+    }
+
+    #[cfg(feature = "arrow")]
+    fn apply_arrow(&self, batch: &arrow_array::RecordBatch, field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        if let Some(col) = crate::arrow_bridge::get_float64_column(batch, field) {
+            match arrow_arith::aggregate::sum(col) {
+                Some(s) => Value::Float(s),
+                None => Value::Float(0.0),
+            }
+        } else {
+            Value::Float(0.0)
+        }
     }
 }
 
@@ -252,6 +281,24 @@ impl AggregateFunc for Avg {
             Value::Float(crate::simd::sum_f64(&valid) / valid.len() as f64)
         }
     }
+
+    #[cfg(feature = "arrow")]
+    fn apply_arrow(&self, batch: &arrow_array::RecordBatch, field: Option<&str>) -> Value {
+        use arrow_array::Array;
+        let field = field.unwrap_or("value");
+        if let Some(col) = crate::arrow_bridge::get_float64_column(batch, field) {
+            let non_null = col.len() - col.null_count();
+            if non_null == 0 {
+                return Value::Null;
+            }
+            match arrow_arith::aggregate::sum(col) {
+                Some(s) => Value::Float(s / non_null as f64),
+                None => Value::Null,
+            }
+        } else {
+            Value::Null
+        }
+    }
 }
 
 /// Min aggregation (SIMD-optimized)
@@ -293,6 +340,19 @@ impl AggregateFunc for Min {
             None => Value::Null,
         }
     }
+
+    #[cfg(feature = "arrow")]
+    fn apply_arrow(&self, batch: &arrow_array::RecordBatch, field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        if let Some(col) = crate::arrow_bridge::get_float64_column(batch, field) {
+            match arrow_arith::aggregate::min(col) {
+                Some(v) => Value::Float(v),
+                None => Value::Null,
+            }
+        } else {
+            Value::Null
+        }
+    }
 }
 
 /// Max aggregation (SIMD-optimized)
@@ -332,6 +392,19 @@ impl AggregateFunc for Max {
         match crate::simd::max_f64(&valid) {
             Some(max) => Value::Float(max),
             None => Value::Null,
+        }
+    }
+
+    #[cfg(feature = "arrow")]
+    fn apply_arrow(&self, batch: &arrow_array::RecordBatch, field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        if let Some(col) = crate::arrow_bridge::get_float64_column(batch, field) {
+            match arrow_arith::aggregate::max(col) {
+                Some(v) => Value::Float(v),
+                None => Value::Null,
+            }
+        } else {
+            Value::Null
         }
     }
 }
@@ -975,6 +1048,17 @@ impl Aggregator {
         let mut result = IndexMap::new();
         for (alias, func, field) in &self.aggregations {
             let value = func.apply_columnar(buffer, field.as_deref());
+            result.insert(alias.clone(), value);
+        }
+        result
+    }
+
+    /// Apply aggregations to an Arrow RecordBatch (vectorized via Arrow compute).
+    #[cfg(feature = "arrow")]
+    pub fn apply_arrow(&self, batch: &arrow_array::RecordBatch) -> AggResult {
+        let mut result = IndexMap::new();
+        for (alias, func, field) in &self.aggregations {
+            let value = func.apply_arrow(batch, field.as_deref());
             result.insert(alias.clone(), value);
         }
         result

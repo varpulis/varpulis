@@ -116,6 +116,9 @@ pub enum ClusterError {
 
     #[error("Not the leader coordinator; forward to: {0}")]
     NotLeader(String),
+
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
 }
 
 /// Trait for pipeline placement strategies.

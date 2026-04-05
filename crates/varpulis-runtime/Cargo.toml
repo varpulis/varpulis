@@ -53,6 +53,11 @@ aws-config = { version = "1.8", optional = true }
 aws-sdk-s3 = { version = "1.124", optional = true }
 zstd = { version = "0.13", optional = true }
 
+# Apache Arrow columnar processing
+arrow-array = { version = "54", optional = true, default-features = false }
+arrow-schema = { version = "54", optional = true, default-features = false }
+arrow-arith = { version = "54", optional = true, default-features = false }
+
 # Encryption at rest
 aes-gcm = { version = "0.10", optional = true }
 argon2 = { version = "0.5", optional = true }
@@ -92,6 +97,7 @@ s3 = ["varpulis-connectors/s3", "async-runtime"]
 nats = ["varpulis-connectors/nats", "async-runtime"]
 elasticsearch = ["varpulis-connectors/elasticsearch", "async-runtime"]
 pulsar = ["varpulis-connectors/pulsar", "async-runtime"]
+arrow = ["arrow-array", "arrow-schema", "arrow-arith"]
 onnx = ["ort"]
 gpu = ["onnx"]
 binary-codec = ["rmp-serde"]

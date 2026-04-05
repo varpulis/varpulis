@@ -1184,4 +1184,145 @@ impl Coordinator {
             }
         }
     }
+
+    // =========================================================================
+    // Dynamic Rescaling
+    // =========================================================================
+
+    /// Rescale the cluster to the target number of workers.
+    ///
+    /// - **Scale up**: Triggers webhook (if configured) and sets `pending_rebalance`
+    ///   so that when new workers register, pipelines are automatically redistributed.
+    /// - **Scale down**: Selects least-loaded workers and drains them, migrating all
+    ///   their pipelines to remaining workers via checkpoint-based stateful migration.
+    ///
+    /// Returns a summary of what happened.
+    pub async fn rescale(&mut self, target_workers: usize) -> Result<RescaleResult, ClusterError> {
+        let available: Vec<WorkerId> = self
+            .workers
+            .values()
+            .filter(|w| w.status == WorkerStatus::Ready)
+            .map(|w| w.id.clone())
+            .collect();
+
+        let current = available.len();
+
+        if target_workers == current {
+            return Ok(RescaleResult {
+                action: "none".to_string(),
+                previous_workers: current,
+                target_workers,
+                migrations: Vec::new(),
+                message: "Already at target worker count".to_string(),
+            });
+        }
+
+        // Enforce scaling policy bounds if configured
+        if let Some(ref policy) = self.scaling_policy {
+            if target_workers < policy.min_workers {
+                return Err(ClusterError::InvalidOperation(format!(
+                    "Target {} below minimum {} workers",
+                    target_workers, policy.min_workers
+                )));
+            }
+            if target_workers > policy.max_workers {
+                return Err(ClusterError::InvalidOperation(format!(
+                    "Target {} above maximum {} workers",
+                    target_workers, policy.max_workers
+                )));
+            }
+        }
+
+        if target_workers > current {
+            // Scale up: fire webhook and mark pending rebalance
+            self.pending_rebalance = true;
+            if self.scaling_policy.is_some() {
+                self.fire_scaling_webhook().await;
+            }
+            info!(
+                "Rescale UP: {} -> {} workers (pending rebalance on new worker registration)",
+                current, target_workers
+            );
+            Ok(RescaleResult {
+                action: "scale_up".to_string(),
+                previous_workers: current,
+                target_workers,
+                migrations: Vec::new(),
+                message: format!(
+                    "Scale-up initiated: waiting for {} new worker(s) to register",
+                    target_workers - current
+                ),
+            })
+        } else {
+            // Scale down: drain least-loaded workers
+            let workers_to_remove = current - target_workers;
+
+            // Sort workers by load (least-loaded first) for draining
+            let mut workers_by_load: Vec<(WorkerId, usize)> = available
+                .iter()
+                .map(|wid| {
+                    let load = self
+                        .workers
+                        .get(wid)
+                        .map(|w| w.capacity.pipelines_running)
+                        .unwrap_or(0);
+                    (wid.clone(), load)
+                })
+                .collect();
+            workers_by_load.sort_by_key(|(_, load)| *load);
+
+            let to_drain: Vec<WorkerId> = workers_by_load
+                .iter()
+                .take(workers_to_remove)
+                .map(|(wid, _)| wid.clone())
+                .collect();
+
+            let mut all_migrations = Vec::new();
+            for wid in &to_drain {
+                match self.drain_worker(wid, Some(Duration::from_secs(300))).await {
+                    Ok(migration_ids) => {
+                        info!(
+                            "Drained worker {} ({} migrations)",
+                            wid,
+                            migration_ids.len()
+                        );
+                        all_migrations.extend(migration_ids);
+                    }
+                    Err(e) => {
+                        warn!("Failed to drain worker {}: {}", wid, e);
+                    }
+                }
+            }
+
+            info!(
+                "Rescale DOWN: {} -> {} workers ({} migrations)",
+                current,
+                target_workers,
+                all_migrations.len()
+            );
+
+            Ok(RescaleResult {
+                action: "scale_down".to_string(),
+                previous_workers: current,
+                target_workers,
+                migrations: all_migrations,
+                message: format!("Drained {} worker(s)", workers_to_remove),
+            })
+        }
+    }
+}
+
+/// Result of a rescale operation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RescaleResult {
+    /// "scale_up", "scale_down", or "none"
+    pub action: String,
+    /// Worker count before rescale
+    pub previous_workers: usize,
+    /// Requested target
+    pub target_workers: usize,
+    /// Migration IDs created during scale-down
+    pub migrations: Vec<String>,
+    /// Human-readable summary
+    pub message: String,
 }

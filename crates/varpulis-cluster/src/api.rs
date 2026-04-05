@@ -200,8 +200,9 @@ pub fn cluster_routes(
             "/api/v1/cluster/pipeline/generate",
             post(handle_graph_to_pipeline),
         )
-        // Migration / Rebalance
+        // Migration / Rebalance / Rescale
         .route("/api/v1/cluster/rebalance", post(handle_rebalance))
+        .route("/api/v1/cluster/rescale", post(handle_rescale))
         .route(
             "/api/v1/cluster/pipelines/{group_id}/{pipeline_name}/migrate",
             post(handle_manual_migrate),
@@ -2031,6 +2032,32 @@ async fn handle_rebalance(State(state): State<AppState>, _auth: RbacOperator) ->
     }
 }
 
+/// Request body for the rescale endpoint.
+#[derive(Debug, serde::Deserialize)]
+struct RescaleRequest {
+    target_workers: usize,
+}
+
+async fn handle_rescale(
+    State(state): State<AppState>,
+    _auth: RbacAdmin,
+    Json(body): Json<RescaleRequest>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
+    if let Some(resp) =
+        forward_to_leader(&coordinator, "POST", "/api/v1/cluster/rescale", None).await
+    {
+        return resp;
+    }
+
+    let mut coord = coordinator.write().await;
+
+    match coord.rescale(body.target_workers).await {
+        Ok(result) => reply_json_status(&result, StatusCode::OK),
+        Err(e) => cluster_error_response(e),
+    }
+}
+
 async fn handle_list_migrations(
     State(state): State<AppState>,
     _auth: RbacViewer,
@@ -2603,6 +2630,7 @@ fn cluster_error_response(err: ClusterError) -> Response {
         ClusterError::MigrationFailed(_) => (StatusCode::INTERNAL_SERVER_ERROR, "migration_failed"),
         ClusterError::WorkerDraining(_) => (StatusCode::CONFLICT, "worker_draining"),
         ClusterError::NotLeader(_) => (StatusCode::MISDIRECTED_REQUEST, "not_leader"),
+        ClusterError::InvalidOperation(_) => (StatusCode::BAD_REQUEST, "invalid_operation"),
     };
     let body = ApiError {
         error: err.to_string(),
