@@ -228,6 +228,8 @@ pub struct SasePatternItem {
     pub kleene: Option<KleeneOp>,
     /// Optional filter condition
     pub filter: Option<Expr>,
+    /// Monotonic operator: .increasing(field) / .decreasing(field)
+    pub monotonic: Option<MonotonicOp>,
 }
 
 /// Kleene operators for SASE+ patterns
@@ -239,6 +241,15 @@ pub enum KleeneOp {
     Star,
     /// Zero or one (?)
     Optional,
+}
+
+/// Monotonic operators: syntactic sugar for self-referencing Kleene predicates
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MonotonicOp {
+    /// .increasing(field) — each value > previous
+    Increasing(String),
+    /// .decreasing(field) — each value < previous
+    Decreasing(String),
 }
 
 /// Stream source
@@ -546,6 +557,8 @@ pub struct FollowedByClause {
     pub alias: Option<String>,
     /// Whether to match all events (true) or just one (false)
     pub match_all: bool,
+    /// Monotonic operator: .increasing(field) / .decreasing(field)
+    pub monotonic: Option<MonotonicOp>,
 }
 
 /// Select item in projection

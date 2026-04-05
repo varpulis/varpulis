@@ -573,6 +573,9 @@ fn parse_pattern_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
 
     for p in inner {
         match p.as_rule() {
+            Rule::pattern_arrow_expr => {
+                expr = parse_pattern_arrow_expr(p)?;
+            }
             Rule::sase_pattern_expr => {
                 expr = parse_sase_pattern_expr(p)?;
             }
@@ -600,6 +603,74 @@ fn parse_pattern_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
         within,
         partition_by,
     })
+}
+
+/// Parse arrow syntax in pattern declarations: A -> all B.increasing(temp) as rising -> C
+fn parse_pattern_arrow_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
+    let inner = pair.into_inner();
+    let mut items = Vec::new();
+
+    for item_pair in inner {
+        if item_pair.as_rule() != Rule::pattern_arrow_item {
+            continue;
+        }
+        let mut item_inner = item_pair.into_inner();
+        let mut match_all = false;
+        let mut negated = false;
+        let mut event_type = String::new();
+        let mut monotonic = None;
+        let mut filter = None;
+        let mut alias = None;
+
+        for p in item_inner.by_ref() {
+            match p.as_rule() {
+                Rule::match_all_keyword => match_all = true,
+                Rule::sase_not_keyword => negated = true,
+                Rule::identifier => {
+                    if event_type.is_empty() {
+                        event_type = p.as_str().to_string();
+                    }
+                }
+                Rule::monotonic_op => monotonic = Some(parse_monotonic_op(p)?),
+                Rule::sase_where_clause => {
+                    filter = Some(parse_sase_where_clause(p)?);
+                }
+                Rule::sase_alias_clause => {
+                    alias = Some(p.into_inner().expect_next("alias")?.as_str().to_string());
+                }
+                _ => {}
+            }
+        }
+
+        if negated {
+            event_type = format!("!{event_type}");
+        }
+
+        let kleene = if match_all || monotonic.is_some() {
+            Some(KleeneOp::Plus)
+        } else {
+            None
+        };
+
+        items.push(SasePatternItem {
+            event_type,
+            alias,
+            kleene,
+            filter,
+            monotonic,
+        });
+    }
+
+    if items.len() == 1 {
+        Ok(SasePatternExpr::Seq(items))
+    } else {
+        Ok(SasePatternExpr::Seq(items))
+    }
+}
+
+fn parse_sase_where_clause(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
+    let expr_pair = pair.into_inner().expect_next("where expression")?;
+    parse_expr(expr_pair)
 }
 
 fn parse_sase_pattern_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
@@ -689,11 +760,32 @@ fn parse_sase_item_inner(
     _negated: bool,
 ) -> ParseResult<SasePatternItem> {
     let mut inner = pair.into_inner();
-    let event_type = inner.expect_next("event type")?.as_str().to_string();
+    let mut event_type = String::new();
+    let mut match_all = false;
 
-    let mut kleene = None;
+    // First tokens may be match_all_keyword then identifier
+    for p in inner.by_ref() {
+        match p.as_rule() {
+            Rule::match_all_keyword => match_all = true,
+            Rule::identifier => {
+                event_type = p.as_str().to_string();
+                break;
+            }
+            _ => {
+                event_type = p.as_str().to_string();
+                break;
+            }
+        }
+    }
+
+    let mut kleene = if match_all {
+        Some(KleeneOp::Plus)
+    } else {
+        None
+    };
     let mut filter = None;
     let mut alias = None;
+    let mut monotonic = None;
 
     for p in inner {
         match p.as_rule() {
@@ -704,6 +796,12 @@ fn parse_sase_item_inner(
                     "?" => KleeneOp::Optional,
                     _ => KleeneOp::Plus,
                 });
+            }
+            Rule::monotonic_op => {
+                monotonic = Some(parse_monotonic_op(p)?);
+                if kleene.is_none() {
+                    kleene = Some(KleeneOp::Plus);
+                }
             }
             Rule::sase_where_clause => {
                 filter = Some(parse_expr(
@@ -730,6 +828,7 @@ fn parse_sase_item_inner(
         alias,
         kleene,
         filter,
+        monotonic,
     })
 }
 
@@ -1173,6 +1272,7 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                 filter,
                 alias: None,
                 match_all: false,
+                monotonic: None,
             }))
         }
         Rule::fork_op => {
@@ -1463,14 +1563,21 @@ fn parse_followed_by_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stream
 
     let mut filter = None;
     let mut alias = None;
+    let mut monotonic = None;
 
     for p in inner {
         match p.as_rule() {
             Rule::or_expr => filter = Some(parse_or_expr(p)?),
             Rule::filter_expr => filter = Some(parse_filter_expr(p)?),
             Rule::identifier => alias = Some(p.as_str().to_string()),
+            Rule::monotonic_op => monotonic = Some(parse_monotonic_op(p)?),
             _ => {}
         }
+    }
+
+    // Monotonic operators imply match_all (Kleene+)
+    if monotonic.is_some() {
+        match_all = true;
     }
 
     Ok(StreamOp::FollowedBy(FollowedByClause {
@@ -1478,7 +1585,21 @@ fn parse_followed_by_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stream
         filter,
         alias,
         match_all,
+        monotonic,
     }))
+}
+
+fn parse_monotonic_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<MonotonicOp> {
+    let mut inner = pair.into_inner();
+    let fn_pair = inner.expect_next("monotonic function")?;
+    let field = inner.expect_next("field name")?.as_str().to_string();
+    match fn_pair.as_str() {
+        "increasing" => Ok(MonotonicOp::Increasing(field)),
+        "decreasing" => Ok(MonotonicOp::Decreasing(field)),
+        other => Err(ParseError::InvalidDuration(format!(
+            "unknown monotonic function: {other}"
+        ))),
+    }
 }
 
 fn parse_select_item(pair: pest::iterators::Pair<Rule>) -> ParseResult<SelectItem> {

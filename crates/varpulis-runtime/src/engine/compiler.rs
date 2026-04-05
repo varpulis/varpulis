@@ -297,12 +297,35 @@ pub fn compile_to_sase_pattern_with_resolver(
         let clause_predicate = clause.filter.as_ref().and_then(expr_to_sase_predicate);
         let stream_pred = stream_predicate.as_ref().and_then(expr_to_sase_predicate);
 
-        let predicate = match (stream_pred, clause_predicate) {
+        let mut predicate = match (stream_pred, clause_predicate) {
             (Some(sp), Some(cp)) => Some(Predicate::And(Box::new(sp), Box::new(cp))),
             (Some(sp), None) => Some(sp),
             (None, Some(cp)) => Some(cp),
             (None, None) => None,
         };
+
+        // Monotonic operators generate self-referencing CompareRef predicates
+        if let Some(ref mono) = clause.monotonic {
+            let alias = clause
+                .alias
+                .as_deref()
+                .unwrap_or(&resolved_event_type)
+                .to_string();
+            let (field, op) = match mono {
+                varpulis_core::ast::MonotonicOp::Increasing(f) => (f.clone(), CompareOp::Gt),
+                varpulis_core::ast::MonotonicOp::Decreasing(f) => (f.clone(), CompareOp::Lt),
+            };
+            let mono_pred = Predicate::CompareRef {
+                field: field.clone(),
+                op,
+                ref_alias: alias,
+                ref_field: field,
+            };
+            predicate = Some(match predicate {
+                Some(existing) => Predicate::And(Box::new(existing), Box::new(mono_pred)),
+                None => mono_pred,
+            });
+        }
 
         let event_pattern = SasePattern::Event {
             event_type: resolved_event_type,
@@ -310,8 +333,8 @@ pub fn compile_to_sase_pattern_with_resolver(
             alias: clause.alias.clone(),
         };
 
-        // Handle match_all
-        let pattern = if clause.match_all {
+        // Handle match_all (or monotonic which implies match_all)
+        let pattern = if clause.match_all || clause.monotonic.is_some() {
             SasePattern::KleenePlus(Box::new(event_pattern))
         } else {
             event_pattern
@@ -484,7 +507,34 @@ pub fn compile_sase_pattern_expr(
 
 /// Compile a single `SasePatternItem` to a `SasePattern`, handling Kleene operators.
 fn compile_sase_pattern_item(item: &varpulis_core::ast::SasePatternItem) -> SasePattern {
-    let predicate = item.filter.as_ref().and_then(expr_to_sase_predicate);
+    let mut predicate = item.filter.as_ref().and_then(expr_to_sase_predicate);
+
+    // Monotonic operators generate self-referencing CompareRef predicates:
+    //   .increasing(temp) as r → where temp > r.temp  (Kleene+)
+    //   .decreasing(temp) as r → where temp < r.temp  (Kleene+)
+    if let Some(ref mono) = item.monotonic {
+        let alias = item
+            .alias
+            .as_deref()
+            .unwrap_or(&item.event_type)
+            .to_string();
+        let (field, op) = match mono {
+            varpulis_core::ast::MonotonicOp::Increasing(f) => (f.clone(), CompareOp::Gt),
+            varpulis_core::ast::MonotonicOp::Decreasing(f) => (f.clone(), CompareOp::Lt),
+        };
+        let mono_pred = Predicate::CompareRef {
+            field: field.clone(),
+            op,
+            ref_alias: alias,
+            ref_field: field,
+        };
+        // Combine with existing predicate if any
+        predicate = Some(match predicate {
+            Some(existing) => Predicate::And(Box::new(existing), Box::new(mono_pred)),
+            None => mono_pred,
+        });
+    }
+
     let base = SasePattern::Event {
         event_type: item.event_type.clone(),
         predicate,

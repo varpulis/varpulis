@@ -147,7 +147,7 @@ dot_op = { "." ~ (
 
 // followed_by: use filter_expr for filter (stops before stream ops), 'as identifier' handled at end
 match_all_keyword = { "all" }
-followed_by_op = { "->" ~ match_all_keyword? ~ identifier ~ ("where" ~ filter_expr)? ~ ("as" ~ identifier)? }
+followed_by_op = { "->" ~ match_all_keyword? ~ identifier ~ monotonic_op? ~ ("where" ~ filter_expr)? ~ ("as" ~ identifier)? }
 
 // Filter expression that stops before stream operation keywords
 // This prevents .emit(), .where() etc from being parsed as part of the filter
@@ -270,16 +270,30 @@ expr_list = { expr ~ ("," ~ expr)* }
 // SASE+ Pattern Declaration (Reusable Named Patterns)
 // ============================================================================
 
-// Pattern declaration: pattern Name = SEQ(...) within 10m partition by user_id
+// Pattern declaration supports both syntaxes:
+//   Arrow (preferred): pattern Name = A -> all B where cond as b -> C within 5m partition by key
+//   SEQ (deprecated):  pattern Name = SEQ(A, B+ where cond as b, C) within 5m partition by key
 pattern_decl = {
-    "pattern" ~ identifier ~ "=" ~ sase_pattern_expr ~
+    "pattern" ~ identifier ~ "=" ~ (pattern_arrow_expr | sase_pattern_expr) ~
     pattern_within_clause? ~ pattern_partition_clause?
 }
 
 pattern_within_clause = { "within" ~ duration }
 pattern_partition_clause = { "partition" ~ "by" ~ identifier }
 
-// SASE+ Pattern expressions
+// Arrow syntax for patterns: A -> all B where cond as b -> C
+pattern_arrow_expr = { pattern_arrow_item ~ ("->" ~ pattern_arrow_item)+ }
+pattern_arrow_item = {
+    match_all_keyword? ~ sase_not_keyword? ~ identifier ~
+    monotonic_op? ~ sase_where_clause? ~ sase_alias_clause?
+}
+
+// Monotonic operators: .increasing(field) / .decreasing(field)
+// Syntactic sugar for self-referencing Kleene predicates
+monotonic_op = { "." ~ monotonic_fn ~ "(" ~ identifier ~ ")" }
+monotonic_fn = { "increasing" | "decreasing" }
+
+// SASE+ Pattern expressions (deprecated — use arrow syntax)
 sase_pattern_expr = { sase_or_expr }
 sase_or_expr = { sase_and_expr ~ ("OR" ~ sase_and_expr)* }
 sase_and_expr = { sase_not_expr ~ ("AND" ~ sase_not_expr)* }
@@ -291,7 +305,7 @@ sase_primary_expr = {
     | sase_event_ref
 }
 
-// SEQ(A, B+, C* where cond as alias, NOT D)
+// SEQ(A, B+, C* where cond as alias, NOT D) — DEPRECATED
 sase_seq_expr = { "SEQ" ~ "(" ~ sase_seq_items ~ ")" }
 sase_seq_items = { sase_seq_item ~ ("," ~ sase_seq_item)* }
 sase_seq_item = {
@@ -308,8 +322,8 @@ sase_alias_clause = { "as" ~ identifier }
 // Grouped expression: (A OR B)
 sase_grouped_expr = { "(" ~ sase_pattern_expr ~ ")" }
 
-// Simple event reference
-sase_event_ref = { identifier ~ kleene_op? ~ sase_where_clause? ~ sase_alias_clause? }
+// Simple event reference (also supports monotonic operators and arrow for single-item patterns)
+sase_event_ref = { match_all_keyword? ~ identifier ~ monotonic_op? ~ kleene_op? ~ sase_where_clause? ~ sase_alias_clause? }
 
 // ============================================================================
 // Event Declaration
