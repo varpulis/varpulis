@@ -1,3 +1,8 @@
+varpulis-cep.com {
+    tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
+    redir https://www.varpulis-cep.com{uri} permanent
+}
+
 demo.varpulis-cep.com, www.varpulis-cep.com {
     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
 
