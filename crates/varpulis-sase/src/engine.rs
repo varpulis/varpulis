@@ -16,7 +16,7 @@ use super::event_time::{EventTimeConfig, EventTimeManager, EventTimeResult};
 use super::kleene::KleeneLimits;
 use super::metrics::SaseMetrics;
 use super::nfa::{Nfa, NfaCompiler, StateType};
-use super::predicate::{eval_predicate, event_matches_state};
+use super::predicate::{eval_predicate, event_matches_state, predicate_references_alias};
 use super::run::Run;
 use super::types::{
     GlobalNegation, MatchResult, Predicate, SasePattern, SaseStats, SelectionStrategy, SharedEvent,
@@ -984,13 +984,31 @@ impl SaseEngine {
                 continue;
             }
 
-            if event_matches_state(
-                &self.nfa,
-                &event,
-                next_state,
-                empty_captured,
-                self.evaluator.as_deref(),
-            ) {
+            // For Kleene states with self-referencing predicates, the first
+            // event has no previous value to compare against. Match event type only.
+            let matches = if next_state.state_type == StateType::Kleene
+                && next_state.self_loop
+                && next_state.alias.as_ref().is_some_and(|a| {
+                    next_state
+                        .predicate
+                        .as_ref()
+                        .is_some_and(|p| predicate_references_alias(p, a))
+                })
+            {
+                next_state
+                    .event_type
+                    .as_ref()
+                    .is_none_or(|et| *event.event_type == *et)
+            } else {
+                event_matches_state(
+                    &self.nfa,
+                    &event,
+                    next_state,
+                    empty_captured,
+                    self.evaluator.as_deref(),
+                )
+            };
+            if matches {
                 let mut run = match self.time_semantics {
                     TimeSemantics::ProcessingTime => Run::new(next_id),
                     TimeSemantics::EventTime => Run::new_with_event_time(next_id, event.timestamp),

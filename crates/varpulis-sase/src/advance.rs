@@ -154,13 +154,10 @@ pub(crate) fn advance_run_shared(
         // PERF(Opt4): Use push_at_kleene to avoid re-allocating captured key
         run.push_at_kleene(Arc::clone(&event), &current_state.alias, now);
 
-        // PERF(Opt3): Use pre-computed flag instead of per-event iteration
+        // Kleene-final patterns (epsilon to Accept): accumulate silently.
+        // Emission happens when the Kleene breaks (non-matching event arrives).
         if current_state.has_epsilon_to_accept {
-            return RunAdvanceResult::CompleteAndContinue(MatchResult {
-                captured: run.captured.clone(),
-                stack: run.stack.clone(),
-                duration: run.started_at.elapsed(),
-            });
+            return RunAdvanceResult::Continue;
         }
 
         // No epsilon to accept: accumulate for deferred emission (SEQ(A, B+, C))
@@ -181,6 +178,17 @@ pub(crate) fn advance_run_shared(
             }
         }
         return RunAdvanceResult::Continue;
+    }
+
+    // Kleene break: when the self-loop predicate fails and we have accumulated
+    // events, emit the accumulated match. The engine will start a new run with
+    // this event via skip-till-any-match.
+    if current_state.state_type == StateType::Kleene
+        && current_state.self_loop
+        && current_state.has_epsilon_to_accept
+        && !run.captured.is_empty()
+    {
+        return complete_run(run, limits, evaluator);
     }
 
     // Check transitions
@@ -242,13 +250,9 @@ pub(crate) fn advance_run_shared(
             }
 
             if next_state.state_type == StateType::Kleene && next_state.self_loop {
-                // PERF(Opt3): Use pre-computed flag instead of per-event iteration
+                // Kleene-final: accumulate silently, emit on break
                 if next_state.has_epsilon_to_accept {
-                    return RunAdvanceResult::CompleteAndContinue(MatchResult {
-                        captured: run.captured.clone(),
-                        stack: run.stack.clone(),
-                        duration: run.started_at.elapsed(),
-                    });
+                    return RunAdvanceResult::Continue;
                 }
 
                 // No epsilon to accept: accumulate for deferred emission (SEQ(A, B+, C))
