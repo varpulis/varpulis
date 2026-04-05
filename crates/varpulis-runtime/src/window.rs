@@ -6,7 +6,7 @@
 //! - Partitioned windows
 //! - Delay buffers (rstream equivalent)
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
@@ -1351,6 +1351,401 @@ pub struct IncrementalAggregates {
     pub event_count: usize,
 }
 
+// =============================================================================
+// BINNED SLIDING WINDOW
+// =============================================================================
+
+/// Pre-aggregated values for a single time bin.
+#[derive(Debug, Clone)]
+struct BinAggregate {
+    sum: f64,
+    count: usize,
+    min: f64,
+    max: f64,
+}
+
+impl BinAggregate {
+    fn new() -> Self {
+        Self {
+            sum: 0.0,
+            count: 0,
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+        }
+    }
+
+    fn add(&mut self, v: f64) {
+        self.sum += v;
+        self.count += 1;
+        if v < self.min {
+            self.min = v;
+        }
+        if v > self.max {
+            self.max = v;
+        }
+    }
+}
+
+/// A single time bin holding events and pre-aggregated values.
+#[derive(Debug, Clone)]
+struct WindowBin {
+    events: Vec<SharedEvent>,
+    /// Pre-aggregated values per tracked field.
+    aggregates: FxHashMap<String, BinAggregate>,
+}
+
+impl WindowBin {
+    fn new() -> Self {
+        Self {
+            events: Vec::new(),
+            aggregates: FxHashMap::default(),
+        }
+    }
+
+    fn add_event(&mut self, event: &SharedEvent, tracked_fields: &[String]) {
+        for field in tracked_fields {
+            if let Some(v) = event.get_float(field) {
+                if !v.is_nan() {
+                    self.aggregates
+                        .entry(field.clone())
+                        .or_insert_with(BinAggregate::new)
+                        .add(v);
+                }
+            }
+        }
+        self.events.push(Arc::clone(event));
+    }
+}
+
+/// A sliding window using time-binned aggregation for O(bins) emit cost.
+///
+/// Instead of storing individual events in a flat deque, events are grouped into
+/// time bins (one per slide interval). Sliding the window adds/removes entire bins
+/// rather than scanning individual events.
+///
+/// For a 1-hour window with 5-second slide, this means 720 bins instead of
+/// potentially millions of events — a 10x+ improvement for wide windows.
+///
+/// Decomposable aggregations (sum, count, avg, min, max) are pre-computed per bin,
+/// so emitting aggregates is O(bins_per_window) instead of O(events).
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct BinnedSlidingWindow {
+    window_size: Duration,
+    slide_interval: Duration,
+    /// Bins indexed by bin start time (milliseconds).
+    bins: BTreeMap<i64, WindowBin>,
+    /// Number of bins that fit in one window.
+    bins_per_window: usize,
+    /// Last emitted bin boundary (milliseconds).
+    last_emit_bin: Option<i64>,
+    /// Fields to track for pre-aggregation.
+    tracked_fields: Vec<String>,
+    /// Slide interval in milliseconds (cached for hot path).
+    slide_ms: i64,
+    /// Window size in milliseconds (cached for hot path).
+    window_ms: i64,
+}
+
+impl BinnedSlidingWindow {
+    /// Create a new binned sliding window.
+    ///
+    /// `tracked_fields` lists field names for which per-bin aggregates are
+    /// maintained. Pass an empty slice if only event-level access is needed.
+    pub fn new(
+        window_size: Duration,
+        slide_interval: Duration,
+        tracked_fields: Vec<String>,
+    ) -> Self {
+        let slide_ms = slide_interval.num_milliseconds().max(1);
+        let window_ms = window_size.num_milliseconds();
+        let bins_per_window = (window_ms / slide_ms) as usize;
+
+        Self {
+            window_size,
+            slide_interval,
+            bins: BTreeMap::new(),
+            bins_per_window,
+            last_emit_bin: None,
+            tracked_fields,
+            slide_ms,
+            window_ms,
+        }
+    }
+
+    /// Compute the bin key (start time in ms) for a given event timestamp.
+    #[inline]
+    fn bin_key(&self, event_time_ms: i64) -> i64 {
+        (event_time_ms / self.slide_ms) * self.slide_ms
+    }
+
+    /// Add a shared event, returning window contents if slide interval reached.
+    ///
+    /// Returns `Some(events)` when the window slides, containing all events
+    /// currently within the window. Returns `None` otherwise.
+    pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
+        let event_time_ms = event.timestamp.timestamp_millis();
+        let bin_key = self.bin_key(event_time_ms);
+
+        // Insert into bin
+        let bin = self.bins.entry(bin_key).or_insert_with(WindowBin::new);
+        bin.add_event(&event, &self.tracked_fields);
+
+        // Expire old bins
+        let cutoff = bin_key - self.window_ms;
+        // split_off returns everything >= cutoff; we keep that part
+        let keep = self.bins.split_off(&cutoff);
+        self.bins = keep;
+
+        // Check if we should emit
+        let should_emit = match self.last_emit_bin {
+            None => true,
+            Some(last) => bin_key > last,
+        };
+
+        should_emit.then(|| {
+            self.last_emit_bin = Some(bin_key);
+            self.collect_events()
+        })
+    }
+
+    /// Collect all events from all bins (Arc clone, no deep copy).
+    fn collect_events(&self) -> Vec<SharedEvent> {
+        let estimated_size: usize = self.bins.values().map(|b| b.events.len()).sum();
+        let mut events = Vec::with_capacity(estimated_size);
+        for bin in self.bins.values() {
+            events.extend(bin.events.iter().map(Arc::clone));
+        }
+        events
+    }
+
+    /// Get pre-aggregated results across all bins for a given field.
+    ///
+    /// This is O(bins_per_window) — much faster than scanning all events.
+    /// Returns `None` if no data exists for the field.
+    pub fn bin_aggregates(&self, field: &str) -> Option<IncrementalAggregates> {
+        let mut sum = 0.0;
+        let mut count = 0usize;
+        let mut min = f64::INFINITY;
+        let mut max = f64::NEG_INFINITY;
+        let mut event_count = 0usize;
+
+        for bin in self.bins.values() {
+            event_count += bin.events.len();
+            if let Some(agg) = bin.aggregates.get(field) {
+                sum += agg.sum;
+                count += agg.count;
+                if agg.min < min {
+                    min = agg.min;
+                }
+                if agg.max > max {
+                    max = agg.max;
+                }
+            }
+        }
+
+        if count == 0 {
+            return None;
+        }
+
+        Some(IncrementalAggregates {
+            sum,
+            count,
+            avg: Some(sum / count as f64),
+            min: Some(min),
+            max: Some(max),
+            event_count,
+        })
+    }
+
+    /// Get current window contents as shared references.
+    pub fn current_shared(&self) -> Vec<SharedEvent> {
+        self.collect_events()
+    }
+
+    /// Number of bins currently in the window.
+    pub fn bin_count(&self) -> usize {
+        self.bins.len()
+    }
+
+    /// Create a checkpoint of the current window state.
+    pub fn checkpoint(&self) -> WindowCheckpoint {
+        // Serialize all events from all bins (aggregates are recomputed on restore)
+        let events: Vec<SerializableEvent> = self
+            .bins
+            .values()
+            .flat_map(|bin| bin.events.iter())
+            .map(|e| SerializableEvent::from(e.as_ref()))
+            .collect();
+
+        WindowCheckpoint {
+            events,
+            window_start_ms: None,
+            last_emit_ms: self.last_emit_bin,
+            partitions: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Restore window state from a checkpoint.
+    pub fn restore(&mut self, cp: &WindowCheckpoint) {
+        self.bins.clear();
+        self.last_emit_bin = cp.last_emit_ms;
+
+        // Re-insert all events into bins (aggregates recomputed automatically)
+        for se in &cp.events {
+            let event = Arc::new(Event::from(se.clone()));
+            let event_time_ms = event.timestamp.timestamp_millis();
+            let bin_key = self.bin_key(event_time_ms);
+
+            let bin = self.bins.entry(bin_key).or_insert_with(WindowBin::new);
+            bin.add_event(&event, &self.tracked_fields);
+        }
+    }
+
+    /// Advance watermark — emit window if slide interval has passed.
+    pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Option<Vec<SharedEvent>> {
+        let wm_ms = wm.timestamp_millis();
+
+        // Expire old bins
+        let cutoff = wm_ms - self.window_ms;
+        let keep = self.bins.split_off(&cutoff);
+        self.bins = keep;
+
+        let should_emit = match self.last_emit_bin {
+            None => !self.bins.is_empty(),
+            Some(last) => {
+                let current_bin = self.bin_key(wm_ms);
+                current_bin > last && !self.bins.is_empty()
+            }
+        };
+
+        should_emit.then(|| {
+            self.last_emit_bin = Some(self.bin_key(wm_ms));
+            self.collect_events()
+        })
+    }
+}
+
+/// A partitioned binned sliding window that maintains separate binned windows per partition key.
+#[derive(Debug)]
+pub struct PartitionedBinnedSlidingWindow {
+    partition_key: String,
+    window_size: Duration,
+    slide_interval: Duration,
+    tracked_fields: Vec<String>,
+    windows: FxHashMap<String, BinnedSlidingWindow>,
+}
+
+impl PartitionedBinnedSlidingWindow {
+    pub fn new(
+        partition_key: String,
+        window_size: Duration,
+        slide_interval: Duration,
+        tracked_fields: Vec<String>,
+    ) -> Self {
+        Self {
+            partition_key,
+            window_size,
+            slide_interval,
+            tracked_fields,
+            windows: FxHashMap::default(),
+        }
+    }
+
+    /// Add a shared event to the appropriate partition window.
+    pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
+        let key = event.get(&self.partition_key).map_or_else(
+            || "default".to_string(),
+            |v| v.to_partition_key().into_owned(),
+        );
+
+        let window = self.windows.entry(key).or_insert_with(|| {
+            BinnedSlidingWindow::new(
+                self.window_size,
+                self.slide_interval,
+                self.tracked_fields.clone(),
+            )
+        });
+
+        window.add_shared(event)
+    }
+
+    /// Get all current events from all partitions.
+    pub fn current_all_shared(&self) -> Vec<SharedEvent> {
+        let mut all_events = Vec::new();
+        for window in self.windows.values() {
+            all_events.extend(window.current_shared());
+        }
+        all_events
+    }
+
+    /// Create a checkpoint of all partition windows.
+    pub fn checkpoint(&self) -> WindowCheckpoint {
+        let partitions = self
+            .windows
+            .iter()
+            .map(|(key, window)| {
+                let events: Vec<SerializableEvent> = window
+                    .bins
+                    .values()
+                    .flat_map(|bin| bin.events.iter())
+                    .map(|e| SerializableEvent::from(e.as_ref()))
+                    .collect();
+
+                (
+                    key.clone(),
+                    PartitionedWindowCheckpoint {
+                        events,
+                        window_start_ms: window.last_emit_bin,
+                    },
+                )
+            })
+            .collect();
+
+        WindowCheckpoint {
+            events: Vec::new(),
+            window_start_ms: None,
+            last_emit_ms: None,
+            partitions,
+        }
+    }
+
+    /// Restore partition windows from a checkpoint.
+    pub fn restore(&mut self, cp: &WindowCheckpoint) {
+        self.windows.clear();
+        for (key, pcp) in &cp.partitions {
+            let mut window = BinnedSlidingWindow::new(
+                self.window_size,
+                self.slide_interval,
+                self.tracked_fields.clone(),
+            );
+            window.last_emit_bin = pcp.window_start_ms;
+
+            for se in &pcp.events {
+                let event = Arc::new(Event::from(se.clone()));
+                let event_time_ms = event.timestamp.timestamp_millis();
+                let bin_key = window.bin_key(event_time_ms);
+
+                let bin = window.bins.entry(bin_key).or_insert_with(WindowBin::new);
+                bin.add_event(&event, &self.tracked_fields);
+            }
+
+            self.windows.insert(key.clone(), window);
+        }
+    }
+
+    /// Advance watermark across all partitions.
+    pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Vec<(String, Vec<SharedEvent>)> {
+        let mut results = Vec::new();
+        for (key, window) in &mut self.windows {
+            if let Some(events) = window.advance_watermark(wm) {
+                results.push((key.clone(), events));
+            }
+        }
+        results
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2383,5 +2778,240 @@ mod tests {
             2,
             "Closed session should contain the 2 events"
         );
+    }
+
+    // =========================================================================
+    // BinnedSlidingWindow tests
+    // =========================================================================
+
+    #[test]
+    fn test_binned_sliding_basic() {
+        // 10s window, 1s slide → 10 bins (ratio=10, triggers binned selection)
+        let mut window =
+            BinnedSlidingWindow::new(Duration::seconds(10), Duration::seconds(1), Vec::new());
+        // Use a fixed base time aligned to a second boundary
+        let base_time = DateTime::from_timestamp_millis(1_700_000_000_000).unwrap();
+
+        // First event should trigger emit (first event always emits)
+        let e1 = Arc::new(Event::new("A").with_timestamp(base_time));
+        let result = window.add_shared(e1);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 1);
+
+        // Event in same bin should not emit (same second)
+        let e2 = Arc::new(Event::new("A").with_timestamp(base_time + Duration::milliseconds(500)));
+        let result = window.add_shared(e2);
+        assert!(result.is_none());
+
+        // Event in next bin should emit (next second)
+        let e3 = Arc::new(Event::new("A").with_timestamp(base_time + Duration::seconds(1)));
+        let result = window.add_shared(e3);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 3); // all 3 events in window
+    }
+
+    #[test]
+    fn test_binned_sliding_expiry() {
+        // 5s window, 1s slide
+        let mut window =
+            BinnedSlidingWindow::new(Duration::seconds(5), Duration::seconds(1), Vec::new());
+        let base_time = DateTime::from_timestamp_millis(1_700_000_000_000).unwrap();
+
+        // Add events at t=0, t=1, t=2, t=3, t=4
+        for i in 0..5 {
+            let e = Arc::new(Event::new("A").with_timestamp(base_time + Duration::seconds(i)));
+            window.add_shared(e);
+        }
+
+        // At t=6, the t=0 bin should be expired
+        let e6 = Arc::new(Event::new("A").with_timestamp(base_time + Duration::seconds(6)));
+        let result = window.add_shared(e6);
+        assert!(result.is_some());
+        let events = result.unwrap();
+        // t=0 expired (cutoff = 6-5 = 1), so events at t=1,2,3,4,6 = 5 events
+        assert_eq!(events.len(), 5);
+    }
+
+    #[test]
+    fn test_binned_sliding_equivalence_with_sliding() {
+        // Both windows should produce the same output events for the same input
+        let window_size = Duration::seconds(10);
+        let slide = Duration::seconds(1);
+        let mut binned = BinnedSlidingWindow::new(window_size, slide, Vec::new());
+        let mut regular = SlidingWindow::new(window_size, slide);
+        let base_time = DateTime::from_timestamp_millis(1_700_000_000_000).unwrap();
+
+        for i in 0..20 {
+            let e = Arc::new(Event::new("A").with_timestamp(base_time + Duration::seconds(i)));
+            let binned_result = binned.add_shared(Arc::clone(&e));
+            let regular_result = regular.add_shared(e);
+
+            match (&binned_result, &regular_result) {
+                (Some(b), Some(r)) => {
+                    assert_eq!(
+                        b.len(),
+                        r.len(),
+                        "Event count mismatch at t={i}: binned={}, regular={}",
+                        b.len(),
+                        r.len()
+                    );
+                }
+                (None, None) => {}
+                _ => panic!(
+                    "Emit mismatch at t={i}: binned={}, regular={}",
+                    binned_result.is_some(),
+                    regular_result.is_some()
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn test_binned_sliding_bin_aggregates() {
+        let mut window = BinnedSlidingWindow::new(
+            Duration::seconds(10),
+            Duration::seconds(1),
+            vec!["value".to_string()],
+        );
+        let base_time = DateTime::from_timestamp_millis(1_700_000_000_000).unwrap();
+
+        // Add events with known values
+        for i in 0..5 {
+            let e = Event::new("A")
+                .with_timestamp(base_time + Duration::seconds(i))
+                .with_field("value", varpulis_core::Value::Float(i as f64 * 10.0));
+            window.add_shared(Arc::new(e));
+        }
+
+        let agg = window.bin_aggregates("value").unwrap();
+        assert_eq!(agg.count, 5);
+        assert!((agg.sum - 100.0).abs() < f64::EPSILON); // 0+10+20+30+40
+        assert!((agg.avg.unwrap() - 20.0).abs() < f64::EPSILON);
+        assert!((agg.min.unwrap() - 0.0).abs() < f64::EPSILON);
+        assert!((agg.max.unwrap() - 40.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_binned_sliding_checkpoint_restore() {
+        let mut window = BinnedSlidingWindow::new(
+            Duration::seconds(10),
+            Duration::seconds(1),
+            vec!["val".to_string()],
+        );
+        let base_time = DateTime::from_timestamp_millis(1_700_000_000_000).unwrap();
+
+        for i in 0..5 {
+            let e = Event::new("A")
+                .with_timestamp(base_time + Duration::seconds(i))
+                .with_field("val", varpulis_core::Value::Float(i as f64));
+            window.add_shared(Arc::new(e));
+        }
+
+        let cp = window.checkpoint();
+
+        // Restore into new window
+        let mut restored = BinnedSlidingWindow::new(
+            Duration::seconds(10),
+            Duration::seconds(1),
+            vec!["val".to_string()],
+        );
+        restored.restore(&cp);
+
+        // Verify event count
+        assert_eq!(restored.current_shared().len(), 5);
+        assert_eq!(restored.bin_count(), window.bin_count());
+
+        // Verify aggregates recomputed correctly
+        let orig_agg = window.bin_aggregates("val").unwrap();
+        let rest_agg = restored.bin_aggregates("val").unwrap();
+        assert_eq!(orig_agg.count, rest_agg.count);
+        assert!((orig_agg.sum - rest_agg.sum).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_binned_sliding_watermark() {
+        let mut window =
+            BinnedSlidingWindow::new(Duration::seconds(10), Duration::seconds(2), Vec::new());
+        let base_time = DateTime::from_timestamp_millis(1_700_000_000_000).unwrap();
+
+        // Add events at t=0, t=2, t=4, t=6, t=8
+        for i in (0..10).step_by(2) {
+            let e = Arc::new(Event::new("A").with_timestamp(base_time + Duration::seconds(i)));
+            window.add_shared(e);
+        }
+
+        // Advance watermark to t+12 — should expire some bins
+        // cutoff = 12-10 = 2, bins with key >= 2000ms survive
+        // Bins: 0,2000,4000,6000,8000 → bins 2000,4000,6000,8000 survive (4 events)
+        let result = window.advance_watermark(base_time + Duration::seconds(12));
+        assert!(
+            result.is_some(),
+            "Should emit after watermark advance past bins"
+        );
+        let events = result.unwrap();
+        assert_eq!(events.len(), 4, "t=0 expired, t=2,4,6,8 survive");
+    }
+
+    #[test]
+    fn test_partitioned_binned_sliding() {
+        let mut window = PartitionedBinnedSlidingWindow::new(
+            "device_id".to_string(),
+            Duration::seconds(10),
+            Duration::seconds(1),
+            Vec::new(),
+        );
+        let base_time = DateTime::from_timestamp_millis(1_700_000_000_000).unwrap();
+
+        // Add events for two partitions
+        let e1 = Event::new("A")
+            .with_timestamp(base_time)
+            .with_field("device_id", varpulis_core::Value::Str("dev1".into()));
+        window.add_shared(Arc::new(e1));
+
+        let e2 = Event::new("A")
+            .with_timestamp(base_time)
+            .with_field("device_id", varpulis_core::Value::Str("dev2".into()));
+        window.add_shared(Arc::new(e2));
+
+        // Trigger emit for dev1 at next slide
+        let e3 = Event::new("A")
+            .with_timestamp(base_time + Duration::seconds(1))
+            .with_field("device_id", varpulis_core::Value::Str("dev1".into()));
+        let result = window.add_shared(Arc::new(e3));
+        assert!(result.is_some());
+        // dev1 should have 2 events
+        assert_eq!(result.unwrap().len(), 2);
+
+        // All events across partitions
+        assert_eq!(window.current_all_shared().len(), 3);
+    }
+
+    #[test]
+    fn test_partitioned_binned_checkpoint_restore() {
+        let mut window = PartitionedBinnedSlidingWindow::new(
+            "key".to_string(),
+            Duration::seconds(10),
+            Duration::seconds(1),
+            Vec::new(),
+        );
+        let base_time = DateTime::from_timestamp_millis(1_700_000_000_000).unwrap();
+
+        for part in &["a", "b"] {
+            let e = Event::new("A")
+                .with_timestamp(base_time)
+                .with_field("key", varpulis_core::Value::Str((*part).into()));
+            window.add_shared(Arc::new(e));
+        }
+
+        let cp = window.checkpoint();
+        let mut restored = PartitionedBinnedSlidingWindow::new(
+            "key".to_string(),
+            Duration::seconds(10),
+            Duration::seconds(1),
+            Vec::new(),
+        );
+        restored.restore(&cp);
+
+        assert_eq!(restored.current_all_shared().len(), 2);
     }
 }

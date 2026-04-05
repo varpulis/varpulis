@@ -115,6 +115,33 @@ pub trait SinkConnector: Send + Sync {
     fn health_check(&self) -> ConnectorHealth {
         ConnectorHealth::healthy(0)
     }
+
+    // ---- Two-Phase Commit (2PC) for exactly-once delivery ----
+
+    /// Whether this connector supports exactly-once 2PC semantics.
+    fn supports_exactly_once(&self) -> bool {
+        false
+    }
+
+    /// Begin a new checkpoint epoch.
+    async fn begin_epoch(&self, _checkpoint_id: u64) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    /// Pre-commit: finalize data but don't make visible.
+    async fn prepare_commit(&self, _checkpoint_id: u64) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    /// Commit: make pre-committed data visible.
+    async fn commit(&self, _checkpoint_id: u64) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    /// Abort: discard uncommitted data for the current epoch.
+    async fn abort(&self, _checkpoint_id: u64) -> Result<(), ConnectorError> {
+        Ok(())
+    }
 }
 
 /// Health status returned by connector health checks.

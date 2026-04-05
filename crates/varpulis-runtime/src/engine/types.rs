@@ -15,8 +15,9 @@ use crate::event::SharedEvent;
 use crate::join::JoinBuffer;
 use crate::sase::SaseEngine;
 use crate::window::{
-    CountWindow, PartitionedSessionWindow, PartitionedSlidingWindow, PartitionedTumblingWindow,
-    SessionWindow, SlidingCountWindow, SlidingWindow, TumblingWindow,
+    BinnedSlidingWindow, CountWindow, PartitionedBinnedSlidingWindow, PartitionedSessionWindow,
+    PartitionedSlidingWindow, PartitionedTumblingWindow, SessionWindow, SlidingCountWindow,
+    SlidingWindow, TumblingWindow,
 };
 
 // =============================================================================
@@ -546,6 +547,8 @@ pub enum WindowType {
     PartitionedSliding(PartitionedSlidingWindow),
     Session(SessionWindow),
     PartitionedSession(PartitionedSessionWindow),
+    BinnedSliding(BinnedSlidingWindow),
+    PartitionedBinnedSliding(PartitionedBinnedSlidingWindow),
 }
 
 /// Configuration for simple emit operation

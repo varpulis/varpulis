@@ -126,6 +126,8 @@ pub mod sequence;
 pub use varpulis_simd as simd;
 pub mod udf;
 pub mod vpl_test;
+#[cfg(feature = "wasm-udf")]
+pub mod wasm_udf;
 pub mod watermark;
 pub mod window;
 pub mod zdd_unified;

@@ -8770,6 +8770,8 @@ dependencies = [
  "argon2",
  "async-nats",
  "async-trait",
+ "aws-config",
+ "aws-sdk-s3",
  "chrono",
  "core_affinity",
  "criterion",
@@ -8808,7 +8810,9 @@ dependencies = [
  "varpulis-pst",
  "varpulis-sase",
  "varpulis-simd",
+ "varpulis-wasm",
  "varpulis-zdd",
+ "zstd",
 ]
 
 [[package]]

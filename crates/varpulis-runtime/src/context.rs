@@ -25,7 +25,9 @@ use varpulis_core::ast::{Program, Stmt, StreamSource};
 
 use crate::engine::Engine;
 use crate::event::{Event, SharedEvent};
-use crate::persistence::{CheckpointConfig, CheckpointManager, EngineCheckpoint, StoreError};
+use crate::persistence::{
+    AsyncCheckpointManager, CheckpointConfig, CheckpointManager, EngineCheckpoint, StoreError,
+};
 
 /// Messages sent through context channels.
 ///
@@ -36,6 +38,9 @@ pub enum ContextMessage {
     Event(SharedEvent),
     /// A checkpoint barrier — triggers state snapshot
     CheckpointBarrier(CheckpointBarrier),
+    /// Notification that a checkpoint has been durably persisted.
+    /// Contexts use this to commit exactly-once sinks (Enhancement #5).
+    CheckpointBarrierComplete(u64),
     /// Watermark update from an upstream context
     WatermarkUpdate {
         source_context: String,
@@ -69,14 +74,23 @@ struct PendingCheckpoint {
 /// Coordinates checkpoints across multiple contexts.
 ///
 /// Sends `CheckpointBarrier` to all contexts, collects `CheckpointAck` responses,
-/// and persists the assembled `Checkpoint` once all contexts have acknowledged.
+/// and persists the assembled `Checkpoint`. Supports both synchronous and async
+/// persistence modes:
+///
+/// - **Sync mode** (default): `try_complete()` blocks on persistence, then returns.
+/// - **Async mode** (Chandy-Lamport): `try_complete()` hands the checkpoint to
+///   `AsyncCheckpointManager` for background persistence, then `try_finalize()`
+///   checks if persistence completed and broadcasts `CheckpointBarrierComplete`.
 pub struct CheckpointCoordinator {
     manager: CheckpointManager,
+    async_manager: Option<AsyncCheckpointManager>,
     ack_tx: mpsc::Sender<CheckpointAck>,
     ack_rx: mpsc::Receiver<CheckpointAck>,
     context_names: Vec<String>,
     pending: Option<PendingCheckpoint>,
     next_checkpoint_id: u64,
+    /// Receiver for async persistence completion (populated when async mode is used).
+    pending_persist: Option<(u64, tokio::sync::oneshot::Receiver<Result<(), StoreError>>)>,
 }
 
 impl std::fmt::Debug for CheckpointCoordinator {
@@ -85,22 +99,40 @@ impl std::fmt::Debug for CheckpointCoordinator {
             .field("context_names", &self.context_names)
             .field("next_checkpoint_id", &self.next_checkpoint_id)
             .field("has_pending", &self.pending.is_some())
+            .field("has_pending_persist", &self.pending_persist.is_some())
+            .field("async_mode", &self.async_manager.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl CheckpointCoordinator {
-    /// Create a new coordinator for the given contexts.
+    /// Create a new coordinator for the given contexts (synchronous mode).
     pub fn new(manager: CheckpointManager, context_names: Vec<String>) -> Self {
         let (ack_tx, ack_rx) = mpsc::channel(context_names.len() * 2);
         Self {
             manager,
+            async_manager: None,
             ack_tx,
             ack_rx,
             context_names,
             pending: None,
             next_checkpoint_id: 1,
+            pending_persist: None,
         }
+    }
+
+    /// Enable async persistence mode (Chandy-Lamport barriers).
+    ///
+    /// When enabled, `try_complete()` offloads persistence to a background task
+    /// instead of blocking. Call `try_finalize()` to check for completion and
+    /// broadcast `CheckpointBarrierComplete` to contexts.
+    pub fn enable_async(&mut self) {
+        let manager_clone = CheckpointManager::new(
+            Arc::clone(self.manager.store()),
+            crate::persistence::CheckpointConfig::default(),
+        )
+        .expect("Failed to create async checkpoint manager");
+        self.async_manager = Some(AsyncCheckpointManager::new(manager_clone));
     }
 
     /// Get a sender for checkpoint acknowledgments (cloned into each context).
@@ -112,6 +144,11 @@ impl CheckpointCoordinator {
     pub fn initiate(&mut self, context_txs: &FxHashMap<String, mpsc::Sender<ContextMessage>>) {
         if self.pending.is_some() {
             warn!("Checkpoint already in progress, skipping initiation");
+            return;
+        }
+
+        if self.pending_persist.is_some() {
+            warn!("Previous checkpoint still persisting, skipping initiation");
             return;
         }
 
@@ -179,10 +216,22 @@ impl CheckpointCoordinator {
     }
 
     /// Try to drain pending acks and complete the checkpoint.
+    ///
+    /// In sync mode, persistence blocks here. In async mode, persistence is
+    /// offloaded and `try_finalize()` must be called to detect completion.
     pub fn try_complete(&mut self) -> Result<(), StoreError> {
         while let Ok(ack) = self.ack_rx.try_recv() {
             if let Some(checkpoint) = self.receive_ack(ack) {
-                self.manager.checkpoint(checkpoint)?;
+                if let Some(ref async_mgr) = self.async_manager {
+                    // Async mode: offload persistence to background task
+                    let checkpoint_id = checkpoint.id;
+                    let rx = async_mgr.checkpoint_async(checkpoint);
+                    self.pending_persist = Some((checkpoint_id, rx));
+                    info!("Checkpoint {checkpoint_id} acks complete, persisting async");
+                } else {
+                    // Sync mode: persist immediately (blocking)
+                    self.manager.checkpoint(checkpoint)?;
+                }
                 return Ok(());
             }
         }
@@ -201,14 +250,53 @@ impl CheckpointCoordinator {
         Ok(())
     }
 
+    /// Check if async persistence completed and broadcast `CheckpointBarrierComplete`.
+    ///
+    /// Returns `Some(checkpoint_id)` when a checkpoint was just durably persisted,
+    /// allowing the caller to broadcast `CheckpointBarrierComplete` to all contexts.
+    /// Returns `None` if no async persistence is pending or not yet complete.
+    pub fn try_finalize(&mut self) -> Result<Option<u64>, StoreError> {
+        let Some((checkpoint_id, ref mut rx)) = self.pending_persist else {
+            return Ok(None);
+        };
+
+        // Non-blocking check: has the background task completed?
+        match rx.try_recv() {
+            Ok(result) => {
+                // Persistence completed — propagate any error
+                result?;
+                let id = checkpoint_id;
+                self.pending_persist = None;
+                info!("Checkpoint {id} async persistence finalized");
+                Ok(Some(id))
+            }
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                // Still persisting — that's fine
+                Ok(None)
+            }
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                // Background task panicked or was cancelled
+                self.pending_persist = None;
+                Err(StoreError::IoError(
+                    "Async checkpoint persist task was cancelled".to_string(),
+                ))
+            }
+        }
+    }
+
     /// Check if a checkpoint should be initiated based on interval.
     pub fn should_checkpoint(&self) -> bool {
-        self.pending.is_none() && self.manager.should_checkpoint()
+        self.pending.is_none() && self.pending_persist.is_none() && self.manager.should_checkpoint()
     }
 
     /// Whether a checkpoint is currently in progress (waiting for acks).
     pub const fn has_pending(&self) -> bool {
         self.pending.is_some()
+    }
+
+    /// Whether async persistence is in progress.
+    pub fn has_pending_persist(&self) -> bool {
+        self.pending_persist.is_some()
     }
 }
 
@@ -443,9 +531,20 @@ impl ContextRuntime {
     }
 
     /// Handle a checkpoint barrier by snapshotting engine state and sending ack.
+    ///
+    /// For exactly-once sinks, calls `prepare_commit` after the snapshot so that
+    /// sink data is finalized (but not yet visible) when the ack is sent.
     async fn handle_checkpoint_barrier(&self, barrier: CheckpointBarrier) {
         if let Some(ref ack_tx) = self.ack_tx {
+            // Phase 1: fast in-memory state capture
             let checkpoint = self.engine.create_checkpoint();
+
+            // Phase 2: pre-commit exactly-once sinks (data finalized but not visible)
+            self.engine
+                .prepare_commit_sinks(barrier.checkpoint_id)
+                .await;
+
+            // Phase 3: send ack to coordinator
             let _ = ack_tx
                 .send(CheckpointAck {
                     context_name: self.name.clone(),
@@ -530,6 +629,11 @@ impl ContextRuntime {
                         }
                         Some(ContextMessage::CheckpointBarrier(barrier)) => {
                             self.handle_checkpoint_barrier(barrier).await;
+                        }
+                        Some(ContextMessage::CheckpointBarrierComplete(checkpoint_id)) => {
+                            // Checkpoint durably persisted — commit exactly-once sinks
+                            // and begin the next epoch.
+                            self.engine.commit_sinks(checkpoint_id).await;
                         }
                         Some(ContextMessage::WatermarkUpdate { source_context, watermark_ms }) => {
                             // Feed watermark into engine's tracker (Phase 2E)
@@ -967,7 +1071,43 @@ impl ContextOrchestrator {
         if self.should_checkpoint() {
             self.trigger_checkpoint();
         }
-        self.try_complete_checkpoint()
+        let completed = self.try_complete_checkpoint()?;
+
+        // In async mode, check if persistence completed and broadcast
+        self.try_finalize_checkpoint()?;
+
+        Ok(completed)
+    }
+
+    /// Check if async persistence completed and broadcast `CheckpointBarrierComplete`.
+    ///
+    /// In sync mode this is a no-op. In async mode, it polls the background
+    /// persist task and sends `CheckpointBarrierComplete` to all contexts when done.
+    pub fn try_finalize_checkpoint(&mut self) -> Result<(), StoreError> {
+        if let Some(ref mut coordinator) = self.checkpoint_coordinator {
+            if let Some(checkpoint_id) = coordinator.try_finalize()? {
+                // Broadcast completion to all contexts
+                for (ctx_name, tx) in &self.context_txs {
+                    if let Err(e) =
+                        tx.try_send(ContextMessage::CheckpointBarrierComplete(checkpoint_id))
+                    {
+                        warn!(
+                            "Failed to send CheckpointBarrierComplete to context '{}': {}",
+                            ctx_name, e
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Enable async checkpoint persistence (Chandy-Lamport barriers).
+    pub fn enable_async_checkpoints(&mut self) {
+        if let Some(ref mut coordinator) = self.checkpoint_coordinator {
+            coordinator.enable_async();
+            info!("Async checkpoint persistence enabled (Chandy-Lamport mode)");
+        }
     }
 
     /// Get the names of all running contexts

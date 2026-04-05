@@ -11,10 +11,11 @@
 //! - Pattern matcher state (active SASE runs)
 //! - Checkpointing and recovery (versioned snapshots)
 //!
-//! Three storage backends are available:
+//! Four storage backends are available:
 //! - [`MemoryStore`] — fast, volatile (testing/development)
 //! - [`FileStore`] — atomic writes to local filesystem
 //! - `RocksDbStore` — production-grade, requires `persistence` feature
+//! - `S3StateStore` — object storage, requires `s3-state` feature
 //!
 //! # Example
 //! ```text
@@ -34,9 +35,11 @@ use std::time::{Duration, Instant};
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "persistence")]
+#[cfg(any(feature = "persistence", feature = "s3-state"))]
 use tracing::debug;
 use tracing::info;
+#[cfg(all(feature = "s3-state", feature = "checkpoint-compression"))]
+use tracing::warn;
 
 use crate::event::Event;
 
@@ -638,6 +641,344 @@ impl StateStore for FileStore {
     }
 }
 
+// =============================================================================
+// S3 State Store
+// =============================================================================
+
+/// S3-based state store for decoupling checkpoint storage from compute.
+///
+/// Stores checkpoints and key-value data as objects in an S3 bucket.
+/// Enables stateless workers and dynamic rescaling since state lives in
+/// object storage rather than local disk.
+///
+/// # Object Layout
+///
+/// ```text
+/// s3://{bucket}/{prefix}/checkpoint/{id}   — serialized Checkpoint
+/// s3://{bucket}/{prefix}/checkpoint/latest  — latest checkpoint ID (8 bytes LE)
+/// s3://{bucket}/{prefix}/kv/{key}           — arbitrary key-value data
+/// ```
+///
+/// # Compression
+///
+/// When the `checkpoint-compression` feature is enabled, checkpoint data
+/// is compressed with zstd before upload (3-5x size reduction typical).
+#[cfg(feature = "s3-state")]
+pub struct S3StateStore {
+    client: aws_sdk_s3::Client,
+    bucket: String,
+    prefix: String,
+    compress: bool,
+    rt: tokio::runtime::Handle,
+}
+
+#[cfg(feature = "s3-state")]
+impl std::fmt::Debug for S3StateStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3StateStore")
+            .field("bucket", &self.bucket)
+            .field("prefix", &self.prefix)
+            .field("compress", &self.compress)
+            .finish()
+    }
+}
+
+#[cfg(feature = "s3-state")]
+impl S3StateStore {
+    /// Create a new S3 state store.
+    ///
+    /// `region` and `profile` control AWS credential resolution.
+    /// `compress` enables zstd compression (requires `checkpoint-compression` feature).
+    pub async fn new(
+        bucket: String,
+        prefix: String,
+        region: String,
+        profile: Option<String>,
+        compress: bool,
+    ) -> Result<Self, StoreError> {
+        let aws_config = if let Some(ref profile_name) = profile {
+            aws_config::defaults(aws_config::BehaviorVersion::latest())
+                .profile_name(profile_name)
+                .region(aws_config::Region::new(region))
+                .load()
+                .await
+        } else {
+            aws_config::defaults(aws_config::BehaviorVersion::latest())
+                .region(aws_config::Region::new(region))
+                .load()
+                .await
+        };
+
+        let client = aws_sdk_s3::Client::new(&aws_config);
+        let rt = tokio::runtime::Handle::current();
+
+        info!("S3StateStore initialized: s3://{}/{}", bucket, prefix);
+        Ok(Self {
+            client,
+            bucket,
+            prefix,
+            compress,
+            rt,
+        })
+    }
+
+    /// Build the S3 object key for a given logical key.
+    fn s3_key(&self, key: &str) -> String {
+        if self.prefix.is_empty() {
+            key.to_string()
+        } else {
+            format!("{}/{}", self.prefix, key)
+        }
+    }
+
+    /// Upload data to S3.
+    async fn put_object(&self, key: &str, data: Vec<u8>) -> Result<(), StoreError> {
+        let s3_key = self.s3_key(key);
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(&s3_key)
+            .body(aws_sdk_s3::primitives::ByteStream::from(data))
+            .send()
+            .await
+            .map_err(|e| StoreError::IoError(format!("S3 put_object failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Download data from S3. Returns None if the object doesn't exist.
+    async fn get_object(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        let s3_key = self.s3_key(key);
+        match self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(&s3_key)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let bytes = resp
+                    .body
+                    .collect()
+                    .await
+                    .map_err(|e| StoreError::IoError(format!("S3 read body failed: {e}")))?
+                    .into_bytes();
+                Ok(Some(bytes.to_vec()))
+            }
+            Err(e) => {
+                // Check if it's a NoSuchKey error
+                let service_err = e.into_service_error();
+                if service_err.is_no_such_key() {
+                    Ok(None)
+                } else {
+                    Err(StoreError::IoError(format!(
+                        "S3 get_object failed: {service_err}"
+                    )))
+                }
+            }
+        }
+    }
+
+    /// Delete an object from S3.
+    async fn delete_object(&self, key: &str) -> Result<(), StoreError> {
+        let s3_key = self.s3_key(key);
+        self.client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(&s3_key)
+            .send()
+            .await
+            .map_err(|e| StoreError::IoError(format!("S3 delete_object failed: {e}")))?;
+        Ok(())
+    }
+
+    /// List all objects under a prefix.
+    async fn list_objects(&self, prefix: &str) -> Result<Vec<String>, StoreError> {
+        let s3_prefix = self.s3_key(prefix);
+        let mut keys = Vec::new();
+        let mut continuation_token = None;
+
+        loop {
+            let mut req = self
+                .client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .prefix(&s3_prefix);
+
+            if let Some(token) = continuation_token.take() {
+                req = req.continuation_token(token);
+            }
+
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| StoreError::IoError(format!("S3 list_objects failed: {e}")))?;
+
+            if let Some(contents) = resp.contents {
+                for obj in contents {
+                    if let Some(key) = obj.key {
+                        // Strip the store prefix to return logical keys
+                        let logical = if self.prefix.is_empty() {
+                            key
+                        } else {
+                            key.strip_prefix(&format!("{}/", self.prefix))
+                                .unwrap_or(&key)
+                                .to_string()
+                        };
+                        keys.push(logical);
+                    }
+                }
+            }
+
+            if resp.is_truncated == Some(true) {
+                continuation_token = resp.next_continuation_token;
+            } else {
+                break;
+            }
+        }
+
+        Ok(keys)
+    }
+
+    /// Optionally compress data with zstd.
+    fn maybe_compress(&self, data: &[u8]) -> Vec<u8> {
+        #[cfg(feature = "checkpoint-compression")]
+        if self.compress {
+            match zstd::encode_all(data, 3) {
+                Ok(compressed) => {
+                    // Prepend a magic byte to identify compressed data
+                    let mut out = Vec::with_capacity(1 + compressed.len());
+                    out.push(0x5A); // 'Z' marker for zstd
+                    out.extend_from_slice(&compressed);
+                    return out;
+                }
+                Err(e) => {
+                    warn!("zstd compression failed, storing uncompressed: {e}");
+                }
+            }
+        }
+        let _ = self.compress; // suppress unused warning when feature disabled
+        data.to_vec()
+    }
+
+    /// Decompress data if it was compressed.
+    fn maybe_decompress(data: &[u8]) -> Result<Vec<u8>, StoreError> {
+        #[cfg(feature = "checkpoint-compression")]
+        if data.first() == Some(&0x5A) {
+            // 'Z' marker — zstd compressed
+            return zstd::decode_all(&data[1..])
+                .map_err(|e| StoreError::IoError(format!("zstd decompression failed: {e}")));
+        }
+        Ok(data.to_vec())
+    }
+}
+
+#[cfg(feature = "s3-state")]
+impl StateStore for S3StateStore {
+    fn save_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), StoreError> {
+        let data = crate::codec::serialize(checkpoint, crate::codec::CheckpointFormat::active())?;
+        let data = self.maybe_compress(&data);
+        let id = checkpoint.id;
+
+        self.rt.block_on(async {
+            // Upload checkpoint data
+            self.put_object(&format!("checkpoint/{id}"), data).await?;
+
+            // Update "latest" pointer
+            self.put_object("checkpoint/latest", id.to_le_bytes().to_vec())
+                .await?;
+
+            Ok(())
+        })?;
+
+        debug!("Saved checkpoint {id} to S3");
+        Ok(())
+    }
+
+    fn load_latest_checkpoint(&self) -> Result<Option<Checkpoint>, StoreError> {
+        self.rt.block_on(async {
+            // Read the "latest" pointer
+            let Some(id_bytes) = self.get_object("checkpoint/latest").await? else {
+                return Ok(None);
+            };
+
+            let Ok(bytes) = <[u8; 8]>::try_from(id_bytes.as_slice()) else {
+                return Ok(None);
+            };
+            let id = u64::from_le_bytes(bytes);
+
+            // Load that checkpoint
+            let Some(data) = self.get_object(&format!("checkpoint/{id}")).await? else {
+                return Ok(None);
+            };
+
+            let data = Self::maybe_decompress(&data)?;
+            let checkpoint: Checkpoint = crate::codec::deserialize(&data)?;
+            debug!("Loaded latest checkpoint {id} from S3");
+            Ok(Some(checkpoint))
+        })
+    }
+
+    fn load_checkpoint(&self, id: u64) -> Result<Option<Checkpoint>, StoreError> {
+        self.rt.block_on(async {
+            let Some(data) = self.get_object(&format!("checkpoint/{id}")).await? else {
+                return Ok(None);
+            };
+            let data = Self::maybe_decompress(&data)?;
+            let checkpoint: Checkpoint = crate::codec::deserialize(&data)?;
+            Ok(Some(checkpoint))
+        })
+    }
+
+    fn list_checkpoints(&self) -> Result<Vec<u64>, StoreError> {
+        self.rt.block_on(async {
+            let keys = self.list_objects("checkpoint/").await?;
+            let mut ids: Vec<u64> = keys
+                .iter()
+                .filter_map(|k| k.strip_prefix("checkpoint/").and_then(|s| s.parse().ok()))
+                .collect();
+            ids.sort_unstable();
+            Ok(ids)
+        })
+    }
+
+    fn prune_checkpoints(&self, keep: usize) -> Result<usize, StoreError> {
+        let checkpoints = self.list_checkpoints()?;
+        let to_delete = checkpoints.len().saturating_sub(keep);
+
+        if to_delete > 0 {
+            self.rt.block_on(async {
+                for id in checkpoints.iter().take(to_delete) {
+                    self.delete_object(&format!("checkpoint/{id}")).await?;
+                }
+                Ok::<(), StoreError>(())
+            })?;
+            info!("Pruned {to_delete} old checkpoints from S3");
+        }
+
+        Ok(to_delete)
+    }
+
+    fn put(&self, key: &str, value: &[u8]) -> Result<(), StoreError> {
+        let s3_key = format!("kv/{key}");
+        self.rt.block_on(self.put_object(&s3_key, value.to_vec()))
+    }
+
+    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        let s3_key = format!("kv/{key}");
+        self.rt.block_on(self.get_object(&s3_key))
+    }
+
+    fn delete(&self, key: &str) -> Result<(), StoreError> {
+        let s3_key = format!("kv/{key}");
+        self.rt.block_on(self.delete_object(&s3_key))
+    }
+
+    fn flush(&self) -> Result<(), StoreError> {
+        Ok(()) // S3 writes are immediately durable
+    }
+}
+
 /// Checkpoint manager that handles periodic checkpointing
 pub struct CheckpointManager {
     store: Arc<dyn StateStore>,
@@ -703,6 +1044,130 @@ impl CheckpointManager {
     /// Get the underlying store
     pub fn store(&self) -> &Arc<dyn StateStore> {
         &self.store
+    }
+}
+
+// =============================================================================
+// Async Checkpoint Manager (Chandy-Lamport support)
+// =============================================================================
+
+/// Async wrapper around [`CheckpointManager`] that offloads serialization and
+/// persistence to a background task.
+///
+/// This is the core enabler for Chandy-Lamport-style async barriers:
+/// 1. The engine captures state synchronously (fast in-memory snapshot)
+/// 2. `checkpoint_async()` hands the snapshot to a background task for
+///    serialization + I/O (slow, but no longer blocks event processing)
+/// 3. The returned `oneshot::Receiver` fires when persistence is complete
+///
+/// # Thread Safety
+///
+/// The inner `CheckpointManager` is wrapped in a `Mutex` because `checkpoint()`
+/// requires `&mut self`. The mutex is only held briefly during the background
+/// task's persist call, not during event processing.
+#[cfg(feature = "async-runtime")]
+pub struct AsyncCheckpointManager {
+    inner: std::sync::Mutex<CheckpointManager>,
+}
+
+#[cfg(feature = "async-runtime")]
+impl std::fmt::Debug for AsyncCheckpointManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AsyncCheckpointManager")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "async-runtime")]
+impl AsyncCheckpointManager {
+    /// Create a new async checkpoint manager wrapping an existing manager.
+    pub fn new(manager: CheckpointManager) -> Self {
+        Self {
+            inner: std::sync::Mutex::new(manager),
+        }
+    }
+
+    /// Check if it's time to create a checkpoint.
+    pub fn should_checkpoint(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|m| m.should_checkpoint())
+            .unwrap_or(false)
+    }
+
+    /// Persist a checkpoint asynchronously in a background task.
+    ///
+    /// Returns a `oneshot::Receiver` that resolves when persistence is complete.
+    /// The event loop can continue processing events immediately after calling
+    /// this method — it does NOT block on serialization or I/O.
+    pub fn checkpoint_async(
+        &self,
+        checkpoint: Checkpoint,
+    ) -> tokio::sync::oneshot::Receiver<Result<(), StoreError>> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        // Clone the store Arc so the background task can use it
+        let store = self
+            .inner
+            .lock()
+            .map(|m| Arc::clone(m.store()))
+            .expect("CheckpointManager mutex poisoned");
+
+        // Assign ID and timestamp under the lock (fast)
+        let checkpoint = {
+            let mut mgr = self.inner.lock().expect("CheckpointManager mutex poisoned");
+            let mut cp = checkpoint;
+            cp.id = mgr.next_checkpoint_id;
+            cp.timestamp_ms = chrono::Utc::now().timestamp_millis();
+            mgr.next_checkpoint_id += 1;
+            mgr.last_checkpoint = Instant::now();
+            cp
+        };
+
+        let config_max = self
+            .inner
+            .lock()
+            .map(|m| m.config.max_checkpoints)
+            .unwrap_or(3);
+
+        let checkpoint_id = checkpoint.id;
+
+        // Offload serialization + I/O to a blocking task
+        tokio::task::spawn_blocking(move || {
+            let result = (|| {
+                store.save_checkpoint(&checkpoint)?;
+                store.prune_checkpoints(config_max)?;
+                store.flush()?;
+                info!(
+                    "Async checkpoint {checkpoint_id} persisted ({} events processed)",
+                    checkpoint.events_processed
+                );
+                Ok(())
+            })();
+
+            // If the receiver was dropped (caller doesn't care), that's fine
+            let _ = tx.send(result);
+        });
+
+        rx
+    }
+
+    /// Synchronous checkpoint (fallback for shutdown or when async isn't needed).
+    pub fn checkpoint_sync(&self, checkpoint: Checkpoint) -> Result<(), StoreError> {
+        let mut mgr = self
+            .inner
+            .lock()
+            .map_err(|e| StoreError::IoError(format!("Mutex poisoned: {e}")))?;
+        mgr.checkpoint(checkpoint)
+    }
+
+    /// Load the latest checkpoint for recovery.
+    pub fn recover(&self) -> Result<Option<Checkpoint>, StoreError> {
+        let mgr = self
+            .inner
+            .lock()
+            .map_err(|e| StoreError::IoError(format!("Mutex poisoned: {e}")))?;
+        mgr.recover()
     }
 }
 

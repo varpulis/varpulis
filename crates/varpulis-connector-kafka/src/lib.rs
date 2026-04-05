@@ -674,6 +674,48 @@ impl SinkConnector for KafkaSink {
     async fn close(&self) -> Result<(), ConnectorError> {
         self.flush().await
     }
+
+    fn supports_exactly_once(&self) -> bool {
+        self.transactional
+    }
+
+    async fn begin_epoch(&self, _checkpoint_id: u64) -> Result<(), ConnectorError> {
+        if self.transactional {
+            self.producer
+                .begin_transaction()
+                .map_err(|e| ConnectorError::SendFailed(format!("begin_transaction: {e}")))?;
+        }
+        Ok(())
+    }
+
+    async fn prepare_commit(&self, _checkpoint_id: u64) -> Result<(), ConnectorError> {
+        if self.transactional {
+            // Flush ensures all enqueued messages are sent to the broker.
+            // The transaction remains open — data is not yet visible to consumers.
+            self.producer
+                .flush(Duration::from_secs(30))
+                .map_err(|e| ConnectorError::SendFailed(format!("prepare_commit flush: {e}")))?;
+        }
+        Ok(())
+    }
+
+    async fn commit(&self, _checkpoint_id: u64) -> Result<(), ConnectorError> {
+        if self.transactional {
+            self.producer
+                .commit_transaction(Duration::from_secs(30))
+                .map_err(|e| ConnectorError::SendFailed(format!("commit_transaction: {e}")))?;
+        }
+        Ok(())
+    }
+
+    async fn abort(&self, _checkpoint_id: u64) -> Result<(), ConnectorError> {
+        if self.transactional {
+            self.producer
+                .abort_transaction(Duration::from_secs(10))
+                .map_err(|e| ConnectorError::SendFailed(format!("abort_transaction: {e}")))?;
+        }
+        Ok(())
+    }
 }
 
 /// Backward-compatible alias for [`KafkaSink`].

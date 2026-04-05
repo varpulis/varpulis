@@ -17,22 +17,68 @@ SASE+ (Sequence Algebra for Stream Events) is a pattern matching algorithm for C
 
 ---
 
+## Two Syntaxes for Patterns
+
+Varpulis offers two ways to express patterns. Both compile to the same NFA engine.
+
+### Named Patterns with `SEQ()` (formal syntax)
+
+Use `SEQ()` for **named pattern declarations** — required for Kleene closures (`+`, `*`) with `partition by`:
+
+```vpl
+pattern BruteForce = SEQ(
+    AuthEvent where status == "failed" as first,
+    AuthEvent+ where status == "failed" as fails,
+    AuthEvent where status == "success" as success
+) within 30m partition by source_ip
+```
+
+Operators: `SEQ(...)`, `AND(...)`, `OR(...)`, `NOT(...)`, Kleene `+`, `*`, `?`
+
+### Inline Stream Patterns with `->` (fluent syntax)
+
+Use `->` inside **stream expressions** for a more readable, chainable style:
+
+```vpl
+stream FraudAlert = login as l
+    -> transfer as t .within(5m)
+    .where(l.user_id == t.user_id && t.amount > 5000)
+    .emit(alert: "Suspicious transfer", user: l.user_id)
+```
+
+For Kleene closures in stream expressions, use the `all` keyword:
+
+```vpl
+stream BruteForce = LoginFailed as f
+    -> all LoginFailed where user_id == f.user_id as fails
+    -> LoginSuccess where user_id == f.user_id as success
+    .within(30m)
+    .partition_by(user_id)
+    .emit(failures: count(fails) + 1)
+```
+
+### When to Use Which
+
+| | `SEQ()` (named pattern) | `->` (stream expression) |
+|---|---|---|
+| Kleene `+`/`*` with `partition by` | Required | Use `all` keyword |
+| AND / OR / NOT combinators | Supported | Not available |
+| Chaining `.emit()`, `.forecast()` | Via separate `stream = Pattern.emit(...)` | Inline |
+| Readability | Formal, good for complex logic | Fluent, good for simple pipelines |
+
+---
+
 ## Pattern Types
 
-### Sequence (`->`)
+### Sequence
 
 Events must occur in the specified order.
 
 ```vpl
-// A followed by B
-pattern Simple = A -> B
+pattern ThreeStep = SEQ(A, B, C) within 5m
 
-// A followed by B followed by C
-pattern ThreeStep = A -> B -> C
-
-// With conditions
-pattern Conditional =
-    Login[status == "success"] -> Action -> Logout
+# Or equivalently in a stream expression:
+stream ThreeStep = A -> B -> C .within(5m)
 ```
 
 **NFA Structure:**
@@ -40,16 +86,23 @@ pattern Conditional =
 [Start] -> [Match A] -> [Match B] -> [Match C] -> [Accept]
 ```
 
-### Kleene Plus (`+`)
+### Kleene Plus (`+` / `all`)
 
-One or more occurrences of a pattern.
+One or more occurrences of an event type.
 
 ```vpl
-// One or more failed logins
-pattern RepeatedFails = LoginFailed+
+# Named pattern syntax
+pattern BruteForce = SEQ(
+    LoginFailed+ as fails,
+    LoginSuccess as success
+) within 10m partition by user_id
 
-// Failed logins followed by success
-pattern BruteForce = LoginFailed+ -> LoginSuccess within 10m
+# Stream expression syntax (use `all` keyword)
+stream BruteForce = LoginFailed as first
+    -> all LoginFailed as fails
+    -> LoginSuccess as success
+    .within(10m)
+    .partition_by(user_id)
 ```
 
 **NFA Structure:**
@@ -202,6 +255,70 @@ When a pattern times out:
 1. Partial matches are discarded
 2. Resources are freed
 3. No match is emitted
+
+---
+
+## Rising & Monotonic Patterns (v0.10.0)
+
+Self-referencing Kleene predicates let you detect **strictly monotonic trends** — rising temperatures, escalating prices, increasing severity — where each event must compare against the previous captured event.
+
+### Strictly Rising Values
+
+```vpl
+pattern StrictlyRising = SEQ(
+    SensorReading as first,
+    SensorReading+ where temperature > rising.temperature as rising,
+    SensorReading where temperature < first.temperature as drop
+) within 5m partition by sensor_id
+```
+
+**How it works:** The predicate `temperature > rising.temperature` compares each new event against the **last captured Kleene event** (not the first). The alias `rising` refers to itself — the engine:
+
+1. **First Kleene event**: Skips the self-referencing predicate (no previous value exists), checks event type only
+2. **Subsequent events**: Evaluates `temperature > rising.temperature` against the previously captured event
+3. **Terminator**: The final `SensorReading where temperature < first.temperature` closes the pattern
+
+### Strictly Decreasing Values
+
+```vpl
+pattern CoolingDown = SEQ(
+    SensorReading as first,
+    SensorReading+ where temperature < cooling.temperature as cooling
+) within 10m partition by sensor_id
+```
+
+### Escalating Severity
+
+```vpl
+pattern Escalation = SEQ(
+    Alert as first,
+    Alert+ where severity > escalating.severity as escalating
+) within 1h partition by host
+
+stream EscalationAlert = Escalation
+    .where(count(escalating) >= 3)
+    .emit(
+        host: first.host,
+        initial_severity: first.severity,
+        final_severity: escalating.severity,
+        steps: count(escalating)
+    )
+```
+
+### Aggregating Over Trends
+
+When you need **statistics** (count, average) over rising trends rather than individual matches, use `.trend_aggregate()` with the Hamlet engine for O(n) performance:
+
+```vpl
+stream TrendStats = StockTick as first
+    -> all StockTick where price > first.price as rising
+    .within(60s)
+    .partition_by(symbol)
+    .trend_aggregate(count: count_trends())
+    .emit(symbol: first.symbol, trends: count)
+```
+
+> **Note:** Self-referencing predicates (`rising.temperature`) compare against the **previous** Kleene event. Cross-referencing predicates (`first.temperature`) compare against a **fixed** earlier event.
 
 ---
 
@@ -422,78 +539,43 @@ See `varpulis-zdd` crate for ZDD data structures and `sase.rs` for integration w
 
 ```vpl
 // Multiple small transactions followed by large withdrawal
-pattern SmurfingPattern =
-    Transaction[amount < 1000]+
-    -> Transaction[amount > 9000]
-    within 1h
-    partition by account_id
+pattern SmurfingPattern = SEQ(
+    Transaction+ where amount < 1000 as small,
+    Transaction where amount > 9000 as large
+) within 1h partition by account_id
 
-stream FraudAlerts = Transaction
-    pattern SmurfingPattern
-    emit alert("Smurfing", "Account {account_id} suspicious pattern")
-```
-
-### Session Analysis
-
-```vpl
-// Complete user session
-pattern UserSession =
-    Login as start
-    -> PageView*
-    -> OR(Logout, SessionTimeout) as end
-    within 24h
-    partition by user_id
-
-stream Sessions = *
-    pattern UserSession
-    emit log("Session: {start.user_id}, duration: {end.timestamp - start.timestamp}")
+stream FraudAlerts = SmurfingPattern
+    .emit(
+        alert: "Smurfing",
+        account: large.account_id,
+        num_small: count(small)
+    )
 ```
 
 ### SLA Monitoring
 
 ```vpl
 // Request without response within SLA
-pattern SLABreach =
-    Request as req
-    -> NOT(Response[request_id == req.id]) within 5s
+pattern SLABreach = SEQ(
+    Request as req,
+    NOT(Response where request_id == req.id)
+) within 5s
 
-stream SLAAlerts = *
-    pattern SLABreach
-    emit alert("SLABreach", "Request {req.id} not responded within SLA")
+stream SLAAlerts = SLABreach
+    .emit(alert: "SLA breach", request_id: req.id)
 ```
 
 ### IoT Device Monitoring
 
 ```vpl
-// Device going offline
-pattern DeviceOffline =
-    Heartbeat as last_beat
-    -> NOT(Heartbeat[device_id == last_beat.device_id]) within 1m
-    partition by device_id
+// Device going offline (no heartbeat within 1m)
+pattern DeviceOffline = SEQ(
+    Heartbeat as last_beat,
+    NOT(Heartbeat)
+) within 1m partition by device_id
 
-stream OfflineAlerts = Heartbeat
-    pattern DeviceOffline
-    emit alert("DeviceOffline", "Device {last_beat.device_id} stopped responding")
-```
-
-### Order Processing
-
-```vpl
-// Order completion flow
-pattern OrderComplete =
-    OrderPlaced as order
-    -> PaymentReceived[order_id == order.id]
-    -> AND(
-        ItemsPicked[order_id == order.id],
-        AddressVerified[order_id == order.id]
-       )
-    -> Shipped[order_id == order.id]
-    within 7d
-    partition by order_id
-
-stream CompletedOrders = *
-    pattern OrderComplete
-    emit log("Order {order.id} completed successfully")
+stream OfflineAlerts = DeviceOffline
+    .emit(alert: "Device offline", device: last_beat.device_id)
 ```
 
 ---

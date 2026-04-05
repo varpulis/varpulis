@@ -63,4 +63,8 @@ pub enum SmartModuleKind {
     Filter,
     /// Transform events: returns a modified event.
     Map,
+    /// Scalar UDF: takes JSON-encoded args, returns a single JSON-encoded value.
+    ScalarUdf,
+    /// Aggregate UDF: stateful accumulation with init/update/finish lifecycle.
+    AggregateUdf,
 }

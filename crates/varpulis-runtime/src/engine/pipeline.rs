@@ -521,6 +521,16 @@ fn execute_op_common(
                             window_results.extend(completed);
                         }
                     }
+                    WindowType::BinnedSliding(w) => {
+                        if let Some(window_events) = w.add_shared(event) {
+                            window_results.extend(window_events);
+                        }
+                    }
+                    WindowType::PartitionedBinnedSliding(w) => {
+                        if let Some(window_events) = w.add_shared(event) {
+                            window_results.extend(window_events);
+                        }
+                    }
                 }
             }
             *current_events = window_results;

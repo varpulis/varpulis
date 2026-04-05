@@ -398,7 +398,11 @@ config_array = { "[" ~ (config_value ~ ("," ~ config_value)*)? ~ "]" }
 // Import
 // ============================================================================
 
-import_stmt = { "import" ~ string ~ ("as" ~ identifier)? }
+import_stmt = { import_wasm_fn | import_module }
+import_module = { "import" ~ string ~ ("as" ~ identifier)? }
+import_wasm_fn = { "import" ~ "fn" ~ identifier ~ "(" ~ wasm_param_list? ~ ")" ~ ("->" ~ type_expr)? ~ "from" ~ string }
+wasm_param_list = { wasm_param ~ ("," ~ wasm_param)* }
+wasm_param = { identifier ~ ":" ~ type_expr }
 
 // ============================================================================
 // Expressions (PEG handles precedence via rule ordering)

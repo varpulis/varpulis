@@ -91,6 +91,23 @@ impl SmartModuleEngine {
             })?;
 
         // Get the kind-specific function
+        // Get scalar UDF function (optional)
+        let scalar_udf_fn = if config.kind == SmartModuleKind::ScalarUdf {
+            Some(
+                instance
+                    .get_typed_func::<(i32, i32), i64>(&mut store, "sm_scalar_udf")
+                    .map_err(|e| SmartModuleError::InvalidSignature {
+                        name: "sm_scalar_udf".into(),
+                        reason: e.to_string(),
+                    })?,
+            )
+        } else {
+            // Try to get it optionally (module might export it even if not the primary kind)
+            instance
+                .get_typed_func::<(i32, i32), i64>(&mut store, "sm_scalar_udf")
+                .ok()
+        };
+
         let filter_fn = if config.kind == SmartModuleKind::Filter {
             Some(
                 instance
@@ -126,6 +143,7 @@ impl SmartModuleEngine {
             dealloc,
             filter_fn,
             map_fn,
+            scalar_udf_fn,
             memory,
         })
     }
@@ -141,6 +159,7 @@ pub struct SmartModuleInstance {
     dealloc: TypedFunc<(i32, i32), ()>,
     filter_fn: Option<TypedFunc<(i32, i32), i32>>,
     map_fn: Option<TypedFunc<(i32, i32), i64>>,
+    scalar_udf_fn: Option<TypedFunc<(i32, i32), i64>>,
     memory: Memory,
 }
 
@@ -218,6 +237,52 @@ impl SmartModuleInstance {
         })?;
 
         // Deallocate input
+        let _ = self.dealloc.call(&mut self.store, (ptr, len));
+
+        // Extract output pointer and length from packed i64 result
+        let out_ptr = (result >> 32) as i32;
+        let out_len = (result & 0xFFFF_FFFF) as i32;
+
+        let output = self.read_from_guest(out_ptr, out_len)?;
+        let _ = self.dealloc.call(&mut self.store, (out_ptr, out_len));
+
+        serde_json::from_slice(&output).map_err(|e| SmartModuleError::Serialization(e.to_string()))
+    }
+
+    /// Call a scalar UDF with the given arguments.
+    ///
+    /// Arguments are serialized as a JSON array `[arg1, arg2, ...]`.
+    /// The WASM module returns a single JSON-encoded value.
+    pub fn call_scalar(
+        &mut self,
+        args: &[varpulis_core::Value],
+    ) -> Result<varpulis_core::Value, SmartModuleError> {
+        let scalar_fn =
+            self.scalar_udf_fn
+                .as_ref()
+                .ok_or_else(|| SmartModuleError::InvalidSignature {
+                    name: "sm_scalar_udf".into(),
+                    reason: "module does not export sm_scalar_udf".into(),
+                })?;
+        let scalar_fn = scalar_fn.clone();
+
+        let json =
+            serde_json::to_vec(args).map_err(|e| SmartModuleError::Serialization(e.to_string()))?;
+
+        let (ptr, len) = self.write_to_guest(&json)?;
+        self.prepare_fuel()?;
+
+        let result = scalar_fn.call(&mut self.store, (ptr, len)).map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("fuel") {
+                SmartModuleError::FuelExhausted {
+                    limit: self.max_fuel.unwrap_or(0),
+                }
+            } else {
+                SmartModuleError::Execution(msg)
+            }
+        })?;
+
         let _ = self.dealloc.call(&mut self.store, (ptr, len));
 
         // Extract output pointer and length from packed i64 result

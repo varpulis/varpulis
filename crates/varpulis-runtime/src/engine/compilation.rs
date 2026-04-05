@@ -26,8 +26,9 @@ use crate::aggregation::Aggregator;
 use crate::join::JoinBuffer;
 use crate::sase::SaseEngine;
 use crate::window::{
-    CountWindow, PartitionedSessionWindow, PartitionedSlidingWindow, PartitionedTumblingWindow,
-    SessionWindow, SlidingCountWindow, SlidingWindow, TumblingWindow,
+    BinnedSlidingWindow, CountWindow, PartitionedBinnedSlidingWindow, PartitionedSessionWindow,
+    PartitionedSlidingWindow, PartitionedTumblingWindow, SessionWindow, SlidingCountWindow,
+    SlidingWindow, TumblingWindow,
 };
 
 impl Engine {
@@ -732,15 +733,32 @@ impl Engine {
                                             _ => 60_000_000_000, // 1 minute default
                                         };
                                         let slide = Duration::nanoseconds(slide_ns as i64);
-                                        runtime_ops.push(RuntimeOp::Window(
-                                            WindowType::PartitionedSliding(
-                                                PartitionedSlidingWindow::new(
-                                                    key.clone(),
-                                                    duration,
-                                                    slide,
+                                        let ratio = duration
+                                            .num_milliseconds()
+                                            .checked_div(slide.num_milliseconds().max(1))
+                                            .unwrap_or(0);
+                                        if ratio >= 10 {
+                                            runtime_ops.push(RuntimeOp::Window(
+                                                WindowType::PartitionedBinnedSliding(
+                                                    PartitionedBinnedSlidingWindow::new(
+                                                        key.clone(),
+                                                        duration,
+                                                        slide,
+                                                        Vec::new(),
+                                                    ),
                                                 ),
-                                            ),
-                                        ));
+                                            ));
+                                        } else {
+                                            runtime_ops.push(RuntimeOp::Window(
+                                                WindowType::PartitionedSliding(
+                                                    PartitionedSlidingWindow::new(
+                                                        key.clone(),
+                                                        duration,
+                                                        slide,
+                                                    ),
+                                                ),
+                                            ));
+                                        }
                                     } else {
                                         runtime_ops.push(RuntimeOp::Window(
                                             WindowType::PartitionedTumbling(
@@ -757,9 +775,23 @@ impl Engine {
                                         _ => 60_000_000_000, // 1 minute default
                                     };
                                     let slide = Duration::nanoseconds(slide_ns as i64);
-                                    runtime_ops.push(RuntimeOp::Window(WindowType::Sliding(
-                                        SlidingWindow::new(duration, slide),
-                                    )));
+                                    let ratio = duration
+                                        .num_milliseconds()
+                                        .checked_div(slide.num_milliseconds().max(1))
+                                        .unwrap_or(0);
+                                    if ratio >= 10 {
+                                        runtime_ops.push(RuntimeOp::Window(
+                                            WindowType::BinnedSliding(BinnedSlidingWindow::new(
+                                                duration,
+                                                slide,
+                                                Vec::new(),
+                                            )),
+                                        ));
+                                    } else {
+                                        runtime_ops.push(RuntimeOp::Window(WindowType::Sliding(
+                                            SlidingWindow::new(duration, slide),
+                                        )));
+                                    }
                                 } else {
                                     runtime_ops.push(RuntimeOp::Window(WindowType::Tumbling(
                                         TumblingWindow::new(duration),

@@ -1820,12 +1820,64 @@ fn parse_config_value(pair: pest::iterators::Pair<Rule>) -> ParseResult<ConfigVa
 }
 
 fn parse_import_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
-    let mut inner = pair.into_inner();
-    let path_pair = inner.expect_next("import path")?;
-    let path = path_pair.as_str();
-    let path = path[1..path.len() - 1].to_string();
-    let alias = inner.next().map(|p| p.as_str().to_string());
-    Ok(Stmt::Import { path, alias })
+    let inner_pair = pair.into_inner().expect_next("import variant")?;
+    match inner_pair.as_rule() {
+        Rule::import_module => {
+            let mut inner = inner_pair.into_inner();
+            let path_pair = inner.expect_next("import path")?;
+            let path = path_pair.as_str();
+            let path = path[1..path.len() - 1].to_string();
+            let alias = inner.next().map(|p| p.as_str().to_string());
+            Ok(Stmt::Import { path, alias })
+        }
+        Rule::import_wasm_fn => {
+            let mut inner = inner_pair.into_inner();
+            let name = inner.expect_next("function name")?.as_str().to_string();
+
+            let mut params = Vec::new();
+            let mut ret = None;
+            let mut wasm_path = String::new();
+
+            for p in inner {
+                match p.as_rule() {
+                    Rule::wasm_param_list => {
+                        for param_pair in p.into_inner() {
+                            let mut param_inner = param_pair.into_inner();
+                            let param_name =
+                                param_inner.expect_next("param name")?.as_str().to_string();
+                            let param_type = parse_type(param_inner.expect_next("param type")?)?;
+                            params.push(varpulis_core::ast::Param {
+                                name: param_name,
+                                ty: param_type,
+                            });
+                        }
+                    }
+                    Rule::type_expr => {
+                        ret = Some(parse_type(p)?);
+                    }
+                    Rule::string => {
+                        let s = p.as_str();
+                        wasm_path = s[1..s.len() - 1].to_string();
+                    }
+                    _ => {}
+                }
+            }
+
+            Ok(Stmt::ImportWasmFn {
+                name,
+                params,
+                ret,
+                wasm_path,
+            })
+        }
+        _ => {
+            // Fallback: shouldn't happen with well-formed grammar
+            let path_pair = inner_pair;
+            let path = path_pair.as_str();
+            let path = path[1..path.len() - 1].to_string();
+            Ok(Stmt::Import { path, alias: None })
+        }
+    }
 }
 
 fn parse_if_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {

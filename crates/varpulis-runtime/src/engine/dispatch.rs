@@ -930,6 +930,16 @@ impl Engine {
                                     Some(all)
                                 }
                             }
+                            WindowType::BinnedSliding(w) => w.advance_watermark(wm),
+                            WindowType::PartitionedBinnedSliding(w) => {
+                                let parts = w.advance_watermark(wm);
+                                let all: Vec<_> = parts.into_iter().flat_map(|(_, e)| e).collect();
+                                if all.is_empty() {
+                                    None
+                                } else {
+                                    Some(all)
+                                }
+                            }
                             _ => None, // Count-based windows don't use watermarks
                         };
 

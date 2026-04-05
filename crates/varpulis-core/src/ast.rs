@@ -110,6 +110,18 @@ pub enum Stmt {
         /// Optional import alias.
         alias: Option<String>,
     },
+    /// Import a WASM function as a UDF.
+    /// Syntax: `import fn name(param: type, ...) -> return_type from "path.wasm"`
+    ImportWasmFn {
+        /// Function name (registered in UdfRegistry).
+        name: String,
+        /// Typed parameters.
+        params: Vec<Param>,
+        /// Return type (None defaults to Any).
+        ret: Option<Type>,
+        /// Path to the WASM module file.
+        wasm_path: String,
+    },
     /// Expression statement
     Expr(Expr),
     /// If statement

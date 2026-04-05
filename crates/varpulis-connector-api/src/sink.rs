@@ -74,6 +74,48 @@ pub trait Sink: Send + Sync {
 
     /// Close the sink
     async fn close(&self) -> Result<(), SinkError>;
+
+    // =========================================================================
+    // Two-Phase Commit (2PC) for exactly-once delivery
+    // =========================================================================
+    // These methods integrate sink delivery with the checkpoint lifecycle.
+    // Default implementations are no-ops, so existing sinks compile unchanged.
+    // Override these + `supports_exactly_once()` for exactly-once guarantees.
+
+    /// Whether this sink supports exactly-once 2PC semantics.
+    ///
+    /// When `true`, the checkpoint coordinator will call `begin_epoch`,
+    /// `prepare_commit`, `commit`, and `abort` at appropriate lifecycle points.
+    fn supports_exactly_once(&self) -> bool {
+        false
+    }
+
+    /// Begin a new epoch. Events sent after this call are part of the given
+    /// checkpoint epoch. For Kafka: `begin_transaction()`.
+    async fn begin_epoch(&self, _checkpoint_id: u64) -> Result<(), SinkError> {
+        Ok(())
+    }
+
+    /// Pre-commit: finalize buffered data for the current epoch but don't make
+    /// it visible to consumers. For Kafka: `flush()` (transaction still open).
+    /// For S3: upload remaining buffer as final part (MPU not yet completed).
+    async fn prepare_commit(&self, _checkpoint_id: u64) -> Result<(), SinkError> {
+        Ok(())
+    }
+
+    /// Commit: make pre-committed data visible. Called only after the checkpoint
+    /// is durably persisted. For Kafka: `commit_transaction()`.
+    /// For S3: `complete_multipart_upload()`.
+    async fn commit(&self, _checkpoint_id: u64) -> Result<(), SinkError> {
+        Ok(())
+    }
+
+    /// Abort: discard uncommitted data for the current epoch. Called during
+    /// recovery or when a checkpoint fails. For Kafka: `abort_transaction()`.
+    /// For S3: `abort_multipart_upload()`.
+    async fn abort(&self, _checkpoint_id: u64) -> Result<(), SinkError> {
+        Ok(())
+    }
 }
 
 /// Adapter: wraps a `SinkConnector` as a `Sink` for use in the sink registry.
@@ -139,5 +181,40 @@ impl Sink for SinkConnectorAdapter {
     async fn close(&self) -> Result<(), SinkError> {
         let inner = self.inner.lock().await;
         inner.close().await.map_err(SinkError::from)
+    }
+
+    fn supports_exactly_once(&self) -> bool {
+        // Check inner synchronously via try_lock — safe here since this is a
+        // config query, not a hot-path operation.
+        self.inner
+            .try_lock()
+            .map(|inner| inner.supports_exactly_once())
+            .unwrap_or(false)
+    }
+
+    async fn begin_epoch(&self, checkpoint_id: u64) -> Result<(), SinkError> {
+        let inner = self.inner.lock().await;
+        inner
+            .begin_epoch(checkpoint_id)
+            .await
+            .map_err(SinkError::from)
+    }
+
+    async fn prepare_commit(&self, checkpoint_id: u64) -> Result<(), SinkError> {
+        let inner = self.inner.lock().await;
+        inner
+            .prepare_commit(checkpoint_id)
+            .await
+            .map_err(SinkError::from)
+    }
+
+    async fn commit(&self, checkpoint_id: u64) -> Result<(), SinkError> {
+        let inner = self.inner.lock().await;
+        inner.commit(checkpoint_id).await.map_err(SinkError::from)
+    }
+
+    async fn abort(&self, checkpoint_id: u64) -> Result<(), SinkError> {
+        let inner = self.inner.lock().await;
+        inner.abort(checkpoint_id).await.map_err(SinkError::from)
     }
 }

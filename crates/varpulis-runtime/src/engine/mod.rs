@@ -123,6 +123,9 @@ pub struct Engine {
         Vec<std::sync::Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     /// Auto-checkpointing manager (None = checkpointing disabled)
     pub(super) checkpoint_manager: Option<crate::persistence::CheckpointManager>,
+    /// Async checkpoint manager for non-blocking persistence (Chandy-Lamport mode)
+    #[cfg(feature = "async-runtime")]
+    pub(super) async_checkpoint_manager: Option<crate::persistence::AsyncCheckpointManager>,
     /// Connector credentials store for secure profile resolution (async-runtime only)
     #[cfg(feature = "async-runtime")]
     pub(super) credentials_store: Option<Arc<connector::credentials::CredentialsStore>>,
@@ -228,6 +231,8 @@ impl Engine {
             topic_prefix: None,
             shared_hamlet_aggregators: Vec::new(),
             checkpoint_manager: None,
+            #[cfg(feature = "async-runtime")]
+            async_checkpoint_manager: None,
             credentials_store: None,
             dlq_path: None,
             dlq_config: crate::dead_letter::DlqConfig::default(),
@@ -615,6 +620,56 @@ impl Engine {
                         "Unresolved import '{}' (alias: {:?}) — imports must be resolved before engine.load()",
                         path, alias
                     );
+                }
+                #[cfg(feature = "wasm-udf")]
+                Stmt::ImportWasmFn {
+                    name,
+                    params,
+                    ret,
+                    wasm_path,
+                } => {
+                    use crate::udf::{Signature, TypeConstraint};
+
+                    let wasm_bytes = std::fs::read(wasm_path).map_err(|e| {
+                        error::EngineError::Compilation(format!(
+                            "Failed to read WASM module '{}': {e}",
+                            wasm_path
+                        ))
+                    })?;
+
+                    let input_types: Vec<TypeConstraint> = params
+                        .iter()
+                        .map(|p| TypeConstraint::Exact(p.ty.clone()))
+                        .collect();
+                    let return_type = ret.clone().unwrap_or(varpulis_core::Type::Any);
+                    let signature = Signature {
+                        input_types,
+                        return_type,
+                        variadic: None,
+                    };
+
+                    let udf = crate::wasm_udf::WasmScalarUDF::new(
+                        name,
+                        &wasm_bytes,
+                        signature,
+                        Some(1_000_000), // Default fuel limit
+                    )
+                    .map_err(|e| {
+                        error::EngineError::Compilation(format!(
+                            "Failed to load WASM UDF '{}': {e}",
+                            name
+                        ))
+                    })?;
+
+                    self.udf_registry.register_scalar(std::sync::Arc::new(udf));
+                    info!("Registered WASM UDF '{name}' from {wasm_path}");
+                }
+                #[cfg(not(feature = "wasm-udf"))]
+                Stmt::ImportWasmFn { name, .. } => {
+                    return Err(error::EngineError::Compilation(format!(
+                        "WASM UDF '{}' requires the 'wasm-udf' feature",
+                        name
+                    )));
                 }
                 Stmt::VarDecl {
                     mutable,
@@ -1015,6 +1070,46 @@ impl Engine {
             .map_err(error::EngineError::Pipeline)
     }
 
+    /// Call `prepare_commit` on all exactly-once sinks for the given checkpoint epoch.
+    #[cfg(feature = "async-runtime")]
+    pub async fn prepare_commit_sinks(&self, checkpoint_id: u64) {
+        for (key, sink) in self.sinks.cache() {
+            if sink.supports_exactly_once() {
+                if let Err(e) = sink.prepare_commit(checkpoint_id).await {
+                    tracing::error!("Sink '{key}' prepare_commit failed: {e}");
+                }
+            }
+        }
+    }
+
+    /// Call `commit` on all exactly-once sinks, then `begin_epoch` for the next epoch.
+    #[cfg(feature = "async-runtime")]
+    pub async fn commit_sinks(&self, checkpoint_id: u64) {
+        for (key, sink) in self.sinks.cache() {
+            if sink.supports_exactly_once() {
+                if let Err(e) = sink.commit(checkpoint_id).await {
+                    tracing::error!("Sink '{key}' commit failed: {e}");
+                }
+                // Begin the next epoch immediately after commit
+                if let Err(e) = sink.begin_epoch(checkpoint_id + 1).await {
+                    tracing::error!("Sink '{key}' begin_epoch failed: {e}");
+                }
+            }
+        }
+    }
+
+    /// Call `abort` on all exactly-once sinks (recovery path).
+    #[cfg(feature = "async-runtime")]
+    pub async fn abort_sinks(&self, checkpoint_id: u64) {
+        for (key, sink) in self.sinks.cache() {
+            if sink.supports_exactly_once() {
+                if let Err(e) = sink.abort(checkpoint_id).await {
+                    tracing::error!("Sink '{key}' abort failed: {e}");
+                }
+            }
+        }
+    }
+
     /// Inject a pre-built sink into the engine's registry (async-runtime only).
     #[cfg(feature = "async-runtime")]
     pub fn inject_sink(&mut self, key: &str, sink: Arc<dyn crate::sink::Sink>) {
@@ -1367,6 +1462,8 @@ impl Engine {
                             WindowType::PartitionedSession(w) => w.checkpoint(),
                             WindowType::PartitionedTumbling(w) => w.checkpoint(),
                             WindowType::PartitionedSliding(w) => w.checkpoint(),
+                            WindowType::BinnedSliding(w) => w.checkpoint(),
+                            WindowType::PartitionedBinnedSliding(w) => w.checkpoint(),
                         };
                         window_states.insert(name.clone(), cp);
                     }
@@ -1473,6 +1570,8 @@ impl Engine {
                             WindowType::PartitionedSession(w) => w.restore(wcp),
                             WindowType::PartitionedTumbling(w) => w.restore(wcp),
                             WindowType::PartitionedSliding(w) => w.restore(wcp),
+                            WindowType::BinnedSliding(w) => w.restore(wcp),
+                            WindowType::PartitionedBinnedSliding(w) => w.restore(wcp),
                         },
                         RuntimeOp::PartitionedWindow(pw) => {
                             for (key, pcp) in &wcp.partitions {
@@ -1613,6 +1712,57 @@ impl Engine {
     /// Returns true if auto-checkpointing is enabled.
     pub const fn has_checkpointing(&self) -> bool {
         self.checkpoint_manager.is_some()
+    }
+
+    /// Enable async checkpoint persistence for single-engine mode.
+    ///
+    /// After calling this, `force_checkpoint_async()` will offload serialization
+    /// and persistence to a background task, allowing the event loop to continue
+    /// processing events immediately after state capture.
+    #[cfg(feature = "async-runtime")]
+    pub fn enable_async_checkpoints(&mut self) {
+        if let Some(ref manager) = self.checkpoint_manager {
+            let async_mgr = crate::persistence::AsyncCheckpointManager::new(
+                crate::persistence::CheckpointManager::new(
+                    std::sync::Arc::clone(manager.store()),
+                    crate::persistence::CheckpointConfig::default(),
+                )
+                .expect("Failed to create async checkpoint manager"),
+            );
+            self.async_checkpoint_manager = Some(async_mgr);
+        }
+    }
+
+    /// Force a non-blocking checkpoint: capture state synchronously (fast),
+    /// then persist asynchronously in a background task.
+    ///
+    /// Returns a `oneshot::Receiver` that resolves when persistence is complete.
+    /// The caller can continue processing events immediately.
+    #[cfg(feature = "async-runtime")]
+    pub fn force_checkpoint_async(
+        &mut self,
+    ) -> Option<tokio::sync::oneshot::Receiver<Result<(), crate::persistence::StoreError>>> {
+        let async_mgr = self.async_checkpoint_manager.as_ref()?;
+
+        // Fast synchronous state capture
+        let engine_cp = self.create_checkpoint();
+        let events_processed = self.events_processed;
+
+        let mut context_states = std::collections::HashMap::new();
+        context_states.insert("main".to_string(), engine_cp);
+
+        let cp = crate::persistence::Checkpoint {
+            id: 0,
+            timestamp_ms: 0,
+            events_processed,
+            window_states: std::collections::HashMap::new(),
+            pattern_states: std::collections::HashMap::new(),
+            metadata: std::collections::HashMap::new(),
+            context_states,
+        };
+
+        // Offload persistence to background
+        Some(async_mgr.checkpoint_async(cp))
     }
 
     // =========================================================================
