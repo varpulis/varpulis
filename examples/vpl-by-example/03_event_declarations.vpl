@@ -1,0 +1,40 @@
+# VPL by Example: 03 — Event Declarations
+#
+# Event declarations define the schema of incoming events.
+# They specify field names and types:
+#   - str      String values
+#   - int      Integer numbers
+#   - float    Floating-point numbers
+#   - bool     Boolean (true/false)
+#   - timestamp  ISO 8601 timestamps
+#
+# Event declarations are optional for simple programs (Varpulis infers types),
+# but recommended for documentation and type checking.
+#
+# Run: varpulis simulate -p 03_event_declarations.vpl -e 03_event_declarations.evt -v -w 1
+
+event Trade:
+    symbol: str
+    price: float
+    quantity: int
+    side: str
+    ts: timestamp
+
+event Alert:
+    level: str
+    message: str
+    source: str
+
+# Use declared events in streams
+stream LargeTrades = Trade
+    .where(quantity > 100 and side == "buy")
+    .emit(
+        symbol: symbol,
+        price: price,
+        quantity: quantity,
+        total: price * quantity
+    )
+
+stream CriticalAlerts = Alert
+    .where(level == "critical")
+    .emit(source: source, message: message)

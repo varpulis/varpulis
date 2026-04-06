@@ -1,0 +1,26 @@
+# 23 — Forecasting: Predict account takeover
+# Note: forecasting requires warmup (50 completed patterns) before
+# predictions activate. With few events, the pattern still matches
+# but forecast_probability may be 0 until warmup completes.
+
+# Training data — repeat the pattern to warm up the PST
+BATCH 0
+Login { user_id: "user1", ip: "1.1.1.1" }
+BATCH 100
+PasswordChange { user_id: "user1" }
+BATCH 200
+Transaction { user_id: "user1", amount: 1000.0 }
+
+BATCH 1000
+Login { user_id: "user2", ip: "2.2.2.2" }
+BATCH 1100
+PasswordChange { user_id: "user2" }
+BATCH 1200
+Transaction { user_id: "user2", amount: 2000.0 }
+
+BATCH 2000
+Login { user_id: "user3", ip: "3.3.3.3" }
+BATCH 2100
+PasswordChange { user_id: "user3" }
+BATCH 2200
+Transaction { user_id: "user3", amount: 5000.0 }

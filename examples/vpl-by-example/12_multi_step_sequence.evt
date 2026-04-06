@@ -1,0 +1,20 @@
+# 12 — Multi-Step Sequence: Login -> PasswordChange -> Purchase
+# Expected:
+#   attacker1: Login -> PasswordChange -> Purchase(2000) → MATCH
+#   legit_user: Login -> Purchase(50) but no PasswordChange → NO MATCH
+
+BATCH 0
+Login { user_id: "attacker1", device: "unknown_phone" }
+
+BATCH 100
+PasswordChange { user_id: "attacker1" }
+
+BATCH 200
+Purchase { user_id: "attacker1", amount: 2000.0 }
+
+# Legitimate user — no password change, so no match
+BATCH 500
+Login { user_id: "legit_user", device: "home_laptop" }
+
+BATCH 600
+Purchase { user_id: "legit_user", amount: 50.0 }

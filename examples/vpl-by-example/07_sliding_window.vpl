@@ -1,0 +1,27 @@
+# VPL by Example: 07 — Sliding Window
+#
+# A sliding window overlaps with adjacent windows. It advances by a "slide"
+# interval while maintaining a larger "window" of data.
+#
+# Syntax: .window(<size>, sliding: <step>)
+#   - .window(10s, sliding: 5s)  → 10s window, advances every 5s
+#   - .window(1m, sliding: 15s)  → 1m window, advances every 15s
+#   - .window(20, sliding: 5)    → 20-event window, advances every 5 events
+#
+# Timeline (10s window, 5s slide):
+#   |---------- window 1 ----------|
+#                |---------- window 2 ----------|
+#   0s          5s                10s           15s
+#
+# Run: varpulis simulate -p 07_sliding_window.vpl -e 07_sliding_window.evt -v -w 1
+
+event SensorReading:
+    temperature: float
+
+stream SlidingAvg = SensorReading
+    .window(10s, sliding: 5s)
+    .aggregate(
+        avg_temp: avg(temperature),
+        readings: count()
+    )
+    .emit(avg_temp: avg_temp, readings: readings)

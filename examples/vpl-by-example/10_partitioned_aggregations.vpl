@@ -1,0 +1,38 @@
+# VPL by Example: 10 — Partitioned Aggregations
+#
+# .partition_by(field) groups events by a key before windowing.
+# Each partition gets its own independent window and aggregation state.
+#
+# Without partition_by: all events go into one window.
+# With partition_by: events are grouped, each group gets its own window.
+#
+# Syntax: .partition_by(<field_name>)
+#
+# Use cases:
+#   - Per-user statistics
+#   - Per-sensor aggregations
+#   - Per-symbol VWAP (volume-weighted average price)
+#
+# Run: varpulis simulate -p 10_partitioned_aggregations.vpl -e 10_partitioned_aggregations.evt -v -w 1
+
+event Trade:
+    symbol: str
+    price: float
+    quantity: int
+
+# VWAP per stock symbol: sum(price * quantity) / sum(quantity)
+stream VWAP = Trade
+    .partition_by(symbol)
+    .window(5)
+    .aggregate(
+        symbol: last(symbol),
+        vwap: sum(price * quantity) / sum(quantity),
+        total_volume: sum(quantity),
+        trade_count: count()
+    )
+    .emit(
+        symbol: symbol,
+        vwap: vwap,
+        volume: total_volume,
+        trades: trade_count
+    )

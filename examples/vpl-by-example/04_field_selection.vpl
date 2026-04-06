@@ -1,0 +1,46 @@
+# VPL by Example: 04 — Field Selection with .select() and .emit()
+#
+# .select() projects and transforms fields, creating a new event shape.
+# .emit() produces the final output event with named fields.
+#
+# Both support:
+#   - Field pass-through:   field_name
+#   - Renaming:             new_name: old_name
+#   - Computed fields:      new_name: expression
+#   - Arithmetic:           total: price * quantity
+#   - Conditional:          label: if expr then "a" else "b"
+#
+# Run: varpulis simulate -p 04_field_selection.vpl -e 04_field_selection.evt -v -w 1
+
+event Trade:
+    symbol: str
+    price: float
+    quantity: int
+    side: str
+
+# Pass-through and rename fields
+stream TradeBasics = Trade
+    .select(
+        ticker: symbol,
+        trade_price: price,
+        trade_qty: quantity
+    )
+
+# Computed fields with arithmetic
+stream TradeValues = Trade
+    .emit(
+        symbol: symbol,
+        total_value: price * quantity,
+        fee: price * quantity * 0.001,
+        side: side
+    )
+
+# Conditional expressions with if-then-else
+stream TradeSeverity = Trade
+    .emit(
+        symbol: symbol,
+        size: if quantity > 1000 then "large"
+              else if quantity > 100 then "medium"
+              else "small",
+        total: price * quantity
+    )

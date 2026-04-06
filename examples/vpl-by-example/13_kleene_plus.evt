@@ -1,0 +1,18 @@
+# 13 — Kleene Plus: SmallPurchase+ -> LargePurchase
+# Expected: card_testing alert for stolen_card (3 small then 1 large)
+
+BATCH 0
+SmallPurchase { card_id: "stolen_card", amount: 1.00, merchant: "gas_station" }
+
+BATCH 5000
+SmallPurchase { card_id: "stolen_card", amount: 2.50, merchant: "vending" }
+
+BATCH 10000
+SmallPurchase { card_id: "stolen_card", amount: 1.50, merchant: "parking" }
+
+BATCH 20000
+LargePurchase { card_id: "stolen_card", amount: 3500.00, merchant: "electronics" }
+
+# Legitimate card — only one small purchase, no large → no alert
+BATCH 30000
+SmallPurchase { card_id: "legit_card", amount: 5.00, merchant: "coffee_shop" }

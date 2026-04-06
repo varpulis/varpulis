@@ -1,0 +1,40 @@
+# VPL by Example: 18 — Match All (Capturing Multiple Events)
+#
+# "-> all EventType" captures ALL matching events between sequence steps,
+# not just the first one. This is the Kleene closure in arrow syntax.
+#
+# Syntax:
+#   -> all EventType where <cond> as alias
+#
+# Compiles to an NFA with a self-loop on the Kleene state.
+#
+# Kleene-final behavior: events accumulate silently until a terminator
+# event completes the pattern, then all captured events are available.
+#
+# Run: varpulis simulate -p 18_match_all.vpl -e 18_match_all.evt -v -w 1
+
+event TransactionOpen:
+    tx_id: str
+    customer: str
+
+event ProcessingStep:
+    tx_id: str
+    step_name: str
+    duration: float
+
+event TransactionClose:
+    tx_id: str
+    status: str
+
+# Capture ALL processing steps between open and close
+stream TransactionSummary = TransactionOpen as open
+    -> all ProcessingStep where tx_id == open.tx_id as steps
+    -> TransactionClose where tx_id == open.tx_id as close
+    .within(10m)
+    .emit(
+        tx_id: open.tx_id,
+        customer: open.customer,
+        final_status: close.status,
+        last_step: steps.step_name,
+        last_duration: steps.duration
+    )

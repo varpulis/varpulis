@@ -1,0 +1,41 @@
+# VPL by Example: 27 — Strictly Increasing (.increasing operator)
+#
+# Detect strictly rising values where each event must be greater than
+# the previous one. Use the `.increasing(field)` monotonic operator.
+#
+# Syntax:
+#   -> all EventType.increasing(field) as alias
+#
+# This is syntactic sugar for a self-referencing Kleene predicate:
+#   each new event must satisfy `field > previous_captured.field`
+#
+# Semantics:
+#   1. First Kleene event: no previous value, captured unconditionally
+#   2. Subsequent events: must have a strictly greater value
+#   3. When the predicate fails (next event isn't greater),
+#      the accumulated run emits and a new run starts
+#
+# Use cases:
+#   - Rising temperatures (overheating detection)
+#   - Escalating prices (bull run detection)
+#   - Increasing severity levels (alert escalation)
+#
+# Run: varpulis simulate -p 27_strictly_increasing.vpl -e 27_strictly_increasing.evt -v -w 1
+
+event TempReading:
+    sensor_id: str
+    temperature: int
+
+# Detect strictly rising temperatures, partitioned per sensor
+pattern StrictlyRising = TempReading as first
+    -> all TempReading.increasing(temperature) as rising
+    within 5m partition by sensor_id
+
+stream RisingTempAlert = StrictlyRising
+    .emit(
+        alert: "temperature_rising",
+        sensor: first.sensor_id,
+        baseline: first.temperature,
+        peak: rising.temperature,
+        steps: count(rising)
+    )

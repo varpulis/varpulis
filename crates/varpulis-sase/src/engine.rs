@@ -993,8 +993,7 @@ impl SaseEngine {
                         .predicate
                         .as_ref()
                         .is_some_and(|p| predicate_references_alias(p, a))
-                })
-            {
+                }) {
                 next_state
                     .event_type
                     .as_ref()

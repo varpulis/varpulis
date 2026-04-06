@@ -14,18 +14,17 @@
 ---
 
 ```python
-stream FraudAlert = Events
-    .where(type == "login") as e1
-    -> Events.where(type == "transfer") as e2
-    -> Events.where(type == "transfer") as e3
+stream FraudAlert = Login as login
+    -> all Transfer where user_id == login.user_id as txs
+    -> Logout where user_id == login.user_id
     .within(5m)
-    .where(e2.amount + e3.amount > 10000)
-    .forecast(confidence: 0.8, horizon: 2m)
-    .alert(webhook: "https://ops.example.com/fraud", message: "User {e1.user}: ${e2.amount + e3.amount}")
-    .emit(user: e1.user, total: e2.amount + e3.amount)
+    .trend_aggregate(total: sum_trends(txs.amount), transfers: count_events(txs))
+    .where(total > 10000)
+    .forecast(confidence: 0.7, horizon: 2m, warmup: 50)
+    .emit(user: login.user_id, total: total, transfers: transfers)
 ```
 
-Login → two transfers over $10K within 5 minutes. `.forecast()` fires **before** the pattern completes. No other open-source CEP engine does this.
+Login → *all* transfers → logout within 5 minutes. Kleene closure captures every transfer; Hamlet sums them in O(n). Only fires when total exceeds $10K. `.forecast()` predicts the pattern **before** it completes. No other open-source CEP engine does this.
 
 ## Quick Start
 

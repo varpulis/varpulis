@@ -1,0 +1,38 @@
+# VPL by Example: 14 — Negation (Event Absence)
+#
+# .not() detects the ABSENCE of an expected event within a time window.
+# This is critical for timeout detection and compliance monitoring.
+#
+# Syntax:
+#   .not(EventType where <condition>)
+#
+# The .not() is applied after a sequence with .within() — it checks that
+# the specified event did NOT occur during the window.
+#
+# Use cases:
+#   - Order placed but never paid
+#   - Login without subsequent logout (session leak)
+#   - Alert raised but never acknowledged
+#
+# Run: varpulis simulate -p 14_negation.vpl -e 14_negation.evt -v -w 1
+
+event Order:
+    id: int
+    customer: str
+    amount: float
+
+event Payment:
+    order_id: int
+    amount: float
+
+# Detect orders that are NOT followed by payment within 5 minutes
+stream UnpaidOrders = Order as order
+    -> Payment where order_id == order.id
+    .within(5m)
+    .not(Payment where order_id == order.id)
+    .emit(
+        alert: "unpaid_order",
+        order_id: order.id,
+        customer: order.customer,
+        amount: order.amount
+    )

@@ -1,0 +1,82 @@
+# VPL by Example: 26 — Connectors (Source and Sink Configuration)
+#
+# Connectors define external data sources and destinations.
+# This example shows connector syntax — it requires external services
+# to run, so it is for reference only (no .evt file).
+#
+# Connector declaration:
+#   connector Name = type(param: value, ...)
+#
+# Supported types:
+#   mqtt       MQTT broker (host, port, client_id)
+#   kafka      Apache Kafka (brokers, group_id)
+#   nats       NATS messaging (host, port)
+#   http       HTTP/REST API (base_url)
+#   websocket  WebSocket feed (url)
+#   file       File input (path, format)
+#
+# Source usage:
+#   EventType.from(ConnectorName, topic: "topic/path")
+#
+# Sink usage (inline):
+#   .to(ConnectorName, topic: "output/topic")
+
+# =============================================================================
+# MQTT Connector — IoT sensors
+# =============================================================================
+
+connector Sensors = mqtt(
+    host: "localhost",
+    port: 1883,
+    client_id: "varpulis-iot"
+)
+
+event TemperatureReading:
+    sensor_id: str
+    value: float
+    ts: timestamp
+
+# Read from MQTT topic with wildcard
+stream SensorData = TemperatureReading
+    .from(Sensors, topic: "sensors/temperature/#")
+
+# =============================================================================
+# Kafka Connector — Event streaming
+# =============================================================================
+
+connector EventBus = kafka(
+    brokers: ["kafka-1:9092", "kafka-2:9092"],
+    group_id: "varpulis-processor"
+)
+
+event UserAction:
+    user_id: str
+    action: str
+    ts: timestamp
+
+# Read from Kafka topic
+stream UserActions = UserAction
+    .from(EventBus, topic: "user.actions")
+
+# =============================================================================
+# HTTP Connector — Webhook output
+# =============================================================================
+
+connector AlertWebhook = http(
+    base_url: "https://alerts.example.com/api"
+)
+
+# Process and output to webhook
+stream HighTempAlerts = SensorData
+    .where(value > 50)
+    .emit(sensor: sensor_id, temperature: value, alert: "high_temp")
+    .to(AlertWebhook, path: "/alerts")
+
+# =============================================================================
+# Kafka output — write results back to Kafka
+# =============================================================================
+
+stream ProcessedActions = UserActions
+    .where(action == "purchase")
+    .emit(user: user_id, action: action)
+    .to(EventBus, topic: "processed.purchases")

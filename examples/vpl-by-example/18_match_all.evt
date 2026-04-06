@@ -1,0 +1,16 @@
+# 18 — Match All: TransactionOpen -> ProcessingStep+ -> TransactionClose
+# Expected: TX-001 with 3 processing steps captured
+
+TransactionOpen { tx_id: "TX-001", customer: "Acme Corp" }
+
+BATCH 100
+ProcessingStep { tx_id: "TX-001", step_name: "validation", duration: 120.0 }
+
+BATCH 200
+ProcessingStep { tx_id: "TX-001", step_name: "enrichment", duration: 340.0 }
+
+BATCH 300
+ProcessingStep { tx_id: "TX-001", step_name: "settlement", duration: 210.0 }
+
+BATCH 400
+TransactionClose { tx_id: "TX-001", status: "completed" }

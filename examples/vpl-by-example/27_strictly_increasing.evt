@@ -1,0 +1,28 @@
+# 27 — Strictly Increasing: Rising temperatures then drop
+#
+# Sensor A: 20 → 25 → 30 → 35 → 10 (drop below baseline 20) → MATCH
+#   baseline=20, peak=35, drop_to=10, steps=3 (25, 30, 35)
+#
+# Sensor B: 50 → 45 (not rising) → NO MATCH
+
+BATCH 0
+TempReading { sensor_id: "A", temperature: 20 }
+
+BATCH 1000
+TempReading { sensor_id: "A", temperature: 25 }
+
+BATCH 2000
+TempReading { sensor_id: "A", temperature: 30 }
+
+BATCH 3000
+TempReading { sensor_id: "A", temperature: 35 }
+
+BATCH 4000
+TempReading { sensor_id: "A", temperature: 10 }
+
+# Sensor B — temperature falls immediately, no rising trend
+BATCH 10000
+TempReading { sensor_id: "B", temperature: 50 }
+
+BATCH 11000
+TempReading { sensor_id: "B", temperature: 45 }

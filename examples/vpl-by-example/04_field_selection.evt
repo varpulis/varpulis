@@ -1,0 +1,10 @@
+# 04 — Field Selection
+# Expected:
+#   TradeBasics: all 4 trades with renamed fields
+#   TradeValues: all 4 with computed total_value and fee
+#   TradeSeverity: small (10), medium (200), medium (500), large (5000)
+
+Trade { symbol: "AAPL", price: 185.50, quantity: 10, side: "buy" }
+Trade { symbol: "GOOG", price: 140.25, quantity: 200, side: "sell" }
+Trade { symbol: "TSLA", price: 245.00, quantity: 500, side: "buy" }
+Trade { symbol: "AMZN", price: 178.30, quantity: 5000, side: "sell" }

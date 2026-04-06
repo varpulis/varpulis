@@ -1,0 +1,14 @@
+# 10 — Partitioned Aggregations (by symbol, 5-event window)
+# AAPL partition: 5 trades → vwap computed per AAPL
+# GOOG partition: 5 trades → vwap computed per GOOG
+
+Trade { symbol: "AAPL", price: 185.00, quantity: 100 }
+Trade { symbol: "GOOG", price: 140.00, quantity: 200 }
+Trade { symbol: "AAPL", price: 186.00, quantity: 150 }
+Trade { symbol: "GOOG", price: 141.00, quantity: 100 }
+Trade { symbol: "AAPL", price: 184.50, quantity: 200 }
+Trade { symbol: "GOOG", price: 139.50, quantity: 300 }
+Trade { symbol: "AAPL", price: 187.00, quantity: 50 }
+Trade { symbol: "GOOG", price: 142.00, quantity: 150 }
+Trade { symbol: "AAPL", price: 185.50, quantity: 300 }
+Trade { symbol: "GOOG", price: 140.50, quantity: 250 }

@@ -1,0 +1,18 @@
+# VPL by Example: 06 — Count-Based Window
+#
+# A count window collects a fixed number of events before processing.
+# Unlike time windows, it triggers based on event count, not elapsed time.
+#
+# Syntax: .window(<integer>)
+#   - .window(3) = process every 3 events
+#   - .window(100) = process every 100 events
+#
+# Run: varpulis simulate -p 06_count_window.vpl -e 06_count_window.evt -v -w 1
+
+event SensorReading:
+    temperature: float
+
+stream BatchAverage = SensorReading
+    .window(3)
+    .aggregate(avg_temp: avg(temperature), count: count())
+    .emit(avg_temp: avg_temp, count: count)

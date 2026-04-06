@@ -1,0 +1,22 @@
+# 17 — Reusable Patterns
+# Expected:
+#   Session pattern: alice Login -> Logout → MATCH
+#   FailedBurst: bob Login -> 3 failed transactions → MATCH
+
+BATCH 0
+Login { user_id: "alice", device: "laptop" }
+
+BATCH 1000
+Login { user_id: "bob", device: "phone" }
+
+BATCH 2000
+Transaction { user_id: "bob", amount: 100.0, status: "failed" }
+
+BATCH 3000
+Transaction { user_id: "bob", amount: 200.0, status: "failed" }
+
+BATCH 4000
+Transaction { user_id: "bob", amount: 50.0, status: "failed" }
+
+BATCH 5000
+Logout { user_id: "alice" }

@@ -1,0 +1,19 @@
+# 15 — Temporal Constraints: Impossible travel within 1h
+# Expected:
+#   traveler1: US -> Nigeria in 45 minutes → MATCH
+#   slow_traveler: US -> Japan in 2 hours → NO MATCH (exceeds 1h)
+
+BATCH 0
+Login { user_id: "traveler1", country: "US" }
+
+# 45 minutes later (2,700,000 ms)
+BATCH 2700000
+Login { user_id: "traveler1", country: "NG" }
+
+# Different user — 2 hour gap (exceeds within 1h)
+BATCH 5000000
+Login { user_id: "slow_traveler", country: "US" }
+
+# 2 hours later (7,200,000 ms from start = 2,200,000 ms gap)
+BATCH 12200000
+Login { user_id: "slow_traveler", country: "JP" }

@@ -1,0 +1,18 @@
+# 29 — SEQ vs Arrow: Both should produce identical results
+# Expected: both TakeoverViaSEQ and TakeoverViaArrow match attacker1
+
+BATCH 0
+Login { user_id: "attacker1", ip: "1.2.3.4" }
+
+BATCH 1000
+PasswordChange { user_id: "attacker1" }
+
+BATCH 2000
+Purchase { user_id: "attacker1", amount: 3000.0 }
+
+# Legitimate user — no password change, so neither pattern matches
+BATCH 5000
+Login { user_id: "legit_user", ip: "10.0.0.1" }
+
+BATCH 6000
+Purchase { user_id: "legit_user", amount: 50.0 }

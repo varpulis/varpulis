@@ -1,0 +1,11 @@
+# 07 — Sliding Window (10s window, 5s slide)
+# Window [0s-10s]: 20, 22, 25, 30 → avg 24.25
+# Window [5s-15s]: 25, 30, 18 → avg 24.33
+# Window [10s-20s]: 18, 35 → avg 26.5
+
+@0s SensorReading { temperature: 20.0 }
+@3s SensorReading { temperature: 22.0 }
+@5s SensorReading { temperature: 25.0 }
+@8s SensorReading { temperature: 30.0 }
+@12s SensorReading { temperature: 18.0 }
+@16s SensorReading { temperature: 35.0 }

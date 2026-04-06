@@ -1,0 +1,16 @@
+# 24 — Trend Aggregation: Batch processing pipeline
+# Expected: BATCH-001 with 3 steps, various trend statistics
+
+BatchStart { batch_id: "BATCH-001", source: "etl_pipeline" }
+
+BATCH 100
+BatchStep { batch_id: "BATCH-001", step: "extract", duration: 1200.0, errors: 0 }
+
+BATCH 200
+BatchStep { batch_id: "BATCH-001", step: "transform", duration: 3400.0, errors: 2 }
+
+BATCH 300
+BatchStep { batch_id: "BATCH-001", step: "load", duration: 800.0, errors: 0 }
+
+BATCH 400
+BatchEnd { batch_id: "BATCH-001", status: "success" }

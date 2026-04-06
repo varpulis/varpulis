@@ -1,0 +1,37 @@
+# VPL by Example: 12 — Multi-Step Sequence (A -> B -> C)
+#
+# Chains of -> operators match longer event sequences.
+# Each step can reference any earlier alias for correlation.
+#
+# Syntax:
+#   stream Name = EventA as a
+#       -> EventB where <condition referencing a> as b
+#       -> EventC where <condition referencing a or b> as c
+#       .emit(...)
+#
+# The SASE+ engine efficiently tracks all partial matches concurrently.
+# A 4-step sequence (A -> B -> C -> D) works the same way.
+#
+# Run: varpulis simulate -p 12_multi_step_sequence.vpl -e 12_multi_step_sequence.evt -v -w 1
+
+event Login:
+    user_id: str
+    device: str
+
+event PasswordChange:
+    user_id: str
+
+event Purchase:
+    user_id: str
+    amount: float
+
+# Three-step fraud pattern: Login -> PasswordChange -> Large Purchase
+stream AccountTakeover = Login as login
+    -> PasswordChange where user_id == login.user_id as pwd
+    -> Purchase where user_id == login.user_id and amount > 500 as purchase
+    .emit(
+        alert: "account_takeover",
+        user: login.user_id,
+        device: login.device,
+        amount: purchase.amount
+    )

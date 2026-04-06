@@ -1,0 +1,34 @@
+# VPL by Example: 25 — Watermarks
+#
+# .watermark() handles out-of-order events by tracking event time progress.
+# Events arriving "late" (before the watermark) are still processed if
+# within the tolerance.
+#
+# Syntax:
+#   .watermark(out_of_order: <duration>)
+#
+# Parameters:
+#   out_of_order  Maximum allowed lateness for events
+#
+# Without watermarks, late events may be dropped or assigned to wrong windows.
+# With watermarks, the engine waits for the tolerance period before closing
+# a window, allowing late events to be included.
+#
+# Use cases:
+#   - Network-delivered sensor data with variable latency
+#   - Distributed systems with clock skew
+#   - Mobile events with intermittent connectivity
+#
+# Run: varpulis simulate -p 25_watermarks.vpl -e 25_watermarks.evt -v -w 1
+
+event SensorEvent:
+    value: float
+
+stream WatermarkedSensor = SensorEvent
+    .watermark(out_of_order: 5s)
+    .window(10s)
+    .aggregate(
+        readings: count(),
+        avg_value: avg(value)
+    )
+    .emit(readings: readings, avg_value: avg_value)

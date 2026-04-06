@@ -13,6 +13,7 @@ use crate::clock::Timestamp;
 use crate::ExprEvaluator;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) enum RunAdvanceResult {
     Continue,
     Complete(MatchResult),

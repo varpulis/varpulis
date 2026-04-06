@@ -1,0 +1,39 @@
+# VPL by Example: 22 — Conditional Expressions
+#
+# VPL supports inline conditional expressions in .emit() and .select().
+#
+# Syntax:
+#   if <condition> then <value_true> else <value_false>
+#
+# Chained conditions:
+#   if <cond1> then <val1>
+#   else if <cond2> then <val2>
+#   else <val_default>
+#
+# Conditions can use: ==, !=, <, >, <=, >=, and, or, not
+#
+# Run: varpulis simulate -p 22_conditional_expressions.vpl -e 22_conditional_expressions.evt -v -w 1
+
+# Event declaration
+event ServerMetric:
+    host: str
+    cpu: float
+    memory: float
+    disk: float
+
+stream ServerAlerts = ServerMetric
+    .where(cpu > 80 or memory > 90 or disk > 95)
+    .emit(
+        host: host,
+        # Classify severity based on thresholds
+        severity: if cpu > 95 or memory > 98 then "critical"
+                  else if cpu > 90 or memory > 95 then "high"
+                  else "warning",
+        # Identify the primary issue
+        issue: if cpu > 80 then "high_cpu"
+               else if memory > 90 then "high_memory"
+               else "high_disk",
+        cpu: cpu,
+        memory: memory,
+        disk: disk
+    )

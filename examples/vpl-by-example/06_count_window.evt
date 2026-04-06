@@ -1,0 +1,10 @@
+# 06 — Count-Based Window (every 3 events)
+# Batch 1: 10, 20, 30 → avg 20.0
+# Batch 2: 40, 50, 60 → avg 50.0
+
+SensorReading { temperature: 10 }
+SensorReading { temperature: 20 }
+SensorReading { temperature: 30 }
+SensorReading { temperature: 40 }
+SensorReading { temperature: 50 }
+SensorReading { temperature: 60 }

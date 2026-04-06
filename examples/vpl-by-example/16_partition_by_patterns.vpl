@@ -1,0 +1,33 @@
+# VPL by Example: 16 — Partition By in Patterns
+#
+# .partition_by(field) creates independent pattern instances per key.
+# Each partition tracks its own sequence matches independently.
+#
+# Without partition_by: one global pattern tracker
+# With partition_by: one pattern tracker per unique key value
+#
+# This is critical for multi-tenant or multi-device scenarios where
+# patterns should be isolated (e.g., per user, per sensor, per account).
+#
+# Run: varpulis simulate -p 16_partition_by_patterns.vpl -e 16_partition_by_patterns.evt -v -w 1
+
+# Event declarations
+event FailedLogin:
+    user_id: str
+    ip: str
+
+event SuccessLogin:
+    user_id: str
+    ip: str
+
+# Brute force: 3+ failed logins then success, per user
+stream BruteForce = FailedLogin as first
+    -> all FailedLogin where user_id == first.user_id as fails
+    -> SuccessLogin where user_id == first.user_id as success
+    .within(10m)
+    .partition_by(user_id)
+    .emit(
+        alert: "brute_force",
+        user: first.user_id,
+        success_ip: success.ip
+    )

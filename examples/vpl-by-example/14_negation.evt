@@ -1,0 +1,14 @@
+# 14 — Negation: Order without Payment
+# Expected:
+#   Order 2 (Bob, 200) → unpaid (no Payment with order_id=2)
+#   Order 1 (Alice, 100) → paid at 50ms, so NOT flagged
+
+Order { id: 1, customer: "Alice", amount: 100.0 }
+
+BATCH 50
+Payment { order_id: 1, amount: 100.0 }
+
+BATCH 100
+Order { id: 2, customer: "Bob", amount: 200.0 }
+
+# No payment for order 2 within the window

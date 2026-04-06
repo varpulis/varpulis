@@ -1,0 +1,51 @@
+# VPL by Example: 23 — Predictive Forecasting
+#
+# .forecast() uses Prediction Suffix Trees (PST) to predict whether
+# a partial pattern match will complete. This is unique to Varpulis.
+#
+# Syntax:
+#   .forecast(confidence: <float>, horizon: <duration>, warmup: <int>)
+#
+# Parameters:
+#   confidence  Minimum confidence threshold (0.0 to 1.0)
+#   horizon     How far ahead to predict
+#   warmup      Number of completed patterns needed before predictions start
+#
+# Output fields added by .forecast():
+#   forecast_probability  Likelihood the pattern will complete (0.0 to 1.0)
+#   forecast_confidence   Calibrated confidence of the prediction
+#   forecast_time         Estimated time to pattern completion
+#
+# Use cases:
+#   - Proactive fraud alerts before damage occurs
+#   - Predictive maintenance before equipment failure
+#   - Early warning for security kill chains
+#
+# Run: varpulis simulate -p 23_forecasting.vpl -e 23_forecasting.evt -v -w 1
+
+event Login:
+    user_id: str
+    ip: str
+
+event PasswordChange:
+    user_id: str
+
+event Transaction:
+    user_id: str
+    amount: float
+
+# Predict account takeover before the final transaction
+stream PredictedTakeover = Login as login
+    -> PasswordChange where user_id == login.user_id as pwd
+    -> Transaction where user_id == login.user_id and amount > 500 as tx
+    .within(30m)
+    .forecast(confidence: 0.5, horizon: 15m, warmup: 50)
+    .where(forecast_probability > 0.6)
+    .emit(
+        alert: "PREDICTED_TAKEOVER",
+        user: login.user_id,
+        ip: login.ip,
+        amount: tx.amount,
+        probability: forecast_probability,
+        severity: if forecast_probability > 0.9 then "CRITICAL" else "HIGH"
+    )

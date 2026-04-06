@@ -1,0 +1,55 @@
+# VPL by Example: 19 — Stream Joins
+#
+# join() correlates events from two or more streams by a shared key.
+#
+# Syntax:
+#   stream Result = join(StreamA, StreamB)
+#       .on(StreamA.key == StreamB.key)
+#       .window(<duration>)
+#       .select(field1: StreamA.field, field2: StreamB.field)
+#
+# The join waits for matching events from both streams within the window.
+# When a match is found on the join key, the combined event is emitted.
+#
+# Use cases:
+#   - Correlate sensor readings from different sources
+#   - Enrich events with reference data
+#   - Combine metrics from different systems
+#
+# Run: varpulis simulate -p 19_join.vpl -e 19_join.evt -v -w 1
+
+event TemperatureReading:
+    zone: str
+    value: float
+
+event HumidityReading:
+    zone: str
+    value: float
+
+# First, create filtered streams for each sensor type
+stream TempReadings = TemperatureReading
+    .partition_by(zone)
+    .window(5s)
+    .aggregate(
+        zone: last(zone),
+        avg_temp: avg(value)
+    )
+
+stream HumidReadings = HumidityReading
+    .partition_by(zone)
+    .window(5s)
+    .aggregate(
+        zone: last(zone),
+        avg_humidity: avg(value)
+    )
+
+# Join temperature and humidity by zone
+stream ComfortIndex = join(TempReadings, HumidReadings)
+    .on(TempReadings.zone == HumidReadings.zone)
+    .window(1m)
+    .select(
+        zone: TempReadings.zone,
+        temperature: TempReadings.avg_temp,
+        humidity: HumidReadings.avg_humidity,
+        comfort: 100 - abs(TempReadings.avg_temp - 22) * 5
+    )

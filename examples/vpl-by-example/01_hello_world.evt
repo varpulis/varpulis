@@ -1,0 +1,6 @@
+# 01 — Hello World: Three sensor readings, two above threshold
+# Expected output: 2 events (S1 at 105, S3 at 200)
+
+SensorReading { sensor_id: "S1", temperature: 105 }
+SensorReading { sensor_id: "S2", temperature: 50 }
+SensorReading { sensor_id: "S3", temperature: 200 }

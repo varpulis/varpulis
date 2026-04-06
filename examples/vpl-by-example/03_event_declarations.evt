@@ -1,0 +1,12 @@
+# 03 — Event Declarations
+# Expected:
+#   LargeTrades: AAPL buy 200 shares, TSLA buy 500 shares
+#   CriticalAlerts: "Database connection lost"
+
+Trade { symbol: "AAPL", price: 185.50, quantity: 200, side: "buy" }
+Trade { symbol: "GOOG", price: 140.25, quantity: 50, side: "sell" }
+Trade { symbol: "TSLA", price: 245.00, quantity: 500, side: "buy" }
+Trade { symbol: "MSFT", price: 420.75, quantity: 10, side: "buy" }
+Alert { level: "warning", message: "High CPU usage", source: "web-01" }
+Alert { level: "critical", message: "Database connection lost", source: "db-primary" }
+Alert { level: "info", message: "Deployment complete", source: "ci-runner" }

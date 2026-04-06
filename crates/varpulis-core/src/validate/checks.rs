@@ -658,6 +658,12 @@ fn check_stream_ops(
                 }
                 seen_aggregate = true;
                 check_aggregate_items(v, items, op_span);
+                // Aggregate output fields become available to downstream ops
+                for item in items {
+                    if !bare_fields.contains(&item.alias) {
+                        bare_fields.push(item.alias.clone());
+                    }
+                }
             }
             StreamOp::Window(_) => {
                 if seen_window {
@@ -866,6 +872,15 @@ fn check_stream_ops(
                 }
             }
 
+            StreamOp::TrendAggregate(items) => {
+                // Trend aggregate output fields become available to downstream ops
+                for item in items {
+                    if !bare_fields.contains(&item.alias) {
+                        bare_fields.push(item.alias.clone());
+                    }
+                }
+            }
+
             // --- Operations that need no extra validation ---
             StreamOp::Tap(_)
             | StreamOp::Print(_)
@@ -873,7 +888,6 @@ fn check_stream_ops(
             | StreamOp::Pattern(_)
             | StreamOp::Process(_)
             | StreamOp::On(_)
-            | StreamOp::TrendAggregate(_)
             | StreamOp::Score(_)
             | StreamOp::Forecast(_) => {}
         }

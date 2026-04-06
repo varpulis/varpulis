@@ -1,0 +1,59 @@
+# VPL by Example: 17 — Reusable Pattern Declarations
+#
+# Named pattern declarations let you define reusable SASE+ patterns
+# that multiple streams can reference. Patterns use arrow (`->`) syntax,
+# the same syntax as stream expressions.
+#
+# Syntax:
+#   pattern Name = A as a -> B where <cond> as b
+#       within <duration> partition by <field>
+#
+#   pattern Name = A -> all B as bs -> C    # Kleene+ with `all`
+#   pattern Name = A.increasing(field)+      # Monotonic operators
+#
+# Note: SEQ() is deprecated but still parses for backward compatibility.
+# Prefer the arrow syntax above for new code.
+#
+# For negation (absence detection), use .not() on streams instead
+# (see example 14_negation.vpl).
+#
+# Patterns are compiled to NFAs at startup and shared across streams.
+# A pattern can be referenced by multiple streams.
+#
+# Run: varpulis simulate -p 17_reusable_patterns.vpl -e 17_reusable_patterns.evt -v -w 1
+
+event Login:
+    user_id: str
+    device: str
+
+event Logout:
+    user_id: str
+
+event Transaction:
+    user_id: str
+    amount: float
+    status: str
+
+# Pattern: Login followed by Logout (simple session)
+pattern Session = Login as login
+    -> Logout where user_id == login.user_id as logout
+    within 24h partition by user_id
+
+# Pattern: Login then ALL failed transactions (Kleene+ via `all`)
+pattern FailedBurst = Login as login
+    -> all Transaction where user_id == login.user_id and status == "failed" as fails
+    within 10m partition by user_id
+
+# Use patterns in streams
+stream SessionCompleted = Session
+    .emit(
+        event_type: "session_complete",
+        user: login.user_id
+    )
+
+stream FailedTransactionBurst = FailedBurst
+    .emit(
+        event_type: "failed_burst",
+        user: login.user_id,
+        failures: count(fails)
+    )

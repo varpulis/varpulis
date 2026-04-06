@@ -1,0 +1,52 @@
+# VPL by Example: 21 — User-Defined Functions
+#
+# VPL supports user-defined functions for reusable logic.
+#
+# Syntax:
+#   fn name(param1: type, param2: type) -> return_type:
+#       expression
+#
+# Functions can contain:
+#   - Arithmetic and comparisons
+#   - if-then-else expressions
+#   - let bindings for intermediate values
+#   - Other function calls
+#
+# Functions are pure (no side effects) and can be used in
+# .where(), .emit(), .select(), and .aggregate() expressions.
+#
+# Run: varpulis simulate -p 21_functions.vpl -e 21_functions.evt -v -w 1
+
+# Simple calculation
+fn calculate_fee(amount: float) -> float:
+    amount * 0.025
+
+# Boolean check
+fn is_large_order(amount: float) -> bool:
+    amount >= 1000.0
+
+# Conditional logic with if-then-else
+fn risk_level(amount: float, country: str) -> str:
+    if amount > 5000 then "high"
+    else if amount > 1000 then "medium"
+    else "low"
+
+# Function with let binding
+fn net_amount(gross: float, tax_rate: float) -> float:
+    let tax = gross * tax_rate
+    gross - tax
+
+event Order:
+    id: str
+    amount: float
+    country: str
+
+stream ProcessedOrders = Order
+    .emit(
+        id: id,
+        amount: amount,
+        fee: calculate_fee(amount),
+        net: net_amount(amount, 0.1),
+        risk: risk_level(amount, country),
+        is_large: is_large_order(amount)
+    )

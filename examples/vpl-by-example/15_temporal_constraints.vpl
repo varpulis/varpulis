@@ -1,0 +1,30 @@
+# VPL by Example: 15 — Temporal Constraints (.within)
+#
+# .within(duration) sets a maximum time window for a sequence to complete.
+# If the full sequence doesn't match within the duration, the partial
+# match is discarded.
+#
+# Syntax: .within(<duration>)
+#   Duration units: ms, s, m, h, d
+#
+# .within() applies to the entire sequence — from the first event (A)
+# to the last required event. Events arriving after the window expires
+# will not complete the match.
+#
+# Run: varpulis simulate -p 15_temporal_constraints.vpl -e 15_temporal_constraints.evt -v -w 1
+
+# Event declaration is needed for the simulate command
+event Login:
+    user_id: str
+    country: str
+
+# Impossible travel: same user, different countries, within 1 hour
+stream ImpossibleTravel = Login as login1
+    -> Login where user_id == login1.user_id and country != login1.country as login2
+    .within(1h)
+    .emit(
+        alert: "impossible_travel",
+        user: login1.user_id,
+        from_country: login1.country,
+        to_country: login2.country
+    )

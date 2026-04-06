@@ -1,0 +1,36 @@
+# VPL by Example: 28 — Strictly Decreasing (.decreasing operator)
+#
+# Detect strictly falling values where each event must be less than
+# the previous one. Use the `.decreasing(field)` monotonic operator.
+#
+# Syntax:
+#   -> all EventType.decreasing(field) as alias
+#
+# This is syntactic sugar for a self-referencing Kleene predicate:
+#   each new event must satisfy `field < previous_captured.field`
+#
+# Use cases:
+#   - Battery draining rapidly
+#   - Stock price crash detection
+#   - Cooling system temperature dropping
+#   - Resource depletion monitoring
+#
+# Run: varpulis simulate -p 28_strictly_decreasing.vpl -e 28_strictly_decreasing.evt -v -w 1
+
+event PressureReading:
+    sensor_id: str
+    pressure: float
+
+# Detect strictly falling pressure (possible leak)
+pattern PressureDrop = PressureReading as first
+    -> all PressureReading.decreasing(pressure) as falling
+    within 10m partition by sensor_id
+
+stream PressureAlert = PressureDrop
+    .emit(
+        alert: "pressure_dropping",
+        sensor: first.sensor_id,
+        initial: first.pressure,
+        current: falling.pressure,
+        readings: count(falling)
+    )

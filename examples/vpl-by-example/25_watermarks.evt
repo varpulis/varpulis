@@ -1,0 +1,9 @@
+# 25 — Watermarks: Out-of-order event handling with 5s tolerance
+# Events arrive slightly out of order but within tolerance
+
+@0s SensorEvent { value: 10.0 }
+@3s SensorEvent { value: 20.0 }
+@1s SensorEvent { value: 15.0 }
+@5s SensorEvent { value: 25.0 }
+@4s SensorEvent { value: 22.0 }
+@8s SensorEvent { value: 30.0 }

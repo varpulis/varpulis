@@ -1,0 +1,17 @@
+# 11 — Simple Sequence: Order -> Payment
+# Expected matches:
+#   Order 1 (Alice) matched by Payment at 50ms
+#   Order 3 (Charlie) matched by Payment at 150ms
+#   Order 2 (Bob) has no matching payment → no output
+
+Order { id: 1, customer: "Alice", amount: 150.0 }
+
+BATCH 50
+Payment { order_id: 1, amount: 150.0, method: "card" }
+
+BATCH 100
+Order { id: 2, customer: "Bob", amount: 75.0 }
+
+BATCH 150
+Order { id: 3, customer: "Charlie", amount: 300.0 }
+Payment { order_id: 3, amount: 300.0, method: "wire" }

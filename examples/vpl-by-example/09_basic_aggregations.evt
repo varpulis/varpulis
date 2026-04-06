@@ -1,0 +1,8 @@
+# 09 — Basic Aggregations (5-event window)
+# Window 1: 5 trades → count=5, sum(qty)=860, avg(price)=193.96
+
+Trade { symbol: "AAPL", price: 185.50, quantity: 100 }
+Trade { symbol: "GOOG", price: 140.25, quantity: 50 }
+Trade { symbol: "TSLA", price: 245.00, quantity: 200 }
+Trade { symbol: "MSFT", price: 420.75, quantity: 10 }
+Trade { symbol: "AMZN", price: 178.30, quantity: 500 }

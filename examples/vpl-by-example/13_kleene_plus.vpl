@@ -1,0 +1,43 @@
+# VPL by Example: 13 — Kleene Plus (One or More)
+#
+# Kleene+ captures one or more matching events using the `all` keyword:
+#
+#   -> all EventType where <condition> as alias
+#
+# Works the same in stream expressions and named patterns.
+#
+# Kleene-final behavior: matched events accumulate silently.
+# The pattern emits only when a non-matching event arrives (the "break")
+# or when a terminator event completes the sequence.
+#
+# For monotonic patterns (each event > or < previous), use the
+# .increasing() / .decreasing() operators (see examples 27 and 28).
+#
+# Common use cases:
+#   - Card testing: many small purchases before a large one
+#   - Brute force: multiple failed logins before success
+#   - Batch processing: collect all steps before completion
+#
+# Run: varpulis simulate -p 13_kleene_plus.vpl -e 13_kleene_plus.evt -v -w 1
+
+event SmallPurchase:
+    card_id: str
+    amount: float
+    merchant: str
+
+event LargePurchase:
+    card_id: str
+    amount: float
+    merchant: str
+
+# Card testing: one or more small purchases followed by a large one
+stream CardTesting = SmallPurchase as first
+    -> all SmallPurchase where card_id == first.card_id as tests
+    -> LargePurchase where card_id == first.card_id as big
+    .within(1h)
+    .emit(
+        alert: "card_testing",
+        card: first.card_id,
+        large_amount: big.amount,
+        large_merchant: big.merchant
+    )

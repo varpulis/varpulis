@@ -1,0 +1,20 @@
+# 16 — Partition By: Brute force detection per user
+# Expected:
+#   alice: 3 failed + 1 success → MATCH
+#   bob: 2 failed only → NO MATCH (no success)
+
+BATCH 0
+FailedLogin { user_id: "alice", ip: "1.2.3.4" }
+
+BATCH 1000
+FailedLogin { user_id: "bob", ip: "5.6.7.8" }
+
+BATCH 2000
+FailedLogin { user_id: "alice", ip: "1.2.3.4" }
+
+BATCH 3000
+FailedLogin { user_id: "alice", ip: "1.2.3.5" }
+FailedLogin { user_id: "bob", ip: "5.6.7.8" }
+
+BATCH 5000
+SuccessLogin { user_id: "alice", ip: "1.2.3.5" }

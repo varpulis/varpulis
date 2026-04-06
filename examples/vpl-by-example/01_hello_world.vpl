@@ -1,0 +1,18 @@
+# VPL by Example: 01 — Hello World
+#
+# The simplest Varpulis program: read events, filter, and emit output.
+#
+# A stream declaration has three parts:
+#   1. A name (HighTemp)
+#   2. A source event type (SensorReading)
+#   3. A chain of operations (.where, .emit)
+#
+# Run: varpulis simulate -p 01_hello_world.vpl -e 01_hello_world.evt -v -w 1
+
+event SensorReading:
+    sensor_id: str
+    temperature: float
+
+stream HighTemp = SensorReading
+    .where(temperature > 100)
+    .emit(sensor: sensor_id, temp: temperature)

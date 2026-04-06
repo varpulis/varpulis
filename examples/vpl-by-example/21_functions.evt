@@ -1,0 +1,9 @@
+# 21 — User-Defined Functions
+# Expected:
+#   ORD-1: fee=2.5, net=90, risk=low, is_large=false
+#   ORD-2: fee=75, net=2700, risk=medium, is_large=true
+#   ORD-3: fee=250, net=9000, risk=high, is_large=true
+
+Order { id: "ORD-1", amount: 100.0, country: "US" }
+Order { id: "ORD-2", amount: 3000.0, country: "DE" }
+Order { id: "ORD-3", amount: 10000.0, country: "NG" }

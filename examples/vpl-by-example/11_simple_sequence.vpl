@@ -1,0 +1,36 @@
+# VPL by Example: 11 — Simple Sequence Pattern (A -> B)
+#
+# The -> (followed-by) operator detects ordered event sequences.
+# This is Varpulis' core CEP capability using the SASE+ algorithm.
+#
+# Syntax:
+#   stream Name = EventA as alias_a
+#       -> EventB where <correlation_condition> as alias_b
+#       .emit(...)
+#
+# Key concepts:
+#   - "as alias" captures the event for later reference
+#   - "where" filters the next event, often correlating with earlier events
+#   - The engine tracks all active partial matches (runs) concurrently
+#
+# Run: varpulis simulate -p 11_simple_sequence.vpl -e 11_simple_sequence.evt -v -w 1
+
+event Order:
+    id: int
+    customer: str
+    amount: float
+
+event Payment:
+    order_id: int
+    amount: float
+    method: str
+
+# Detect: Order followed by Payment for the same order
+stream OrderPaid = Order as order
+    -> Payment where order_id == order.id as payment
+    .emit(
+        order_id: order.id,
+        customer: order.customer,
+        amount: payment.amount,
+        method: payment.method
+    )

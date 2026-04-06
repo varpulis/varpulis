@@ -1,0 +1,14 @@
+# 08 — Session Window (5s inactivity gap)
+# User Alice: session 1 (0s-4s, 3 clicks), session 2 (15s-17s, 2 clicks)
+# User Bob: session 1 (1s-3s, 2 clicks)
+
+@0s ClickEvent { user_id: "alice", page: "/home" }
+@1s ClickEvent { user_id: "bob", page: "/products" }
+@2s ClickEvent { user_id: "alice", page: "/products" }
+@3s ClickEvent { user_id: "bob", page: "/cart" }
+@4s ClickEvent { user_id: "alice", page: "/cart" }
+
+# 11 second gap for alice — session 1 closes
+
+@15s ClickEvent { user_id: "alice", page: "/checkout" }
+@17s ClickEvent { user_id: "alice", page: "/confirm" }

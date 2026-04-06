@@ -480,6 +480,7 @@ fn pattern_expr_seq_single_item() {
         alias: Some("o".to_string()),
         kleene: None,
         filter: None,
+        monotonic: None,
     };
     let expr = SasePatternExpr::Seq(vec![item]);
     let pattern = compile_sase_pattern_expr(&expr, None).unwrap();
@@ -503,18 +504,21 @@ fn pattern_expr_seq_multiple_items() {
             alias: Some("a".to_string()),
             kleene: None,
             filter: None,
+            monotonic: None,
         },
         SasePatternItem {
             event_type: "B".to_string(),
             alias: Some("b".to_string()),
             kleene: None,
             filter: None,
+            monotonic: None,
         },
         SasePatternItem {
             event_type: "C".to_string(),
             alias: Some("c".to_string()),
             kleene: None,
             filter: None,
+            monotonic: None,
         },
     ];
     let expr = SasePatternExpr::Seq(items);
@@ -647,6 +651,7 @@ fn pattern_expr_kleene_plus() {
         alias: Some("t".to_string()),
         kleene: Some(KleeneOp::Plus),
         filter: None,
+        monotonic: None,
     };
     let expr = SasePatternExpr::Seq(vec![item]);
     let pattern = compile_sase_pattern_expr(&expr, None).unwrap();
@@ -667,6 +672,7 @@ fn pattern_expr_kleene_star() {
         alias: None,
         kleene: Some(KleeneOp::Star),
         filter: None,
+        monotonic: None,
     };
     let expr = SasePatternExpr::Seq(vec![item]);
     let pattern = compile_sase_pattern_expr(&expr, None).unwrap();
@@ -686,6 +692,7 @@ fn pattern_expr_kleene_optional() {
         alias: None,
         kleene: Some(KleeneOp::Optional),
         filter: None,
+        monotonic: None,
     };
     let expr = SasePatternExpr::Seq(vec![item]);
     let pattern = compile_sase_pattern_expr(&expr, None).unwrap();
@@ -707,6 +714,7 @@ fn pattern_expr_seq_with_filter() {
         alias: Some("t".to_string()),
         kleene: None,
         filter: Some(filter),
+        monotonic: None,
     };
     let expr = SasePatternExpr::Seq(vec![item]);
     let pattern = compile_sase_pattern_expr(&expr, None).unwrap();
@@ -739,18 +747,21 @@ fn pattern_expr_seq_mixed_kleene_and_plain() {
             alias: Some("s".to_string()),
             kleene: None,
             filter: None,
+            monotonic: None,
         },
         SasePatternItem {
             event_type: "Middle".to_string(),
             alias: Some("m".to_string()),
             kleene: Some(KleeneOp::Plus),
             filter: None,
+            monotonic: None,
         },
         SasePatternItem {
             event_type: "End".to_string(),
             alias: Some("e".to_string()),
             kleene: None,
             filter: None,
+            monotonic: None,
         },
     ];
     let expr = SasePatternExpr::Seq(items);
@@ -785,18 +796,21 @@ fn extract_types_from_seq() {
             alias: None,
             kleene: None,
             filter: None,
+            monotonic: None,
         },
         SasePatternItem {
             event_type: "B".to_string(),
             alias: None,
             kleene: None,
             filter: None,
+            monotonic: None,
         },
         SasePatternItem {
             event_type: "C".to_string(),
             alias: None,
             kleene: None,
             filter: None,
+            monotonic: None,
         },
     ];
     let expr = SasePatternExpr::Seq(items);
@@ -812,18 +826,21 @@ fn extract_types_from_seq_deduplicates() {
             alias: None,
             kleene: None,
             filter: None,
+            monotonic: None,
         },
         SasePatternItem {
             event_type: "A".to_string(),
             alias: None,
             kleene: None,
             filter: None,
+            monotonic: None,
         },
         SasePatternItem {
             event_type: "B".to_string(),
             alias: None,
             kleene: None,
             filter: None,
+            monotonic: None,
         },
     ];
     let expr = SasePatternExpr::Seq(items);
@@ -1015,12 +1032,14 @@ fn resolver_with_followed_by_clauses() {
             filter: Some(binary(BinOp::Gt, ident("amount"), Expr::Float(0.0))),
             alias: Some("p".to_string()),
             match_all: false,
+            monotonic: None,
         },
         FollowedByClause {
             event_type: "OrderShipped".to_string(),
             filter: None,
             alias: Some("s".to_string()),
             match_all: false,
+            monotonic: None,
         },
     ];
     let pattern =
@@ -1095,6 +1114,7 @@ fn resolver_followed_by_match_all_creates_kleene_plus() {
         filter: None,
         alias: Some("ticks".to_string()),
         match_all: true,
+        monotonic: None,
     }];
     let pattern =
         compile_to_sase_pattern_with_resolver(&source, &clauses, &[], None, &no_resolve).unwrap();
@@ -1250,6 +1270,7 @@ fn resolver_followed_by_with_derived_stream_combines_predicates() {
         )),
         alias: Some("hp".to_string()),
         match_all: false,
+        monotonic: None,
     }];
 
     let pattern =

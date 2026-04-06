@@ -1,0 +1,12 @@
+# 02 — Filtering: Orders with various amounts and currencies
+# Expected:
+#   ExpensiveOrders: ORD-2 (1500), ORD-4 (8000), ORD-5 (750000)
+#   HighValueUSD: ORD-2 (1500 USD), ORD-4 (8000 USD)
+#   FlaggedOrders: ORD-4 (8000), ORD-5 (BTC)
+#   PremiumDomestic: ORD-2 (Alice, 1500), ORD-4 (Diana, 8000)
+
+Order { order_id: "ORD-1", amount: 50, currency: "USD", customer: "Alice" }
+Order { order_id: "ORD-2", amount: 1500, currency: "USD", customer: "Alice" }
+Order { order_id: "ORD-3", amount: 300, currency: "EUR", customer: "Bob" }
+Order { order_id: "ORD-4", amount: 8000, currency: "USD", customer: "Diana" }
+Order { order_id: "ORD-5", amount: 750000, currency: "BTC", customer: "anonymous" }

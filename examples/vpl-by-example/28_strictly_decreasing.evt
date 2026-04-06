@@ -1,0 +1,32 @@
+# 28 — Strictly Decreasing: Falling pressure readings
+#
+# Sensor X: 100 → 90 → 80 → 70 → 60 → pattern breaks when a non-decreasing event arrives
+#   initial=100, current=60, readings=4 (90, 80, 70, 60)
+#
+# Sensor Y: 50 → 55 (not falling) → NO MATCH
+
+BATCH 0
+PressureReading { sensor_id: "X", pressure: 100.0 }
+
+BATCH 1000
+PressureReading { sensor_id: "X", pressure: 90.0 }
+
+BATCH 2000
+PressureReading { sensor_id: "X", pressure: 80.0 }
+
+BATCH 3000
+PressureReading { sensor_id: "X", pressure: 70.0 }
+
+BATCH 4000
+PressureReading { sensor_id: "X", pressure: 60.0 }
+
+# Non-decreasing event breaks the pattern → emit
+BATCH 5000
+PressureReading { sensor_id: "X", pressure: 65.0 }
+
+# Sensor Y — pressure rises, no falling trend
+BATCH 10000
+PressureReading { sensor_id: "Y", pressure: 50.0 }
+
+BATCH 11000
+PressureReading { sensor_id: "Y", pressure: 55.0 }

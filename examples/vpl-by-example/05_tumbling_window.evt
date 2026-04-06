@@ -1,0 +1,11 @@
+# 05 — Tumbling Time Window (5s buckets)
+# Window 1 (0s-5s): readings 20, 22, 25 → avg ~22.3
+# Window 2 (5s-10s): readings 30, 28 → avg 29.0
+# Window 3 (10s-15s): reading 18 → avg 18.0
+
+@0s SensorReading { sensor_id: "S1", temperature: 20.0 }
+@2s SensorReading { sensor_id: "S1", temperature: 22.0 }
+@4s SensorReading { sensor_id: "S1", temperature: 25.0 }
+@6s SensorReading { sensor_id: "S1", temperature: 30.0 }
+@8s SensorReading { sensor_id: "S1", temperature: 28.0 }
+@12s SensorReading { sensor_id: "S1", temperature: 18.0 }

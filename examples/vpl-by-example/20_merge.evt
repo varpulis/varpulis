@@ -1,0 +1,11 @@
+# 20 — Merge: Combine temperature and humidity alerts
+# Expected:
+#   TempAlerts: zone_a at 35, zone_b at 40
+#   HumidAlerts: zone_a at 85
+#   AllAlerts: all 3 alerts merged
+
+@0s TemperatureReading { zone: "zone_a", value: 35.0 }
+@1s HumidityReading { zone: "zone_a", value: 85.0 }
+@2s TemperatureReading { zone: "zone_b", value: 40.0 }
+@3s HumidityReading { zone: "zone_b", value: 50.0 }
+@4s TemperatureReading { zone: "zone_c", value: 22.0 }

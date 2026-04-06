@@ -1,0 +1,49 @@
+# VPL by Example: 20 — Merge Streams
+#
+# merge() combines multiple streams into a single unified stream.
+# Unlike join (which correlates), merge simply unions all events.
+#
+# Syntax:
+#   stream Combined = merge(StreamA, StreamB, StreamC)
+#       .emit(...)
+#
+# All input streams contribute events to the merged output.
+# Events retain their original fields and arrive in time order.
+#
+# Use cases:
+#   - Aggregate alerts from multiple detection streams
+#   - Combine logs from different services
+#   - Create a unified event feed
+#
+# Run: varpulis simulate -p 20_merge.vpl -e 20_merge.evt -v -w 1
+
+event TemperatureReading:
+    zone: str
+    value: float
+
+event HumidityReading:
+    zone: str
+    value: float
+
+# Individual alert streams
+stream TempAlerts = TemperatureReading
+    .where(value > 30)
+    .emit(
+        alert_type: "high_temperature",
+        severity: "warning",
+        zone: zone,
+        value: value
+    )
+
+stream HumidAlerts = HumidityReading
+    .where(value > 70)
+    .emit(
+        alert_type: "high_humidity",
+        severity: "warning",
+        zone: zone,
+        value: value
+    )
+
+# Merge all alerts into one stream
+stream AllAlerts = merge(TempAlerts, HumidAlerts)
+    .emit()

@@ -540,6 +540,7 @@ mod tests {
                         filter: None,
                         alias: None,
                         match_all: false,
+                        monotonic: None,
                     }),
                     StreamOp::Within(Expr::Str("bad".to_string())),
                 ],

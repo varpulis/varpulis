@@ -1,0 +1,9 @@
+# 19 — Join: Temperature + Humidity by zone
+# Expected: comfort index computed for zones with both readings
+
+@0s TemperatureReading { zone: "office", value: 22.0 }
+@1s HumidityReading { zone: "office", value: 45.0 }
+@2s TemperatureReading { zone: "server_room", value: 19.0 }
+@3s HumidityReading { zone: "server_room", value: 40.0 }
+@4s TemperatureReading { zone: "office", value: 23.0 }
+@4s HumidityReading { zone: "office", value: 48.0 }

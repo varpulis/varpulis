@@ -1,0 +1,72 @@
+# VPL by Example: 24 — Trend Aggregation (Hamlet Engine)
+#
+# .trend_aggregate() computes aggregate statistics over all matching
+# event trends using the Hamlet engine — without enumerating every
+# combination. This is O(n) per event instead of O(2^n).
+#
+# Syntax:
+#   .trend_aggregate(
+#       name: avg_trends(alias.field),
+#       name: sum_trends(alias.field),
+#       name: max_trends(alias.field),
+#       name: min_trends(alias.field),
+#       name: count_events(alias),
+#       name: count_trends()
+#   )
+#
+# Functions:
+#   avg_trends(field)   Average of field across all trend combinations
+#   sum_trends(field)   Sum of field across all trend combinations
+#   max_trends(field)   Maximum across all trends
+#   min_trends(field)   Minimum across all trends
+#   count_events(alias) Number of events captured by Kleene closure
+#   count_trends()      Number of unique trend combinations (2^n - 1)
+#
+# Use cases:
+#   - Transaction pipeline monitoring
+#   - Multi-step process analysis
+#   - Batch operation statistics
+#
+# Aggregate output fields can be filtered with .where() downstream:
+#   .trend_aggregate(total: sum_trends(...))
+#   .where(total > 1000)            # works on the aggregate result
+#
+# Run: varpulis simulate -p 24_trend_aggregation.vpl -e 24_trend_aggregation.evt -v -w 1
+
+event BatchStart:
+    batch_id: str
+    source: str
+
+event BatchStep:
+    batch_id: str
+    step: str
+    duration: float
+    errors: int
+
+event BatchEnd:
+    batch_id: str
+    status: str
+
+stream BatchAnalytics = BatchStart as start
+    -> all BatchStep where batch_id == start.batch_id as steps
+    -> BatchEnd where batch_id == start.batch_id as done
+    .within(30m)
+    .partition_by(batch_id)
+    .trend_aggregate(
+        avg_duration: avg_trends(steps.duration),
+        max_errors: max_trends(steps.errors),
+        total_duration: sum_trends(steps.duration),
+        step_count: count_events(steps),
+        trend_count: count_trends()
+    )
+    .where(total_duration > 1000)
+    .emit(
+        batch_id: start.batch_id,
+        source: start.source,
+        status: done.status,
+        avg_step_duration: avg_duration,
+        max_step_errors: max_errors,
+        total_duration: total_duration,
+        steps: step_count,
+        trends: trend_count
+    )

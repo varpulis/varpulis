@@ -661,11 +661,7 @@ fn parse_pattern_arrow_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Sa
         });
     }
 
-    if items.len() == 1 {
-        Ok(SasePatternExpr::Seq(items))
-    } else {
-        Ok(SasePatternExpr::Seq(items))
-    }
+    Ok(SasePatternExpr::Seq(items))
 }
 
 fn parse_sase_where_clause(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {

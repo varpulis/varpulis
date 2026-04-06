@@ -1,0 +1,10 @@
+# 22 — Conditional Expressions
+# Expected:
+#   web-01: severity=warning, issue=high_cpu (cpu=85)
+#   db-01: severity=critical, issue=high_cpu (cpu=98)
+#   cache-01: severity=high, issue=high_memory (memory=96)
+
+ServerMetric { host: "web-01", cpu: 85.0, memory: 60.0, disk: 45.0 }
+ServerMetric { host: "web-02", cpu: 30.0, memory: 40.0, disk: 50.0 }
+ServerMetric { host: "db-01", cpu: 98.0, memory: 75.0, disk: 60.0 }
+ServerMetric { host: "cache-01", cpu: 50.0, memory: 96.0, disk: 70.0 }

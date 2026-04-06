@@ -1,0 +1,43 @@
+# VPL by Example: 09 — Basic Aggregations
+#
+# .aggregate() computes summary statistics over windowed events.
+#
+# Built-in aggregation functions:
+#   count()         Number of events
+#   sum(field)      Sum of numeric field
+#   avg(field)      Average (mean)
+#   min(field)      Minimum value
+#   max(field)      Maximum value
+#   stddev(field)   Standard deviation
+#   first(field)    First value in window
+#   last(field)     Last value in window
+#   ema(field)      Exponential moving average
+#
+# Aggregations require a window (time or count based).
+#
+# Run: varpulis simulate -p 09_basic_aggregations.vpl -e 09_basic_aggregations.evt -v -w 1
+
+event Trade:
+    symbol: str
+    price: float
+    quantity: int
+
+stream TradeStats = Trade
+    .window(5)
+    .aggregate(
+        trades: count(),
+        total_volume: sum(quantity),
+        avg_price: avg(price),
+        min_price: min(price),
+        max_price: max(price),
+        first_symbol: first(symbol),
+        last_symbol: last(symbol)
+    )
+    .emit(
+        trades: trades,
+        total_volume: total_volume,
+        avg_price: avg_price,
+        price_range: max_price - min_price,
+        first_symbol: first_symbol,
+        last_symbol: last_symbol
+    )

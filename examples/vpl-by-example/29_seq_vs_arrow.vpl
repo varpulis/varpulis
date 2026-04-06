@@ -1,0 +1,65 @@
+# VPL by Example: 29 — Arrow Patterns (preferred over SEQ)
+#
+# Pattern declarations now use arrow syntax — `SEQ()` is deprecated.
+# Both stream expressions and named patterns share the same `->` syntax.
+#
+# Syntax:
+#   pattern Name = A as a -> all B where ... as b -> C
+#       within 5m partition by key
+#
+# Equivalent stream expression form:
+#   stream Name = A as a -> all B where ... as b -> C
+#       .within(5m)
+#       .partition_by(key)
+#       .emit(...)
+#
+# When to use named patterns vs inline streams:
+#   - Named patterns: when reused across multiple streams or for clarity
+#   - Inline streams: when the pattern is one-off and pipeline is short
+#
+# Run: varpulis simulate -p 29_seq_vs_arrow.vpl -e 29_seq_vs_arrow.evt -v -w 1
+
+event Login:
+    user_id: str
+    ip: str
+
+event PasswordChange:
+    user_id: str
+
+event Purchase:
+    user_id: str
+    amount: float
+
+# =========================================================================
+# Approach 1: Named pattern with arrow syntax
+# =========================================================================
+
+pattern AccountTakeover = Login as login
+    -> PasswordChange where user_id == login.user_id as pwd
+    -> Purchase where user_id == login.user_id and amount > 500 as purchase
+    within 30m partition by user_id
+
+stream TakeoverViaPattern = AccountTakeover
+    .emit(
+        method: "named_pattern",
+        user: login.user_id,
+        amount: purchase.amount
+    )
+
+# =========================================================================
+# Approach 2: Inline stream expression
+# =========================================================================
+
+stream TakeoverInline = Login as login
+    -> PasswordChange where user_id == login.user_id as pwd
+    -> Purchase where user_id == login.user_id and amount > 500 as purchase
+    .within(30m)
+    .emit(
+        method: "inline",
+        user: login.user_id,
+        amount: purchase.amount
+    )
+
+# Both produce identical results — choose based on:
+# - Use named patterns for reuse and named documentation
+# - Use inline streams for one-off, concise pipelines
