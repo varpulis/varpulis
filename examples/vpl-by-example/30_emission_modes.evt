@@ -1,0 +1,5 @@
+@0s Start { id: "session-1" }
+@1s Reading { id: "R1", value: 10 }
+@2s Reading { id: "R2", value: 20 }
+@3s Reading { id: "R3", value: 30 }
+@4s End { id: "session-1" }

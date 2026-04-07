@@ -79,6 +79,35 @@
 | `=>` | Lambda expression | `x => x * 2` |
 | `->` | Return type | `fn add(a: int, b: int) -> int` |
 
+## SASE+ Pattern Mode Operators
+
+Stream-level operators that control how SASE+ patterns produce matches.
+See [SASE+ Patterns Guide](../guides/sase-patterns.md#selection-and-emission-modes) for details.
+
+### Selection strategy (how runs are spawned)
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `.strict()` | Strict contiguity — events must be adjacent | `stream X = A -> B.strict().emit(...)` |
+| `.stnm()` | Skip-till-next-match — non-overlapping maximal matches | `stream X = A -> B.stnm().emit(...)` |
+| `.stam()` | Skip-till-any-match — overlapping runs (default) | `stream X = A -> B.stam().emit(...)` |
+
+### Emission mode (how matches are produced)
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `.each()` | Emit one match per Kleene event extension (**default**) | `stream X = all B as b .each().emit(...)` |
+| `.longest()` | Emit one consolidated match at terminator/break | `stream X = all B as b .longest().emit(...)` |
+| `.subsets()` | Emit 2^N − 1 matches (paper-correct STAM verbose, expert mode) | `stream X = all B as b .subsets().emit(...)` |
+
+### Monotonic pattern shortcuts
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `.increasing(field)` | Sugar for `where field > self.field` Kleene+; auto-implies `.longest()` | `all TempReading.increasing(temperature) as rising` |
+| `.decreasing(field)` | Sugar for `where field < self.field` Kleene+; auto-implies `.longest()` | `all Sensor.decreasing(pressure) as falling` |
+
+
 ## Duration Operators
 
 ```varpulis

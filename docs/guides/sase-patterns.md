@@ -66,6 +66,168 @@ stream BruteForce = LoginFailed as f
 
 ---
 
+## Selection and Emission Modes
+
+Pattern matching has **two orthogonal axes** that control how matches are produced. Most users never need to think about them — the defaults match what practitioners expect — but understanding them is essential for advanced patterns.
+
+### Quick Reference
+
+```vpl
+stream X = ... pattern ...
+    .stam()       // selection: how runs are spawned (default)
+    .each()       // emission: how matches are produced (default)
+    .emit(...)
+```
+
+| Axis | Operators | Default |
+|---|---|---|
+| **Selection strategy** | `.strict()`, `.stnm()`, `.stam()` | `.stam()` |
+| **Emission mode** | `.each()`, `.longest()`, `.subsets()` | `.each()` (or `.longest()` for monotonic) |
+
+### Selection Strategies
+
+Selection controls **how runs are spawned and which events extend them** when multiple events of the same type arrive.
+
+#### `.strict()` — Strict Contiguity
+
+Events must be **adjacent in the stream**, with no irrelevant events between them. Use for regex-like matching where order and adjacency both matter.
+
+```vpl
+# Match only when A is immediately followed by B (no events between)
+pattern AdjacentAB = A -> B
+stream Strict = AdjacentAB.strict().emit(...)
+```
+
+If events arrive `A, X, B`, the `X` breaks contiguity and the pattern fails. Useful for parsing log lines, network protocol parsing, DNA sequence matching.
+
+#### `.stnm()` — Skip-Till-Next-Match
+
+Skip irrelevant events until the **next** matching event. Each event participates in **at most one** match (no overlapping runs). The most "intuitive" mode for first-match-wins detection.
+
+```vpl
+# Skip irrelevant events; one maximal match per anchor
+stream FirstMatch = Login -> Action -> Logout
+    .stnm()
+    .within(1h)
+    .emit(...)
+```
+
+#### `.stam()` — Skip-Till-Any-Match (default)
+
+Skip irrelevant events with **non-deterministic** branching: any event that could start a new pattern instance does so, in addition to extending existing runs. This is the SASE+ paper's most permissive mode.
+
+```vpl
+# Multiple overlapping runs, each anchored at a different Login
+stream OverlappingFraud = Login as l -> Transaction as t
+    .stam()
+    .where(t.amount > 5000)
+    .emit(...)
+```
+
+With events `Login1, Login2, Transaction1`, you get **two matches**: `(Login1, Transaction1)` and `(Login2, Transaction1)`.
+
+> **Default**: `.stam()` is the default. Most CEP use cases want overlapping matches.
+
+### Emission Modes
+
+Emission controls **how many `MatchResult`s a completed run produces**. This is the axis the SASE+ paper conflates with selection — separating them gives finer control.
+
+#### `.each()` — Fire on Each Kleene Event (default)
+
+Emit **one match per Kleene event extension**. Linear in the size of the Kleene closure. Most ergonomic for "for each B captured, do something" patterns.
+
+```vpl
+# Each fail event triggers one alert
+stream FailedAttempt = LoginFailed as fail
+    .each()    # default — can be omitted
+    .emit(alert: "Login failed", user: fail.user_id)
+```
+
+For `Start -> all B as b -> End` with 5 Bs, `.each()` emits **5 matches** as the Bs arrive (the `End` terminator confirms but doesn't add an extra emit).
+
+#### `.longest()` — Emit Once at Completion
+
+Emit **one consolidated match** when the pattern completes (terminator arrives or Kleene self-loop breaks). The match contains the longest captured sequence; the alias is bound to the **last** captured event of that sequence.
+
+```vpl
+# Brute force: one alert when login finally succeeds, with the full failure history
+pattern BruteForce = LoginFailed as first
+    -> all LoginFailed as fails
+    -> LoginSuccess as success
+    within 30m partition by user_id
+
+stream Alert = BruteForce
+    .longest()
+    .emit(user: first.user_id, num_fails: count(fails) + 1)
+```
+
+For `Start -> all B as b -> End` with 5 Bs, `.longest()` emits **1 match** at `End` with `b` bound to B5.
+
+> **Auto-resolved for monotonic patterns**: `.increasing()` and `.decreasing()` automatically use `.longest()` because users want one "rising sequence ended" alert, not one per data point. Override with `.increasing(temp).each()`.
+
+#### `.subsets()` — Paper-Correct STAM Verbose (expert mode)
+
+Emit **one match per non-empty subset** of the Kleene capture. For N captured Kleene events, this produces **2^N − 1** matches. This is the textbook SASE+ STAM verbose output (SIGMOD 2008 §4.2).
+
+```vpl
+# Academic mode: enumerate every subset of the captured Bs
+stream PaperMode = A -> all B as b -> C
+    .subsets()
+    .emit(...)
+```
+
+For `SEQ(A, B+, C)` with 3 Bs, `.subsets()` produces **2³ − 1 = 7 matches**:
+- `{B1}`, `{B2}`, `{B3}`
+- `{B1, B2}`, `{B1, B3}`, `{B2, B3}`
+- `{B1, B2, B3}`
+
+**Cost**: exponential in the number of Kleene events. Capped at `MAX_ENUMERATION_RESULTS = 10_000` to prevent memory blowup. Use only when you specifically need formal SASE+ verbose semantics or to feed downstream consumers expecting subset enumeration.
+
+> **Warning**: `.subsets()` is for spec compliance and academic correctness. For practical use cases, prefer `.each()` (linear) or `.longest()` (constant).
+
+### Combining Modes
+
+Modes are independent and can be combined:
+
+```vpl
+# STNM selection + Each emission
+stream X = A -> all B as b -> C
+    .stnm()
+    .each()
+    .emit(...)
+```
+
+### Comparison Table
+
+For pattern `SEQ(A, B+, C)` with events `A, B1, B2, B3, C`:
+
+| Mode | # matches | Bindings |
+|---|---|---|
+| `.each()` (default) | **3** | `b=B1`, `b=B2`, `b=B3` (one per B) |
+| `.longest()` | **1** | `b=B3` (last captured) |
+| `.subsets()` | **7** | one per non-empty subset of `{B1,B2,B3}` |
+
+For pattern `Start -> all B as b -> End` with 9 Bs and an `End` terminator:
+
+| Mode | # matches |
+|---|---|
+| `.each()` | 9 |
+| `.longest()` | 1 |
+| `.subsets()` | 511 |
+
+### Choosing the Right Mode
+
+| Use case | Recommended | Why |
+|---|---|---|
+| "For each event, do X" | `.each()` (default) | One emit per Kleene step is most intuitive |
+| "Alert when pattern completes, summarize" | `.longest()` | One consolidated emit with bound aggregates |
+| "Detect rising/falling trends" | `.increasing()` / `.decreasing()` | Auto-resolves to `.longest()` |
+| "Enumerate every match per SASE+ paper" | `.subsets()` | Spec-compliant verbose mode |
+| "Strict log line parsing" | `.strict()` selection | No skipping allowed |
+| "First match wins" | `.stnm()` selection | One non-overlapping match per anchor |
+
+---
+
 ## Pattern Types
 
 ### Sequence
@@ -259,7 +421,34 @@ When a pattern times out:
 
 Self-referencing Kleene predicates let you detect **strictly monotonic trends** — rising temperatures, escalating prices, increasing severity — where each event must compare against the previous captured event.
 
-### Strictly Rising Values
+For convenience, Varpulis provides `.increasing(field)` and `.decreasing(field)` operators that generate the self-referencing predicate automatically.
+
+### Using `.increasing()` / `.decreasing()` (recommended)
+
+```vpl
+# Strictly increasing temperature
+stream RisingTemp = TempReading -> all TempReading.increasing(temperature) as rising
+    .partition_by(sensor_id)
+    .emit(sensor: rising.sensor_id, max: rising.temperature, count: count(rising))
+
+# Strictly decreasing pressure
+stream DropPressure = Sensor -> all Sensor.decreasing(pressure) as falling
+    .partition_by(sensor_id)
+    .emit(sensor: falling.sensor_id, min: falling.pressure)
+```
+
+**Default emission**: `.increasing()` / `.decreasing()` automatically use `.longest()` mode — one alert when the trend ends. Override with `.each()` for per-event emissions:
+
+```vpl
+stream EachRise = TempReading -> all TempReading.increasing(temperature) as rising
+    .partition_by(sensor_id)
+    .each()    # one emit per rising event instead of one at break
+    .emit(...)
+```
+
+### Manual Self-Reference (advanced)
+
+If you need finer control over the predicate, you can write the self-reference explicitly:
 
 ```vpl
 pattern StrictlyRising = SensorReading as first
@@ -270,7 +459,7 @@ pattern StrictlyRising = SensorReading as first
 
 **How it works:** The predicate `temperature > rising.temperature` compares each new event against the **last captured Kleene event** (not the first). The alias `rising` refers to itself — the engine:
 
-1. **First Kleene event**: Skips the self-referencing predicate (no previous value exists), checks event type only
+1. **First Kleene event**: Compares against the previous step's event (the anchor `first`), or skips if the anchor doesn't carry the field
 2. **Subsequent events**: Evaluates `temperature > rising.temperature` against the previously captured event
 3. **Terminator**: The final `SensorReading where temperature < first.temperature` closes the pattern
 

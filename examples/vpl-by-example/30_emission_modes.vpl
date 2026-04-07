@@ -1,0 +1,35 @@
+# Selection and Emission Modes
+#
+# Three streams demonstrate the different emission modes for the same pattern.
+# Run with: varpulis simulate -p 30_emission_modes.vpl -e 30_emission_modes.evt -v -w 1
+
+event Start:
+    id: str
+
+event Reading:
+    id: str
+    value: int
+
+event End:
+    id: str
+
+# ─── Each mode (default) ──────────────────────────────────────────
+# Emits ONE match per Reading event captured. For 3 Readings between
+# Start and End, this emits 3 matches.
+stream EachMode = Start -> all Reading as r -> End
+    .emit(mode: "each", reading: r.id, val: r.value)
+
+# ─── Longest mode ─────────────────────────────────────────────────
+# Emits ONE consolidated match when End arrives, with `r` bound to
+# the LAST captured Reading (R3 in this example).
+stream LongestMode = Start -> all Reading as r -> End
+    .longest()
+    .emit(mode: "longest", reading: r.id, val: r.value)
+
+# ─── Subsets mode (paper-correct STAM verbose, expert mode) ───────
+# Emits 2^N - 1 matches at End, one per non-empty subset of the
+# captured Readings. For 3 Readings: 7 matches.
+# Each subset binds `r` to the last element of that subset.
+stream SubsetsMode = Start -> all Reading as r -> End
+    .subsets()
+    .emit(mode: "subsets", reading: r.id, val: r.value)
