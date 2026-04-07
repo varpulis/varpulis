@@ -1,2 +1,6 @@
 # Generated event files
 data/*.jsonl
+
+# Python bytecode
+__pycache__/
+*.pyc

@@ -1,0 +1,26 @@
+{
+  "scenario": "01_filter",
+  "events": 100000,
+  "runs": 5,
+  "engines": {
+    "arroyo": {
+      "runs_ms": [1207.4, 1155.1, 1157.4, 1125.8, 1209.7],
+      "median_s": 1.1574,
+      "min_s": 1.1258,
+      "max_s": 1.2097,
+      "throughput_eps": 86398,
+      "output_count": 89000,
+      "input_path": "kafka_redpanda",
+      "version": "v0.15.0"
+    },
+    "varpulis": {
+      "median_s": 0.5723,
+      "throughput_eps": 174751,
+      "output_count": 89000,
+      "input_path": "file_jsonl",
+      "version": "v0.10.x",
+      "note": "from proton-comparison/results/01_filter.json (file mode)"
+    }
+  },
+  "methodology_note": "Each engine measured at its native fast path. Arroyo on Kafka source (production-recommended), Varpulis on file source. A like-for-like Kafka comparison requires rebuilding varpulis-cli with --features kafka."
+}

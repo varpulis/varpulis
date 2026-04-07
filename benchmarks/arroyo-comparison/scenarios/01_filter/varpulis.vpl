@@ -1,0 +1,24 @@
+# Scenario 1 (Arroyo bench): Filter ticks where price > 50, Kafka source + sink
+
+event Tick:
+    ts: int
+    symbol: str
+    price: float
+    volume: int
+
+connector RedpandaIn = kafka(
+    brokers: ["localhost:29092"],
+    topic: "scenario-01-filter",
+    group_id: "varpulis-bench"
+)
+
+connector RedpandaOut = kafka(
+    brokers: ["localhost:29092"],
+    topic: "scenario-01-filter-vpl-out"
+)
+
+stream Filtered = Tick
+    .from(RedpandaIn)
+    .where(price > 50.0)
+    .emit(symbol: symbol, price: price, volume: volume)
+    .to(RedpandaOut)

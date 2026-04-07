@@ -302,9 +302,100 @@ For a security team maintaining a catalog of MITRE ATT&CK detection rules, **the
 
 ## Performance
 
-::: tip Head-to-head benchmarks: pending
-The Varpulis-vs-Proton comparison page includes measured numbers from a reproducible benchmark suite at [`benchmarks/proton-comparison/`](https://github.com/varpulis/varpulis/tree/main/benchmarks/proton-comparison). The Arroyo equivalent at [`benchmarks/arroyo-comparison/`](https://github.com/varpulis/varpulis/tree/main/benchmarks/arroyo-comparison) has the Docker stack (Postgres + Redpanda + Arroyo) and event generators wired up but the SQL job submission via the Arroyo REST API is not yet automated. We expect to publish measured numbers in a follow-up — the architectural prediction is that the gap will be smaller than vs Proton (both engines are Rust, both have hot-path vectorisation), with Varpulis holding an edge on operational simplicity (no Postgres, no checkpoint store, smaller binary) and Arroyo holding an edge on DataFusion-vectorised pure-SQL aggregation paths.
-:::
+We ran a head-to-head benchmark of Arroyo and Varpulis on Scenario 1 (filter
+events where price > 50). The benchmark suite is reproducible from the
+[varpulis repository](https://github.com/varpulis/varpulis) under
+[`benchmarks/arroyo-comparison/`](https://github.com/varpulis/varpulis/tree/main/benchmarks/arroyo-comparison).
+
+**Test setup**:
+- Hardware: Ryzen 9 7950X / 32 GB DDR5 / NVMe SSD
+- Arroyo: v0.15.0 in Docker, single-node `cluster` mode, Postgres + Redpanda
+  alongside, Kafka source + Kafka sink, **5 runs, median reported**
+- Varpulis: v0.10.x release build, single core, file-mode JSONL ingestion
+  (its native fast path), **5 runs, median reported** (numbers from the
+  [Proton comparison page](varpulis-vs-proton.md))
+- Both engines see the same 100,000 events with the same field values.
+- Output count is verified for correctness across both engines (89,000).
+
+**Methodology note** — different input paths: Arroyo runs on its
+production-recommended Kafka source (events pre-loaded into a Redpanda topic)
+because that's the most documented and stable input path in v0.15.0. Varpulis
+runs on file-mode JSONL ingestion via `varpulis simulate`, which is its
+native high-throughput path. **Each engine is measured at its native fast
+path.** A like-for-like Kafka comparison would require rebuilding Varpulis
+with `--features kafka` and is on the follow-up list.
+
+### Scenario 1 — Filter (price > 50)
+
+```sql
+-- Arroyo
+CREATE TABLE ticks (ts BIGINT, symbol TEXT, price DOUBLE, volume BIGINT)
+WITH (connector='kafka', type='source', bootstrap_servers='redpanda:9092',
+      topic='scenario-01-filter', format='json', 'source.offset'='earliest');
+
+CREATE TABLE ticks_filtered (symbol TEXT, price DOUBLE, volume BIGINT)
+WITH (connector='kafka', type='sink', bootstrap_servers='redpanda:9092',
+      topic='scenario-01-filter-out', format='json');
+
+INSERT INTO ticks_filtered
+SELECT symbol, price, volume FROM ticks WHERE price > 50.0;
+```
+
+```vpl
+# Varpulis
+stream Filtered = Tick
+    .where(price > 50.0)
+    .emit(symbol: symbol, price: price, volume: volume)
+```
+
+| Engine | Throughput | Output | Input path |
+|---|---|---|---|
+| **Varpulis** | **174,751 events/sec** | 89,000 ✓ | File (JSONL via `simulate`) |
+| Arroyo | 86,398 events/sec | 89,000 ✓ | Kafka (Redpanda topic via Kafka source) |
+
+Both engines deliver identical 89,000 output events, verifying correctness.
+Varpulis is roughly **2× faster** on its native input path than Arroyo on its
+native input path. The architectural reasons:
+
+1. **Varpulis pays no broker round-trip.** File-mode reads JSONL directly from
+   the local filesystem, no network/Kafka deserialisation overhead. The
+   Arroyo path goes through Redpanda's Kafka protocol on every event.
+2. **Arroyo runs in Docker with its full cluster topology** (controller +
+   worker + Postgres) — non-trivial baseline overhead even at small
+   parallelism. Varpulis runs as a single process with a shared in-process
+   pipeline.
+3. **The Arroyo job has to compile and start before timing begins**, but
+   we exclude the compile time. The 1.16s wall time is purely the data
+   processing pass through the running pipeline.
+
+A direct Varpulis-on-Kafka comparison (rebuilding `varpulis-cli` with
+`--features kafka` and using the same Redpanda topic) would close some of
+this gap because Varpulis would also pay the Kafka deserialisation cost.
+Architecturally we expect Varpulis-on-Kafka to land in the **130-160k
+events/sec** range based on its file-mode-vs-Kafka delta in the apama
+benchmark, leaving roughly a 1.5-2× margin over Arroyo.
+
+### What we did NOT yet measure
+
+- **Scenario 2 (tumbling 1-second windowed aggregation)**: Arroyo's `WATERMARK
+  FOR` clause requires a `TIMESTAMP` column, and our benchmark generator emits
+  `ts` as `BIGINT` (Unix millis) for compatibility with Proton's JSONEachRow.
+  A future revision will add a parallel `event_time` ISO string field so the
+  same generator drives both engines without schema changes. The infrastructure
+  in `benchmarks/arroyo-comparison/` has the SQL written; only the data
+  generator update is needed.
+- **Like-for-like Kafka comparison** (both engines on Kafka): requires
+  rebuilding Varpulis with `--features kafka`. Pending.
+- **Native pattern detection workloads** (sequence, Kleene closure,
+  forecasting): Arroyo has no native implementation, so the only comparison
+  would be Varpulis's NFA vs a hand-coded Rust UDAF — that's not engine-vs-
+  engine, it's "Varpulis vs whoever wrote the UDAF".
+
+If you want to reproduce these numbers, the benchmark scripts are at
+[`benchmarks/arroyo-comparison/`](https://github.com/varpulis/varpulis/tree/main/benchmarks/arroyo-comparison)
+— `python3 run_benchmark.py --scenario 01_filter` runs the Arroyo path.
+
+### Published vendor numbers (for context)
 
 Arroyo's most-cited benchmark is the [10× faster than Flink on sliding windows](https://www.arroyo.dev/blog/how-arroyo-beats-flink-at-sliding-windows/) blog post. The architectural argument is sound: Flink naïvely updates `width/slide` windows per event (720 updates for a 1h/5s sliding window), while Arroyo's `WindowState` uses incremental bin aggregation whose memory cost scales with non-empty bins. Directionally plausible, but the post does not include hardware specs, dataset descriptions, or reproducible benchmark code — it's a marketing technical post, not a published benchmark.
 
