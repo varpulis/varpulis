@@ -335,13 +335,13 @@ mod tests {
     #[test]
     fn test_goto_def_in_pattern() {
         use tower_lsp::lsp_types::Url;
-        let code = "event Warning:\n    level: int\n\nevent Error:\n    msg: str\n\npattern Alert = SEQ(Warning, Error) within 5m";
+        let code = "event Warning:\n    level: int\n\nevent Error:\n    msg: str\n\npattern Alert = Warning -> Error within 5m";
         let uri = Url::parse("file:///test.vpl").unwrap();
         let loc = get_definition(
             code,
             Position {
                 line: 6,
-                character: 20,
+                character: 16,
             },
             &uri,
         );

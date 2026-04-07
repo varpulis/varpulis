@@ -38,7 +38,7 @@ event Warning:
 event Error:
     code: int
 
-pattern Alert = SEQ(w: Warning, e: Error) within 5m
+pattern Alert = Warning as w -> Error as e within 5m
 ";
     let diags = get_diagnostics(code);
     // Pattern syntax may produce warnings but should not panic
@@ -242,7 +242,7 @@ fn diagnostics_incomplete_aggregate() {
 
 #[test]
 fn diagnostics_incomplete_pattern() {
-    let code = "pattern P = SEQ(a:";
+    let code = "pattern P = A ->";
     let diags = get_diagnostics(code);
     assert!(!diags.is_empty());
 }

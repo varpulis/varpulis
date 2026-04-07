@@ -1233,7 +1233,7 @@ fn load_with_source_valid_program() {
 #[test]
 fn pattern_declaration_and_retrieval() {
     let code = r"
-        pattern TempSpike = SEQ(HighTemp, LowTemp)
+        pattern TempSpike = HighTemp -> LowTemp
         stream S = Tick
             .emit(x: x)
     ";

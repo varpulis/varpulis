@@ -223,9 +223,6 @@ fn match_token_ctx(s: &str, after_dot: bool) -> Option<(usize, u32)> {
         "false",
         "null",
         "within",
-        "SEQ",
-        "AND",
-        "OR",
         "NOT",
     ];
 

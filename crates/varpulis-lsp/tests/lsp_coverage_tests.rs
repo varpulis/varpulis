@@ -46,7 +46,7 @@ fn hover_keyword_event() {
 
 #[test]
 fn hover_keyword_pattern() {
-    let text = "pattern Alert = SEQ(a: Warning, b: Error) within 5m";
+    let text = "pattern Alert = Warning as a -> Error as b within 5m";
     let h = hover_text(text, 0, 0).unwrap();
     assert!(h.contains("pattern"));
     assert!(h.contains("SASE+"));
@@ -185,30 +185,6 @@ fn hover_stream_ops_join() {
     let h = hover_text(text, 0, 0).unwrap();
     assert!(h.contains("join"));
     assert!(h.contains("Inner join"));
-}
-
-#[test]
-fn hover_sase_seq() {
-    let text = "SEQ(a: EventA)";
-    let h = hover_text(text, 0, 0).unwrap();
-    assert!(h.contains("SEQ"));
-    assert!(h.contains("Sequence"));
-}
-
-#[test]
-fn hover_sase_and() {
-    let text = "AND(a: EventA, b: EventB)";
-    let h = hover_text(text, 0, 0).unwrap();
-    assert!(h.contains("AND"));
-    assert!(h.contains("Conjunction"));
-}
-
-#[test]
-fn hover_sase_or() {
-    let text = "OR(a: EventA, b: EventB)";
-    let h = hover_text(text, 0, 0).unwrap();
-    assert!(h.contains("OR"));
-    assert!(h.contains("Disjunction"));
 }
 
 #[test]
@@ -613,9 +589,6 @@ fn semantic_tokens_all_keywords() {
         "false",
         "null",
         "within",
-        "SEQ",
-        "AND",
-        "OR",
         "NOT",
     ] {
         let text = format!("{kw} something");
@@ -670,7 +643,7 @@ fn document_symbols_event() {
 
 #[test]
 fn document_symbols_pattern() {
-    let text = "pattern Alert = SEQ(a: Warning) within 5m";
+    let text = "pattern Alert = Warning as a within 5m";
     let symbols = get_document_symbols(text);
     assert_eq!(symbols.len(), 1);
     assert_eq!(symbols[0].name, "Alert");
@@ -722,7 +695,7 @@ event SensorReading:
 stream SensorData = SensorReading
     .emit()
 
-pattern Alert = SEQ(a: SensorReading) within 5m
+pattern Alert = SensorReading as a within 5m
 
 fn process(x: int) -> int { x * 2 }
 
@@ -913,12 +886,11 @@ fn completion_in_aggregate() {
 
 #[test]
 fn completion_in_pattern() {
-    let text = "pattern X = SEQ(";
-    let items = get_completions(text, pos(0, 16));
+    let text = "pattern X = ";
+    let items = get_completions(text, pos(0, 12));
     let labels: Vec<&str> = items.iter().map(|c| c.label.as_str()).collect();
-    assert!(labels.contains(&"SEQ"));
-    assert!(labels.contains(&"AND"));
-    assert!(labels.contains(&"OR"));
+    assert!(labels.contains(&"->"));
+    assert!(labels.contains(&"all"));
     assert!(labels.contains(&"NOT"));
     assert!(labels.contains(&"within"));
 }
@@ -1150,9 +1122,9 @@ fn goto_definition_on_definition_itself() {
 #[test]
 fn goto_definition_pattern_event_ref() {
     // Cursor on "Warning" in a pattern should jump to the event declaration
-    let code = "event Warning:\n    level: int\n\nevent Error:\n    msg: str\n\npattern Alert = SEQ(Warning, Error) within 5m";
-    // "Warning" in SEQ on line 6, col 20
-    let loc = varpulis_lsp::navigation::get_definition(code, pos(6, 20), &test_uri());
+    let code = "event Warning:\n    level: int\n\nevent Error:\n    msg: str\n\npattern Alert = Warning -> Error within 5m";
+    // "Warning" in pattern body on line 6, col 16
+    let loc = varpulis_lsp::navigation::get_definition(code, pos(6, 16), &test_uri());
     assert!(
         loc.is_some(),
         "should find definition for Warning event in pattern"
@@ -1241,7 +1213,7 @@ fn references_empty_document() {
 
 #[test]
 fn references_event_in_pattern() {
-    let code = "event Warning:\n    level: int\n\nevent Error:\n    msg: str\n\npattern Alert = SEQ(Warning, Error) within 5m";
+    let code = "event Warning:\n    level: int\n\nevent Error:\n    msg: str\n\npattern Alert = Warning -> Error within 5m";
     // Cursor on "Warning" in event declaration (line 0, col 6)
     let refs = varpulis_lsp::navigation::get_references(code, pos(0, 6), &test_uri());
     assert!(refs.is_some(), "should find references for Warning");

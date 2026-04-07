@@ -196,11 +196,10 @@ This is where the architectural difference matters most. Varpulis uses native SA
 <summary>VPL (Varpulis) — 6 lines of pattern</summary>
 
 ```vpl
-pattern RisingSequence = SEQ(
-    StockTick as first,
-    StockTick+ where price > first.price as rising,
-    StockTick where price > rising.price as last
-) within 60s partition by symbol
+pattern RisingSequence = StockTick as first
+    -> all StockTick where price > first.price as rising
+    -> StockTick where price > rising.price as last
+    within 60s partition by symbol
 ```
 </details>
 

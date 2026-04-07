@@ -456,8 +456,15 @@ fn predicate_literal_falls_back_to_expr() {
 // =============================================================================
 
 #[test]
-fn pattern_expr_event() {
-    let expr = SasePatternExpr::Event("Temperature".to_string());
+fn pattern_expr_single_event_via_seq() {
+    let item = SasePatternItem {
+        event_type: "Temperature".to_string(),
+        alias: None,
+        kleene: None,
+        filter: None,
+        monotonic: None,
+    };
+    let expr = SasePatternExpr::Seq(vec![item]);
     let pattern = compile_sase_pattern_expr(&expr, None).unwrap();
     match pattern {
         SasePattern::Event {
@@ -541,76 +548,15 @@ fn pattern_expr_seq_multiple_items() {
 }
 
 #[test]
-fn pattern_expr_and() {
-    let left = SasePatternExpr::Event("A".to_string());
-    let right = SasePatternExpr::Event("B".to_string());
-    let expr = SasePatternExpr::And(Box::new(left), Box::new(right));
-    let pattern = compile_sase_pattern_expr(&expr, None).unwrap();
-    match pattern {
-        SasePattern::And(l, r) => {
-            match l.as_ref() {
-                SasePattern::Event { event_type, .. } => assert_eq!(event_type, "A"),
-                _ => panic!("Expected Event on left"),
-            }
-            match r.as_ref() {
-                SasePattern::Event { event_type, .. } => assert_eq!(event_type, "B"),
-                _ => panic!("Expected Event on right"),
-            }
-        }
-        _ => panic!("Expected SasePattern::And"),
-    }
-}
-
-#[test]
-fn pattern_expr_or() {
-    let left = SasePatternExpr::Event("A".to_string());
-    let right = SasePatternExpr::Event("B".to_string());
-    let expr = SasePatternExpr::Or(Box::new(left), Box::new(right));
-    let pattern = compile_sase_pattern_expr(&expr, None).unwrap();
-    match pattern {
-        SasePattern::Or(l, r) => {
-            match l.as_ref() {
-                SasePattern::Event { event_type, .. } => assert_eq!(event_type, "A"),
-                _ => panic!("Expected Event on left"),
-            }
-            match r.as_ref() {
-                SasePattern::Event { event_type, .. } => assert_eq!(event_type, "B"),
-                _ => panic!("Expected Event on right"),
-            }
-        }
-        _ => panic!("Expected SasePattern::Or"),
-    }
-}
-
-#[test]
-fn pattern_expr_not() {
-    let inner = SasePatternExpr::Event("Cancelled".to_string());
-    let expr = SasePatternExpr::Not(Box::new(inner));
-    let pattern = compile_sase_pattern_expr(&expr, None).unwrap();
-    match pattern {
-        SasePattern::Not(inner) => match inner.as_ref() {
-            SasePattern::Event { event_type, .. } => assert_eq!(event_type, "Cancelled"),
-            _ => panic!("Expected Event inside Not"),
-        },
-        _ => panic!("Expected SasePattern::Not"),
-    }
-}
-
-#[test]
-fn pattern_expr_group_passes_through() {
-    let inner = SasePatternExpr::Event("Tick".to_string());
-    let expr = SasePatternExpr::Group(Box::new(inner));
-    let pattern = compile_sase_pattern_expr(&expr, None).unwrap();
-    // Group should pass through to inner
-    match pattern {
-        SasePattern::Event { event_type, .. } => assert_eq!(event_type, "Tick"),
-        _ => panic!("Expected Group to unwrap to Event"),
-    }
-}
-
-#[test]
 fn pattern_expr_with_within_duration() {
-    let expr = SasePatternExpr::Event("Temperature".to_string());
+    let item = SasePatternItem {
+        event_type: "Temperature".to_string(),
+        alias: None,
+        kleene: None,
+        filter: None,
+        monotonic: None,
+    };
+    let expr = SasePatternExpr::Seq(vec![item]);
     let duration = Duration::from_secs(30);
     let pattern = compile_sase_pattern_expr(&expr, Some(duration)).unwrap();
     match pattern {
@@ -622,25 +568,6 @@ fn pattern_expr_with_within_duration() {
             }
         }
         _ => panic!("Expected SasePattern::Within"),
-    }
-}
-
-#[test]
-fn pattern_expr_group_with_within_duration() {
-    // Group should forward the within duration
-    let inner = SasePatternExpr::Event("Tick".to_string());
-    let expr = SasePatternExpr::Group(Box::new(inner));
-    let duration = Duration::from_secs(60);
-    let pattern = compile_sase_pattern_expr(&expr, Some(duration)).unwrap();
-    match pattern {
-        SasePattern::Within(inner, dur) => {
-            assert_eq!(dur, Duration::from_secs(60));
-            match inner.as_ref() {
-                SasePattern::Event { event_type, .. } => assert_eq!(event_type, "Tick"),
-                _ => panic!("Expected Event inside Within"),
-            }
-        }
-        _ => panic!("Expected SasePattern::Within when Group has within"),
     }
 }
 
@@ -849,65 +776,65 @@ fn extract_types_from_seq_deduplicates() {
 }
 
 #[test]
-fn extract_types_from_and() {
-    let left = SasePatternExpr::Event("Order".to_string());
-    let right = SasePatternExpr::Event("Payment".to_string());
-    let expr = SasePatternExpr::And(Box::new(left), Box::new(right));
-    let types = extract_event_types_from_pattern_expr(&expr);
-    assert_eq!(types, vec!["Order", "Payment"]);
-}
-
-#[test]
-fn extract_types_from_or() {
-    let left = SasePatternExpr::Event("Success".to_string());
-    let right = SasePatternExpr::Event("Failure".to_string());
-    let expr = SasePatternExpr::Or(Box::new(left), Box::new(right));
-    let types = extract_event_types_from_pattern_expr(&expr);
-    assert_eq!(types, vec!["Success", "Failure"]);
-}
-
-#[test]
-fn extract_types_from_not() {
-    let inner = SasePatternExpr::Event("Cancelled".to_string());
-    let expr = SasePatternExpr::Not(Box::new(inner));
-    let types = extract_event_types_from_pattern_expr(&expr);
-    assert_eq!(types, vec!["Cancelled"]);
-}
-
-#[test]
-fn extract_types_from_group() {
-    let inner = SasePatternExpr::Event("Tick".to_string());
-    let expr = SasePatternExpr::Group(Box::new(inner));
-    let types = extract_event_types_from_pattern_expr(&expr);
-    assert_eq!(types, vec!["Tick"]);
-}
-
-#[test]
-fn extract_types_from_event() {
-    let expr = SasePatternExpr::Event("Temperature".to_string());
+fn extract_types_from_single_item_seq() {
+    let item = SasePatternItem {
+        event_type: "Temperature".to_string(),
+        alias: None,
+        kleene: None,
+        filter: None,
+        monotonic: None,
+    };
+    let expr = SasePatternExpr::Seq(vec![item]);
     let types = extract_event_types_from_pattern_expr(&expr);
     assert_eq!(types, vec!["Temperature"]);
 }
 
 #[test]
-fn extract_types_from_and_deduplicates() {
-    let left = SasePatternExpr::Event("X".to_string());
-    let right = SasePatternExpr::Event("X".to_string());
-    let expr = SasePatternExpr::And(Box::new(left), Box::new(right));
+fn extract_types_dedup() {
+    let items = vec![
+        SasePatternItem {
+            event_type: "X".to_string(),
+            alias: None,
+            kleene: None,
+            filter: None,
+            monotonic: None,
+        },
+        SasePatternItem {
+            event_type: "X".to_string(),
+            alias: None,
+            kleene: None,
+            filter: None,
+            monotonic: None,
+        },
+    ];
+    let expr = SasePatternExpr::Seq(items);
     let types = extract_event_types_from_pattern_expr(&expr);
     assert_eq!(types, vec!["X"]);
 }
 
 #[test]
-fn extract_types_nested_and_or() {
-    // AND(OR(A, B), C)
-    let a = SasePatternExpr::Event("A".to_string());
-    let b = SasePatternExpr::Event("B".to_string());
-    let or_ab = SasePatternExpr::Or(Box::new(a), Box::new(b));
-    let c = SasePatternExpr::Event("C".to_string());
-    let expr = SasePatternExpr::And(Box::new(or_ab), Box::new(c));
+fn extract_types_strips_negation_prefix() {
+    // Per-item NOT in arrow syntax produces "!EventType"; the type extractor
+    // should return the bare event name.
+    let items = vec![
+        SasePatternItem {
+            event_type: "Login".to_string(),
+            alias: None,
+            kleene: None,
+            filter: None,
+            monotonic: None,
+        },
+        SasePatternItem {
+            event_type: "!Logout".to_string(),
+            alias: None,
+            kleene: None,
+            filter: None,
+            monotonic: None,
+        },
+    ];
+    let expr = SasePatternExpr::Seq(items);
     let types = extract_event_types_from_pattern_expr(&expr);
-    assert_eq!(types, vec!["A", "B", "C"]);
+    assert_eq!(types, vec!["Login", "Logout"]);
 }
 
 // =============================================================================

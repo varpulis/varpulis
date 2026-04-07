@@ -142,11 +142,10 @@ stream StressForecast = HighHumidity as step1
 # Scenario: A device sends 3+ over-temperature readings in a row
 # followed by a return-to-normal reading = transient spike event.
 
-pattern TransientSpikePattern = SEQ(
-    TbTelemetry where temperature > 75.0 as first_hot,
-    TbTelemetry+ where temperature > 75.0 as hot,
-    TbTelemetry where temperature <= 75.0 as normal
-) within 30m partition by deviceName
+pattern TransientSpikePattern = TbTelemetry where temperature > 75.0 as first_hot
+    -> all TbTelemetry where temperature > 75.0 as hot
+    -> TbTelemetry where temperature <= 75.0 as normal
+    within 30m partition by deviceName
 
 stream TransientSpike = TransientSpikePattern
     .emit(

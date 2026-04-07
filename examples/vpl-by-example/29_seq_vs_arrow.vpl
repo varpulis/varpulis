@@ -1,7 +1,7 @@
-# VPL by Example: 29 — Arrow Patterns (preferred over SEQ)
+# VPL by Example: 29 — Arrow Patterns
 #
-# Pattern declarations now use arrow syntax — `SEQ()` is deprecated.
-# Both stream expressions and named patterns share the same `->` syntax.
+# Pattern declarations use arrow syntax. Both stream expressions and named
+# patterns share the same `->` syntax.
 #
 # Syntax:
 #   pattern Name = A as a -> all B where ... as b -> C

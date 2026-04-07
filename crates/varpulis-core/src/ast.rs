@@ -200,21 +200,15 @@ pub struct ConnectorParam {
     pub value: ConfigValue,
 }
 
-/// SASE+ Pattern Expression for complex event processing
+/// SASE+ Pattern Expression for complex event processing.
+///
+/// Patterns are produced by the arrow syntax (`A -> all B as bs -> C`).
+/// The legacy `SEQ()` form and AND/OR/NOT/Group combinators have been
+/// removed in favor of the unified arrow syntax.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SasePatternExpr {
-    /// Sequence: SEQ(A, B, C)
+    /// Sequence: A -> B -> C (or a single item, degenerate sequence)
     Seq(Vec<SasePatternItem>),
-    /// Conjunction: A AND B
-    And(Box<Self>, Box<Self>),
-    /// Disjunction: A OR B
-    Or(Box<Self>, Box<Self>),
-    /// Negation: NOT A
-    Not(Box<Self>),
-    /// Single event type reference
-    Event(String),
-    /// Grouped expression
-    Group(Box<Self>),
 }
 
 /// Item in a SASE+ sequence with optional Kleene operator

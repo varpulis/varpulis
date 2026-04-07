@@ -100,11 +100,10 @@ event StockTick:
     volume: int
     ts: timestamp
 
-pattern RisingSequence = SEQ(
-    StockTick as first,
-    StockTick+ where price > first.price as rising,
-    StockTick where price > rising.price as last
-) within 60s partition by symbol
+pattern RisingSequence = StockTick as first
+    -> all StockTick where price > first.price as rising
+    -> StockTick where price > rising.price as last
+    within 60s partition by symbol
 ```
 
 **EPL (Esper) -- `every` with `until`**

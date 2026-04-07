@@ -150,13 +150,13 @@ fn e005_no_error_distinct_contexts() {
 
 #[test]
 fn e006_duplicate_pattern() {
-    let diags = validate_vpl("pattern P = SEQ(A, B)\npattern P = SEQ(C, D)");
+    let diags = validate_vpl("pattern P = A -> B\npattern P = C -> D");
     assert!(has_error(&diags, "E006"), "Expected E006: {diags:?}");
 }
 
 #[test]
 fn e006_no_error_distinct_patterns() {
-    let diags = validate_vpl("pattern P1 = SEQ(A, B)\npattern P2 = SEQ(C, D)");
+    let diags = validate_vpl("pattern P1 = A -> B\npattern P2 = C -> D");
     assert!(!has_code(&diags, "E006"), "Should have no E006: {diags:?}");
 }
 
@@ -1030,7 +1030,7 @@ fn e050_nested_unknown_function() {
 
 #[test]
 fn pattern_with_undeclared_event_refs() {
-    let diags = validate_vpl("pattern P = SEQ(UndeclaredA, UndeclaredB)");
+    let diags = validate_vpl("pattern P = UndeclaredA -> UndeclaredB");
     // E033 should be emitted for undeclared event types in patterns
     assert!(
         has_error(&diags, "E033"),
@@ -1041,7 +1041,7 @@ fn pattern_with_undeclared_event_refs() {
 #[test]
 fn pattern_with_declared_event_refs_no_error() {
     let diags = validate_vpl(
-        "event Login: user: str\nevent Purchase: user: str\npattern P = SEQ(Login, Purchase)",
+        "event Login: user: str\nevent Purchase: user: str\npattern P = Login -> Purchase",
     );
     let e033_for_login = diags.iter().any(|(sev, c, msg)| {
         *sev == Severity::Error && *c == Some("E033") && msg.contains("Login")

@@ -47,11 +47,10 @@ event TempReading:
     sensor_id: str
     temperature: int
 
-pattern StrictlyRising = SEQ(
-    TempReading as first,
-    TempReading+ where temperature > first.temperature as rising,
-    TempReading where temperature < first.temperature as drop
-) within 5m partition by sensor_id
+pattern StrictlyRising = TempReading as first
+    -> all TempReading where temperature > first.temperature as rising
+    -> TempReading where temperature < first.temperature as drop
+    within 5m partition by sensor_id
 
 stream HighTemp = StrictlyRising
     .where(count(rising) >= 2)
@@ -91,11 +90,10 @@ event TempReading:
     sensor_id: str
     temperature: int
 
-pattern StrictlyRising = SEQ(
-    TempReading as first,
-    TempReading+ where temperature > first.temperature as rising,
-    TempReading where temperature < first.temperature as drop
-) within 5m partition by sensor_id
+pattern StrictlyRising = TempReading as first
+    -> all TempReading where temperature > first.temperature as rising
+    -> TempReading where temperature < first.temperature as drop
+    within 5m partition by sensor_id
 
 stream HighTemp = StrictlyRising
     .emit(sensor: first.sensor_id, num: count(rising))
@@ -128,11 +126,10 @@ event TempReading:
     sensor_id: str
     temperature: int
 
-pattern Rising = SEQ(
-    TempReading as first,
-    TempReading+ where temperature > first.temperature as rising,
-    TempReading where temperature < first.temperature as drop
-) within 5m partition by sensor_id
+pattern Rising = TempReading as first
+    -> all TempReading where temperature > first.temperature as rising
+    -> TempReading where temperature < first.temperature as drop
+    within 5m partition by sensor_id
 
 stream Alert = Rising
     .emit(sensor: first.sensor_id, num: count(rising))
@@ -163,11 +160,10 @@ event TempReading:
     sensor_id: str
     temperature: int
 
-pattern StrictlyRising = SEQ(
-    TempReading as first,
-    TempReading+ where temperature > rising.temperature as rising,
-    TempReading where temperature < first.temperature as drop
-) within 5m partition by sensor_id
+pattern StrictlyRising = TempReading as first
+    -> all TempReading where temperature > rising.temperature as rising
+    -> TempReading where temperature < first.temperature as drop
+    within 5m partition by sensor_id
 
 stream Alert = StrictlyRising
     .emit(sensor: first.sensor_id, baseline: first.temperature, peak: rising.temperature, drop_to: drop.temperature, num: count(rising))
@@ -208,11 +204,10 @@ event AuthEvent:
     username: str
     status: str
 
-pattern BruteForce = SEQ(
-    AuthEvent where status == "failed" as first,
-    AuthEvent+ where status == "failed" as fails,
-    AuthEvent where status == "success" as success
-) within 30m partition by source_ip
+pattern BruteForce = AuthEvent where status == "failed" as first
+    -> all AuthEvent where status == "failed" as fails
+    -> AuthEvent where status == "success" as success
+    within 30m partition by source_ip
 
 stream Alert = BruteForce
     .emit(ip: first.source_ip, failures: count(fails) + 1, user: success.username)
@@ -239,11 +234,10 @@ event AuthEvent:
     username: str
     status: str
 
-pattern BruteForce = SEQ(
-    AuthEvent where status == "failed" as first,
-    AuthEvent+ where status == "failed" as fails,
-    AuthEvent where status == "success" as success
-) within 30m partition by source_ip
+pattern BruteForce = AuthEvent where status == "failed" as first
+    -> all AuthEvent where status == "failed" as fails
+    -> AuthEvent where status == "success" as success
+    within 30m partition by source_ip
 
 stream Alert = BruteForce
     .emit(ip: first.source_ip)
@@ -263,7 +257,7 @@ stream Alert = BruteForce
 }
 
 // =========================================================================
-// SEQ(A, B+) without terminator — SASE+ STAM emits on each Kleene extension
+// A -> all B without terminator — SASE+ STAM emits on each Kleene extension
 // =========================================================================
 
 #[test]
@@ -273,10 +267,9 @@ event TempReading:
     sensor_id: str
     temperature: int
 
-pattern Rising = SEQ(
-    TempReading as first,
-    TempReading+ where temperature > first.temperature as rising
-) within 5m partition by sensor_id
+pattern Rising = TempReading as first
+    -> all TempReading where temperature > first.temperature as rising
+    within 5m partition by sensor_id
 
 stream Alert = Rising
     .emit(sensor: first.sensor_id, num: count(rising))
@@ -292,7 +285,7 @@ stream Alert = Rising
     let outputs = run_sync(vpl, events);
     assert!(
         outputs.len() >= 3,
-        "SEQ(A, B+) without terminator should emit on each Kleene extension, got {}",
+        "A -> all B without terminator should emit on each Kleene extension, got {}",
         outputs.len()
     );
 }
@@ -309,11 +302,10 @@ event AuthEvent:
     username: str
     status: str
 
-pattern BruteForce = SEQ(
-    AuthEvent where status == "failed" as first,
-    AuthEvent+ where status == "failed" as fails,
-    AuthEvent where status == "success" as success
-) within 30m partition by source_ip
+pattern BruteForce = AuthEvent where status == "failed" as first
+    -> all AuthEvent where status == "failed" as fails
+    -> AuthEvent where status == "success" as success
+    within 30m partition by source_ip
 
 stream Alert = BruteForce
     .where(count(fails) >= 4)

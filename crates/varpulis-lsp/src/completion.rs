@@ -132,7 +132,7 @@ fn get_completion_context(text: &str, position: Position) -> CompletionContext {
     }
 
     // Check if we're in a pattern context
-    if prefix.contains("pattern ") || prefix.contains("SEQ(") || prefix.contains("AND(") {
+    if prefix.contains("pattern ") {
         return CompletionContext::InPattern;
     }
 
@@ -483,8 +483,8 @@ fn get_top_level_completions() -> Vec<CompletionItem> {
             "pattern",
             CompletionItemKind::KEYWORD,
             "Declare a SASE+ pattern",
-            "pattern ${1:Name} = SEQ(${2:a}: ${3:EventType}) within ${4:5m}",
-            Some("pattern Name = SEQ(...) within duration"),
+            "pattern ${1:Name} = ${2:EventA} -> ${3:EventB} within ${4:5m}",
+            Some("pattern Name = EventA -> EventB within duration"),
         ),
         completion_item(
             "let",
@@ -682,32 +682,25 @@ fn get_aggregation_completions() -> Vec<CompletionItem> {
 fn get_pattern_completions() -> Vec<CompletionItem> {
     vec![
         completion_item(
-            "SEQ",
+            "->",
             CompletionItemKind::KEYWORD,
-            "Sequence of events",
-            "SEQ(${1:a}: ${2:EventA}, ${3:b}: ${4:EventB})",
-            Some("SEQ(a: EventA, b: EventB)"),
+            "Sequence operator (followed by)",
+            "-> ${1:EventType}",
+            Some("EventA -> EventB"),
         ),
         completion_item(
-            "AND",
+            "all",
             CompletionItemKind::KEYWORD,
-            "All events must occur",
-            "AND(${1:a}: ${2:EventA}, ${3:b}: ${4:EventB})",
-            Some("AND(a: EventA, b: EventB)"),
-        ),
-        completion_item(
-            "OR",
-            CompletionItemKind::KEYWORD,
-            "Any event may occur",
-            "OR(${1:a}: ${2:EventA}, ${3:b}: ${4:EventB})",
-            Some("OR(a: EventA, b: EventB)"),
+            "Kleene+ (one or more)",
+            "all ${1:EventType}",
+            Some("-> all EventType"),
         ),
         completion_item(
             "NOT",
             CompletionItemKind::KEYWORD,
             "Event must not occur",
-            "NOT(${1:EventType})",
-            Some("NOT(EventType)"),
+            "NOT ${1:EventType}",
+            Some("-> NOT EventType"),
         ),
         completion_item(
             "within",
@@ -1498,16 +1491,15 @@ mod tests {
 
     #[test]
     fn test_pattern_completions() {
-        let text = "pattern X = SEQ(";
+        let text = "pattern X = ";
         let position = Position {
             line: 0,
-            character: 16,
+            character: 12,
         };
         let completions = get_completions(text, position);
         let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
-        assert!(labels.contains(&"SEQ"));
-        assert!(labels.contains(&"AND"));
-        assert!(labels.contains(&"OR"));
+        assert!(labels.contains(&"->"));
+        assert!(labels.contains(&"all"));
         assert!(labels.contains(&"NOT"));
     }
 

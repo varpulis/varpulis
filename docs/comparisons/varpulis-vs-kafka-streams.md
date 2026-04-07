@@ -122,11 +122,10 @@ One of the most powerful CEP features is Kleene closure -- detecting patterns wi
 
 **Varpulis -- native Kleene+ operator**
 ```vpl
-pattern RisingPrices = SEQ(
-    StockTick as first,
-    StockTick+ where price > first.price as rising,
-    StockTick where price > rising.price as last
-) within 60s partition by symbol
+pattern RisingPrices = StockTick as first
+    -> all StockTick where price > first.price as rising
+    -> StockTick where price > rising.price as last
+    within 60s partition by symbol
 ```
 
 This pattern matches sequences of 3 or more events where prices continuously rise. Varpulis's SASE+ engine finds **all valid subsequences** -- in benchmarks, this produces 99K+ matches from 100K events, compared to ~20K with greedy matching approaches.

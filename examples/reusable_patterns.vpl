@@ -3,7 +3,7 @@
 # This example demonstrates the pattern declaration syntax for defining
 # reusable complex event patterns that can be referenced across your application.
 #
-# Syntax: pattern Name = SEQ(...) [within duration] [partition by key]
+# Syntax: pattern Name = A -> B -> C [within duration] [partition by key]
 
 # =============================================================================
 # CONNECTOR DEFINITIONS
@@ -62,44 +62,37 @@ stream TransactionStream = Transaction
 # =============================================================================
 
 # Pattern 1: Simple sequence - Login followed by Logout
-pattern LoginLogout = SEQ(Login, Logout) within 24h partition by user_id
+pattern LoginLogout = Login -> Logout within 24h partition by user_id
 
 # Pattern 2: Login followed by multiple failed transactions
-# The + Kleene operator matches one or more failed transactions
-pattern LoginThenFailedTx = SEQ(
-    Login as login,
-    Transaction+ where status == "failed" as failed_txs
-) within 10m partition by user_id
+# `all` matches one or more failed transactions (Kleene+)
+pattern LoginThenFailedTx = Login as login
+    -> all Transaction where status == "failed" as failed_txs
+    within 10m partition by user_id
 
 # Pattern 3: High-value transaction pattern
 # Matches transactions over $1000
 pattern HighValueTx = Transaction where amount > 1000 as high_value
 
-# Pattern 4: Using OR to match any of multiple event types
-pattern AuthEvent = Login OR Logout
-
-# Pattern 5: Using AND to require concurrent patterns
-pattern BothLoginAndTx = Login AND Transaction
-
-# Pattern 6: Negation - Login without a subsequent Logout (potential session leak)
-pattern LoginWithoutLogout = SEQ(
-    Login as login,
-    NOT Logout,
-    Transaction as tx
-) within 1h partition by user_id
+# Pattern 4: Negation - Login without a subsequent Logout (potential session leak)
+# Note: For matching either of two event types (formerly Login OR Logout) or both
+# in any order (formerly Login AND Transaction), the recommended approach is to
+# use multiple streams + .merge() instead of pattern combinators.
+pattern LoginWithoutLogout = Login as login
+    -> NOT Logout
+    -> Transaction as tx
+    within 1h partition by user_id
 
 # Pattern 7: Complex fraud detection sequence
-pattern FraudSequence = SEQ(
-    Login where device == "unknown" as suspicious_login,
-    Transaction+ where amount > 500 as transactions,
-    NOT Logout
-) within 30m partition by user_id
+pattern FraudSequence = Login where device == "unknown" as suspicious_login
+    -> all Transaction where amount > 500 as transactions
+    -> NOT Logout
+    within 30m partition by user_id
 
 # Pattern 8: Multi-location access detection
-pattern MultiLocationAccess = SEQ(
-    Login as first_login,
-    Login where location != first_login.location as second_login
-) within 1h partition by user_id
+pattern MultiLocationAccess = Login as first_login
+    -> Login where location != first_login.location as second_login
+    within 1h partition by user_id
 
 # =============================================================================
 # STREAMS USING PATTERNS (Future feature - pattern reference in streams)

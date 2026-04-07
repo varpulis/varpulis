@@ -41,7 +41,7 @@ Apama:    on Login() as l -> Transaction(user_id=l.user_id) within(300.0)
 - Expected: **Varpulis significantly better** - native SASE+ vs manual state machine
 
 ```
-Varpulis: SEQ(Start, Rising+, End) - Native SASE+ (~15 lines)
+Varpulis: Start -> all Rising -> End - Native SASE+ (~15 lines)
 Apama:    Manual dictionary tracking with state machine (~60 lines)
 ```
 

@@ -163,12 +163,12 @@ fn get_documentation(word: &str) -> Option<String> {
             Declares a SASE+ pattern for complex event processing.\n\n\
             **Syntax:**\n\
             ```vpl\n\
-            pattern <Name> = SEQ(<events>) within <duration>\n\
+            pattern <Name> = <event> -> <event> -> ... within <duration>\n\
             ```\n\n\
             **Example:**\n\
             ```vpl\n\
-            pattern TemperatureSpike = SEQ(a: TempReading, b: TempReading)\n\
-                where b.temp > a.temp + 10\n\
+            pattern TemperatureSpike = TempReading as a\n\
+                -> TempReading where temp > a.temp + 10 as b\n\
                 within 5m\n\
             ```"
         )),
@@ -495,41 +495,12 @@ fn get_documentation(word: &str) -> Option<String> {
         )),
 
         // SASE+ Pattern operators
-        "SEQ" => Some(format!(
-            "## SEQ (Sequence)\n\n\
-            Matches events occurring in sequence.\n\n\
-            **Syntax:**\n\
-            ```vpl\n\
-            SEQ(a: EventA, b: EventB, c: EventC)\n\
-            ```\n\n\
-            Events must occur in the specified order within the time window."
-        )),
-
-        "AND" => Some(format!(
-            "## AND (Conjunction)\n\n\
-            Matches when all specified events occur (any order).\n\n\
-            **Syntax:**\n\
-            ```vpl\n\
-            AND(a: EventA, b: EventB)\n\
-            ```\n\n\
-            Both events must occur within the time window."
-        )),
-
-        "OR" => Some(format!(
-            "## OR (Disjunction)\n\n\
-            Matches when any of the specified events occur.\n\n\
-            **Syntax:**\n\
-            ```vpl\n\
-            OR(a: EventA, b: EventB)\n\
-            ```"
-        )),
-
         "NOT" => Some(format!(
             "## NOT (Negation)\n\n\
             Matches when an event does NOT occur.\n\n\
             **Syntax:**\n\
             ```vpl\n\
-            SEQ(a: EventA, NOT(EventB), c: EventC)\n\
+            pattern P = EventA -> NOT EventB -> EventC\n\
             ```\n\n\
             EventB must not occur between EventA and EventC."
         )),
@@ -549,7 +520,7 @@ fn get_documentation(word: &str) -> Option<String> {
             - `d` - days\n\n\
             **Example:**\n\
             ```vpl\n\
-            pattern Alert = SEQ(a: Warning, b: Error) within 30s\n\
+            pattern Alert = Warning as a -> Error as b within 30s\n\
             ```"
         )),
 

@@ -68,11 +68,10 @@ event PriceSpike:
     magnitude: float
 
 # Reusable pattern declaration
-pattern RisingPrices = SEQ(
-    StockTick as first,
-    StockTick+ where price > first.price as middle,
-    StockTick where price > middle.price as last
-) within 60s partition by symbol
+pattern RisingPrices = StockTick as first
+    -> all StockTick where price > first.price as middle
+    -> StockTick where price > middle.price as last
+    within 60s partition by symbol
 
 # Note: SASE+ patterns are Varpulis's strength:
 # + Temporal sequences with "within" constraints

@@ -11,9 +11,6 @@
 #   pattern Name = A -> all B as bs -> C    # Kleene+ with `all`
 #   pattern Name = A.increasing(field)+      # Monotonic operators
 #
-# Note: SEQ() is deprecated but still parses for backward compatibility.
-# Prefer the arrow syntax above for new code.
-#
 # For negation (absence detection), use .not() on streams instead
 # (see example 14_negation.vpl).
 #

@@ -193,12 +193,11 @@ event ServiceError:
     targetSystem: string
 
 -- 5+ distinct services failing against the same target within 2 minutes.
--- Uses SEQ() with Kleene+ for unbounded error accumulation.
+-- Uses arrow syntax with `all` for unbounded error accumulation.
 -- count() returns the number of matched events in the closure.
-pattern ErrorBurst = SEQ(
-    ServiceError as first,
-    ServiceError+ as errors
-) within 2m partition by targetSystem
+pattern ErrorBurst = ServiceError as first
+    -> all ServiceError as errors
+    within 2m partition by targetSystem
 
 stream ErrorCascade = ErrorBurst
     .where(count(errors) >= 4)
@@ -290,11 +289,10 @@ event ApiCall:
     apiKey: string
 
 -- Credential stuffing: 10+ failed logins from same IP within 5 minutes
--- Uses SEQ() with Kleene+ for unbounded attempt accumulation
-pattern StuffingPattern = SEQ(
-    ApiCall where endpoint == "/auth/login" and statusCode == 401 as first,
-    ApiCall+ where endpoint == "/auth/login" and statusCode == 401 as attempts
-) within 5m partition by clientIp
+-- Uses arrow syntax with `all` for unbounded attempt accumulation
+pattern StuffingPattern = ApiCall where endpoint == "/auth/login" and statusCode == 401 as first
+    -> all ApiCall where endpoint == "/auth/login" and statusCode == 401 as attempts
+    within 5m partition by clientIp
 
 stream CredentialStuffing = StuffingPattern
     .where(count(attempts) >= 9)
@@ -304,10 +302,9 @@ stream CredentialStuffing = StuffingPattern
     .to(http(url: "https://apigw.internal/blacklist", method: "POST"))
 
 -- API enumeration: high-frequency probing on a path prefix
-pattern EnumPattern = SEQ(
-    ApiCall where starts_with(endpoint, "/api/users/") as first,
-    ApiCall+ where starts_with(endpoint, "/api/users/") as probes
-) within 1m partition by clientIp
+pattern EnumPattern = ApiCall where starts_with(endpoint, "/api/users/") as first
+    -> all ApiCall where starts_with(endpoint, "/api/users/") as probes
+    within 1m partition by clientIp
 
 stream ApiEnumeration = EnumPattern
     .where(count(probes) >= 49)

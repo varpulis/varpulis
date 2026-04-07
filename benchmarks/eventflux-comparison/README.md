@@ -259,7 +259,7 @@ for i in 1..=50:
     stream TrendQuery_{i} = StockTick
         .partition_by(symbol)
         .pattern(rising: (e) => e.price > 100.0 + i)
-        .detect(SEQ(rising+))
+        .detect(all rising)
         .trend_aggregate(count: count())
         .emit(event_type: "Trend", query_id: i, count: count)
 ```

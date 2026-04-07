@@ -15,12 +15,11 @@ event AuthEvent:
     target_host: str
 
 # Kleene+ pattern: 3+ failed logins -> success from same IP
-# Uses SEQ() with Kleene+ for unbounded failure accumulation
-pattern BruteForceChain = SEQ(
-    AuthEvent where status == "failed" as first,
-    AuthEvent+ where status == "failed" as fails,
-    AuthEvent where status == "success" as success
-) within 30m partition by source_ip
+# Uses arrow syntax with `all` for unbounded failure accumulation
+pattern BruteForceChain = AuthEvent where status == "failed" as first
+    -> all AuthEvent where status == "failed" as fails
+    -> AuthEvent where status == "success" as success
+    within 30m partition by source_ip
 
 stream BruteForceTakeover = BruteForceChain
     .emit(

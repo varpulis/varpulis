@@ -17,7 +17,7 @@ Varpulis demonstrates significant advantages over Apama in **Kleene pattern matc
 
 ### The Problem with Traditional CEP
 
-When processing Kleene+ patterns like `SEQ(A, B+, C)`, each B event doubles the number of possible match combinations:
+When processing Kleene+ patterns like `A -> all B -> C`, each B event doubles the number of possible match combinations:
 - 10 B events → 1,023 combinations (2^10 - 1)
 - 20 B events → 1,048,575 combinations (2^20 - 1)
 - 30 B events → 1,073,741,823 combinations (2^30 - 1)
@@ -68,7 +68,7 @@ Apama:    ~550 Kelem/s (estimated)
 Login → Transaction pattern detection:
 
 ```
-SEQ(Login, Transaction) within 5m - 10K events
+Login -> Transaction within 5m - 10K events
 Varpulis: 287 Kelem/s (35 ms)
 Apama:    ~200 Kelem/s (estimated - Flink comparison baseline)
 ```
@@ -78,7 +78,7 @@ Apama:    ~200 Kelem/s (estimated - Flink comparison baseline)
 Rising price sequence detection:
 
 ```
-SEQ(Start, Rising+, End) - 5K events
+Start -> all Rising -> End - 5K events
 Varpulis: 418 Kelem/s (12 ms) with ZDD
 Apama:    Manual implementation required (~60 lines vs 22 lines)
 ```
@@ -94,11 +94,10 @@ event StockTick:
     price: float
     volume: int
 
-pattern RisingSequence = SEQ(
-    StockTick as first,
-    StockTick+ where price > first.price as rising,
-    StockTick where price > rising.price as last
-) within 60s partition by symbol
+pattern RisingSequence = StockTick as first
+    -> all StockTick where price > first.price as rising
+    -> StockTick where price > rising.price as last
+    within 60s partition by symbol
 
 stream PriceSpikes = RisingSequence
     .emit(

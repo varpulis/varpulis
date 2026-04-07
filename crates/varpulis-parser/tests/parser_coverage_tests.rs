@@ -756,40 +756,8 @@ fn test_timer_source_with_initial_delay() {
 // ============================================================================
 
 #[test]
-fn test_pattern_decl_seq_kleene_star() {
-    let stmt = parse_first_stmt("pattern P = SEQ(A, B*, C)");
-    match stmt {
-        Stmt::PatternDecl { name, expr, .. } => {
-            assert_eq!(name, "P");
-            match expr {
-                SasePatternExpr::Seq(items) => {
-                    assert_eq!(items.len(), 3);
-                    assert_eq!(items[1].kleene, Some(KleeneOp::Star));
-                }
-                other => panic!("Expected Seq, got {other:?}"),
-            }
-        }
-        other => panic!("Expected PatternDecl, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_pattern_decl_seq_optional() {
-    let stmt = parse_first_stmt("pattern P = SEQ(A, B?, C)");
-    match stmt {
-        Stmt::PatternDecl { expr, .. } => match expr {
-            SasePatternExpr::Seq(items) => {
-                assert_eq!(items[1].kleene, Some(KleeneOp::Optional));
-            }
-            other => panic!("Expected Seq, got {other:?}"),
-        },
-        other => panic!("Expected PatternDecl, got {other:?}"),
-    }
-}
-
-#[test]
 fn test_pattern_decl_with_within_and_partition() {
-    let stmt = parse_first_stmt("pattern P = SEQ(A, B+, C?) within 30s partition by user_id");
+    let stmt = parse_first_stmt("pattern P = A -> all B within 30s partition by user_id");
     match stmt {
         Stmt::PatternDecl {
             within,
@@ -808,93 +776,46 @@ fn test_pattern_decl_with_within_and_partition() {
 
 #[test]
 fn test_pattern_decl_negated_item() {
-    let stmt = parse_first_stmt("pattern P = SEQ(Login, NOT Logout, Transaction)");
+    let stmt = parse_first_stmt("pattern P = Login -> NOT Logout -> Transaction");
     match stmt {
-        Stmt::PatternDecl { expr, .. } => match expr {
-            SasePatternExpr::Seq(items) => {
-                assert_eq!(items.len(), 3);
-                // Negated items are prefixed with "!"
-                assert!(items[1].event_type.starts_with('!'));
-            }
-            other => panic!("Expected Seq, got {other:?}"),
-        },
+        Stmt::PatternDecl { expr, .. } => {
+            let SasePatternExpr::Seq(items) = expr;
+            assert_eq!(items.len(), 3);
+            // Negated items are prefixed with "!"
+            assert!(items[1].event_type.starts_with('!'));
+        }
         other => panic!("Expected PatternDecl, got {other:?}"),
     }
 }
 
 #[test]
-fn test_pattern_decl_or() {
-    let stmt = parse_first_stmt("pattern P = A OR B");
+fn test_pattern_decl_not_in_arrow() {
+    // Per-item NOT in arrow syntax: produces "!" prefix on the event_type.
+    let stmt = parse_first_stmt("pattern P = Login -> NOT Logout");
     match stmt {
-        Stmt::PatternDecl { expr, .. } => match expr {
-            SasePatternExpr::Or(_, _) => {}
-            other => panic!("Expected Or, got {other:?}"),
-        },
+        Stmt::PatternDecl { expr, .. } => {
+            let SasePatternExpr::Seq(items) = expr;
+            assert_eq!(items.len(), 2);
+            assert!(
+                items[1].event_type.starts_with('!'),
+                "Expected negated item"
+            );
+        }
         other => panic!("Expected PatternDecl, got {other:?}"),
     }
 }
 
 #[test]
-fn test_pattern_decl_and() {
-    let stmt = parse_first_stmt("pattern P = A AND B");
+fn test_pattern_decl_kleene_via_all() {
+    // Arrow syntax: `all` keyword for Kleene+, with where + as
+    let stmt = parse_first_stmt("pattern P = Login -> all Transaction where amount > 100 as txs");
     match stmt {
-        Stmt::PatternDecl { expr, .. } => match expr {
-            SasePatternExpr::And(_, _) => {}
-            other => panic!("Expected And, got {other:?}"),
-        },
-        other => panic!("Expected PatternDecl, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_pattern_decl_not_in_seq() {
-    // Standalone `NOT A` at top level is limited by the grammar (NOT is consumed
-    // silently as a literal). Use NOT inside a SEQ item instead, which produces
-    // the "!" prefix on the event_type.
-    let stmt = parse_first_stmt("pattern P = SEQ(Login, NOT Logout)");
-    match stmt {
-        Stmt::PatternDecl { expr, .. } => match expr {
-            SasePatternExpr::Seq(items) => {
-                assert_eq!(items.len(), 2);
-                assert!(
-                    items[1].event_type.starts_with('!'),
-                    "Expected negated item"
-                );
-            }
-            other => panic!("Expected Seq with negated item, got {other:?}"),
-        },
-        other => panic!("Expected PatternDecl, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_pattern_decl_grouped() {
-    let stmt = parse_first_stmt("pattern P = (A OR B) AND C");
-    match stmt {
-        Stmt::PatternDecl { expr, .. } => match expr {
-            SasePatternExpr::And(left, _right) => match *left {
-                SasePatternExpr::Group(_) => {}
-                other => panic!("Expected Group inside And, got {other:?}"),
-            },
-            other => panic!("Expected And with Group, got {other:?}"),
-        },
-        other => panic!("Expected PatternDecl, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_pattern_decl_event_with_kleene_as_sase_event_ref() {
-    // Event ref with kleene, where, alias => should wrap in single-item Seq
-    let stmt = parse_first_stmt("pattern P = Transaction+ where amount > 100 as txs");
-    match stmt {
-        Stmt::PatternDecl { expr, .. } => match expr {
-            SasePatternExpr::Seq(items) => {
-                assert_eq!(items.len(), 1);
-                assert_eq!(items[0].kleene, Some(KleeneOp::Plus));
-                assert!(items[0].filter.is_some());
-                assert_eq!(items[0].alias, Some("txs".to_string()));
-            }
-            other => panic!("Expected single-item Seq, got {other:?}"),
+        Stmt::PatternDecl { expr, .. } => {
+            let SasePatternExpr::Seq(items) = expr;
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[1].kleene, Some(KleeneOp::Plus));
+            assert!(items[1].filter.is_some());
+            assert_eq!(items[1].alias, Some("txs".to_string()));
         },
         other => panic!("Expected PatternDecl, got {other:?}"),
     }

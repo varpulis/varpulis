@@ -1648,22 +1648,14 @@ fn extract_ident(expr: &Expr) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 fn check_sase_pattern_refs(v: &mut Validator, expr: &SasePatternExpr, span: Span) {
-    match expr {
-        SasePatternExpr::Event(name) => {
-            check_source_name(v, name, span);
-        }
-        SasePatternExpr::Seq(items) => {
-            for item in items {
-                check_source_name(v, &item.event_type, span);
-            }
-        }
-        SasePatternExpr::And(a, b) | SasePatternExpr::Or(a, b) => {
-            check_sase_pattern_refs(v, a, span);
-            check_sase_pattern_refs(v, b, span);
-        }
-        SasePatternExpr::Not(inner) | SasePatternExpr::Group(inner) => {
-            check_sase_pattern_refs(v, inner, span);
-        }
+    let SasePatternExpr::Seq(items) = expr;
+    for item in items {
+        // Strip the "!" prefix used by negated arrow items (NOT EventType)
+        let name = item
+            .event_type
+            .strip_prefix('!')
+            .unwrap_or(&item.event_type);
+        check_source_name(v, name, span);
     }
 }
 

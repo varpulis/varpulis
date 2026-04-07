@@ -17,27 +17,26 @@ SASE+ (Sequence Algebra for Stream Events) is a pattern matching algorithm for C
 
 ---
 
-## Two Syntaxes for Patterns
+## Pattern Syntax
 
-Varpulis offers two ways to express patterns. Both compile to the same NFA engine.
+Varpulis uses arrow (`->`) syntax for both **named patterns** and **inline stream expressions**. Both compile to the same NFA engine.
 
-### Named Patterns with `SEQ()` (formal syntax)
+### Named Patterns
 
-Use `SEQ()` for **named pattern declarations** — required for Kleene closures (`+`, `*`) with `partition by`:
+Use `pattern Name = ...` to declare a reusable named pattern:
 
 ```vpl
-pattern BruteForce = SEQ(
-    AuthEvent where status == "failed" as first,
-    AuthEvent+ where status == "failed" as fails,
-    AuthEvent where status == "success" as success
-) within 30m partition by source_ip
+pattern BruteForce = AuthEvent where status == "failed" as first
+    -> all AuthEvent where status == "failed" as fails
+    -> AuthEvent where status == "success" as success
+    within 30m partition by source_ip
 ```
 
-Operators: `SEQ(...)`, `AND(...)`, `OR(...)`, `NOT(...)`, Kleene `+`, `*`, `?`
+Within an arrow item the order is: `[all] [NOT] EventType [where filter] [as alias]`. Use `all` for Kleene-plus accumulation.
 
-### Inline Stream Patterns with `->` (fluent syntax)
+### Inline Stream Patterns
 
-Use `->` inside **stream expressions** for a more readable, chainable style:
+Use `->` inside **stream expressions** for a chainable style:
 
 ```vpl
 stream FraudAlert = login as l
@@ -46,7 +45,7 @@ stream FraudAlert = login as l
     .emit(alert: "Suspicious transfer", user: l.user_id)
 ```
 
-For Kleene closures in stream expressions, use the `all` keyword:
+For Kleene-plus inside stream expressions, use the `all` keyword:
 
 ```vpl
 stream BruteForce = LoginFailed as f
@@ -59,12 +58,11 @@ stream BruteForce = LoginFailed as f
 
 ### When to Use Which
 
-| | `SEQ()` (named pattern) | `->` (stream expression) |
+| | Named pattern | Inline stream expression |
 |---|---|---|
-| Kleene `+`/`*` with `partition by` | Required | Use `all` keyword |
-| AND / OR / NOT combinators | Supported | Not available |
+| Reuse across multiple streams | Yes | No |
 | Chaining `.emit()`, `.forecast()` | Via separate `stream = Pattern.emit(...)` | Inline |
-| Readability | Formal, good for complex logic | Fluent, good for simple pipelines |
+| Readability for complex logic | Good | Good for short pipelines |
 
 ---
 
@@ -75,7 +73,7 @@ stream BruteForce = LoginFailed as f
 Events must occur in the specified order.
 
 ```vpl
-pattern ThreeStep = SEQ(A, B, C) within 5m
+pattern ThreeStep = A -> B -> C within 5m
 
 # Or equivalently in a stream expression:
 stream ThreeStep = A -> B -> C .within(5m)
@@ -92,12 +90,11 @@ One or more occurrences of an event type.
 
 ```vpl
 # Named pattern syntax
-pattern BruteForce = SEQ(
-    LoginFailed+ as fails,
-    LoginSuccess as success
-) within 10m partition by user_id
+pattern BruteForce = all LoginFailed as fails
+    -> LoginSuccess as success
+    within 10m partition by user_id
 
-# Stream expression syntax (use `all` keyword)
+# Stream expression syntax (same `all` keyword)
 stream BruteForce = LoginFailed as first
     -> all LoginFailed as fails
     -> LoginSuccess as success
@@ -265,11 +262,10 @@ Self-referencing Kleene predicates let you detect **strictly monotonic trends** 
 ### Strictly Rising Values
 
 ```vpl
-pattern StrictlyRising = SEQ(
-    SensorReading as first,
-    SensorReading+ where temperature > rising.temperature as rising,
-    SensorReading where temperature < first.temperature as drop
-) within 5m partition by sensor_id
+pattern StrictlyRising = SensorReading as first
+    -> all SensorReading where temperature > rising.temperature as rising
+    -> SensorReading where temperature < first.temperature as drop
+    within 5m partition by sensor_id
 ```
 
 **How it works:** The predicate `temperature > rising.temperature` compares each new event against the **last captured Kleene event** (not the first). The alias `rising` refers to itself — the engine:
@@ -281,19 +277,17 @@ pattern StrictlyRising = SEQ(
 ### Strictly Decreasing Values
 
 ```vpl
-pattern CoolingDown = SEQ(
-    SensorReading as first,
-    SensorReading+ where temperature < cooling.temperature as cooling
-) within 10m partition by sensor_id
+pattern CoolingDown = SensorReading as first
+    -> all SensorReading where temperature < cooling.temperature as cooling
+    within 10m partition by sensor_id
 ```
 
 ### Escalating Severity
 
 ```vpl
-pattern Escalation = SEQ(
-    Alert as first,
-    Alert+ where severity > escalating.severity as escalating
-) within 1h partition by host
+pattern Escalation = Alert as first
+    -> all Alert where severity > escalating.severity as escalating
+    within 1h partition by host
 
 stream EscalationAlert = Escalation
     .where(count(escalating) >= 3)
@@ -539,10 +533,9 @@ See `varpulis-zdd` crate for ZDD data structures and `sase.rs` for integration w
 
 ```vpl
 // Multiple small transactions followed by large withdrawal
-pattern SmurfingPattern = SEQ(
-    Transaction+ where amount < 1000 as small,
-    Transaction where amount > 9000 as large
-) within 1h partition by account_id
+pattern SmurfingPattern = all Transaction where amount < 1000 as small
+    -> Transaction where amount > 9000 as large
+    within 1h partition by account_id
 
 stream FraudAlerts = SmurfingPattern
     .emit(
@@ -556,10 +549,9 @@ stream FraudAlerts = SmurfingPattern
 
 ```vpl
 // Request without response within SLA
-pattern SLABreach = SEQ(
-    Request as req,
-    NOT(Response where request_id == req.id)
-) within 5s
+pattern SLABreach = Request as req
+    -> NOT Response where request_id == req.id
+    within 5s
 
 stream SLAAlerts = SLABreach
     .emit(alert: "SLA breach", request_id: req.id)
@@ -569,10 +561,9 @@ stream SLAAlerts = SLABreach
 
 ```vpl
 // Device going offline (no heartbeat within 1m)
-pattern DeviceOffline = SEQ(
-    Heartbeat as last_beat,
-    NOT(Heartbeat)
-) within 1m partition by device_id
+pattern DeviceOffline = Heartbeat as last_beat
+    -> NOT Heartbeat
+    within 1m partition by device_id
 
 stream OfflineAlerts = DeviceOffline
     .emit(alert: "Device offline", device: last_beat.device_id)

@@ -464,37 +464,12 @@ pub fn compile_sase_pattern_expr(
 ) -> Option<SasePattern> {
     use varpulis_core::ast::SasePatternExpr;
 
-    let pattern = match expr {
-        SasePatternExpr::Seq(items) => {
-            let steps: Vec<SasePattern> = items.iter().map(compile_sase_pattern_item).collect();
-            if steps.len() == 1 {
-                steps.into_iter().next().unwrap()
-            } else {
-                SasePattern::Seq(steps)
-            }
-        }
-        SasePatternExpr::And(left, right) => {
-            let l = compile_sase_pattern_expr(left, None)?;
-            let r = compile_sase_pattern_expr(right, None)?;
-            SasePattern::And(Box::new(l), Box::new(r))
-        }
-        SasePatternExpr::Or(left, right) => {
-            let l = compile_sase_pattern_expr(left, None)?;
-            let r = compile_sase_pattern_expr(right, None)?;
-            SasePattern::Or(Box::new(l), Box::new(r))
-        }
-        SasePatternExpr::Not(inner) => {
-            let i = compile_sase_pattern_expr(inner, None)?;
-            SasePattern::Not(Box::new(i))
-        }
-        SasePatternExpr::Event(name) => SasePattern::Event {
-            event_type: name.clone(),
-            predicate: None,
-            alias: None,
-        },
-        SasePatternExpr::Group(inner) => {
-            return compile_sase_pattern_expr(inner, within);
-        }
+    let SasePatternExpr::Seq(items) = expr;
+    let steps: Vec<SasePattern> = items.iter().map(compile_sase_pattern_item).collect();
+    let pattern = if steps.len() == 1 {
+        steps.into_iter().next().unwrap()
+    } else {
+        SasePattern::Seq(steps)
     };
 
     // Wrap with Within if specified
@@ -558,32 +533,16 @@ pub fn extract_event_types_from_pattern_expr(
 ) -> Vec<String> {
     use varpulis_core::ast::SasePatternExpr;
 
+    let SasePatternExpr::Seq(items) = expr;
     let mut types = Vec::new();
-    match expr {
-        SasePatternExpr::Seq(items) => {
-            for item in items {
-                if !types.contains(&item.event_type) {
-                    types.push(item.event_type.clone());
-                }
-            }
-        }
-        SasePatternExpr::And(left, right) | SasePatternExpr::Or(left, right) => {
-            for t in extract_event_types_from_pattern_expr(left) {
-                if !types.contains(&t) {
-                    types.push(t);
-                }
-            }
-            for t in extract_event_types_from_pattern_expr(right) {
-                if !types.contains(&t) {
-                    types.push(t);
-                }
-            }
-        }
-        SasePatternExpr::Not(inner) | SasePatternExpr::Group(inner) => {
-            types = extract_event_types_from_pattern_expr(inner);
-        }
-        SasePatternExpr::Event(name) => {
-            types.push(name.clone());
+    for item in items {
+        // Strip the "!" prefix that NOT items use
+        let name = item
+            .event_type
+            .strip_prefix('!')
+            .unwrap_or(&item.event_type);
+        if !types.iter().any(|t: &String| t == name) {
+            types.push(name.to_string());
         }
     }
     types

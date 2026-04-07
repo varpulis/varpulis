@@ -1005,7 +1005,7 @@ async fn sync_multiple_streams_same_event() {
 #[tokio::test]
 async fn pattern_declaration_lookup() {
     let code = r"
-        pattern RapidOrders = SEQ(Order, Payment) within 5s
+        pattern RapidOrders = Order -> Payment within 5s
     ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);

@@ -38,11 +38,11 @@ varpulis simulate -p <example>.vpl -e <example>.evt -v -w 1
 |---|------|---------|------------|
 | 11 | [simple_sequence](11_simple_sequence.vpl) | Two-event sequence (A -> B) | `->`, `as alias`, `where` correlation |
 | 12 | [multi_step_sequence](12_multi_step_sequence.vpl) | Three+ event chains (A -> B -> C) | Chained `->` with cross-step references |
-| 13 | [kleene_plus](13_kleene_plus.vpl) | One or more repeated events | `-> all EventType` or `SEQ(A, B+)` |
+| 13 | [kleene_plus](13_kleene_plus.vpl) | One or more repeated events | `-> all EventType` |
 | 14 | [negation](14_negation.vpl) | Detect event absence | `.not(EventType where condition)` |
 | 15 | [temporal_constraints](15_temporal_constraints.vpl) | Time-bounded pattern matching | `.within(1h)` |
 | 16 | [partition_by_patterns](16_partition_by_patterns.vpl) | Independent patterns per key | `.partition_by(user_id)` in patterns |
-| 17 | [reusable_patterns](17_reusable_patterns.vpl) | Named pattern declarations | `pattern Name = SEQ(A, B+)` with `AND`, `OR` |
+| 17 | [reusable_patterns](17_reusable_patterns.vpl) | Named pattern declarations | `pattern Name = A -> all B` |
 | 18 | [match_all](18_match_all.vpl) | Capture all events in Kleene closure | `-> all ProcessingStep as steps` |
 
 ### Multi-Stream Operations
