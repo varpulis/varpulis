@@ -156,6 +156,13 @@ impl Nfa {
         }
     }
 
+    /// Returns true if the NFA contains any greedy Kleene state (i.e., the
+    /// pattern uses .increasing() / .decreasing() or a self-ref Kleene alias).
+    /// Used by the engine to disable overlapping runs via skip-till-any-match.
+    pub fn has_greedy_kleene(&self) -> bool {
+        self.states.iter().any(|s| s.is_greedy)
+    }
+
     /// Mark a state as an accepting (final) state.
     pub fn set_accept(&mut self, state_id: usize) {
         if let Some(state) = self.states.get_mut(state_id) {

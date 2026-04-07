@@ -587,6 +587,11 @@ impl SaseEngine {
         // Check global negations - invalidate runs that match
         self.check_global_negations(&event);
 
+        // For greedy Kleene patterns (.increasing()/.decreasing()), only one
+        // active run per partition is allowed — new runs would just produce
+        // prefix duplicates of the existing run's rising sequence.
+        let is_greedy = self.nfa.has_greedy_kleene();
+
         // PERF(Opt7): Borrow partition_by instead of cloning per event
         if let Some(ref partition_field) = self.partition_by {
             let partition_key = event
@@ -597,22 +602,38 @@ impl SaseEngine {
             // Process partitioned runs
             completed.extend(self.process_partition_shared(&partition_key, Arc::clone(&event)));
 
-            // Try to start new run in partition with backpressure
-            if let Some(run) = self.try_start_run_shared(Arc::clone(&event)) {
-                let (added, _) = self.handle_backpressure_partitioned(&partition_key, run);
-                if added {
-                    self.total_runs_created += 1;
+            // For greedy mode, skip starting a new run if an active run already
+            // exists in this partition — it captures the full rising sequence.
+            let has_active = is_greedy
+                && self
+                    .partitioned_runs
+                    .get(&partition_key)
+                    .is_some_and(|runs| runs.iter().any(|r| !r.invalidated));
+
+            if !has_active {
+                // Try to start new run in partition with backpressure
+                if let Some(run) = self.try_start_run_shared(Arc::clone(&event)) {
+                    let (added, _) = self.handle_backpressure_partitioned(&partition_key, run);
+                    if added {
+                        self.total_runs_created += 1;
+                    }
                 }
             }
         } else {
             // Non-partitioned processing
             completed.extend(self.process_runs_shared(Arc::clone(&event)));
 
-            // Try to start new run with backpressure
-            if let Some(run) = self.try_start_run_shared(Arc::clone(&event)) {
-                let (added, _) = self.handle_backpressure(run);
-                if added {
-                    self.total_runs_created += 1;
+            // For greedy mode without partitioning, skip starting a new run
+            // if any active run exists.
+            let has_active = is_greedy && self.runs.iter().any(|r| !r.invalidated);
+
+            if !has_active {
+                // Try to start new run with backpressure
+                if let Some(run) = self.try_start_run_shared(Arc::clone(&event)) {
+                    let (added, _) = self.handle_backpressure(run);
+                    if added {
+                        self.total_runs_created += 1;
+                    }
                 }
             }
         }
