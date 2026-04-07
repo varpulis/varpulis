@@ -1,0 +1,49 @@
+# Kleene-bound Variables as Arrays
+#
+# A Kleene-bound variable like `r` in `all Reading as r` is conceptually
+# an array of captured events. This example shows the various ways to
+# access individual elements, the count, and aggregate the values.
+#
+# Run with: varpulis simulate -p 31_array_semantics.vpl -e 31_array_semantics.evt -v -w 1
+
+event Start:
+    id: str
+
+event Reading:
+    id: str
+    val: int
+
+event End:
+    id: str
+
+# Show all the array-style accessors in one stream
+stream ArrayAccess = Start -> all Reading as r -> End
+    .longest()
+    .emit(
+        # Count
+        count: r.LEN,                  # equivalent to count(r)
+
+        # Indexed access (zero-based)
+        first_id: r[0].id,             # first captured Reading
+        first_val: r[0].val,
+        second_val: r[1].val,
+        last_id: r[r.LEN - 1].id,      # equivalent to r.id
+
+        # Last-element shortcut
+        last_id_short: r.id,
+        last_val_short: r.val,
+
+        # Builtins
+        first_via_fn: first(r).id,
+        last_via_fn: last(r).id,
+
+        # Aggregates
+        total_val: sum(r.val),
+        avg_val: avg(r.val),
+        min_val: min(r.val),
+        max_val: max(r.val),
+
+        # Collect into a list (Value::Array)
+        all_ids: collect(r.id),
+        all_vals: collect(r.val)
+    )

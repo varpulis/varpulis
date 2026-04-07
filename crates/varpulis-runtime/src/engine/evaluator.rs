@@ -956,13 +956,23 @@ pub fn eval_expr_with_functions(
             Some(Value::map(map))
         }
 
-        // Index access: arr[0] or map["key"]
+        // Index access: arr[0] or map["key"] or b[i] for Kleene aliases
         Expr::Index {
             expr: container,
             index,
         } => {
-            let container_val =
-                eval_expr_with_functions(container, event, ctx, functions, bindings)?;
+            // Special: if container is a bare Ident matching a Kleene alias,
+            // resolve it to the captured events array (_events_alias).
+            let container_val = if let Expr::Ident(alias) = container.as_ref() {
+                event
+                    .get(format!("_events_{alias}").as_str())
+                    .cloned()
+                    .or_else(|| {
+                        eval_expr_with_functions(container, event, ctx, functions, bindings)
+                    })?
+            } else {
+                eval_expr_with_functions(container, event, ctx, functions, bindings)?
+            };
             let index_val = eval_expr_with_functions(index, event, ctx, functions, bindings)?;
 
             match (&container_val, &index_val) {
@@ -1072,6 +1082,14 @@ pub fn eval_expr_with_functions(
         } => {
             // Handle alias.field access (e.g., order.id, MarketA.price)
             if let Expr::Ident(alias) = object.as_ref() {
+                // Special: alias.LEN → Kleene capture count
+                // (mirrors SASE+ paper notation a.LEN for sequence length)
+                if member == "LEN" {
+                    if let Some(v) = event.get(format!("_count_{alias}").as_str()) {
+                        return Some(v.clone());
+                    }
+                }
+
                 // First check sequence context for captured events
                 if let Some(captured) = ctx.get(alias.as_str()) {
                     return captured.get(member).cloned();
@@ -1099,7 +1117,7 @@ pub fn eval_expr_with_functions(
                 }
             }
             // General case: evaluate object, extract member from Map
-            // Enables first(f).ip, last(f).field patterns
+            // Enables first(f).ip, last(f).field, b[0].field patterns
             let obj_val = eval_expr_with_functions(object, event, ctx, functions, bindings)?;
             if let Value::Map(map) = obj_val {
                 return map.get(member.as_str()).cloned();
@@ -1156,6 +1174,36 @@ pub fn eval_expr_with_functions(
                             if let Expr::Ident(alias) = arg_expr {
                                 let key = format!("_{}_{alias}", func_name);
                                 if let Some(val) = event.get(&key) {
+                                    return Some(val.clone());
+                                }
+                            }
+                        }
+                        // collect(alias.field) → Value::Array of field values
+                        // across all captured Kleene events for `alias`.
+                        "collect" => {
+                            if let Expr::Member {
+                                expr: obj,
+                                member: field,
+                            } = arg_expr
+                            {
+                                if let Expr::Ident(alias) = obj.as_ref() {
+                                    if let Some(Value::Array(events_arr)) =
+                                        event.get(format!("_events_{alias}").as_str())
+                                    {
+                                        let collected: Vec<Value> = events_arr
+                                            .iter()
+                                            .filter_map(|ev| match ev {
+                                                Value::Map(m) => m.get(field.as_str()).cloned(),
+                                                _ => None,
+                                            })
+                                            .collect();
+                                        return Some(Value::array(collected));
+                                    }
+                                }
+                            }
+                            // collect(alias) without member → return the whole array
+                            if let Expr::Ident(alias) = arg_expr {
+                                if let Some(val) = event.get(format!("_events_{alias}").as_str()) {
                                     return Some(val.clone());
                                 }
                             }

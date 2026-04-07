@@ -802,6 +802,24 @@ fn execute_op_common(
                                 .data
                                 .insert(format!("_count_{alias}").into(), Value::Int(count as i64));
 
+                            // _events_alias: Value::Array of Value::Map (one map per captured event)
+                            // Used by the evaluator to support array-style access:
+                            // alias.LEN, alias[i], alias[i].field, collect(alias.field)
+                            let events_array: Vec<Value> = events
+                                .iter()
+                                .map(|ev| {
+                                    let mut map = IndexMap::with_hasher(FxBuildHasher);
+                                    for (k, v) in &ev.data {
+                                        map.insert(k.clone(), v.clone());
+                                    }
+                                    Value::Map(Box::new(map))
+                                })
+                                .collect();
+                            seq_event.data.insert(
+                                format!("_events_{alias}").into(),
+                                Value::array(events_array),
+                            );
+
                             // first(alias) and last(alias) as Value::Map
                             if let Some(first_ev) = events.first() {
                                 let mut map = IndexMap::with_hasher(FxBuildHasher);

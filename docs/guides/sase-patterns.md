@@ -197,6 +197,37 @@ stream X = A -> all B as b -> C
     .emit(...)
 ```
 
+### Kleene-bound Variables as Arrays
+
+Per the SASE+ paper, a Kleene-bound variable like `b` in `all B as b` is conceptually a **sequence/array** of captured events, not a single event. Varpulis supports this with the following syntax:
+
+```vpl
+stream X = Start -> all Reading as b -> End
+    .longest()
+    .emit(
+        count:   b.LEN,            # number of captured Bs
+        first_id: b[0].id,          # first captured B's id
+        last_id:  b[b.LEN - 1].id,  # equivalent to b.id (shortcut)
+        all_ids:  collect(b.id),    # array of all ids
+        all_vals: collect(b.val)    # array of all values
+    )
+```
+
+| Expression | Meaning |
+|---|---|
+| `b.id` | Field of the **last** captured B (ergonomic shortcut) |
+| `b.LEN` or `count(b)` | Number of captured Bs |
+| `b[i].field` | Field of the i-th captured B (zero-indexed) |
+| `b[0].field` / `first(b).field` | First captured B's field |
+| `b[b.LEN - 1].field` / `last(b).field` | Last captured B's field |
+| `collect(b.field)` | List of `field` values across all captured Bs (returns `Value::Array`) |
+| `sum(b.field)`, `avg(b.field)`, `min(b.field)`, `max(b.field)` | Numeric aggregates over the captured Bs |
+| `distinct_count(b.field)` | Number of distinct values for `field` |
+
+**Note**: `b.field` (without `.LEN` or indexing) returns the **last** captured event's field. This is a Varpulis-specific ergonomic shortcut. To get a specific element, use `b[i].field`. To get a list, use `collect(b.field)`.
+
+> **Paper reference**: SASE+ (SIGMOD 2008) Query 3 uses `a.LEN` for sequence length and `a[a.LEN]` for the last element. Varpulis uses zero-indexing (`b[0]`, `b[b.LEN - 1]`) following common programming conventions.
+
 ### Comparison Table
 
 For pattern `SEQ(A, B+, C)` with events `A, B1, B2, B3, C`:
