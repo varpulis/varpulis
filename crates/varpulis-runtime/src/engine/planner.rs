@@ -221,7 +221,10 @@ fn translate_ops(ops: &[StreamOp]) -> Result<Vec<LogicalOp>, String> {
             | StreamOp::Collect
             | StreamOp::Any(_)
             | StreamOp::All
-            | StreamOp::First => continue,
+            | StreamOp::First
+            // SASE+ mode operators are applied to the SaseEngine at compile time
+            | StreamOp::SelectionMode(_)
+            | StreamOp::EmissionMode(_) => continue,
         };
 
         logical_ops.push(logical_op);

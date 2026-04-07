@@ -251,9 +251,12 @@ async fn test_engine_sequence_with_not() {
 
 #[tokio::test]
 async fn test_engine_all_in_source() {
+    // Uses .longest() to preserve the original "wait for Tick terminator" semantics.
+    // Under the default .each() mode, each News would emit on arrival.
     let source = r#"
         stream AllNews = all News as news
             -> Tick as tick
+            .longest()
             .emit(matched: "yes")
     "#;
 

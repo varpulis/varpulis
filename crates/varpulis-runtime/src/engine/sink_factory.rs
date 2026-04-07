@@ -31,7 +31,23 @@ pub fn connector_params_to_config(
             varpulis_core::ast::ConfigValue::Float(f) => f.to_string(),
             varpulis_core::ast::ConfigValue::Bool(b) => b.to_string(),
             varpulis_core::ast::ConfigValue::Duration(d) => format!("{d}ns"),
-            varpulis_core::ast::ConfigValue::Array(_) => continue,
+            // Arrays of strings (e.g. `brokers: ["k1:9092", "k2:9092"]`) are
+            // joined with commas — the standard format for librdkafka's
+            // bootstrap.servers and equivalent multi-host config keys.
+            varpulis_core::ast::ConfigValue::Array(arr) => {
+                let parts: Vec<String> = arr
+                    .iter()
+                    .filter_map(|v| match v {
+                        varpulis_core::ast::ConfigValue::Str(s) => Some(s.clone()),
+                        varpulis_core::ast::ConfigValue::Ident(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if parts.is_empty() {
+                    continue;
+                }
+                parts.join(",")
+            }
             varpulis_core::ast::ConfigValue::Map(_) => continue,
             varpulis_core::ast::ConfigValue::Concat(_) => continue, // dynamic — resolved at runtime
         };

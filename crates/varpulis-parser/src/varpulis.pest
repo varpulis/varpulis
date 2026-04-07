@@ -164,7 +164,21 @@ dot_op = { "." ~ (
     | forecast_op
     | enrich_op
     | alert_op
+    | strict_op | stnm_op | stam_op
+    | each_op | longest_op | subsets_op
 )}
+
+// SASE+ selection mode operators (zero-arg). Control how runs are spawned
+// and which events extend them. See docs/guides/sase-patterns.md.
+strict_op = { "strict" ~ "(" ~ ")" }
+stnm_op = { "stnm" ~ "(" ~ ")" }
+stam_op = { "stam" ~ "(" ~ ")" }
+
+// SASE+ emission mode operators (zero-arg). Control how many MatchResults
+// each completed run produces. See docs/guides/sase-patterns.md.
+each_op = { "each" ~ "(" ~ ")" }
+longest_op = { "longest" ~ "(" ~ ")" }
+subsets_op = { "subsets" ~ "(" ~ ")" }
 
 // followed_by: use filter_expr for filter (stops before stream ops), 'as identifier' handled at end
 match_all_keyword = { "all" }

@@ -53,6 +53,7 @@ pattern StrictlyRising = TempReading as first
     within 5m partition by sensor_id
 
 stream HighTemp = StrictlyRising
+    .longest()
     .where(count(rising) >= 2)
     .emit(
         sensor: first.sensor_id,
@@ -96,6 +97,7 @@ pattern StrictlyRising = TempReading as first
     within 5m partition by sensor_id
 
 stream HighTemp = StrictlyRising
+    .longest()
     .emit(sensor: first.sensor_id, num: count(rising))
 "#;
 
@@ -132,6 +134,7 @@ pattern Rising = TempReading as first
     within 5m partition by sensor_id
 
 stream Alert = Rising
+    .longest()
     .emit(sensor: first.sensor_id, num: count(rising))
 "#;
 
@@ -240,6 +243,7 @@ pattern BruteForce = AuthEvent where status == "failed" as first
     within 30m partition by source_ip
 
 stream Alert = BruteForce
+    .longest()
     .emit(ip: first.source_ip)
 "#;
 

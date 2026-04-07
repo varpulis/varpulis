@@ -23,8 +23,8 @@ use std::time::Duration;
 
 use varpulis_core::Value;
 use varpulis_runtime::sase::{
-    BackpressureStrategy, CompareOp, PatternBuilder, Predicate, SaseEngine, SasePattern,
-    SelectionStrategy,
+    BackpressureStrategy, CompareOp, EmissionMode, PatternBuilder, Predicate, SaseEngine,
+    SasePattern, SelectionStrategy,
 };
 use varpulis_runtime::Event;
 
@@ -53,7 +53,7 @@ fn kleene_star_with_one_b_event() {
         PatternBuilder::event("C"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![]));
     engine.process(&make_event("B", vec![("n", Value::Int(1))]));
@@ -74,7 +74,7 @@ fn kleene_star_with_many_b_events() {
         PatternBuilder::event("C"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![]));
     engine.process(&make_event("B", vec![("n", Value::Int(1))]));
@@ -98,7 +98,7 @@ fn kleene_star_with_aliases() {
         PatternBuilder::event_as("End", "end"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("Start", vec![("n", Value::Int(0))]));
     engine.process(&make_event("Mid", vec![("n", Value::Int(1))]));
@@ -131,7 +131,7 @@ fn not_pattern_with_global_negation_cancels_run() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
     engine.add_negation("Bad".to_string(), None);
 
     engine.process(&make_event("A", vec![]));
@@ -160,7 +160,7 @@ fn not_pattern_without_matching_negation_allows_continuation() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
     engine.add_negation("Bad".to_string(), None);
 
     engine.process(&make_event("A", vec![]));
@@ -190,7 +190,7 @@ fn not_pattern_with_predicate_selective_cancel() {
         PatternBuilder::event("Ship"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
     engine.add_negation(
         "Cancel".to_string(),
         Some(Predicate::CompareRef {
@@ -229,7 +229,7 @@ fn not_pattern_multiple_negations_registered() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
     engine.add_negation("Cancel".to_string(), None);
     engine.add_negation("Abort".to_string(), None);
 
@@ -258,7 +258,7 @@ fn or_in_seq_left_branch() {
         PatternBuilder::event("End"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("Start", vec![]));
     engine.process(&make_event("A", vec![]));
@@ -278,7 +278,7 @@ fn or_in_seq_right_branch() {
         PatternBuilder::event("End"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("Start", vec![]));
     engine.process(&make_event("B", vec![]));
@@ -298,7 +298,7 @@ fn or_in_seq_neither_branch_advances() {
         PatternBuilder::event("End"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("Start", vec![]));
     engine.process(&make_event("C", vec![])); // doesn't match OR
@@ -335,7 +335,7 @@ fn or_with_predicates_in_seq() {
         PatternBuilder::event("End"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     // A with x=5 fails predicate
     engine.process(&make_event("Start", vec![]));
@@ -365,7 +365,7 @@ fn nested_or_in_sequence() {
         PatternBuilder::event("End"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("Start", vec![]));
     engine.process(&make_event("C", vec![])); // matches right branch of outer OR
@@ -402,7 +402,7 @@ fn and_pattern_with_predicates() {
         ),
     );
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     // A with x > 10
     let results = engine.process(&make_event("A", vec![("x", Value::Int(15))]));
@@ -421,7 +421,7 @@ fn and_pattern_incomplete_no_second_type() {
     // AND(A, B) -- only A events arrive, never B
     let pattern = PatternBuilder::and(PatternBuilder::event("A"), PatternBuilder::event("B"));
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![]));
     engine.process(&make_event("A", vec![]));
@@ -444,7 +444,7 @@ fn and_in_seq_reverse_order() {
         PatternBuilder::event("End"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("Start", vec![]));
     engine.process(&make_event("B", vec![])); // second branch first
@@ -472,7 +472,9 @@ fn within_duration_match_inside_window() {
         Duration::from_secs(10),
     );
 
-    let mut engine = SaseEngine::new(pattern).with_event_time();
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_event_time();
 
     let ts1 = Utc.with_ymd_and_hms(2026, 2, 14, 12, 0, 0).unwrap();
     let ts2 = Utc.with_ymd_and_hms(2026, 2, 14, 12, 0, 8).unwrap();
@@ -495,7 +497,9 @@ fn within_duration_expired_by_late_event() {
         Duration::from_secs(10),
     );
 
-    let mut engine = SaseEngine::new(pattern).with_event_time();
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_event_time();
 
     let ts1 = Utc.with_ymd_and_hms(2026, 2, 14, 12, 0, 0).unwrap();
     let ts2 = Utc.with_ymd_and_hms(2026, 2, 14, 12, 0, 20).unwrap();
@@ -522,7 +526,9 @@ fn within_duration_with_watermark_advance() {
         Duration::from_secs(5),
     );
 
-    let mut engine = SaseEngine::new(pattern).with_event_time();
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_event_time();
 
     let ts1 = Utc.with_ymd_and_hms(2026, 2, 14, 12, 0, 0).unwrap();
     engine.process(&Event::new("A").with_timestamp(ts1));
@@ -552,7 +558,9 @@ fn within_wrapping_and_pattern() {
         Duration::from_secs(5),
     );
 
-    let mut engine = SaseEngine::new(pattern).with_event_time();
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_event_time();
 
     let ts1 = Utc.with_ymd_and_hms(2026, 2, 14, 12, 0, 0).unwrap();
     let ts2 = Utc.with_ymd_and_hms(2026, 2, 14, 12, 0, 3).unwrap();
@@ -580,7 +588,9 @@ fn within_wrapping_seq_with_kleene() {
         Duration::from_secs(10),
     );
 
-    let mut engine = SaseEngine::new(pattern).with_event_time();
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_event_time();
 
     let ts1 = Utc.with_ymd_and_hms(2026, 2, 14, 12, 0, 0).unwrap();
     let ts2 = Utc.with_ymd_and_hms(2026, 2, 14, 12, 0, 2).unwrap();
@@ -616,7 +626,7 @@ fn compare_ref_with_not_eq() {
         ),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("Order", vec![("id", Value::Int(1))]));
 
@@ -651,7 +661,7 @@ fn compare_ref_gt() {
         ),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("Base", vec![("val", Value::Int(100))]));
 
@@ -678,7 +688,7 @@ fn compare_ref_ge() {
         ),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("x", Value::Int(100))]));
 
@@ -705,7 +715,7 @@ fn compare_ref_lt() {
         ),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("x", Value::Int(100))]));
 
@@ -732,7 +742,7 @@ fn compare_ref_le() {
         ),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("x", Value::Int(100))]));
 
@@ -776,7 +786,7 @@ fn compare_ref_missing_ref_alias_returns_false() {
         ),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("Order", vec![("id", Value::Int(1))]));
     let results = engine.process(&make_event("Payment", vec![("order_id", Value::Int(1))]));
@@ -802,7 +812,7 @@ fn seq_containing_kleene_plus_and_or() {
         PatternBuilder::event("End"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("Start", vec![]));
     engine.process(&make_event("B", vec![]));
@@ -826,7 +836,7 @@ fn seq_with_and_then_kleene() {
         PatternBuilder::event("End"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![]));
     engine.process(&make_event("B", vec![]));
@@ -847,7 +857,7 @@ fn seq_with_multiple_ands() {
         PatternBuilder::and(PatternBuilder::event("C"), PatternBuilder::event("D")),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![]));
     engine.process(&make_event("B", vec![])); // completes first AND
@@ -868,7 +878,7 @@ fn seq_with_multiple_ands() {
 fn empty_event_stream_produces_no_matches() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let engine = SaseEngine::new(pattern);
+    let engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
     assert_eq!(engine.stats().active_runs, 0);
 }
 
@@ -880,7 +890,7 @@ fn pattern_with_no_matching_events() {
         PatternBuilder::event("Z"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     for _ in 0..100 {
         engine.process(&make_event("A", vec![]));
@@ -904,7 +914,7 @@ fn missing_field_in_predicate_does_not_match() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("other", Value::Int(42))]));
     assert_eq!(
@@ -929,7 +939,7 @@ fn predicate_type_mismatch_does_not_match() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event(
         "A",
@@ -946,7 +956,7 @@ fn predicate_type_mismatch_does_not_match() {
 fn wrong_event_type_ignored() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("X", vec![]));
     engine.process(&make_event("Y", vec![]));
@@ -981,7 +991,7 @@ fn predicate_not_inverts_comparison() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     // price = 30 -- Not(30 < 50) = Not(true) = false => no run
     engine.process(&make_event("A", vec![("price", Value::Int(30))]));
@@ -1014,7 +1024,7 @@ fn predicate_double_not() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("x", Value::Int(5))]));
     assert_eq!(
@@ -1053,7 +1063,7 @@ fn predicate_or_either_branch() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     // status=active should start a run
     engine.process(&make_event(
@@ -1109,7 +1119,7 @@ fn predicate_and_both_required() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     // Both conditions met
     engine.process(&make_event(
@@ -1153,7 +1163,7 @@ fn predicate_expr_literal_true() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![]));
     assert_eq!(
@@ -1177,7 +1187,7 @@ fn predicate_expr_literal_false() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![]));
     assert_eq!(
@@ -1195,7 +1205,7 @@ fn predicate_expr_literal_false() {
 fn engine_stats_after_multiple_operations() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     assert_eq!(engine.stats().active_runs, 0);
     assert!(engine.stats().nfa_states > 0);
@@ -1212,7 +1222,9 @@ fn engine_stats_after_multiple_operations() {
 fn engine_with_strategy_strict_contiguous() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern).with_strategy(SelectionStrategy::StrictContiguous);
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_strategy(SelectionStrategy::StrictContiguous);
 
     engine.process(&make_event("A", vec![]));
     assert_eq!(engine.stats().active_runs, 1);
@@ -1232,7 +1244,9 @@ fn engine_with_strategy_strict_contiguous() {
 fn engine_with_strategy_skip_till_next_match() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_strategy(SelectionStrategy::SkipTillNextMatch);
 
     engine.process(&make_event("A", vec![]));
     engine.process(&make_event("Noise", vec![]));
@@ -1249,6 +1263,7 @@ fn engine_max_runs_limit() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
     let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
         .with_max_runs(3)
         .with_backpressure(BackpressureStrategy::Drop);
 
@@ -1268,7 +1283,7 @@ fn engine_max_runs_limit() {
 #[test]
 fn engine_default_time_semantics_is_processing_time() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
-    let engine = SaseEngine::new(pattern);
+    let engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
     assert_eq!(
         engine.time_semantics(),
         varpulis_runtime::sase::TimeSemantics::ProcessingTime
@@ -1280,7 +1295,9 @@ fn engine_event_time_watermark_tracking() {
     use chrono::{TimeZone, Utc};
 
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
-    let mut engine = SaseEngine::new(pattern).with_event_time();
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_event_time();
 
     assert!(engine.watermark().is_none());
 
@@ -1295,7 +1312,9 @@ fn engine_with_negation_builder() {
     // Test with_negation builder method
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern).with_negation("Cancel".to_string(), None);
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_negation("Cancel".to_string(), None);
 
     assert!(engine.has_interest("Cancel"));
 
@@ -1312,7 +1331,7 @@ fn engine_with_negation_builder() {
 fn multiple_sequential_sequence_matches() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     // First match
     engine.process(&make_event("A", vec![("n", Value::Int(1))]));
@@ -1334,7 +1353,7 @@ fn multiple_sequential_sequence_matches() {
 fn overlapping_matches_from_multiple_starts() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("id", Value::Int(1))]));
     engine.process(&make_event("A", vec![("id", Value::Int(2))]));
@@ -1366,7 +1385,7 @@ fn compare_op_le_in_seq() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("x", Value::Int(10))]));
     assert_eq!(engine.stats().active_runs, 1, "x=10 satisfies x <= 10");
@@ -1400,7 +1419,7 @@ fn compare_op_lt_in_seq() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("x", Value::Int(9))]));
     assert_eq!(engine.stats().active_runs, 1, "x=9 satisfies x < 10");
@@ -1429,7 +1448,7 @@ fn compare_op_ge_in_seq() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("x", Value::Int(10))]));
     assert_eq!(engine.stats().active_runs, 1, "x=10 satisfies x >= 10");
@@ -1462,7 +1481,7 @@ fn compare_float_values_in_seq() {
         PatternBuilder::event("Alert"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("Temp", vec![("celsius", Value::Float(37.0))]));
     assert_eq!(engine.stats().active_runs, 1, "37.0 > 36.5");
@@ -1488,7 +1507,7 @@ fn compare_int_vs_float_cross_type_in_seq() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("val", Value::Int(42))]));
     assert_eq!(
@@ -1515,7 +1534,7 @@ fn compare_string_eq_in_seq() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("name", Value::Str("alice".into()))]));
     assert_eq!(engine.stats().active_runs, 1, "'alice' == 'alice'");
@@ -1540,7 +1559,7 @@ fn compare_bool_eq_in_seq() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("active", Value::Bool(true))]));
     assert_eq!(engine.stats().active_runs, 1, "true == true");
@@ -1563,7 +1582,7 @@ fn has_interest_for_seq_pattern() {
         PatternBuilder::event("C"),
     ]);
 
-    let engine = SaseEngine::new(pattern);
+    let engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     assert!(engine.has_interest("A"));
     assert!(engine.has_interest("B"));
@@ -1575,7 +1594,7 @@ fn has_interest_for_seq_pattern() {
 fn has_interest_with_global_negation() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
     engine.add_negation("Cancel".to_string(), None);
 
     assert!(engine.has_interest("A"));
@@ -1588,7 +1607,7 @@ fn has_interest_with_global_negation() {
 fn has_interest_and_pattern() {
     let pattern = PatternBuilder::and(PatternBuilder::event("X"), PatternBuilder::event("Y"));
 
-    let engine = SaseEngine::new(pattern);
+    let engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     assert!(engine.has_interest("X"));
     assert!(engine.has_interest("Y"));
@@ -1603,7 +1622,9 @@ fn has_interest_and_pattern() {
 fn process_instrumented_counts_metrics() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern).with_instrumentation();
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_instrumentation();
 
     engine.process_instrumented(&make_event("A", vec![]));
     engine.process_instrumented(&make_event("B", vec![]));
@@ -1617,7 +1638,9 @@ fn process_instrumented_counts_metrics() {
 fn process_instrumented_tracks_ignored_events() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern).with_instrumentation();
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_instrumentation();
 
     engine.process_instrumented(&make_event("Unknown", vec![]));
 
@@ -1634,7 +1657,9 @@ fn process_instrumented_tracks_ignored_events() {
 fn extended_stats_utilization() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern).with_max_runs(100);
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_max_runs(100);
 
     engine.process(&make_event("A", vec![]));
 
@@ -1649,7 +1674,7 @@ fn extended_stats_utilization() {
 fn process_with_result_returns_stats() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     let result = engine.process_with_result(&make_event("A", vec![]));
     assert!(result.matches.is_empty());
@@ -1692,7 +1717,7 @@ fn compound_predicate_and_or_not_combination() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     // Left branch of OR: x=10 > 5 AND y=10 < 20 => true
     engine.process(&make_event(
@@ -1741,7 +1766,9 @@ fn partition_by_isolates_runs() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern).with_partition_by("region".to_string());
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_partition_by("region".to_string());
 
     engine.process(&make_event(
         "A",
@@ -1769,7 +1796,9 @@ fn partition_by_isolates_runs() {
 fn partition_with_missing_field() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern).with_partition_by("region".to_string());
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_partition_by("region".to_string());
 
     // Event without the partition field -- should use default partition
     engine.process(&make_event("A", vec![]));
@@ -1792,6 +1821,7 @@ fn backpressure_error_strategy() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
     let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
         .with_max_runs(2)
         .with_backpressure(BackpressureStrategy::Error);
 
@@ -1816,7 +1846,9 @@ fn backpressure_error_strategy() {
 fn skip_till_any_match_strategy() {
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
 
-    let mut engine = SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillAnyMatch);
+    let mut engine = SaseEngine::new(pattern)
+        .with_emission_mode(EmissionMode::Longest)
+        .with_strategy(SelectionStrategy::SkipTillAnyMatch);
 
     engine.process(&make_event("A", vec![]));
     engine.process(&make_event("Noise1", vec![]));
@@ -1843,7 +1875,7 @@ fn repeated_event_types_in_seq() {
         PatternBuilder::event("B"),
     ]);
 
-    let mut engine = SaseEngine::new(pattern);
+    let mut engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
     engine.process(&make_event("A", vec![("n", Value::Int(1))]));
     engine.process(&make_event("A", vec![("n", Value::Int(2))]));

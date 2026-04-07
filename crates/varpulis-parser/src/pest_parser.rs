@@ -7,6 +7,7 @@
 
 use pest::Parser;
 use pest_derive::Parser;
+use varpulis_core::ast::EmissionMode as AstEmissionMode;
 use varpulis_core::ast::*;
 use varpulis_core::span::{Span, Spanned};
 use varpulis_core::types::Type;
@@ -392,6 +393,12 @@ fn is_stream_op_error(positives: &[Rule]) -> bool {
         Rule::forecast_op,
         Rule::enrich_op,
         Rule::alert_op,
+        Rule::strict_op,
+        Rule::stnm_op,
+        Rule::stam_op,
+        Rule::each_op,
+        Rule::longest_op,
+        Rule::subsets_op,
     ];
     positives.len() >= 10 && positives.iter().all(|r| STREAM_OP_RULES.contains(r))
 }
@@ -1152,6 +1159,14 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
         }
         Rule::all_op => Ok(StreamOp::All),
         Rule::first_op => Ok(StreamOp::First),
+        // SASE+ selection mode operators
+        Rule::strict_op => Ok(StreamOp::SelectionMode(SelectionMode::Strict)),
+        Rule::stnm_op => Ok(StreamOp::SelectionMode(SelectionMode::Stnm)),
+        Rule::stam_op => Ok(StreamOp::SelectionMode(SelectionMode::Stam)),
+        // SASE+ emission mode operators
+        Rule::each_op => Ok(StreamOp::EmissionMode(AstEmissionMode::Each)),
+        Rule::longest_op => Ok(StreamOp::EmissionMode(AstEmissionMode::Longest)),
+        Rule::subsets_op => Ok(StreamOp::EmissionMode(AstEmissionMode::Subsets)),
         Rule::concurrent_op => {
             let args = pair
                 .into_inner()

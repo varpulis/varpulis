@@ -19,8 +19,8 @@ use super::nfa::{Nfa, NfaCompiler, StateType};
 use super::predicate::{eval_predicate, event_matches_state, predicate_references_alias};
 use super::run::Run;
 use super::types::{
-    GlobalNegation, MatchResult, Predicate, SasePattern, SaseStats, SelectionStrategy, SharedEvent,
-    TimeSemantics, MAX_ENUMERATION_RESULTS, MAX_KLEENE_EVENTS,
+    EmissionMode, GlobalNegation, MatchResult, Predicate, SasePattern, SaseStats,
+    SelectionStrategy, SharedEvent, TimeSemantics, MAX_ENUMERATION_RESULTS, MAX_KLEENE_EVENTS,
 };
 use crate::clock::Timestamp;
 use crate::ExprEvaluator;
@@ -88,6 +88,10 @@ pub struct SaseEngine {
     last_cleanup: Timestamp,
     /// PERF(Opt5): Minimum interval between cleanup_timeouts() invocations
     cleanup_interval: Duration,
+    /// User-specified emission mode override. `None` means auto-resolve from
+    /// the NFA: greedy patterns (`.increasing()`/`.decreasing()`) → Longest,
+    /// otherwise → Each.
+    pub(crate) emission_mode_override: Option<EmissionMode>,
 }
 
 impl std::fmt::Debug for SaseEngine {
@@ -111,6 +115,7 @@ impl std::fmt::Debug for SaseEngine {
             .field("instrumentation_enabled", &self.instrumentation_enabled)
             .field("max_kleene_events", &self.max_kleene_events)
             .field("max_enumeration_results", &self.max_enumeration_results)
+            .field("emission_mode_override", &self.emission_mode_override)
             .finish_non_exhaustive()
     }
 }
@@ -148,6 +153,31 @@ impl SaseEngine {
             last_cleanup: Timestamp::now(),
             cleanup_interval: Duration::from_millis(100),
             evaluator: None,
+            emission_mode_override: None,
+        }
+    }
+
+    /// Override the emission mode for this engine. By default, the engine
+    /// auto-resolves: monotonic patterns (`.increasing()`/`.decreasing()`)
+    /// use `Longest`, all others use `Each` (one emit per Kleene event).
+    pub fn with_emission_mode(mut self, mode: EmissionMode) -> Self {
+        self.emission_mode_override = Some(mode);
+        self
+    }
+
+    /// Resolve the active emission mode for this engine, taking the user
+    /// override if set, otherwise auto-detecting from NFA shape.
+    pub fn resolved_emission_mode(&self) -> EmissionMode {
+        if let Some(m) = self.emission_mode_override {
+            return m;
+        }
+        // Greedy (monotonic) patterns default to Longest — users want one
+        // "rising sequence ended" event, not one per data point.
+        if self.nfa.has_greedy_kleene() {
+            EmissionMode::Longest
+        } else {
+            // Default for everything else: emit on each Kleene event extension
+            EmissionMode::Each
         }
     }
 
@@ -524,6 +554,7 @@ impl SaseEngine {
         self.check_global_negations(&event);
 
         let mut completed = Vec::new();
+        let mode = self.resolved_emission_mode();
 
         // PERF(Opt7): Borrow partition_by instead of cloning per event
         if let Some(ref partition_field) = self.partition_by {
@@ -535,7 +566,10 @@ impl SaseEngine {
             completed.extend(self.process_partition_shared(&partition_key, Arc::clone(&event)));
 
             // Try to start new run with backpressure
-            if let Some(run) = self.try_start_run_shared(Arc::clone(&event)) {
+            if let Some(mut run) = self.try_start_run_shared(Arc::clone(&event)) {
+                if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
+                    completed.push(m);
+                }
                 let (added, warning) = self.handle_backpressure_partitioned(&partition_key, run);
                 if added {
                     stats.runs_created += 1;
@@ -549,7 +583,10 @@ impl SaseEngine {
             completed.extend(self.process_runs_shared(Arc::clone(&event)));
 
             // Try to start new run with backpressure
-            if let Some(run) = self.try_start_run_shared(Arc::clone(&event)) {
+            if let Some(mut run) = self.try_start_run_shared(Arc::clone(&event)) {
+                if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
+                    completed.push(m);
+                }
                 let (added, warning) = self.handle_backpressure(run);
                 if added {
                     stats.runs_created += 1;
@@ -572,6 +609,55 @@ impl SaseEngine {
         }
     }
 
+    /// When a freshly-started run's current state is a Kleene self-loop, the
+    /// first event landed there directly (e.g., for a Kleene-final pattern
+    /// like `B+`). The standard Kleene accumulation/emission code in
+    /// `advance_run_shared` was bypassed because the run was just created.
+    /// This helper applies the equivalent Kleene-entry handling: initializes
+    /// `kleene_capture` and produces an `Each`-mode match if appropriate.
+    fn post_start_kleene_handling(
+        &self,
+        run: &mut Run,
+        event: &SharedEvent,
+        mode: EmissionMode,
+    ) -> Option<MatchResult> {
+        let state = &self.nfa.states[run.current_state];
+        if !(state.state_type == StateType::Kleene && state.self_loop) {
+            return None;
+        }
+
+        // Initialize kleene_capture and add the first event so Subsets/Longest
+        // modes can enumerate or capture later.
+        if run.kleene_capture.is_none() {
+            let mut kc = crate::kleene::KleeneCapture::new();
+            if state.postponed_predicate.is_some() {
+                kc.deferred_predicate = state.postponed_predicate.clone();
+                kc.needs_zdd = true;
+            }
+            if mode == EmissionMode::Subsets {
+                kc.needs_zdd = true;
+            }
+            run.kleene_capture = Some(kc);
+        }
+        if let Some(ref mut kc) = run.kleene_capture {
+            if kc.needs_zdd {
+                kc.extend(Arc::clone(event), state.alias.clone());
+            } else {
+                kc.extend_simple(Arc::clone(event), state.alias.clone());
+            }
+        }
+
+        // For Each mode, emit immediately with current bindings
+        if mode == EmissionMode::Each {
+            return Some(MatchResult {
+                captured: run.captured.clone(),
+                stack: run.stack.clone(),
+                duration: run.started_at.elapsed(),
+            });
+        }
+        None
+    }
+
     /// Process a shared event reference (avoids redundant cloning)
     pub fn process_shared(&mut self, event: SharedEvent) -> Vec<MatchResult> {
         let mut completed = Vec::with_capacity(8);
@@ -590,7 +676,15 @@ impl SaseEngine {
         // For greedy Kleene patterns (.increasing()/.decreasing()), only one
         // active run per partition is allowed — new runs would just produce
         // prefix duplicates of the existing run's rising sequence.
+        //
+        // Same for Kleene-final-from-start patterns (e.g., bare `B+` or
+        // `all B as b`): the start state's direct transitions land on a
+        // Kleene state, so multiple concurrent runs would produce duplicate
+        // emissions on each Kleene event.
         let is_greedy = self.nfa.has_greedy_kleene();
+        let is_kleene_final_from_start = self.nfa.is_kleene_final_from_start();
+        let suppress_new_runs = is_greedy || is_kleene_final_from_start;
+        let mode = self.resolved_emission_mode();
 
         // PERF(Opt7): Borrow partition_by instead of cloning per event
         if let Some(ref partition_field) = self.partition_by {
@@ -604,7 +698,7 @@ impl SaseEngine {
 
             // For greedy mode, skip starting a new run if an active run already
             // exists in this partition — it captures the full rising sequence.
-            let has_active = is_greedy
+            let has_active = suppress_new_runs
                 && self
                     .partitioned_runs
                     .get(&partition_key)
@@ -612,7 +706,10 @@ impl SaseEngine {
 
             if !has_active {
                 // Try to start new run in partition with backpressure
-                if let Some(run) = self.try_start_run_shared(Arc::clone(&event)) {
+                if let Some(mut run) = self.try_start_run_shared(Arc::clone(&event)) {
+                    if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
+                        completed.push(m);
+                    }
                     let (added, _) = self.handle_backpressure_partitioned(&partition_key, run);
                     if added {
                         self.total_runs_created += 1;
@@ -623,13 +720,17 @@ impl SaseEngine {
             // Non-partitioned processing
             completed.extend(self.process_runs_shared(Arc::clone(&event)));
 
-            // For greedy mode without partitioning, skip starting a new run
-            // if any active run exists.
-            let has_active = is_greedy && self.runs.iter().any(|r| !r.invalidated);
+            // For greedy mode and Kleene-final-from-start patterns, skip
+            // starting a new run if any active run exists (avoids duplicate
+            // emissions on each Kleene event).
+            let has_active = suppress_new_runs && self.runs.iter().any(|r| !r.invalidated);
 
             if !has_active {
                 // Try to start new run with backpressure
-                if let Some(run) = self.try_start_run_shared(Arc::clone(&event)) {
+                if let Some(mut run) = self.try_start_run_shared(Arc::clone(&event)) {
+                    if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
+                        completed.push(m);
+                    }
                     let (added, _) = self.handle_backpressure(run);
                     if added {
                         self.total_runs_created += 1;
@@ -867,8 +968,8 @@ impl SaseEngine {
     ) -> Vec<MatchResult> {
         let mut completed = Vec::with_capacity(4);
         let limits = self.kleene_limits();
-        // PERF(Opt2): Capture time once per event instead of per-push
         let now = Timestamp::now();
+        let mode = self.resolved_emission_mode();
 
         if let Some(runs) = self.partitioned_runs.get_mut(partition_key) {
             let mut i = 0;
@@ -886,6 +987,7 @@ impl SaseEngine {
                     limits,
                     now,
                     self.evaluator.as_deref(),
+                    mode,
                 ) {
                     RunAdvanceResult::Continue => i += 1,
                     RunAdvanceResult::Complete(result) => {
@@ -893,12 +995,16 @@ impl SaseEngine {
                         runs.swap_remove(i);
                     }
                     RunAdvanceResult::CompleteAndContinue(result) => {
-                        // For `all` patterns: emit result but keep run active
+                        // Each mode: emit result but keep run active
                         completed.push(result);
                         i += 1;
                     }
                     RunAdvanceResult::CompleteMulti(results) => {
                         completed.extend(results);
+                        runs.swap_remove(i);
+                    }
+                    RunAdvanceResult::Drained => {
+                        // Each mode: matches were already emitted; drop the run silently
                         runs.swap_remove(i);
                     }
                     RunAdvanceResult::Invalidate => {
@@ -915,8 +1021,8 @@ impl SaseEngine {
     fn process_runs_shared(&mut self, event: SharedEvent) -> Vec<MatchResult> {
         let mut completed = Vec::with_capacity(4);
         let limits = self.kleene_limits();
-        // PERF(Opt2): Capture time once per event instead of per-push
         let now = Timestamp::now();
+        let mode = self.resolved_emission_mode();
         let mut i = 0;
 
         while i < self.runs.len() {
@@ -925,7 +1031,6 @@ impl SaseEngine {
                 continue;
             }
 
-            // PERF: Mutate run in place instead of clone + copy back
             match advance_run_shared(
                 &self.nfa,
                 self.strategy,
@@ -934,6 +1039,7 @@ impl SaseEngine {
                 limits,
                 now,
                 self.evaluator.as_deref(),
+                mode,
             ) {
                 RunAdvanceResult::Continue => i += 1,
                 RunAdvanceResult::Complete(result) => {
@@ -941,12 +1047,16 @@ impl SaseEngine {
                     self.runs.swap_remove(i);
                 }
                 RunAdvanceResult::CompleteAndContinue(result) => {
-                    // For `all` patterns: emit result but keep run active
+                    // Each mode: emit result but keep run active
                     completed.push(result);
                     i += 1;
                 }
                 RunAdvanceResult::CompleteMulti(results) => {
                     completed.extend(results);
+                    self.runs.swap_remove(i);
+                }
+                RunAdvanceResult::Drained => {
+                    // Each mode: matches were already emitted; drop the run silently
                     self.runs.swap_remove(i);
                 }
                 RunAdvanceResult::Invalidate => {

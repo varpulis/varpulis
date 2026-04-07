@@ -41,18 +41,25 @@ fn prev_event_has_referenced_fields(
     }
 }
 use super::run::Run;
-use super::types::{MatchResult, SelectionStrategy, SharedEvent};
+use super::types::{EmissionMode, MatchResult, SelectionStrategy, SharedEvent};
 use crate::clock::Timestamp;
 use crate::ExprEvaluator;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) enum RunAdvanceResult {
     Continue,
     Complete(MatchResult),
-    /// For `all` patterns: emit a result but keep the run active for more matches
+    /// For `Each` mode: emit a result but keep the run active for more matches
     CompleteAndContinue(MatchResult),
-    /// SIGMOD 2014: Multiple results from Kleene enumeration with deferred predicate
+    /// `Subsets` mode: enumerate all subsets of the Kleene capture as separate
+    /// matches via the ZDD (or filtered by a deferred predicate).
     CompleteMulti(Vec<MatchResult>),
+    /// Run finished without producing a final match. Used by `Each` mode when
+    /// a terminator transitions the NFA to Accept after Kleene events were
+    /// already emitted during accumulation — emitting again at the terminator
+    /// would duplicate.
+    Drained,
     Invalidate,
     NoMatch,
 }
@@ -68,7 +75,7 @@ pub(crate) fn advance_run(
     limits: KleeneLimits,
     evaluator: Option<&dyn ExprEvaluator>,
 ) -> RunAdvanceResult {
-    // Wrap in Arc for the shared version
+    // Legacy wrapper — defaults to Each emission for compatibility with old tests
     advance_run_shared(
         nfa,
         strategy,
@@ -77,15 +84,30 @@ pub(crate) fn advance_run(
         limits,
         Timestamp::now(),
         evaluator,
+        EmissionMode::Each,
     )
 }
 
-/// Complete a run, checking for deferred Kleene predicates first.
+/// Complete a run, dispatching on the engine's emission mode.
+///
+/// - **Each**: matches were already emitted via `CompleteAndContinue` during
+///   Kleene accumulation. The terminator should not produce another match;
+///   return `Drained` so the caller drops the run silently.
+/// - **Longest**: emit a single `Complete` with the longest captured sequence.
+/// - **Subsets**: enumerate all non-empty subsets of the Kleene capture and
+///   return `CompleteMulti`. This is the SASE+ paper-correct STAM verbose
+///   output mode.
+///
+/// A deferred predicate (Expr-based cross-event constraint) forces enumeration
+/// regardless of mode, because the predicate can only be evaluated against
+/// concrete event combinations.
 fn complete_run(
     run: &mut Run,
     limits: KleeneLimits,
     evaluator: Option<&dyn ExprEvaluator>,
+    mode: EmissionMode,
 ) -> RunAdvanceResult {
+    // Deferred predicate forces enumeration regardless of mode.
     if let Some(ref kc) = run.kleene_capture {
         if kc.deferred_predicate.is_some() {
             return RunAdvanceResult::CompleteMulti(enumerate_with_filter(
@@ -95,14 +117,44 @@ fn complete_run(
             ));
         }
     }
-    RunAdvanceResult::Complete(MatchResult {
-        captured: std::mem::take(&mut run.captured),
-        stack: std::mem::take(&mut run.stack),
-        duration: run.started_at.elapsed(),
-    })
+
+    let has_kleene_capture = run.kleene_capture.is_some();
+
+    match mode {
+        // Each mode: if a Kleene was active, matches were already emitted via
+        // CompleteAndContinue during accumulation — drain silently to avoid
+        // duplicating. If there was no Kleene (regular sequence pattern),
+        // emit the single final match normally.
+        EmissionMode::Each if has_kleene_capture => RunAdvanceResult::Drained,
+        EmissionMode::Each => RunAdvanceResult::Complete(MatchResult {
+            captured: std::mem::take(&mut run.captured),
+            stack: std::mem::take(&mut run.stack),
+            duration: run.started_at.elapsed(),
+        }),
+        // Subsets mode: enumerate all non-empty subsets of the Kleene capture
+        // (paper-correct STAM verbose). For non-Kleene patterns, single match.
+        EmissionMode::Subsets if has_kleene_capture => RunAdvanceResult::CompleteMulti(
+            enumerate_with_filter(run, limits.max_results, evaluator),
+        ),
+        EmissionMode::Subsets => RunAdvanceResult::Complete(MatchResult {
+            captured: std::mem::take(&mut run.captured),
+            stack: std::mem::take(&mut run.stack),
+            duration: run.started_at.elapsed(),
+        }),
+        // Longest mode: single emit with the last/longest captured sequence.
+        EmissionMode::Longest => RunAdvanceResult::Complete(MatchResult {
+            captured: std::mem::take(&mut run.captured),
+            stack: std::mem::take(&mut run.stack),
+            duration: run.started_at.elapsed(),
+        }),
+    }
 }
 
-/// PERF-01: Optimized version that takes SharedEvent to avoid redundant cloning
+/// PERF-01: Optimized version that takes SharedEvent to avoid redundant cloning.
+///
+/// Takes the resolved `EmissionMode` from the engine; this controls whether
+/// Kleene events emit `CompleteAndContinue` (Each), accumulate silently
+/// (Longest), or accumulate into the ZDD for later subset enumeration (Subsets).
 pub(crate) fn advance_run_shared(
     nfa: &Nfa,
     strategy: SelectionStrategy,
@@ -111,6 +163,7 @@ pub(crate) fn advance_run_shared(
     limits: KleeneLimits,
     now: Timestamp,
     evaluator: Option<&dyn ExprEvaluator>,
+    mode: EmissionMode,
 ) -> RunAdvanceResult {
     let current_state = &nfa.states[run.current_state];
 
@@ -123,7 +176,7 @@ pub(crate) fn advance_run_shared(
 
     // AND-01: Handle AND states specially
     if current_state.state_type == StateType::And {
-        return advance_and_state(nfa, run, current_state, event, limits, evaluator);
+        return advance_and_state(nfa, run, current_state, event, limits, evaluator, mode);
     }
 
     // NEG-01: Handle Negation states - check if event matches forbidden pattern
@@ -146,7 +199,7 @@ pub(crate) fn advance_run_shared(
 
     // Check if we're at an accept state
     if current_state.state_type == StateType::Accept {
-        return complete_run(run, limits, evaluator);
+        return complete_run(run, limits, evaluator, mode);
     }
 
     // KLEENE SELF-LOOP: accumulate additional events matching the Kleene state.
@@ -187,32 +240,20 @@ pub(crate) fn advance_run_shared(
         // PERF(Opt4): Use push_at_kleene to avoid re-allocating captured key
         run.push_at_kleene(Arc::clone(&event), &current_state.alias, now);
 
-        // Kleene-final patterns (epsilon to Accept): emission strategy depends
-        // on the state's selection mode.
-        if current_state.has_epsilon_to_accept {
-            if current_state.is_greedy {
-                // Greedy (.increasing()/.decreasing()): accumulate silently,
-                // emit on break (handled below when self-loop predicate fails).
-                return RunAdvanceResult::Continue;
-            }
-            // SASE+ STAM: emit on every Kleene match (every prefix is a result).
-            return RunAdvanceResult::CompleteAndContinue(MatchResult {
-                captured: run.captured.clone(),
-                stack: run.stack.clone(),
-                duration: run.started_at.elapsed(),
-            });
-        }
-
-        // No epsilon to accept: accumulate for deferred emission (SEQ(A, B+, C))
+        // Always accumulate into kleene_capture so Subsets mode (and deferred
+        // predicates) can enumerate at completion. For Subsets mode we need
+        // the full ZDD; for other modes we can use the lightweight extend.
         if run.kleene_capture.is_none() {
             let mut kc = KleeneCapture::new();
             if current_state.postponed_predicate.is_some() {
                 kc.deferred_predicate = current_state.postponed_predicate.clone();
                 kc.needs_zdd = true;
             }
+            if mode == EmissionMode::Subsets {
+                kc.needs_zdd = true;
+            }
             run.kleene_capture = Some(kc);
         }
-        // PERF(Opt1): Skip ZDD product_with_optional when no deferred predicate
         if let Some(ref mut kc) = run.kleene_capture {
             if kc.needs_zdd {
                 kc.extend(Arc::clone(&event), current_state.alias.clone());
@@ -220,20 +261,34 @@ pub(crate) fn advance_run_shared(
                 kc.extend_simple(Arc::clone(&event), current_state.alias.clone());
             }
         }
-        return RunAdvanceResult::Continue;
+
+        // Dispatch on emission mode:
+        // - Each: emit immediately with current bindings (one match per Kleene event)
+        // - Longest/Subsets: silent — emit at terminator/break
+        match mode {
+            EmissionMode::Each => {
+                return RunAdvanceResult::CompleteAndContinue(MatchResult {
+                    captured: run.captured.clone(),
+                    stack: run.stack.clone(),
+                    duration: run.started_at.elapsed(),
+                });
+            }
+            EmissionMode::Longest | EmissionMode::Subsets => {
+                return RunAdvanceResult::Continue;
+            }
+        }
     }
 
-    // Greedy Kleene break: for .increasing()/.decreasing() the run accumulates
-    // events silently and emits the longest match when the self-loop predicate
-    // fails. SASE+ STAM Kleene states emit on every match (above), so this only
-    // fires for greedy mode.
+    // Kleene break: when the self-loop predicate fails for a Kleene-final
+    // pattern (epsilon to Accept), emit the accumulated match. For Each mode
+    // matches were already emitted; complete_run will Drain. For Longest we
+    // emit one final consolidated match here; for Subsets we enumerate.
     if current_state.state_type == StateType::Kleene
         && current_state.self_loop
-        && current_state.is_greedy
         && current_state.has_epsilon_to_accept
         && !run.captured.is_empty()
     {
-        return complete_run(run, limits, evaluator);
+        return complete_run(run, limits, evaluator, mode);
     }
 
     // Check transitions
@@ -260,8 +315,7 @@ pub(crate) fn advance_run_shared(
         // AND-01: If transitioning to an AND state, enter it and try to match current event
         if next_state.state_type == StateType::And {
             run.current_state = next_id;
-            // Try to advance the AND state with the current event
-            return advance_and_state(nfa, run, next_state, event, limits, evaluator);
+            return advance_and_state(nfa, run, next_state, event, limits, evaluator, mode);
         }
 
         // For Kleene states with self-referencing predicates: the first event
@@ -321,35 +375,22 @@ pub(crate) fn advance_run_shared(
             run.push_at(Arc::clone(&event), next_state.alias.clone(), now);
 
             if next_state.state_type == StateType::Accept {
-                // PERF: Use std::mem::take since run is discarded after Complete
-                return complete_run(run, limits, evaluator);
+                return complete_run(run, limits, evaluator, mode);
             }
 
             if next_state.state_type == StateType::Kleene && next_state.self_loop {
-                // Kleene-final: emission strategy depends on selection mode
-                if next_state.has_epsilon_to_accept {
-                    if next_state.is_greedy {
-                        // Greedy: accumulate silently, emit on break
-                        return RunAdvanceResult::Continue;
-                    }
-                    // SASE+ STAM: emit on every Kleene match
-                    return RunAdvanceResult::CompleteAndContinue(MatchResult {
-                        captured: run.captured.clone(),
-                        stack: run.stack.clone(),
-                        duration: run.started_at.elapsed(),
-                    });
-                }
-
-                // No epsilon to accept: accumulate for deferred emission (SEQ(A, B+, C))
+                // Always accumulate so Subsets mode can enumerate at completion
                 if run.kleene_capture.is_none() {
                     let mut kc = KleeneCapture::new();
                     if next_state.postponed_predicate.is_some() {
                         kc.deferred_predicate = next_state.postponed_predicate.clone();
                         kc.needs_zdd = true;
                     }
+                    if mode == EmissionMode::Subsets {
+                        kc.needs_zdd = true;
+                    }
                     run.kleene_capture = Some(kc);
                 }
-                // PERF(Opt1): Skip ZDD when no deferred predicate
                 if let Some(ref mut kc) = run.kleene_capture {
                     if kc.next_var >= limits.max_events {
                         return RunAdvanceResult::Continue;
@@ -361,7 +402,19 @@ pub(crate) fn advance_run_shared(
                     }
                 }
 
-                return RunAdvanceResult::Continue;
+                // Dispatch on emission mode for the first Kleene entry
+                match mode {
+                    EmissionMode::Each => {
+                        return RunAdvanceResult::CompleteAndContinue(MatchResult {
+                            captured: run.captured.clone(),
+                            stack: run.stack.clone(),
+                            duration: run.started_at.elapsed(),
+                        });
+                    }
+                    EmissionMode::Longest | EmissionMode::Subsets => {
+                        return RunAdvanceResult::Continue;
+                    }
+                }
             }
 
             return RunAdvanceResult::Continue;
@@ -373,8 +426,7 @@ pub(crate) fn advance_run_shared(
         let eps_state = &nfa.states[eps_id];
 
         if eps_state.state_type == StateType::Accept {
-            // PERF: Use std::mem::take since run is discarded after Complete
-            return complete_run(run, limits, evaluator);
+            return complete_run(run, limits, evaluator, mode);
         }
 
         for &next_id in &eps_state.transitions {
@@ -384,8 +436,7 @@ pub(crate) fn advance_run_shared(
                 run.push_at(Arc::clone(&event), next_state.alias.clone(), now);
 
                 if next_state.state_type == StateType::Accept {
-                    // PERF: Use std::mem::take since run is discarded after Complete
-                    return complete_run(run, limits, evaluator);
+                    return complete_run(run, limits, evaluator, mode);
                 }
 
                 return RunAdvanceResult::Continue;
@@ -407,6 +458,7 @@ fn advance_and_state(
     event: SharedEvent,
     limits: KleeneLimits,
     evaluator: Option<&dyn ExprEvaluator>,
+    mode: EmissionMode,
 ) -> RunAdvanceResult {
     let config = match &state.and_config {
         Some(c) => c,
@@ -473,8 +525,7 @@ fn advance_and_state(
             // Check if join state is accept
             let join_state = &nfa.states[config.join_state];
             if join_state.state_type == StateType::Accept {
-                // PERF: Use std::mem::take since run is discarded after Complete
-                return complete_run(run, limits, evaluator);
+                return complete_run(run, limits, evaluator, mode);
             }
         }
 

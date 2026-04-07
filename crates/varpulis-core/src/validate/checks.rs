@@ -889,7 +889,11 @@ fn check_stream_ops(
             | StreamOp::Process(_)
             | StreamOp::On(_)
             | StreamOp::Score(_)
-            | StreamOp::Forecast(_) => {}
+            | StreamOp::Forecast(_)
+            // SASE+ mode operators are validated by the runtime compiler;
+            // they don't need pre-validation here.
+            | StreamOp::SelectionMode(_)
+            | StreamOp::EmissionMode(_) => {}
         }
     }
 }

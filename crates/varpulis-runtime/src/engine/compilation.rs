@@ -441,6 +441,10 @@ impl Engine {
         let mut forecast_spec: Option<varpulis_core::ast::ForecastSpec> = None;
         let mut forecast_insert_idx: Option<usize> = None;
 
+        // For SASE+ explicit selection / emission mode operators
+        let mut selection_mode_override: Option<varpulis_core::ast::SelectionMode> = None;
+        let mut emission_mode_override: Option<varpulis_core::ast::EmissionMode> = None;
+
         // Prepend inline filter from IdentWithFilterAndAlias source — but ONLY
         // for non-sequence streams. For sequence patterns, the filter becomes a
         // SASE predicate on the first step (handled in compiler.rs), not a
@@ -566,6 +570,14 @@ impl Engine {
                     // Record current position so Forecast op is inserted here,
                     // BEFORE any subsequent .emit()/.where() ops.
                     forecast_insert_idx = Some(runtime_ops.len());
+                    continue;
+                }
+                StreamOp::SelectionMode(mode) => {
+                    selection_mode_override = Some(*mode);
+                    continue;
+                }
+                StreamOp::EmissionMode(mode) => {
+                    emission_mode_override = Some(*mode);
                     continue;
                 }
                 StreamOp::Enrich(spec) => {
@@ -1177,6 +1189,8 @@ impl Engine {
             global_within,
             &mut partition_key,
             &mut runtime_ops,
+            selection_mode_override,
+            emission_mode_override,
         );
 
         // === Build PST Forecaster if .forecast() specified ===
@@ -1452,6 +1466,7 @@ impl Engine {
     ///
     /// Returns `Some(SaseEngine)` when the stream has followed-by clauses, a Sequence source,
     /// or references a named pattern. Returns `None` for non-sequence streams.
+    #[allow(clippy::too_many_arguments)]
     fn compile_sase_detection(
         &self,
         source: &StreamSource,
@@ -1460,6 +1475,8 @@ impl Engine {
         global_within: Option<std::time::Duration>,
         partition_key: &mut Option<String>,
         runtime_ops: &mut Vec<RuntimeOp>,
+        selection_mode: Option<varpulis_core::ast::SelectionMode>,
+        emission_mode: Option<varpulis_core::ast::EmissionMode>,
     ) -> Option<SaseEngine> {
         let is_pattern_ref =
             matches!(source, StreamSource::Ident(name) if self.patterns.contains_key(name));
@@ -1509,6 +1526,9 @@ impl Engine {
                 if let Some(ref key) = partition_key {
                     engine = engine.with_partition_by(key.clone());
                 }
+
+                // Apply explicit selection / emission mode operators
+                engine = apply_sase_modes(engine, selection_mode, emission_mode);
 
                 // Add global negation conditions
                 for clause in negation_clauses {
@@ -1564,6 +1584,9 @@ impl Engine {
                 if let Some(ref key) = partition_key {
                     engine = engine.with_partition_by(key.clone());
                 }
+
+                // Apply explicit selection / emission mode operators
+                engine = apply_sase_modes(engine, selection_mode, emission_mode);
 
                 info!("Created SASE+ engine from named pattern '{}'", pattern_name);
                 Some(engine)
@@ -1927,6 +1950,38 @@ fn build_concat_expr(parts: &[varpulis_core::ast::ConfigValue]) -> Expr {
     })
 }
 
+/// Apply user-specified SASE+ selection and emission modes to a freshly-built
+/// engine. AST-level enums are mapped to runtime-level enums.
+fn apply_sase_modes(
+    mut engine: SaseEngine,
+    selection: Option<varpulis_core::ast::SelectionMode>,
+    emission: Option<varpulis_core::ast::EmissionMode>,
+) -> SaseEngine {
+    if let Some(s) = selection {
+        let runtime_strategy = match s {
+            varpulis_core::ast::SelectionMode::Strict => {
+                crate::sase::SelectionStrategy::StrictContiguous
+            }
+            varpulis_core::ast::SelectionMode::Stnm => {
+                crate::sase::SelectionStrategy::SkipTillNextMatch
+            }
+            varpulis_core::ast::SelectionMode::Stam => {
+                crate::sase::SelectionStrategy::SkipTillAnyMatch
+            }
+        };
+        engine = engine.with_strategy(runtime_strategy);
+    }
+    if let Some(e) = emission {
+        let runtime_mode = match e {
+            varpulis_core::ast::EmissionMode::Each => crate::sase::EmissionMode::Each,
+            varpulis_core::ast::EmissionMode::Longest => crate::sase::EmissionMode::Longest,
+            varpulis_core::ast::EmissionMode::Subsets => crate::sase::EmissionMode::Subsets,
+        };
+        engine = engine.with_emission_mode(runtime_mode);
+    }
+    engine
+}
+
 pub(super) const fn stream_op_name(op: &StreamOp) -> &'static str {
     match op {
         StreamOp::Where(_) => ".where()",
@@ -1967,6 +2022,8 @@ pub(super) const fn stream_op_name(op: &StreamOp) -> &'static str {
         StreamOp::Forecast(_) => ".forecast()",
         StreamOp::Enrich(_) => ".enrich()",
         StreamOp::Alert(_) => ".alert()",
+        StreamOp::SelectionMode(_) => ".selection_mode()",
+        StreamOp::EmissionMode(_) => ".emission_mode()",
     }
 }
 

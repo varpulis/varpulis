@@ -142,6 +142,30 @@ pub enum SelectionStrategy {
     StrictContiguous,
 }
 
+/// How a Kleene pattern produces output matches.
+///
+/// Selection strategy controls how runs are spawned and which events extend
+/// them. Emission mode is the orthogonal concern of how many `MatchResult`s
+/// each completed run produces.
+///
+/// Default is `Each` for all Kleene patterns. Use `.longest()` for an
+/// aggregate-style emit-once-at-completion, or `.subsets()` for the
+/// paper-correct STAM verbose enumeration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmissionMode {
+    /// Emit on every Kleene event extension (linear in Kleene size).
+    /// Default for all Kleene patterns.
+    Each,
+    /// Emit once when the Kleene completes (terminator or break),
+    /// with the longest captured sequence. Default for `.increasing()`/
+    /// `.decreasing()` (monotonic) patterns.
+    Longest,
+    /// Emit one match per non-empty subset of the Kleene capture
+    /// (2^N − 1 matches). Paper-correct STAM verbose mode.
+    /// Capped at `MAX_ENUMERATION_RESULTS` for safety.
+    Subsets,
+}
+
 /// Result of pattern matching
 #[derive(Debug, Clone)]
 pub struct MatchResult {

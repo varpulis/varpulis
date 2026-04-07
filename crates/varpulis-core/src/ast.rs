@@ -458,6 +458,36 @@ pub enum StreamOp {
     Enrich(EnrichSpec),
     /// Alert notification: `.alert(webhook: "https://...", message: "Alert: {field}")`
     Alert(Vec<NamedArg>),
+    /// SASE+ selection mode: `.strict()`, `.stnm()`, or `.stam()`.
+    /// Controls how runs are spawned and which events extend them.
+    SelectionMode(SelectionMode),
+    /// SASE+ emission mode: `.each()`, `.longest()`, or `.subsets()`.
+    /// Controls how many MatchResults each completed run produces.
+    EmissionMode(EmissionMode),
+}
+
+/// SASE+ selection strategy. See `crates/varpulis-sase/src/types.rs::SelectionStrategy`
+/// for the runtime equivalent. Mirrored here so the parser/AST don't depend on sase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SelectionMode {
+    /// Strict contiguity — events must be adjacent in the stream
+    Strict,
+    /// Skip-till-next-match — one maximal non-overlapping match per anchor
+    Stnm,
+    /// Skip-till-any-match — overlapping runs from every anchor (paper-correct)
+    Stam,
+}
+
+/// SASE+ emission mode. See `crates/varpulis-sase/src/types.rs::EmissionMode`
+/// for the runtime equivalent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EmissionMode {
+    /// Emit on every Kleene event extension (default for non-monotonic)
+    Each,
+    /// Emit once with the longest captured sequence (default for `.increasing()`/`.decreasing()`)
+    Longest,
+    /// Emit one match per non-empty subset of the Kleene capture (paper-correct STAM verbose)
+    Subsets,
 }
 
 /// A path in a fork construct

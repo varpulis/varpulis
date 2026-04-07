@@ -163,6 +163,24 @@ impl Nfa {
         self.states.iter().any(|s| s.is_greedy)
     }
 
+    /// Returns true if the start state's direct transitions land on a Kleene
+    /// self-loop state AND that Kleene has an epsilon path to Accept (meaning
+    /// it's a true Kleene-final pattern like bare `B+` or `all B as b` with
+    /// no terminator after the Kleene).
+    ///
+    /// For `all B as b -> Tick` (Kleene followed by a terminator), this
+    /// returns false — the Kleene's only continuation is via the Tick
+    /// transition, not via epsilon, so multiple concurrent runs are valid
+    /// (each anchored at a different B).
+    pub fn is_kleene_final_from_start(&self) -> bool {
+        let start = &self.states[self.start_state];
+        start.transitions.iter().any(|&t| {
+            self.states.get(t).is_some_and(|s| {
+                s.state_type == StateType::Kleene && s.self_loop && s.has_epsilon_to_accept
+            })
+        })
+    }
+
     /// Mark a state as an accepting (final) state.
     pub fn set_accept(&mut self, state_id: usize) {
         if let Some(state) = self.states.get_mut(state_id) {

@@ -589,6 +589,30 @@ fn op_to_node_info(op: &StreamOp) -> (String, String, serde_json::Value) {
             "allowed_lateness".to_string(),
             serde_json::json!({ "expr": expr_to_short_string(expr) }),
         ),
+        StreamOp::SelectionMode(m) => (
+            format!(
+                ".{}()",
+                match m {
+                    varpulis_core::ast::SelectionMode::Strict => "strict",
+                    varpulis_core::ast::SelectionMode::Stnm => "stnm",
+                    varpulis_core::ast::SelectionMode::Stam => "stam",
+                }
+            ),
+            "selection_mode".to_string(),
+            serde_json::json!({ "mode": format!("{m:?}") }),
+        ),
+        StreamOp::EmissionMode(m) => (
+            format!(
+                ".{}()",
+                match m {
+                    varpulis_core::ast::EmissionMode::Each => "each",
+                    varpulis_core::ast::EmissionMode::Longest => "longest",
+                    varpulis_core::ast::EmissionMode::Subsets => "subsets",
+                }
+            ),
+            "emission_mode".to_string(),
+            serde_json::json!({ "mode": format!("{m:?}") }),
+        ),
     }
 }
 

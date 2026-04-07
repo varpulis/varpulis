@@ -59,8 +59,8 @@ pub use run::Run;
 // ---------------------------------------------------------------------------
 use rustc_hash::FxHashMap;
 pub use types::{
-    CompareOp, GlobalNegation, MatchResult, Predicate, RunSnapshot, SasePattern, SaseStats,
-    SelectionStrategy, SharedEvent, StackEntry, TimeSemantics, MAX_ENUMERATION_RESULTS,
+    CompareOp, EmissionMode, GlobalNegation, MatchResult, Predicate, RunSnapshot, SasePattern,
+    SaseStats, SelectionStrategy, SharedEvent, StackEntry, TimeSemantics, MAX_ENUMERATION_RESULTS,
     MAX_KLEENE_EVENTS,
 };
 use varpulis_core::{Event, Value};
