@@ -7,6 +7,39 @@ use super::enumeration::enumerate_with_filter;
 use super::kleene::{KleeneCapture, KleeneLimits};
 use super::nfa::{Nfa, State, StateType};
 use super::predicate::{eval_predicate, event_matches_state, predicate_references_alias};
+use super::types::Predicate;
+
+/// Checks whether `prev` carries every field referenced by `alias.X` in `pred`.
+/// Used to decide whether to fall back to "skip predicate" semantics on the
+/// first Kleene entry when binding the alias to the anchor would fail because
+/// the anchor doesn't have the referenced field.
+fn prev_event_has_referenced_fields(
+    pred: &Predicate,
+    prev: &varpulis_core::Event,
+    alias: &str,
+) -> bool {
+    match pred {
+        Predicate::CompareRef {
+            ref_alias,
+            ref_field,
+            ..
+        } => {
+            if ref_alias == alias {
+                prev.get(ref_field).is_some()
+            } else {
+                true
+            }
+        }
+        Predicate::And(l, r) | Predicate::Or(l, r) => {
+            prev_event_has_referenced_fields(l, prev, alias)
+                && prev_event_has_referenced_fields(r, prev, alias)
+        }
+        Predicate::Not(inner) => prev_event_has_referenced_fields(inner, prev, alias),
+        // Compare/Expr: assume present (Compare doesn't reference alias;
+        // Expr is too complex to introspect cheaply)
+        _ => true,
+    }
+}
 use super::run::Run;
 use super::types::{MatchResult, SelectionStrategy, SharedEvent};
 use crate::clock::Timestamp;
@@ -232,8 +265,10 @@ pub(crate) fn advance_run_shared(
         }
 
         // For Kleene states with self-referencing predicates: the first event
-        // entering the Kleene has no previous value to compare against. Skip the
-        // predicate only when the predicate references the Kleene's own alias.
+        // entering the Kleene has no previous value to compare against under
+        // the Kleene's own alias. We temporarily bind the alias to the previous
+        // step's event (run.stack.last()) so .increasing()/.decreasing() compare
+        // against the anchor instead of being silently skipped.
         let matches = if next_state.state_type == StateType::Kleene
             && next_state.self_loop
             && next_state.alias.as_ref().is_some_and(|a| {
@@ -243,11 +278,40 @@ pub(crate) fn advance_run_shared(
                         .as_ref()
                         .is_some_and(|p| predicate_references_alias(p, a))
             }) {
-            // First Kleene entry with self-ref: match event type only
-            next_state
+            // Check event type first
+            let type_ok = next_state
                 .event_type
                 .as_ref()
-                .is_none_or(|et| *event.event_type == *et)
+                .is_none_or(|et| *event.event_type == *et);
+            if !type_ok {
+                false
+            } else {
+                // Try to bind the Kleene alias to the previous step's event
+                // and evaluate the predicate. This makes .increasing()/.decreasing()
+                // compare against the anchor on the first Kleene entry.
+                // If the previous event doesn't carry the referenced field,
+                // fall back to skipping the predicate (true Kleene-only first entry).
+                let alias = next_state.alias.as_ref().unwrap().clone();
+                if let Some(prev) = run.stack.last() {
+                    let mut tmp_captured = run.captured.clone();
+                    tmp_captured.insert(alias.clone(), Arc::clone(&prev.event));
+                    if let Some(p) = next_state.predicate.as_ref() {
+                        let result = eval_predicate(p, &event, &tmp_captured, evaluator);
+                        // If false but the previous event lacks the referenced
+                        // field(s), treat it as "no comparison possible" → skip.
+                        if !result && !prev_event_has_referenced_fields(p, &prev.event, &alias) {
+                            true
+                        } else {
+                            result
+                        }
+                    } else {
+                        true
+                    }
+                } else {
+                    // No previous event — skip predicate
+                    true
+                }
+            }
         } else {
             event_matches_state(nfa, &event, next_state, &run.captured, evaluator)
         };
