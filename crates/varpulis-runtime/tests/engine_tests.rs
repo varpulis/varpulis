@@ -1589,11 +1589,10 @@ async fn test_engine_max_chain_depth() {
 #[tokio::test]
 async fn test_engine_event_declaration() {
     let source = r"
-        event StockTick {
-            symbol: string,
-            price: float,
+        event StockTick:
+            symbol: str
+            price: float
             volume: int
-        }
 
         stream Test = StockTick
             .emit(s: symbol, p: price)

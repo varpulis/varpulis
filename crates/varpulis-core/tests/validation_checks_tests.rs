@@ -780,7 +780,7 @@ fn e090_all_not_implemented() {
 
 #[test]
 fn e091_concurrent_unknown_param() {
-    let diags = validate_vpl("event A { x: int }\nstream S = A\n    .concurrent(bogus: 4)");
+    let diags = validate_vpl("event A:\n    x: int\n\nstream S = A\n    .concurrent(bogus: 4)");
     assert!(
         has_error(&diags, "E091"),
         "Expected E091 for unknown concurrent param: {diags:?}"
@@ -790,7 +790,7 @@ fn e091_concurrent_unknown_param() {
 #[test]
 fn concurrent_valid_no_error() {
     let diags = validate_vpl(
-        "event A { x: int }\nstream S = A\n    .concurrent(workers: 4)\n    .where(x > 0)",
+        "event A:\n    x: int\n\nstream S = A\n    .concurrent(workers: 4)\n    .where(x > 0)",
     );
     assert!(
         !has_error(&diags, "E090") && !has_error(&diags, "E091"),

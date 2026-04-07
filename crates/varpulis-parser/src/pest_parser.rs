@@ -262,8 +262,8 @@ fn parse_inner(source: &str) -> ParseResult<Program> {
     for pair in pairs {
         if pair.as_rule() == Rule::program {
             for inner in pair.into_inner() {
-                if inner.as_rule() == Rule::statement {
-                    statements.push(parse_statement(inner)?);
+                if inner.as_rule() == Rule::top_level_statement {
+                    statements.push(parse_top_level_statement(inner)?);
                 }
             }
         }
@@ -397,6 +397,45 @@ fn is_stream_op_error(positives: &[Rule]) -> bool {
         Rule::alert_op,
     ];
     positives.len() >= 10 && positives.iter().all(|r| STREAM_OP_RULES.contains(r))
+}
+
+/// Parse a top-level statement (declarations and assignments only).
+///
+/// `top_level_statement` and `statement` share most rules but the top level
+/// excludes `expr_stmt` to prevent silently swallowing orphan tokens after
+/// a malformed declaration.
+fn parse_top_level_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stmt>> {
+    let span = Span::new(pair.as_span().start(), pair.as_span().end());
+    let inner = pair.into_inner().expect_next("statement body")?;
+
+    let stmt = match inner.as_rule() {
+        Rule::context_decl => parse_context_decl(inner)?,
+        Rule::connector_decl => parse_connector_decl(inner)?,
+        Rule::stream_decl => parse_stream_decl(inner)?,
+        Rule::pattern_decl => parse_pattern_decl(inner)?,
+        Rule::event_decl => parse_event_decl(inner)?,
+        Rule::type_decl => parse_type_decl(inner)?,
+        Rule::var_decl => parse_var_decl(inner)?,
+        Rule::const_decl => parse_const_decl(inner)?,
+        Rule::fn_decl => parse_fn_decl(inner)?,
+        Rule::config_block => parse_config_block(inner)?,
+        Rule::import_stmt => parse_import_stmt(inner)?,
+        Rule::assignment_stmt => {
+            let mut inner = inner.into_inner();
+            let name = inner.expect_next("variable name")?.as_str().to_string();
+            let value = parse_expr(inner.expect_next("assignment value")?)?;
+            Stmt::Assignment { name, value }
+        }
+        _ => {
+            return Err(ParseError::UnexpectedToken {
+                position: span.start,
+                expected: "top-level declaration".to_string(),
+                found: format!("{:?}", inner.as_rule()),
+            })
+        }
+    };
+
+    Ok(Spanned::new(stmt, span))
 }
 
 fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stmt>> {

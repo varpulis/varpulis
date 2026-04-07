@@ -770,7 +770,9 @@ stream Combined = merge(Temperature, Humidity)
 #[test]
 fn diagnostics_unknown_stream_operation() {
     let code = r"
-event Source { x: Float }
+event Source:
+    x: float
+
 stream S = Source.foo(x > 1)
 ";
     let diags = get_diagnostics(code);

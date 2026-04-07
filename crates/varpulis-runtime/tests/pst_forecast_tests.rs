@@ -45,7 +45,7 @@ async fn run(code: &str, events: Vec<Event>) -> Vec<Event> {
 async fn test_forecast_parses() {
     let code = r#"
         stream ForecastStream = Event1 as e1
-            -> Event2 as e2 where e2.value > 0
+            -> Event2 where value > 0 as e2
             .within(5s)
             .forecast(confidence: 0.5, warmup: 5)
             .emit(status: "forecasted")
@@ -67,7 +67,7 @@ async fn test_forecast_parses() {
 async fn test_forecast_compiles() {
     let code = r#"
         stream ForecastStream = Event1 as e1
-            -> Event2 as e2 where e2.value > 0
+            -> Event2 where value > 0 as e2
             .within(5s)
             .forecast(confidence: 0.5, warmup: 5)
             .emit(status: "forecasted")

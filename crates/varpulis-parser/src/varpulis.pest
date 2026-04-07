@@ -18,8 +18,29 @@ DEDENT = { "\u{00AB}DEDENT\u{00BB}" }
 // Program Entry Point
 // ============================================================================
 
-program = { SOI ~ statement* ~ EOI }
+program = { SOI ~ top_level_statement* ~ EOI }
 
+// Top-level statements: declarations and assignments. Bare expressions
+// (`expr_stmt`) are deliberately excluded — they would silently swallow
+// malformed input (e.g., orphan tokens like `where x > y` after a stream
+// declaration that did not fully consume them).
+top_level_statement = {
+    context_decl
+    | connector_decl
+    | stream_decl
+    | pattern_decl
+    | event_decl
+    | type_decl
+    | var_decl
+    | const_decl
+    | fn_decl
+    | config_block
+    | import_stmt
+    | assignment_stmt
+}
+
+// Statements allowed inside function bodies, blocks, and lambdas.
+// Includes expression statements for `let x = expr; x + 1` style code.
 statement = {
     context_decl
     | connector_decl
