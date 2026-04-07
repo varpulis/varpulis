@@ -1,0 +1,27 @@
+# Scenario 3: Stream-stream window join
+# Join Trade events with Quote events on the same symbol within a 5-second window.
+
+event Trade:
+    ts: int
+    symbol: str
+    price: float
+    volume: int
+
+event Quote:
+    ts: int
+    symbol: str
+    bid: float
+    ask: float
+
+stream Trades = Trade .emit(symbol: symbol, price: price)
+stream Quotes = Quote .emit(symbol: symbol, bid: bid, ask: ask)
+
+stream Enriched = join(Trades, Quotes)
+    .on(Trades.symbol == Quotes.symbol)
+    .window(5s)
+    .select(
+        symbol: Trades.symbol,
+        trade_price: Trades.price,
+        bid: Quotes.bid,
+        ask: Quotes.ask
+    )

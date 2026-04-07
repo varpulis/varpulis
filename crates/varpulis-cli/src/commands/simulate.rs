@@ -85,9 +85,18 @@ pub async fn run_simulation(
     );
 
     // Create output event channel (shared across all engines)
-    // PERF: Use SharedEvent (Arc<Event>) channel for zero-copy event passing
-    // Use larger buffer in quiet mode since we're benchmarking throughput
-    let channel_size = if quiet { 100_000 } else { 1000 * num_workers };
+    // PERF: Use SharedEvent (Arc<Event>) channel for zero-copy event passing.
+    //
+    // The buffer is sized large enough that the engine's cooperative backpressure
+    // path (see `send_output_shared`) is rarely hit even when piping output to a
+    // slow consumer. Backpressure NEVER drops events — see #44 for context.
+    let channel_size = if quiet {
+        100_000
+    } else {
+        // 64K events per worker: large enough that the receiver can drain
+        // most JSON-printing workloads without backpressure stalls.
+        65_536 * num_workers
+    };
     let (output_tx, mut output_rx) = mpsc::channel::<SharedEvent>(channel_size);
 
     // Create initial engine to show metrics

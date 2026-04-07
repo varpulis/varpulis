@@ -1,0 +1,23 @@
+# Scenario 2: Tumbling 1-second window aggregation per device
+# Equivalent Proton SQL: SELECT window_start, device_id, sum/avg/min/max
+#                       FROM tumble(readings, ts, 1s)
+#                       GROUP BY window_start, device_id
+
+event Reading:
+    ts: int
+    device_id: str
+    temperature: float
+
+stream DeviceAgg = Reading
+    .partition_by(device_id)
+    .window(1s)
+    .aggregate(
+        s: sum(temperature),
+        a: avg(temperature),
+        mn: min(temperature),
+        mx: max(temperature)
+    )
+    .emit(
+        device_id: device_id,
+        s: s, a: a, mn: mn, mx: mx
+    )

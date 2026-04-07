@@ -29,9 +29,8 @@ This document captures the remaining **manual** SEO and marketing tasks that wer
 
 **Do NOT position primarily against**:
 - RisingWave / Materialize — they're streaming databases, wrong category
-- Cumulocity Apama — enterprise IoT vendor, wrong wedge, low search volume
+- Apama — enterprise IoT vendor, wrong wedge, low search volume
 - Esper — abandoned project, low commercial intent
-- TIBCO — does not own Apama anymore (common misconception)
 
 **Keywords that are DEAD and should not be targeted as primary terms**:
 - "Complex Event Processing" / "CEP" (peaked 2012, only alive in procurement reports)

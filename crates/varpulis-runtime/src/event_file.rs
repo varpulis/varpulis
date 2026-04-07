@@ -467,6 +467,11 @@ impl EventFileParser {
         // 1. Varpulis native format: {"event_type": "X", "data": {...}}
         if let Some(event_type) = json.get("event_type").and_then(|v| v.as_str()) {
             let mut event = Event::new(event_type);
+            // Honor optional top-level @timestamp / UtcTime / TimeCreated so
+            // benchmarks and replays can preserve event-time. Without this,
+            // time-based windows would never advance because every event
+            // would get Utc::now() (cf. backpressure-fix benchmark work).
+            Self::apply_json_timestamp(&json, &mut event);
             if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
                 for (key, value) in data.iter().take(crate::limits::MAX_FIELDS_PER_EVENT) {
                     event

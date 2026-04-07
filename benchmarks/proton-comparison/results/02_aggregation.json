@@ -1,0 +1,25 @@
+[
+  {
+    "scenario": "02_aggregation",
+    "events": 100000,
+    "runs": 5,
+    "engines": {
+      "varpulis": {
+        "median_s": 0.7910458549999999,
+        "min_s": 0.774054165,
+        "max_s": 0.8023474159999999,
+        "throughput_eps": 126414.92192636545,
+        "peak_rss_mb": 113.7734375,
+        "output_count": 99900
+      },
+      "proton": {
+        "median_s": 2.5483866349677555,
+        "min_s": 2.4706392319640145,
+        "max_s": 2.589208189980127,
+        "throughput_eps": 39240.51344009081,
+        "peak_rss_mb": 366.7,
+        "output_count": 99900
+      }
+    }
+  }
+]

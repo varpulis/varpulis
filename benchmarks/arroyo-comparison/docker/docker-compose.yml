@@ -1,0 +1,81 @@
+# Arroyo vs Varpulis benchmark stack
+#
+# Two transport modes for fair benchmarking:
+#   1. FILE mode (primary): JSONL file → engine → output. Pure engine throughput.
+#   2. REDPANDA (Kafka-compatible): high-throughput network mode.
+#
+# Arroyo OSS additionally requires Postgres for control-plane state.
+# MQTT is deliberately excluded (broker would cap throughput at ~6K events/sec).
+
+services:
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: bench-arroyo-redpanda
+    command:
+      - redpanda
+      - start
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+      - --pandaproxy-addr=0.0.0.0:8082
+      - --rpc-addr=0.0.0.0:33145
+      - --advertise-rpc-addr=redpanda:33145
+      - --smp=2
+      - --memory=2G
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --check=false
+    ports:
+      - "29092:9092"  # external Kafka client (different host port from proton stack)
+      - "28082:8082"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster info --brokers redpanda:9092 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:16
+    container_name: bench-arroyo-postgres
+    environment:
+      POSTGRES_USER: arroyo
+      POSTGRES_PASSWORD: arroyo
+      POSTGRES_DB: arroyo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arroyo"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  arroyo:
+    image: ghcr.io/arroyosystems/arroyo:latest
+    container_name: bench-arroyo
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    environment:
+      DATABASE__TYPE: postgres
+      DATABASE__POSTGRES__HOST: postgres
+      DATABASE__POSTGRES__PORT: "5432"
+      DATABASE__POSTGRES__USER: arroyo
+      DATABASE__POSTGRES__PASSWORD: arroyo
+      DATABASE__POSTGRES__DATABASE_NAME: arroyo
+      CHECKPOINT_URL: file:///tmp/arroyo-checkpoints
+    command: cluster
+    ports:
+      - "5115:5115"   # API
+      - "5116:5116"   # Controller
+      - "8001:8001"   # Worker / metrics
+    volumes:
+      - ../data:/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5115/api/v1/ping || exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+networks:
+  default:
+    name: bench-arroyo-net

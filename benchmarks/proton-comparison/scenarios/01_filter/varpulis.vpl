@@ -1,0 +1,12 @@
+# Scenario 1: Filter — keep only ticks where price > 50
+# Equivalent Proton SQL: SELECT * FROM ticks WHERE price > 50
+
+event Tick:
+    ts: int
+    symbol: str
+    price: float
+    volume: int
+
+stream Filtered = Tick
+    .where(price > 50.0)
+    .emit(symbol: symbol, price: price, volume: volume)

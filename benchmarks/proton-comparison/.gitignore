@@ -1,0 +1,5 @@
+# Generated event files (regenerate via generate_events.py)
+data/*.jsonl
+
+# Old single-file results format (replaced by per-scenario JSON)
+results/benchmark.json

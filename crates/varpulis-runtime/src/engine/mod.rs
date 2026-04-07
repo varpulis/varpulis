@@ -295,23 +295,58 @@ impl Engine {
     }
 
     /// Send an output event to the output channel (if configured).
-    /// In benchmark mode (no output channel), this is a no-op to avoid cloning overhead.
-    /// PERF: Uses zero-copy for SharedEvent channels, clones only for legacy Owned channels.
+    ///
+    /// **Backpressure**: When the output channel is full, this function applies
+    /// cooperative backpressure via a `try_send` retry loop with `yield_now()`.
+    /// Events are NEVER silently dropped — the worker thread blocks until either
+    /// the channel has space or the receiver is gone. This is critical for
+    /// correctness when the consumer is slower than the producer (e.g., piping
+    /// `varpulis simulate` output through `jq` or to a slow file).
+    ///
+    /// On multi-threaded tokio runtimes, the receiver task on another thread
+    /// drains the channel while this loop yields.
+    ///
+    /// In benchmark mode (no output channel), this is a no-op to avoid cloning.
+    /// PERF: Uses zero-copy for SharedEvent channels, clones only for legacy Owned.
     #[cfg(feature = "async-runtime")]
     #[inline]
     pub(super) fn send_output_shared(&mut self, event: &SharedEvent) {
+        use tokio::sync::mpsc::error::TrySendError;
         match &self.output_channel {
             Some(OutputChannel::Shared(tx)) => {
                 // PERF: Zero-copy - just increment Arc refcount
-                if let Err(e) = tx.try_send(Arc::clone(event)) {
-                    warn!("Failed to send output event: {}", e);
+                let mut item = Arc::clone(event);
+                loop {
+                    match tx.try_send(item) {
+                        Ok(()) => break,
+                        Err(TrySendError::Full(returned)) => {
+                            item = returned;
+                            // Cooperative backpressure: yield to the scheduler
+                            // so the receiver task can drain the channel.
+                            std::thread::yield_now();
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            warn!("output channel closed; dropping output event");
+                            break;
+                        }
+                    }
                 }
             }
             Some(OutputChannel::Owned(tx)) => {
                 // Legacy path: must clone the Event
-                let owned = (**event).clone();
-                if let Err(e) = tx.try_send(owned) {
-                    warn!("Failed to send output event: {}", e);
+                let mut item = (**event).clone();
+                loop {
+                    match tx.try_send(item) {
+                        Ok(()) => break,
+                        Err(TrySendError::Full(returned)) => {
+                            item = returned;
+                            std::thread::yield_now();
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            warn!("output channel closed; dropping output event");
+                            break;
+                        }
+                    }
                 }
             }
             None => {
@@ -329,20 +364,45 @@ impl Engine {
     }
 
     /// Send an output event to the output channel (if configured).
+    ///
+    /// Applies cooperative backpressure when the channel is full — see
+    /// [`send_output_shared`] for details. Events are NEVER silently dropped.
     /// When no channel (benchmark/sync mode), collects into internal buffer.
     #[cfg(feature = "async-runtime")]
     #[inline]
     pub(super) fn send_output(&mut self, event: Event) {
+        use tokio::sync::mpsc::error::TrySendError;
         match &self.output_channel {
             Some(OutputChannel::Shared(tx)) => {
-                // Wrap in Arc for shared channel
-                if let Err(e) = tx.try_send(Arc::new(event)) {
-                    warn!("Failed to send output event: {}", e);
+                let mut item = Arc::new(event);
+                loop {
+                    match tx.try_send(item) {
+                        Ok(()) => break,
+                        Err(TrySendError::Full(returned)) => {
+                            item = returned;
+                            std::thread::yield_now();
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            warn!("output channel closed; dropping output event");
+                            break;
+                        }
+                    }
                 }
             }
             Some(OutputChannel::Owned(tx)) => {
-                if let Err(e) = tx.try_send(event) {
-                    warn!("Failed to send output event: {}", e);
+                let mut item = event;
+                loop {
+                    match tx.try_send(item) {
+                        Ok(()) => break,
+                        Err(TrySendError::Full(returned)) => {
+                            item = returned;
+                            std::thread::yield_now();
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            warn!("output channel closed; dropping output event");
+                            break;
+                        }
+                    }
                 }
             }
             None => {

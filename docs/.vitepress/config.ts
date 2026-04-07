@@ -276,6 +276,8 @@ export default defineConfig({
           text: 'Comparisons',
           items: [
             { text: 'Varpulis vs Apache Flink', link: '/comparisons/varpulis-vs-flink' },
+            { text: 'Varpulis vs Timeplus Proton', link: '/comparisons/varpulis-vs-proton' },
+            { text: 'Varpulis vs Arroyo', link: '/comparisons/varpulis-vs-arroyo' },
             { text: 'Varpulis vs Kafka Streams', link: '/comparisons/varpulis-vs-kafka-streams' },
             { text: 'Varpulis vs Esper (legacy)', link: '/comparisons/varpulis-vs-esper' },
           ]

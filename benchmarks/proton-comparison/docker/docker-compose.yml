@@ -1,0 +1,63 @@
+# Proton vs Varpulis benchmark stack
+#
+# Two transport modes for fair benchmarking:
+#   1. FILE mode (primary): JSONL file → engine → output. Bypasses network entirely
+#      and measures pure engine throughput. This is the apama-comparison "CLI/ramdisk"
+#      methodology — where engines hit their real ceilings.
+#   2. REDPANDA (Kafka-compatible): single-binary, much higher throughput than MQTT.
+#      Shared with the Varpulis side of the benchmark for the "realistic operational"
+#      number.
+#
+# MQTT is deliberately excluded — at ~6K events/sec it would measure the broker,
+# not the engines.
+
+services:
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: bench-proton-redpanda
+    command:
+      - redpanda
+      - start
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+      - --pandaproxy-addr=0.0.0.0:8082
+      - --rpc-addr=0.0.0.0:33145
+      - --advertise-rpc-addr=redpanda:33145
+      - --smp=2
+      - --memory=2G
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --check=false
+    ports:
+      - "19092:9092"  # external Kafka client
+      - "18082:8082"  # pandaproxy HTTP
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster info --brokers redpanda:9092 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  proton:
+    image: ghcr.io/timeplus-io/proton:latest
+    container_name: bench-proton
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    ports:
+      - "8463:8463"   # Proton native protocol
+      - "3218:3218"   # Proton HTTP API
+      - "8123:8123"   # ClickHouse-compat HTTP
+    volumes:
+      - ../data:/data:ro
+    environment:
+      - PROTON_LISTEN_HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3218/proton/ping || exit 0"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+networks:
+  default:
+    name: bench-proton-net
