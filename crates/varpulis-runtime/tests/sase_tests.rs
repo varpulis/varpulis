@@ -1909,27 +1909,25 @@ fn test_zdd_kleene_single_run_captures_all() {
 }
 
 #[test]
-fn test_kleene_self_loop_accumulates_then_emits_on_break() {
-    // Kleene+ with epsilon to Accept: B events accumulate silently,
-    // a non-B event triggers emission of the accumulated match.
+fn test_kleene_self_loop_preserves_all_pattern() {
+    // Verify `all` pattern with SASE+ STAM semantics: each B event emits a
+    // result (every prefix of the Kleene closure is a valid match).
     let pattern = PatternBuilder::seq(vec![
         PatternBuilder::event("A"),
         PatternBuilder::one_or_more(PatternBuilder::event("B")),
     ]);
+    // When Kleene+ has epsilon to Accept, each event emits CompleteAndContinue
     let mut engine = SaseEngine::new(pattern);
 
     engine.process(&make_event("A", vec![]));
     let r1 = engine.process(&make_event("B", vec![("n", Value::Int(1))]));
-    assert_eq!(r1.len(), 0, "First B should accumulate silently");
+    assert_eq!(r1.len(), 1, "First B should emit a match");
 
     let r2 = engine.process(&make_event("B", vec![("n", Value::Int(2))]));
-    assert_eq!(r2.len(), 0, "Second B should accumulate silently");
-
-    // Non-B event breaks the Kleene → emit
-    let r3 = engine.process(&make_event("C", vec![]));
-    assert!(
-        !r3.is_empty(),
-        "Non-B event should trigger emit on Kleene break"
+    assert_eq!(
+        r2.len(),
+        1,
+        "Second B should also emit a match via self-loop"
     );
 }
 
@@ -2380,9 +2378,9 @@ fn test_kleene_rising_sequence_with_terminator() {
 }
 
 #[test]
-fn test_kleene_without_terminator_emits_on_break() {
+fn test_kleene_without_terminator_emits_on_each_extension() {
     // SEQ(A, B+) — Kleene is last item, epsilon to Accept.
-    // B events accumulate silently; a non-B event triggers emission.
+    // SASE+ STAM: each B event emits a match.
     let pattern = PatternBuilder::seq(vec![
         PatternBuilder::event("A"),
         PatternBuilder::one_or_more(PatternBuilder::event("B")),
@@ -2392,25 +2390,14 @@ fn test_kleene_without_terminator_emits_on_break() {
 
     engine.process(&make_event("A", vec![]));
 
-    // B events accumulate silently (no emission)
     let r1 = engine.process(&make_event("B", vec![("n", Value::Int(1))]));
-    assert_eq!(r1.len(), 0, "First B should accumulate, not emit");
+    assert_eq!(r1.len(), 1, "First B emits (Kleene min satisfied)");
 
     let r2 = engine.process(&make_event("B", vec![("n", Value::Int(2))]));
-    assert_eq!(r2.len(), 0, "Second B should accumulate, not emit");
+    assert_eq!(r2.len(), 1, "Second B emits via self-loop");
 
     let r3 = engine.process(&make_event("B", vec![("n", Value::Int(3))]));
-    assert_eq!(r3.len(), 0, "Third B should accumulate, not emit");
-
-    // Non-B event breaks the Kleene → emit accumulated match
-    let r4 = engine.process(&make_event("C", vec![]));
-    assert!(
-        !r4.is_empty(),
-        "Non-B event should trigger emit on Kleene break"
-    );
-    // Best match should have A + 3B = 4 events in stack
-    let max_stack = r4.iter().map(|r| r.stack.len()).max().unwrap_or(0);
-    assert_eq!(max_stack, 4, "A + 3B");
+    assert_eq!(r3.len(), 1, "Third B emits via self-loop");
 }
 
 #[test]

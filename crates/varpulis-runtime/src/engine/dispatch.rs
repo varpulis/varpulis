@@ -419,7 +419,10 @@ impl Engine {
                         });
                     }
 
-                    // Skip output clone+rename when stream has no downstream routes
+                    // Skip output clone+rename when stream has no downstream routes.
+                    // When skipped, output_events keep their original event_type, so
+                    // they MUST NOT be queued for downstream routing (they would
+                    // loop back to the same streams that just processed them).
                     let skip_rename = self.router.get_routes(stream_name).is_none();
                     let result = Self::process_stream_sync(
                         stream,
@@ -460,9 +463,14 @@ impl Engine {
                         self.output_events_emitted += result.sink_events_sent;
                     }
 
-                    // Queue output events (push_back to maintain order)
-                    for output_event in result.output_events {
-                        pending_events.push_back((output_event, depth + 1));
+                    // Queue output events for downstream routing.
+                    // Skip when skip_rename is true: those events still carry the
+                    // original event_type and would re-enter the same streams,
+                    // causing an infinite loop until MAX_CHAIN_DEPTH.
+                    if !skip_rename {
+                        for output_event in result.output_events {
+                            pending_events.push_back((output_event, depth + 1));
+                        }
                     }
                 }
             }

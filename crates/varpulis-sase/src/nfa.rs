@@ -57,6 +57,12 @@ pub struct State {
     /// PERF: Pre-computed flag — true when an epsilon transition leads to Accept.
     /// Avoids per-event iteration over epsilon_transitions in Kleene hot paths.
     pub has_epsilon_to_accept: bool,
+    /// Greedy emission mode for Kleene states with self-referencing predicates
+    /// (e.g., `.increasing(field)` / `.decreasing(field)`). When true, the run
+    /// accumulates events silently and emits the longest match when the self-loop
+    /// predicate breaks. When false (default), follows standard SASE+ STAM
+    /// semantics: emit on every Kleene match.
+    pub is_greedy: bool,
 }
 
 impl State {
@@ -76,6 +82,7 @@ impl State {
             negation_info: None,
             postponed_predicate: None,
             has_epsilon_to_accept: false,
+            is_greedy: false,
         }
     }
 
@@ -201,6 +208,27 @@ impl NfaCompiler {
             .collect();
         for (id, flag) in accept_flags {
             self.nfa.states[id].has_epsilon_to_accept = flag;
+        }
+        // Mark Kleene states whose predicate self-references their own alias
+        // (the .increasing()/.decreasing() monotonic operator pattern). These
+        // states use greedy emission semantics — accumulate then emit on break.
+        let greedy_flags: Vec<(usize, bool)> = self
+            .nfa
+            .states
+            .iter()
+            .map(|s| {
+                let is_self_ref_kleene = s.state_type == StateType::Kleene
+                    && s.self_loop
+                    && s.alias.as_ref().is_some_and(|a| {
+                        s.predicate
+                            .as_ref()
+                            .is_some_and(|p| super::predicate::predicate_references_alias(p, a))
+                    });
+                (s.id, is_self_ref_kleene)
+            })
+            .collect();
+        for (id, flag) in greedy_flags {
+            self.nfa.states[id].is_greedy = flag;
         }
         self.nfa
     }

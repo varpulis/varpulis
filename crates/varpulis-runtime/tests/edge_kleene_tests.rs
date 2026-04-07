@@ -307,7 +307,7 @@ async fn kleene_simple_two_step() {
     ";
 
     let results = run_scenario(program, events).await;
-    // Each B after A triggers incremental Kleene output
+    // Each B after A triggers incremental Kleene output (SASE+ STAM)
     assert!(
         !results.is_empty(),
         "A followed by Bs should produce Kleene matches"

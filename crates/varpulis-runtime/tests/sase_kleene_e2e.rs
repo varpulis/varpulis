@@ -263,11 +263,11 @@ stream Alert = BruteForce
 }
 
 // =========================================================================
-// SEQ(A, B+) without terminator — emits on Kleene break
+// SEQ(A, B+) without terminator — SASE+ STAM emits on each Kleene extension
 // =========================================================================
 
 #[test]
-fn test_vpl_kleene_without_terminator_emits_on_break() {
+fn test_vpl_kleene_without_terminator_emits_multiple() {
     let vpl = r#"
 event TempReading:
     sensor_id: str
@@ -284,27 +284,16 @@ stream Alert = Rising
 
     let events = vec![
         temp_event("A", 20),
-        temp_event("A", 30), // Kleene match (30 > 20)
-        temp_event("A", 40), // Kleene match (40 > 20)
-        temp_event("A", 50), // Kleene match (50 > 20)
-        temp_event("A", 10), // Kleene break (10 < 20) → emit accumulated
+        temp_event("A", 30), // 1st Kleene match → emit
+        temp_event("A", 40), // 2nd → emit
+        temp_event("A", 50), // 3rd → emit
     ];
 
     let outputs = run_sync(vpl, events);
     assert!(
-        !outputs.is_empty(),
-        "Kleene-final pattern should emit on break, got 0 outputs"
-    );
-    // The best match should have count=3 (events 30, 40, 50)
-    let max_count = outputs
-        .iter()
-        .filter_map(|e| e.get("num").and_then(|v| v.as_int()))
-        .max()
-        .unwrap_or(0);
-    assert!(
-        max_count >= 3,
-        "Expected at least 3 Kleene matches, got {}",
-        max_count
+        outputs.len() >= 3,
+        "SEQ(A, B+) without terminator should emit on each Kleene extension, got {}",
+        outputs.len()
     );
 }
 

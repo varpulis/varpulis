@@ -13,7 +13,6 @@ use crate::clock::Timestamp;
 use crate::ExprEvaluator;
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) enum RunAdvanceResult {
     Continue,
     Complete(MatchResult),
@@ -155,10 +154,20 @@ pub(crate) fn advance_run_shared(
         // PERF(Opt4): Use push_at_kleene to avoid re-allocating captured key
         run.push_at_kleene(Arc::clone(&event), &current_state.alias, now);
 
-        // Kleene-final patterns (epsilon to Accept): accumulate silently.
-        // Emission happens when the Kleene breaks (non-matching event arrives).
+        // Kleene-final patterns (epsilon to Accept): emission strategy depends
+        // on the state's selection mode.
         if current_state.has_epsilon_to_accept {
-            return RunAdvanceResult::Continue;
+            if current_state.is_greedy {
+                // Greedy (.increasing()/.decreasing()): accumulate silently,
+                // emit on break (handled below when self-loop predicate fails).
+                return RunAdvanceResult::Continue;
+            }
+            // SASE+ STAM: emit on every Kleene match (every prefix is a result).
+            return RunAdvanceResult::CompleteAndContinue(MatchResult {
+                captured: run.captured.clone(),
+                stack: run.stack.clone(),
+                duration: run.started_at.elapsed(),
+            });
         }
 
         // No epsilon to accept: accumulate for deferred emission (SEQ(A, B+, C))
@@ -181,11 +190,13 @@ pub(crate) fn advance_run_shared(
         return RunAdvanceResult::Continue;
     }
 
-    // Kleene break: when the self-loop predicate fails and we have accumulated
-    // events, emit the accumulated match. The engine will start a new run with
-    // this event via skip-till-any-match.
+    // Greedy Kleene break: for .increasing()/.decreasing() the run accumulates
+    // events silently and emits the longest match when the self-loop predicate
+    // fails. SASE+ STAM Kleene states emit on every match (above), so this only
+    // fires for greedy mode.
     if current_state.state_type == StateType::Kleene
         && current_state.self_loop
+        && current_state.is_greedy
         && current_state.has_epsilon_to_accept
         && !run.captured.is_empty()
     {
@@ -251,9 +262,18 @@ pub(crate) fn advance_run_shared(
             }
 
             if next_state.state_type == StateType::Kleene && next_state.self_loop {
-                // Kleene-final: accumulate silently, emit on break
+                // Kleene-final: emission strategy depends on selection mode
                 if next_state.has_epsilon_to_accept {
-                    return RunAdvanceResult::Continue;
+                    if next_state.is_greedy {
+                        // Greedy: accumulate silently, emit on break
+                        return RunAdvanceResult::Continue;
+                    }
+                    // SASE+ STAM: emit on every Kleene match
+                    return RunAdvanceResult::CompleteAndContinue(MatchResult {
+                        captured: run.captured.clone(),
+                        stack: run.stack.clone(),
+                        duration: run.started_at.elapsed(),
+                    });
                 }
 
                 // No epsilon to accept: accumulate for deferred emission (SEQ(A, B+, C))
