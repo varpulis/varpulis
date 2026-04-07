@@ -12,7 +12,7 @@ const vplGrammar = JSON.parse(
 
 export default defineConfig({
   title: 'Varpulis',
-  description: 'Next-generation streaming analytics engine for real-time complex event processing',
+  description: 'Rust stream processing engine for real-time detection. Open-source Apache Flink alternative built for detection engineering, fraud prevention, and MITRE ATT&CK coverage. 1.5M events/sec. Single 15MB binary. No JVM.',
   lang: 'en-US',
 
   base: '/docs/',
@@ -45,21 +45,22 @@ export default defineConfig({
   head: [
     ['link', { rel: 'icon', href: '/docs/favicon.ico' }],
 
-    // SEO meta tags
-    ['meta', { name: 'keywords', content: 'complex event processing, CEP, streaming analytics, pattern matching, real-time, Rust, SASE, event-driven, Kafka, MQTT, NATS' }],
+    // SEO meta tags — data-driven keyword targeting (stream processing + detection engineering wedge)
+    ['meta', { name: 'keywords', content: 'stream processing, rust, apache flink alternative, detection engineering, detection as code, real-time detection, mitre att&ck, sigma rules, fraud detection, threat detection, pattern matching, streaming engine, event processing, soc automation, ai soc, siem alternative, no jvm, single binary, kafka, mqtt, nats' }],
     ['meta', { name: 'author', content: 'Varpulis' }],
+    ['meta', { name: 'robots', content: 'index, follow, max-image-preview:large' }],
 
     // Open Graph
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'Varpulis' }],
-    ['meta', { property: 'og:title', content: 'Varpulis - Complex Event Processing Engine' }],
-    ['meta', { property: 'og:description', content: 'Open-source complex event processing (CEP) engine for real-time pattern matching, trend aggregation, and forecasting. Built in Rust.' }],
+    ['meta', { property: 'og:title', content: 'Varpulis — Rust Stream Processing for Real-Time Detection' }],
+    ['meta', { property: 'og:description', content: 'Open-source Rust stream processing engine. Apache Flink alternative for detection engineering, fraud prevention, and MITRE ATT&CK coverage. 1.5M events/sec. Single 15MB binary. No JVM.' }],
     ['meta', { property: 'og:url', content: 'https://www.varpulis-cep.com/docs/' }],
 
     // Twitter Card
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
-    ['meta', { name: 'twitter:title', content: 'Varpulis - Complex Event Processing Engine' }],
-    ['meta', { name: 'twitter:description', content: 'Open-source CEP engine for real-time pattern matching, trend aggregation, and forecasting. Built in Rust.' }],
+    ['meta', { name: 'twitter:title', content: 'Varpulis — Rust Stream Processing for Real-Time Detection' }],
+    ['meta', { name: 'twitter:description', content: 'Open-source Rust stream processing engine. Apache Flink alternative for detection engineering, fraud prevention, and MITRE ATT&CK coverage.' }],
   ],
 
   themeConfig: {
@@ -274,9 +275,9 @@ export default defineConfig({
         {
           text: 'Comparisons',
           items: [
-            { text: 'Varpulis vs Apache Flink CEP', link: '/comparisons/varpulis-vs-flink' },
-            { text: 'Varpulis vs Esper CEP', link: '/comparisons/varpulis-vs-esper' },
-            { text: 'Varpulis vs Kafka Streams / ksqlDB', link: '/comparisons/varpulis-vs-kafka-streams' },
+            { text: 'Varpulis vs Apache Flink', link: '/comparisons/varpulis-vs-flink' },
+            { text: 'Varpulis vs Kafka Streams', link: '/comparisons/varpulis-vs-kafka-streams' },
+            { text: 'Varpulis vs Esper (legacy)', link: '/comparisons/varpulis-vs-esper' },
           ]
         },
       ],

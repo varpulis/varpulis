@@ -4,7 +4,142 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Varpulis - Pattern Detection for Event Streams</title>
+
+    <!-- Primary Meta Tags -->
+    <title>Varpulis — Rust Stream Processing for Real-Time Detection</title>
+    <meta name="title" content="Varpulis — Rust Stream Processing for Real-Time Detection" />
+    <meta
+      name="description"
+      content="Open-source Rust stream processing engine for real-time detection. Apache Flink alternative built for detection engineering, fraud prevention, and MITRE ATT&CK coverage. 1.5M events/sec. Single 15MB binary. No JVM."
+    />
+    <meta
+      name="keywords"
+      content="stream processing, rust, apache flink alternative, detection engineering, detection as code, real-time detection, mitre att&ck, sigma rules, fraud detection, threat detection, pattern matching, streaming engine, event processing, soc automation, ai soc, siem alternative, no jvm, single binary"
+    />
+    <meta name="author" content="Varpulis" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <link rel="canonical" href="https://www.varpulis-cep.com/" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Varpulis" />
+    <meta property="og:url" content="https://www.varpulis-cep.com/" />
+    <meta
+      property="og:title"
+      content="Varpulis — Rust Stream Processing for Real-Time Detection"
+    />
+    <meta
+      property="og:description"
+      content="Open-source Rust stream processing engine. Apache Flink alternative for detection engineering, fraud prevention, and MITRE ATT&CK coverage. 1.5M events/sec. Single 15MB binary. No JVM."
+    />
+    <meta property="og:image" content="https://www.varpulis-cep.com/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="https://www.varpulis-cep.com/" />
+    <meta
+      name="twitter:title"
+      content="Varpulis — Rust Stream Processing for Real-Time Detection"
+    />
+    <meta
+      name="twitter:description"
+      content="Open-source Rust stream processing engine. Apache Flink alternative for detection engineering, fraud prevention, and MITRE ATT&CK coverage."
+    />
+    <meta name="twitter:image" content="https://www.varpulis-cep.com/og-image.png" />
+
+    <!-- JSON-LD: SoftwareApplication -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Varpulis",
+        "description": "Open-source Rust stream processing engine for real-time detection. Apache Flink alternative built for detection engineering, fraud prevention, and MITRE ATT&CK coverage.",
+        "url": "https://www.varpulis-cep.com/",
+        "applicationCategory": "DeveloperApplication",
+        "applicationSubCategory": "Stream Processing Engine",
+        "operatingSystem": "Linux, macOS, Windows",
+        "programmingLanguage": "Rust",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "license": "https://opensource.org/licenses/MIT",
+        "downloadUrl": "https://github.com/varpulis/varpulis/releases",
+        "sameAs": [
+          "https://github.com/varpulis/varpulis",
+          "https://crates.io/crates/varpulis-cli",
+          "https://docs.rs/varpulis-core",
+          "https://www.varpulis-cep.com/docs/"
+        ],
+        "softwareRequirements": "No JVM required. Single 15MB binary.",
+        "featureList": [
+          "Real-time pattern detection across event streams",
+          "Detection engineering (detection-as-code)",
+          "MITRE ATT&CK kill chain detection",
+          "Sigma rule compatibility",
+          "Real-time fraud detection",
+          "Forecasting with Probabilistic Suffix Trees",
+          "Temporal pattern matching (Kleene closures, negation, within)",
+          "1.5M events per second per core",
+          "Single 15MB binary, no JVM",
+          "Kafka, MQTT, NATS, HTTP, Postgres, Redis, S3 connectors"
+        ]
+      }
+    </script>
+
+    <!-- JSON-LD: FAQPage -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Is Varpulis an Apache Flink alternative?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Varpulis is an open-source Rust stream processing engine designed as a lightweight Apache Flink alternative. It runs as a single 15MB binary with no JVM and delivers 1.5M events per second per core. Unlike Flink CEP, it has native pattern detection, forecasting, and multi-query optimization built in."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What does Varpulis do?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Varpulis detects patterns across real-time event streams — sequences, Kleene closures, negation, temporal windows. It is used for detection engineering, fraud prevention, MITRE ATT&CK kill chain detection, and real-time anomaly detection. Detections are written as declarative VPL programs and deployed as a single binary."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does Varpulis run without a JVM?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Varpulis is written in Rust and compiles to a single native binary (~15MB). No JVM, no cluster, no Zookeeper. It runs as a CLI, a server, or an embedded library, and scales horizontally via built-in clustering."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can Varpulis detect MITRE ATT&CK kill chains?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Varpulis is built for detection engineering. It detects multi-step attack sequences that single-event SIEM rules miss — behavioral patterns that catch what signature rules can't, even when attackers rename tools or change C2 infrastructure. It has been validated against real MITRE ATT&CK datasets at 25K+ events per second."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How is Varpulis different from Timeplus Proton or Arroyo?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Timeplus Proton and Arroyo are excellent general-purpose stream processing engines focused on streaming SQL and analytics. Varpulis specializes in real-time pattern detection — temporal sequences, Kleene closures, forecasting, and multi-query optimization via graphlet sharing. Use Proton or Arroyo for streaming ETL and analytics; use Varpulis when you need to detect complex event patterns in real time."
+            }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

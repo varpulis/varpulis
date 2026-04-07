@@ -6,7 +6,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "CLI for Varpulis kill chain detection & streaming analytics engine"
+description = "CLI for Varpulis — Rust stream processing engine for real-time detection, fraud prevention, and MITRE ATT&CK coverage. Apache Flink alternative."
+keywords = ["stream-processing", "detection", "streaming", "rust", "siem"]
+categories = ["command-line-utilities", "science", "development-tools"]
 
 [lib]
 name = "varpulis_cli"

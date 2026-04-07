@@ -5,10 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Detect temporal patterns in event streams — in Rust, in milliseconds, in 10 lines. Install with: cargo install varpulis-cli"
+description = "Rust stream processing engine for real-time detection. Apache Flink alternative for detection engineering, fraud prevention, and MITRE ATT&CK coverage. 1.5M events/sec, single 15MB binary, no JVM. Install: cargo install varpulis-cli"
 readme = "../../README.md"
-keywords = ["cep", "event-processing", "pattern-matching", "streaming", "sase"]
-categories = ["command-line-utilities", "data-structures"]
+keywords = ["stream-processing", "detection", "pattern-matching", "streaming", "observability"]
+categories = ["command-line-utilities", "science", "development-tools"]
 
 # This is a meta-crate for crates.io discoverability.
 # The actual CLI binary is `varpulis-cli`:

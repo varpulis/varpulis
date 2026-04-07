@@ -6,7 +6,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "Parser for VPL language"
+description = "Parser for VPL — the Varpulis Pattern Language for streaming event detection."
+keywords = ["parser", "dsl", "streaming", "pest", "detection"]
+categories = ["parser-implementations", "development-tools"]
 build = "build.rs"
 
 [dependencies]

@@ -6,7 +6,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "Prediction Suffix Tree (PST) for complex event forecasting"
+description = "Probabilistic Suffix Tree for real-time streaming event forecasting and sequence prediction. Part of the Varpulis stream processing engine."
+keywords = ["forecasting", "prediction", "streaming", "markov", "detection"]
+categories = ["science", "algorithms", "data-structures"]
 
 [dependencies]
 hashlink = "0.11"

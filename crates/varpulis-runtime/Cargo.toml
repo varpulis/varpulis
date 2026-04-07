@@ -6,7 +6,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "Runtime execution engine for Varpulis"
+description = "Runtime execution engine for Varpulis — Rust stream processing with pattern matching, forecasting, and real-time detection."
+keywords = ["stream-processing", "streaming", "runtime", "real-time", "detection"]
+categories = ["science", "development-tools", "data-structures"]
 
 [dependencies]
 varpulis-core = { version = "0.10.0", path = "../varpulis-core" }

@@ -2,7 +2,7 @@
   <img src="docs/assets/logo.png" width="320" alt="Varpulis">
 </p>
 
-<p align="center"><strong>Detect kill chains your SIEM misses.</strong><br>Behavioral sequence detection in Rust. Dual red/blue mode.</p>
+<p align="center"><strong>The Rust stream processing engine for real-time detection.</strong><br>Open-source Apache Flink alternative built for detection engineering, fraud prevention, and MITRE ATT&amp;CK coverage.<br>1.5M events/sec · Single 15MB binary · No JVM</p>
 
 [![CI](https://github.com/varpulis/varpulis/actions/workflows/ci.yml/badge.svg)](https://github.com/varpulis/varpulis/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/varpulis-cli.svg)](https://crates.io/crates/varpulis-cli)
@@ -12,6 +12,8 @@
 [Documentation](https://www.varpulis-cep.com/docs/) · [Live Demo](https://demo.varpulis-cep.com) · [Quick Start](#quick-start) · [Examples](examples/) · [Benchmarks](docs/PERFORMANCE_ANALYSIS.md)
 
 ---
+
+Varpulis detects **patterns across event streams in real-time** — the *what followed by what followed by what* that single-event rules miss. Write detections as declarative VPL programs, deploy as a single binary, process 1.5M events per second per core. It's what you'd use instead of Apache Flink CEP when you don't want a JVM cluster, instead of Esper when you want an actively-developed engine, and instead of writing custom Rust when you want a query language.
 
 ```python
 stream FraudAlert = Login as login
@@ -24,7 +26,7 @@ stream FraudAlert = Login as login
     .emit(user: login.user_id, total: total, transfers: transfers)
 ```
 
-Login → *all* transfers → logout within 5 minutes. Kleene closure captures every transfer; Hamlet sums them in O(n). Only fires when total exceeds $10K. `.forecast()` predicts the pattern **before** it completes. No other open-source CEP engine does this.
+Login → *all* transfers → logout within 5 minutes. Every transfer is captured; aggregated in O(n). Fires only when the total exceeds $10K. `.forecast()` predicts that the pattern is **about to** complete — before the final event arrives. No other open-source streaming engine does this.
 
 ## Quick Start
 

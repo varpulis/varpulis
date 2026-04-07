@@ -6,7 +6,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "SASE+ pattern matching engine for Complex Event Processing"
+description = "Pattern matching engine for streaming event detection — Kleene closures, negation, temporal sequences, NFA-based. Part of the Varpulis stream processing engine."
+keywords = ["pattern-matching", "streaming", "detection", "nfa", "temporal"]
+categories = ["science", "algorithms", "data-structures"]
 
 [dependencies]
 varpulis-core = { version = "0.10.0", path = "../varpulis-core" }

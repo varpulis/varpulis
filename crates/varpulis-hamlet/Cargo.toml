@@ -6,7 +6,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "Hamlet shared online event trend aggregation (SIGMOD 2021)"
+description = "Shared online trend aggregation for streaming event detection — SIGMOD 2021 graphlet-sharing algorithm. Part of the Varpulis stream processing engine."
+keywords = ["streaming", "aggregation", "analytics", "real-time", "detection"]
+categories = ["science", "algorithms", "data-structures"]
 
 [dependencies]
 varpulis-core = { version = "0.10.0", path = "../varpulis-core" }

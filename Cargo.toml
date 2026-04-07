@@ -51,7 +51,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/varpulis/varpulis"
 homepage = "https://www.varpulis-cep.com"
 documentation = "https://docs.varpulis-cep.com"
-description = "Kill chain detection engine — behavioral sequence matching for security and streaming analytics"
+description = "Rust stream processing engine for real-time detection — Apache Flink alternative for detection engineering, fraud prevention, and MITRE ATT&CK coverage"
 
 [workspace.dependencies]
 # Parsing

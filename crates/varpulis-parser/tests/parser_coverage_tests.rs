@@ -816,7 +816,7 @@ fn test_pattern_decl_kleene_via_all() {
             assert_eq!(items[1].kleene, Some(KleeneOp::Plus));
             assert!(items[1].filter.is_some());
             assert_eq!(items[1].alias, Some("txs".to_string()));
-        },
+        }
         other => panic!("Expected PatternDecl, got {other:?}"),
     }
 }
