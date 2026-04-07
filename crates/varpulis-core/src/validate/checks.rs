@@ -942,23 +942,31 @@ fn check_expr_field_refs(
             // Try to resolve the full member chain (e.g., alias.customer.address.city)
             if let Some((root, chain)) = collect_member_chain(expr) {
                 if let Some(event_name) = alias_to_event.get(&root) {
-                    // Validate the first field against the event
-                    if let Some(fields) = v.symbols.event_field_names(event_name) {
-                        if !fields.is_empty() && !fields.iter().any(|f| f == &chain[0]) {
-                            let suggestion = did_you_mean(
-                                &chain[0],
-                                &fields.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-                            );
-                            v.emit_with_hint(
-                                Severity::Warning,
-                                span,
-                                "W034",
-                                format!(
-                                    "reference to undeclared field '{}' on event '{event_name}'",
-                                    chain[0]
-                                ),
-                                format!("declared fields: {}{}", fields.join(", "), suggestion),
-                            );
+                    // Validate the first field against the event.
+                    // Skip `LEN` which is a special accessor for Kleene-bound
+                    // aliases (returns the count of captured events).
+                    if chain[0] != "LEN" {
+                        if let Some(fields) = v.symbols.event_field_names(event_name) {
+                            if !fields.is_empty() && !fields.iter().any(|f| f == &chain[0]) {
+                                let suggestion = did_you_mean(
+                                    &chain[0],
+                                    &fields.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                                );
+                                v.emit_with_hint(
+                                    Severity::Warning,
+                                    span,
+                                    "W034",
+                                    format!(
+                                        "reference to undeclared field '{}' on event '{event_name}'",
+                                        chain[0]
+                                    ),
+                                    format!(
+                                        "declared fields: {}{}",
+                                        fields.join(", "),
+                                        suggestion
+                                    ),
+                                );
+                            }
                         }
                     }
 
