@@ -33,7 +33,7 @@ async fn slow_receiver_does_not_lose_events() {
         let mut count = 0u64;
         while let Some(_evt) = rx.recv().await {
             count += 1;
-            if count % 1_000 == 0 {
+            if count.is_multiple_of(1_000) {
                 // Slow drain — emulate a downstream JSON serializer + stdout pipe
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
@@ -42,13 +42,13 @@ async fn slow_receiver_does_not_lose_events() {
     });
 
     // Push events through the engine using a VPL program that just emits.
-    let vpl = r#"
+    let vpl = r"
         event Tick:
             n: int
 
         stream Out = Tick
             .emit(n: n)
-    "#;
+    ";
     let mut engine = engine;
     let program = parse(vpl).expect("parse");
     engine.load(&program).expect("load");
