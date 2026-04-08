@@ -18,7 +18,7 @@ export default defineConfig({
   base: '/docs/',
 
   sitemap: {
-    hostname: 'https://www.varpulis-cep.com',
+    hostname: 'https://varpulis-cep.com',
     transformItems: (items) => items.map(item => ({
       ...item,
       url: item.url.startsWith('docs/') ? item.url : `docs/${item.url}`,
@@ -55,7 +55,7 @@ export default defineConfig({
     ['meta', { property: 'og:site_name', content: 'Varpulis' }],
     ['meta', { property: 'og:title', content: 'Varpulis — Rust Stream Processing for Real-Time Detection' }],
     ['meta', { property: 'og:description', content: 'Open-source Rust stream processing engine. Apache Flink alternative for detection engineering, fraud prevention, and MITRE ATT&CK coverage. 1.5M events/sec. Single 15MB binary. No JVM.' }],
-    ['meta', { property: 'og:url', content: 'https://www.varpulis-cep.com/docs/' }],
+    ['meta', { property: 'og:url', content: 'https://varpulis-cep.com/docs/' }],
 
     // Twitter Card
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
