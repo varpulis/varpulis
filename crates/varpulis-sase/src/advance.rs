@@ -155,6 +155,7 @@ fn complete_run(
 /// Takes the resolved `EmissionMode` from the engine; this controls whether
 /// Kleene events emit `CompleteAndContinue` (Each), accumulate silently
 /// (Longest), or accumulate into the ZDD for later subset enumeration (Subsets).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn advance_run_shared(
     nfa: &Nfa,
     strategy: SelectionStrategy,
@@ -451,6 +452,7 @@ pub(crate) fn advance_run_shared(
 }
 
 /// AND-01: Handle AND state - track which branches are completed
+#[allow(clippy::too_many_arguments)]
 fn advance_and_state(
     nfa: &Nfa,
     run: &mut Run,

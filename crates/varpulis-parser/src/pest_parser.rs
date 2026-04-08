@@ -7,8 +7,7 @@
 
 use pest::Parser;
 use pest_derive::Parser;
-use varpulis_core::ast::EmissionMode as AstEmissionMode;
-use varpulis_core::ast::*;
+use varpulis_core::ast::{EmissionMode as AstEmissionMode, *};
 use varpulis_core::span::{Span, Spanned};
 use varpulis_core::types::Type;
 

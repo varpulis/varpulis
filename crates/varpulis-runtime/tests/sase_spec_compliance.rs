@@ -355,7 +355,7 @@ fn test_subsets_enumeration_n3_exact_bindings() {
             _ => panic!("b.n should be Int"),
         })
         .collect();
-    last_b_values.sort();
+    last_b_values.sort_unstable();
 
     // Expected last-element distribution across 7 subsets of {1,2,3}:
     //   {1}      → b=1
