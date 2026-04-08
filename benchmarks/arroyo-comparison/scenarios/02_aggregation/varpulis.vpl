@@ -18,7 +18,7 @@ connector RedpandaIn = kafka(
 
 connector RedpandaOut = kafka(
     brokers: ["localhost:29092"],
-    topic: "scenario-02-agg-out"
+    topic: "scenario-02-agg-vpl-out"
 )
 
 stream DeviceAgg = Reading

@@ -57,6 +57,30 @@ def topic_delete(topic):
     rpk("topic", "delete", topic)
 
 
+def group_delete(group):
+    """Delete a consumer group so the next run starts from offset 0."""
+    rpk("group", "delete", group)
+
+
+def _wait_for_group_empty(group, timeout_s=15):
+    """Poll `rpk group describe` until the group state is Empty (no
+    live members) or doesn't exist. This lets `auto_offset_reset=earliest`
+    actually apply on the next run — if any zombie member is still
+    holding the group as Stable, a fresh Varpulis will join the existing
+    group and pick up the committed/end offset instead of replaying."""
+    deadline = time.perf_counter() + timeout_s
+    while time.perf_counter() < deadline:
+        r = rpk("group", "describe", group)
+        if r.returncode != 0 or "GROUP_ID_NOT_FOUND" in r.stdout + r.stderr:
+            return
+        state_line = next(
+            (l for l in r.stdout.splitlines() if l.startswith("STATE")), ""
+        )
+        if "Empty" in state_line or "Dead" in state_line:
+            return
+        time.sleep(0.3)
+
+
 def topic_high_watermark(topic) -> int:
     """Return the current high-watermark of a topic (events in partition 0)."""
     r = rpk("topic", "describe", "-p", topic)
@@ -216,16 +240,34 @@ def run_arroyo(scenario, expected_out, run_idx) -> dict:
 
 def run_varpulis(scenario, expected_out, run_idx) -> dict:
     """Run Varpulis as a Kafka consumer pipeline. Spawn `varpulis run`,
-    poll the output topic until expected_out is reached, then SIGTERM."""
+    poll the output topic until expected_out is reached, then SIGTERM.
+
+    To sidestep Redpanda's consumer-group session-timeout (~10 s, which
+    breaks back-to-back runs because `auto_offset_reset=earliest` only
+    applies to EMPTY groups), we use a unique `group_id` per run. The
+    VPL file is loaded, patched to inject the unique group_id into the
+    source connector's `.from(...)` extra-params, and streamed to the
+    CLI via `--code`."""
     vpl_file = SCRIPT_DIR / "scenarios" / scenario / "varpulis.vpl"
     out_topic = {
         "01_filter": "scenario-01-filter-vpl-out",
         "02_aggregation": "scenario-02-agg-vpl-out",
+        "03_join": "scenario-03-join-vpl-out",
     }[scenario]
     topic_delete(out_topic)
     topic_create(out_topic)
 
-    cmd = [str(VARPULIS_BIN), "run", "--file", str(vpl_file)]
+    vpl = vpl_file.read_text()
+    # Inject a unique group_id per run at the `.from(RedpandaIn)` call
+    # site. The parameter is appended as the only extra-param since
+    # none of our benchmark VPLs use others.
+    unique_group = f"bench-{scenario}-{run_idx}-{int(time.time() * 1000)}"
+    vpl = vpl.replace(
+        ".from(RedpandaIn)",
+        f'.from(RedpandaIn, group_id: "{unique_group}")',
+    )
+
+    cmd = [str(VARPULIS_BIN), "run", "--code", vpl, "--quiet"]
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
     start = time.perf_counter()

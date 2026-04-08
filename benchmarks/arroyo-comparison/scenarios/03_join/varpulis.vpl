@@ -21,7 +21,7 @@ connector RedpandaIn = kafka(
 
 connector RedpandaOut = kafka(
     brokers: ["localhost:29092"],
-    topic: "scenario-03-join-out"
+    topic: "scenario-03-join-vpl-out"
 )
 
 stream Trades = Trade
