@@ -17,16 +17,21 @@ CREATE TABLE readings (
     ts BIGINT NOT NULL,
     device_id TEXT,
     temperature DOUBLE,
-    -- DataFusion's nullability propagation for scalar time functions
-    -- (`to_timestamp_millis`, `from_unixtime`, etc.) marks every result
-    -- as nullable regardless of input. The only way to get a NOT NULL
-    -- TIMESTAMP from a NOT NULL BIGINT — which Arroyo's WATERMARK FOR
-    -- constraint check requires — is the direct `CAST(... as TIMESTAMP)`
-    -- which Arroyo/DataFusion treats as "interpret the bigint as epoch
-    -- seconds". Our generator emits epoch **milliseconds**, so we have
-    -- to divide by 1000 first.
-    event_time TIMESTAMP NOT NULL GENERATED ALWAYS AS (CAST(ts / 1000 as TIMESTAMP)),
-    watermark FOR event_time as CAST(ts / 1000 as TIMESTAMP) - INTERVAL '1' SECOND
+    -- `arrow_cast` with explicit Timestamp(Nanosecond, None) is what
+    -- satisfies Arroyo's WATERMARK FOR NOT NULL constraint AND matches
+    -- the tumbling window operator's internal representation. We
+    -- convert our BIGINT epoch-millis to nanoseconds via `* 1_000_000`
+    -- (stays within i64 range).
+    --
+    -- NOTE: the output topic must have `message.timestamp.after.max.ms`
+    -- large enough to accept event-time-derived record timestamps.
+    -- Redpanda's default (1 hour) rejects records whose event time is
+    -- more than 1 hour in the future. See the benchmark runner
+    -- (`prep_output_topic`) or set it manually:
+    --     rpk topic alter-config <out_topic> \
+    --         --set message.timestamp.after.max.ms=31536000000
+    event_time TIMESTAMP NOT NULL GENERATED ALWAYS AS (arrow_cast(ts * 1000000, 'Timestamp(Nanosecond, None)')),
+    watermark FOR event_time as arrow_cast(ts * 1000000, 'Timestamp(Nanosecond, None)') - INTERVAL '1' SECOND
 ) WITH (
     connector = 'kafka',
     type = 'source',

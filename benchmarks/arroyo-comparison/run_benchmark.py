@@ -57,6 +57,21 @@ def topic_delete(topic):
     rpk("topic", "delete", topic)
 
 
+def topic_allow_future_timestamps(topic):
+    """Relax the `message.timestamp.after.max.ms` broker check so that
+    records whose event-time is more than 1 hour ahead of wall-clock
+    are accepted. Our event generators hard-code a base timestamp that
+    is several days in the future; for windowed-aggregation scenarios
+    the sink record timestamp is derived from `window.end` (event
+    time), so without this Redpanda rejects every output with
+    `InvalidTimestamp` and the sink operator panics.
+    Scenario 01 (stateless filter) doesn't need this because the sink
+    uses wall-clock for the record timestamp.
+    """
+    rpk("topic", "alter-config", topic,
+        "--set", "message.timestamp.after.max.ms=31536000000")
+
+
 def group_delete(group):
     """Delete a consumer group so the next run starts from offset 0."""
     rpk("group", "delete", group)
@@ -193,6 +208,11 @@ def run_arroyo(scenario, expected_out, run_idx) -> dict:
     }[scenario]
     topic_delete(out_topic)
     topic_create(out_topic)
+    # Windowed-aggregation scenarios propagate event time into the Kafka
+    # record timestamp, which Redpanda rejects if it's more than 1 hour
+    # in the future (our generators use a base_ms several days ahead).
+    if scenario == "02_aggregation":
+        topic_allow_future_timestamps(out_topic)
 
     # Submit and wait for Running
     pipeline_name = f"bench-{scenario}-arroyo-{run_idx}-{int(time.time())}"
@@ -256,6 +276,8 @@ def run_varpulis(scenario, expected_out, run_idx) -> dict:
     }[scenario]
     topic_delete(out_topic)
     topic_create(out_topic)
+    if scenario == "02_aggregation":
+        topic_allow_future_timestamps(out_topic)
 
     vpl = vpl_file.read_text()
     # Inject a unique group_id per run at the `.from(RedpandaIn)` call
@@ -299,7 +321,7 @@ def run_varpulis(scenario, expected_out, run_idx) -> dict:
 
 EXPECTED_OUT = {
     "01_filter": 89_000,
-    "02_aggregation": 99_000,
+    "02_aggregation": 99_700,
 }
 
 INPUT_TOPIC = {
