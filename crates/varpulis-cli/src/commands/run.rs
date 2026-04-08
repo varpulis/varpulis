@@ -14,6 +14,7 @@ pub async fn run_program(
     source: &str,
     base_path: Option<&PathBuf>,
     credentials_store: Option<Arc<CredentialsStore>>,
+    quiet: bool,
 ) -> Result<()> {
     use varpulis_runtime::connector::ManagedConnectorRegistry;
     use varpulis_runtime::ContextOrchestrator;
@@ -164,13 +165,20 @@ pub async fn run_program(
                 .map_err(|e| anyhow::anyhow!("Sink connection error: {e}"))?;
         }
 
-        // Spawn output event handler
+        // Spawn output event handler. In `--quiet` mode we drain the channel
+        // without formatting/printing — this avoids the global stdout lock and
+        // Debug-format cost on every event, which becomes the dominant cost
+        // for high-throughput Kafka pipelines (~300x slowdown).
         tokio::spawn(async move {
-            while let Some(output_event) = output_rx.recv().await {
-                println!(
-                    "OUTPUT EVENT: {} - {:?}",
-                    output_event.event_type, output_event.data
-                );
+            if quiet {
+                while output_rx.recv().await.is_some() {}
+            } else {
+                while let Some(output_event) = output_rx.recv().await {
+                    println!(
+                        "OUTPUT EVENT: {} - {:?}",
+                        output_event.event_type, output_event.data
+                    );
+                }
             }
         });
 

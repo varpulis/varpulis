@@ -50,6 +50,12 @@ static KAFKA_PARAMS: &[ConfigParamInfo] = &[
         default_value: None,
     },
     ConfigParamInfo {
+        name: "auto_offset_reset",
+        description: "Where to start consuming if no offset is committed: 'earliest' or 'latest'",
+        required: false,
+        default_value: Some("latest"),
+    },
+    ConfigParamInfo {
         name: "exactly_once",
         description: "Enable exactly-once semantics",
         required: false,

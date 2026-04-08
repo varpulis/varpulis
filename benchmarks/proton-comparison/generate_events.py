@@ -102,9 +102,13 @@ def write_files(scenario, count, out_dir):
         for evt in SCENARIOS[scenario](count):
             event_type = evt["event_type"]
             payload = {k: v for k, v in evt.items() if k != "event_type"}
-            # Flat format for Proton/Arroyo: payload only (Proton infers type
-            # from the target stream's CREATE STREAM schema)
-            flat.write(json.dumps(payload) + "\n")
+            # Flat format for Proton, Arroyo, and Varpulis-on-Kafka: includes
+            # `event_type` as a top-level field. Proton and Arroyo ignore
+            # unknown JSON keys via their CREATE TABLE schema; Varpulis's
+            # Kafka source connector uses this field to route the event to
+            # the matching `event` declaration.
+            flat_evt = {"event_type": event_type, **payload}
+            flat.write(json.dumps(flat_evt) + "\n")
             # Varpulis nested format. Add @timestamp (RFC3339) so Varpulis's
             # event_file parser preserves event-time instead of stamping with
             # wall-clock — required for time-based windows to advance.

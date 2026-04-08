@@ -11,11 +11,14 @@ services:
   redpanda:
     image: redpandadata/redpanda:latest
     container_name: bench-arroyo-redpanda
+    # Two listeners:
+    #   - INTERNAL on 9092 advertised as redpanda:9092 (for arroyo container)
+    #   - EXTERNAL on 19092 advertised as localhost:29092 (for host clients)
     command:
       - redpanda
       - start
-      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
-      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+      - --kafka-addr=INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
+      - --advertise-kafka-addr=INTERNAL://redpanda:9092,EXTERNAL://localhost:29092
       - --pandaproxy-addr=0.0.0.0:8082
       - --rpc-addr=0.0.0.0:33145
       - --advertise-rpc-addr=redpanda:33145
@@ -26,7 +29,7 @@ services:
       - --node-id=0
       - --check=false
     ports:
-      - "29092:9092"  # external Kafka client (different host port from proton stack)
+      - "29092:19092"  # external Kafka client maps host:29092 → container:19092
       - "28082:8082"
     healthcheck:
       test: ["CMD-SHELL", "rpk cluster info --brokers redpanda:9092 || exit 1"]

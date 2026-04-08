@@ -50,6 +50,12 @@ enum Commands {
         /// Inline VPL code
         #[arg(short, long)]
         code: Option<String>,
+
+        /// Drain output events without printing them. Use this for high-throughput
+        /// pipelines (e.g., Kafka source/sink) where the per-event println!
+        /// becomes the dominant cost (~300x slowdown).
+        #[arg(short, long)]
+        quiet: bool,
     },
 
     /// Parse a VPL file and show the AST
@@ -742,7 +748,7 @@ async fn main() -> Result<()> {
     };
 
     match cli.command {
-        Commands::Run { file, code } => {
+        Commands::Run { file, code, quiet } => {
             let (source, base_path) = if let Some(ref path) = file {
                 (
                     std::fs::read_to_string(path)?,
@@ -754,7 +760,8 @@ async fn main() -> Result<()> {
                 anyhow::bail!("Either --file or --code must be provided");
             };
 
-            commands::run::run_program(&source, base_path.as_ref(), credentials_store).await?;
+            commands::run::run_program(&source, base_path.as_ref(), credentials_store, quiet)
+                .await?;
         }
 
         Commands::Parse { file } => {

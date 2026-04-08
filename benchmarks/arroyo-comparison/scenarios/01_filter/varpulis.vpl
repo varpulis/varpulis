@@ -9,7 +9,7 @@ event Tick:
 connector RedpandaIn = kafka(
     brokers: ["localhost:29092"],
     topic: "scenario-01-filter",
-    group_id: "varpulis-bench"
+    auto_offset_reset: "earliest"
 )
 
 connector RedpandaOut = kafka(

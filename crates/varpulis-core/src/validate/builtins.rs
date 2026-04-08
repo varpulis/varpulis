@@ -278,6 +278,13 @@ static KAFKA_PARAMS: &[ConnectorParamDef] = &[
         description: "Partition number",
         context: ParamContext::Both,
     },
+    ConnectorParamDef {
+        name: "auto_offset_reset",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Where to start consuming if no offset is committed: 'earliest' or 'latest' (default: latest). Source-only; sinks ignore.",
+        context: ParamContext::Both,
+    },
 ];
 
 static HTTP_PARAMS: &[ConnectorParamDef] = &[ConnectorParamDef {
