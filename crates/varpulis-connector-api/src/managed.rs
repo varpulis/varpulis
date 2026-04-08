@@ -56,11 +56,18 @@ pub trait ManagedConnector: Send + Sync {
     /// Connector type identifier (e.g. `"mqtt"`, `"kafka"`, `"console"`).
     fn connector_type(&self) -> &str;
 
-    /// Start receiving events on `topic`, forwarding them to `tx`.
+    /// Start receiving events on `topic`, forwarding them to `tx` as **batches**.
+    ///
+    /// Implementations should accumulate events and send them in `Vec<Event>`
+    /// batches (typically up to ~256 events or 5ms, whichever comes first).
+    /// Batching here amortizes the per-event async wake-up cost between the
+    /// connector task and the run-loop, which is the dominant overhead at
+    /// high event rates. Even single-event sources should wrap each event in
+    /// `vec![event]` so the run-loop only deals with batches.
     async fn start_source(
         &mut self,
         topic: &str,
-        tx: mpsc::Sender<Event>,
+        tx: mpsc::Sender<Vec<Event>>,
         params: &HashMap<String, String>,
     ) -> Result<(), ConnectorError>;
 

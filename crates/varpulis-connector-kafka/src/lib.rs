@@ -608,6 +608,9 @@ impl SinkConnector for KafkaSink {
             .key(&*event.event_type);
 
         if self.transactional {
+            // Transactional path still needs synchronous commit to provide
+            // exactly-once semantics. Throughput here is intentionally bounded
+            // by the transaction round-trip.
             self.producer
                 .begin_transaction()
                 .map_err(|e| ConnectorError::SendFailed(format!("begin_transaction: {}", e)))?;
@@ -624,10 +627,25 @@ impl SinkConnector for KafkaSink {
                     ConnectorError::SendFailed(format!("commit_transaction: {}", e))
                 })?;
         } else {
-            self.producer
-                .send(record, Duration::ZERO)
-                .await
-                .map_err(|(e, _)| ConnectorError::SendFailed(e.to_string()))?;
+            // Non-transactional path: non-blocking enqueue via `send_result`.
+            // Awaiting on every `producer.send(...).await` serialises
+            // throughput at the broker round-trip latency (~5–10 ms ≈
+            // 100–200 eps). Instead, hand the record to librdkafka's
+            // internal queue and let `linger.ms` + `batch.size` coalesce
+            // many records per broker round-trip. Delivery errors after
+            // enqueue are reported via the producer's background thread
+            // (and, when `DlqConfig` is configured at the engine layer,
+            // routed to the DLQ). This matches the pattern used by
+            // Arroyo's Kafka sink.
+            //
+            // See docs/development/kafka-source-batching.md for the full
+            // throughput analysis.
+            match self.producer.send_result(record) {
+                Ok(_delivery_future) => {}
+                Err((e, _)) => {
+                    return Err(ConnectorError::SendFailed(format!("kafka enqueue: {e}")))
+                }
+            }
         }
 
         Ok(())

@@ -123,7 +123,7 @@ impl ManagedConnector for ManagedNatsConnector {
     async fn start_source(
         &mut self,
         topic: &str,
-        tx: mpsc::Sender<Event>,
+        tx: mpsc::Sender<Vec<Event>>,
         params: &std::collections::HashMap<String, String>,
     ) -> Result<(), ConnectorError> {
         let client = self.connect_async().await?;
@@ -170,7 +170,11 @@ impl ManagedConnector for ManagedNatsConnector {
                         if let Ok(payload) = std::str::from_utf8(&message.payload) {
                             let subject = message.subject.as_str();
                             if let Some(event) = parse_nats_payload(payload, subject) {
-                                if tx.send(event).await.is_err() {
+                                // Wrap in a single-element batch — async-nats
+                                // delivers one message at a time, so there's
+                                // nothing to coalesce. Run-loop will drain
+                                // contiguous batches together.
+                                if tx.send(vec![event]).await.is_err() {
                                     warn!("Managed NATS {} source channel closed", name);
                                     break;
                                 }

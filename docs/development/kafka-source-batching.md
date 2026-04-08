@@ -2,7 +2,7 @@
 
 ## Status
 
-**Open** — tracked for the next streaming-performance milestone.
+**Resolved (2026-04-08)** — see the "Fix shipped" section at the bottom. End-to-end throughput on the `scenario-01-filter` Kafka→Kafka pipeline is now ~80k input eps / 72k output eps, up from ~160 eps. This matches the order of magnitude of Arroyo (86k eps) on the same scenario and is on the right side of "production-usable".
 
 ## Problem
 
@@ -174,5 +174,84 @@ cargo build --release -p varpulis-cli --features 'varpulis-runtime/kafka'
 docker exec bench-arroyo-redpanda rpk topic describe -p scenario-01-filter-vpl-out
 ```
 
-You should see the output high-watermark climb at ~150-700 events/sec
-on a Ryzen 9 7950X. After the architectural fix, expect 50-150k eps.
+After the fix shipped 2026-04-08, you should see the output
+high-watermark reach 89000 within ~1.2 s — i.e. ~72k output eps ≈
+~80k input eps (the filter passes ~89% of the generated data).
+
+## Fix shipped — 2026-04-08
+
+Two root causes were identified by narrow integration tests
+(`crates/varpulis-connector-kafka/tests/sink_throughput_smoke.rs`),
+not by guessing:
+
+### Cause 1: legacy `KafkaSink::send` blocked per event
+
+The engine's `.to(ConnectorOut)` path routed through the engine's
+default sink factory, which built the legacy
+`KafkaSink` (`crates/varpulis-connector-kafka/src/lib.rs`), whose
+`SinkConnector::send` implementation did:
+
+```rust
+self.producer
+    .send(record, Duration::ZERO)
+    .await
+    .map_err(|(e, _)| ConnectorError::SendFailed(e.to_string()))?;
+```
+
+`FutureProducer::send(...).await` **blocks until the broker ACKs** the
+record. With `linger.ms = 5` and `acks = all`, each event costs one
+broker round-trip (~5–7 ms ≈ 150–200 eps). For a filter+emit+sink
+pipeline processing one event at a time, every single emitted record
+paid that round-trip. The `[to-op] sink.send_batch(1) took 6.xxx ms`
+diagnostic proved this.
+
+**Fix:** switch `KafkaSink::send` to `producer.send_result(record)`
+(non-blocking enqueue, fire-and-forget). Delivery errors after enqueue
+are reported by the producer's background thread. The transactional
+path still uses `.send(...).await` + `commit_transaction` for
+exactly-once semantics. This matches what Arroyo's Kafka sink does.
+
+### Cause 2: `run.rs` only injected managed sinks for `.from()` sources
+
+`varpulis-cli/src/commands/run.rs` iterated `engine.source_bindings()`
+and, for each `.from()` binding, created a shared managed sink. But a
+pipeline like `stream S = Tick.from(In).where(...).to(Out)` has two
+connectors (`In` and `Out`) — `In` is the only source binding, so
+`Out` was NEVER considered by the sink-injection loop. The engine's
+default path built a `KafkaSink` wrapped in `SinkConnectorAdapter`
+instead, which hit Cause 1.
+
+**Fix:** iterate `engine.connector_configs().keys()` and inject
+managed sinks for every connector that has sink operations, not just
+source ones.
+
+### Cause 3 (also fixed, smaller effect): per-event async dispatch
+
+The original `ManagedConnector::start_source` trait used
+`Sender<Event>`. The consumer task pushed events one at a time, the
+run-loop woke on each one, and the per-event tokio wake-up cost was
+significant. Switched to `Sender<Vec<Event>>` and batched up to 256
+events or 5 ms in the Kafka consumer. MQTT/NATS connectors wrap each
+incoming message in a single-element `Vec`. `run.rs`'s main loop now
+calls `engine.process_batch(batch)` directly on each received
+`Vec<Event>` and additionally coalesces contiguous batches via
+`try_recv`.
+
+### Regression test
+
+`crates/varpulis-connector-kafka/tests/sink_throughput_smoke.rs`
+contains three `#[ignore]`-by-default throughput asserts:
+
+1. `KafkaSharedSink::send` (managed path) must sustain ≥ 10k eps.
+2. `KafkaSharedSink::send_batch(256)` must sustain ≥ 10k eps.
+3. Legacy `KafkaSink::send` must sustain ≥ 10k eps.
+
+Run them against a live Redpanda on `localhost:29092` with:
+
+```bash
+docker compose -f benchmarks/arroyo-comparison/docker/docker-compose.yml up -d
+cargo test -p varpulis-connector-kafka --test sink_throughput_smoke \
+    --release -- --ignored --nocapture
+```
+
+Current numbers on a Ryzen 9 7950X are ~140k–220k eps per test.

@@ -55,7 +55,7 @@ impl ManagedConnectorRegistry {
         &mut self,
         connector_name: &str,
         topic: &str,
-        tx: mpsc::Sender<Event>,
+        tx: mpsc::Sender<Vec<Event>>,
         params: &HashMap<String, String>,
     ) -> Result<(), ConnectorError> {
         let connector = self.connectors.get_mut(connector_name).ok_or_else(|| {

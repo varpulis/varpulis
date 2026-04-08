@@ -375,7 +375,10 @@ impl Tenant {
         let mut connector_registry = None;
 
         if !bindings.is_empty() {
-            let (event_tx, event_rx) = mpsc::channel::<Event>(10_000);
+            // Connectors emit `Vec<Event>` batches, not single events. See
+            // `ManagedConnector::start_source` and the kafka source batching
+            // doc for the reasoning.
+            let (event_tx, event_rx) = mpsc::channel::<Vec<Event>>(1_024);
 
             let mut registry = crate::connector::ManagedConnectorRegistry::from_configs(
                 engine.connector_configs(),
@@ -455,12 +458,17 @@ impl Tenant {
             let engine = Arc::new(tokio::sync::Mutex::new(engine));
             let engine_for_source = Arc::clone(&engine);
 
-            // Spawn source event ingestion loop
+            // Spawn source event ingestion loop. Each receive yields a
+            // batch — drain extras with try_recv before processing so the
+            // engine sees fat batches instead of one event at a time.
             tokio::spawn(async move {
                 let mut event_rx = event_rx;
-                while let Some(event) = event_rx.recv().await {
+                while let Some(mut batch) = event_rx.recv().await {
+                    while let Ok(extra) = event_rx.try_recv() {
+                        batch.extend(extra);
+                    }
                     let mut eng = engine_for_source.lock().await;
-                    if let Err(e) = eng.process(event).await {
+                    if let Err(e) = eng.process_batch(batch).await {
                         warn!("Source event processing error: {}", e);
                     }
                 }

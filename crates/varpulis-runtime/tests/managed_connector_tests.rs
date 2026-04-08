@@ -184,11 +184,16 @@ async fn test_managed_connector_single_source_single_sink() {
     });
     publish_json(port, "e2e/1/input", &input_event).await;
 
-    // Receive from the source's mpsc channel
-    let received = timeout(Duration::from_secs(5), rx.recv())
+    // Receive from the source's mpsc channel — connectors emit Vec<Event>
+    // batches; MQTT delivers one event at a time so the batch has len 1.
+    let batch = timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("timeout waiting for source event")
         .expect("channel closed");
+    let received = batch
+        .into_iter()
+        .next()
+        .expect("empty batch from MQTT source");
 
     println!(
         "Source received: {} {:?}",
@@ -266,13 +271,16 @@ async fn test_managed_connector_two_sources_same_connector() {
     publish_json(port, "e2e/2/temperature", &temp_event).await;
     publish_json(port, "e2e/2/humidity", &humid_event).await;
 
-    // Collect both events from the shared channel
+    // Collect both events from the shared channel. Each recv yields a
+    // Vec<Event> batch; we keep recv'ing until we have 2 events.
     let mut received = Vec::new();
-    for _ in 0..2 {
+    while received.len() < 2 {
         match timeout(Duration::from_secs(5), rx.recv()).await {
-            Ok(Some(ev)) => {
-                println!("Received: {} {:?}", ev.event_type, ev.data);
-                received.push(ev);
+            Ok(Some(batch)) => {
+                for ev in batch {
+                    println!("Received: {} {:?}", ev.event_type, ev.data);
+                    received.push(ev);
+                }
             }
             Ok(None) => break,
             Err(_) => break,
@@ -440,11 +448,12 @@ async fn test_managed_connector_multiple_sources_and_sinks() {
     )
     .await;
 
-    // Collect 2 events from the shared source channel
+    // Collect 2 events from the shared source channel. Each recv yields a
+    // Vec<Event> batch.
     let mut source_events = Vec::new();
-    for _ in 0..2 {
+    while source_events.len() < 2 {
         match timeout(Duration::from_secs(5), rx.recv()).await {
-            Ok(Some(ev)) => source_events.push(ev),
+            Ok(Some(batch)) => source_events.extend(batch),
             _ => break,
         }
     }

@@ -81,8 +81,14 @@ pub async fn run_program(
     let bindings = engine.source_bindings().to_vec();
 
     if !bindings.is_empty() {
-        // Create shared event channel for all source connectors
-        let (event_tx, mut event_rx) = mpsc::channel::<Event>(10_000);
+        // Create shared event channel for all source connectors. Connectors
+        // produce **batches** (`Vec<Event>`), not single events — see
+        // `ManagedConnector::start_source` and
+        // `docs/development/kafka-source-batching.md` for the rationale.
+        // Batching at the connector eliminates per-event ping-pong between
+        // the consumer task and the run-loop, which was the dominant cost
+        // at high event rates.
+        let (event_tx, mut event_rx) = mpsc::channel::<Vec<Event>>(1_024);
 
         // Build managed connector registry — one connection per connector
         let mut registry = ManagedConnectorRegistry::from_configs(engine.connector_configs())
@@ -120,31 +126,39 @@ pub async fn run_program(
                 .map_err(|e| anyhow::anyhow!("Source start error: {e}"))?;
         }
 
-        // Create shared sinks and inject into engine
-        for binding in &bindings {
-            let sink_keys = engine.sink_keys_for_connector(&binding.connector_name);
+        // Create shared sinks for EVERY connector referenced by the
+        // pipeline (not just sources). Previously we only injected sinks
+        // for `.from()` bindings — `.to()`-only connectors fell back to
+        // the engine's legacy `KafkaSink` which uses the blocking
+        // `producer.send(...).await` path (~6 ms per event). By using
+        // the managed connector here we get the non-blocking
+        // `send_result` path, matching Arroyo's pattern.
+        let connector_names: Vec<String> = engine.connector_configs().keys().cloned().collect();
+        for connector_name in &connector_names {
+            let sink_keys = engine.sink_keys_for_connector(connector_name);
             if sink_keys.is_empty() {
                 continue;
             }
 
             let default_topic = engine
-                .get_connector(&binding.connector_name)
+                .get_connector(connector_name)
                 .and_then(|c| c.topic.clone())
-                .unwrap_or_else(|| format!("{}-output", binding.connector_name));
+                .unwrap_or_else(|| format!("{}-output", connector_name));
 
+            let mut created = 0usize;
             for sink_key in &sink_keys {
-                let sink_topic = if let Some(topic) =
-                    sink_key.strip_prefix(&format!("{}::", binding.connector_name))
-                {
-                    topic.to_string()
-                } else {
-                    default_topic.clone()
-                };
+                let sink_topic =
+                    if let Some(topic) = sink_key.strip_prefix(&format!("{}::", connector_name)) {
+                        topic.to_string()
+                    } else {
+                        default_topic.clone()
+                    };
 
                 let empty_params = std::collections::HashMap::new();
-                match registry.create_sink(&binding.connector_name, &sink_topic, &empty_params) {
+                match registry.create_sink(connector_name, &sink_topic, &empty_params) {
                     Ok(sink) => {
                         engine.inject_sink(sink_key, sink);
+                        created += 1;
                     }
                     Err(e) => {
                         tracing::warn!("Failed to create sink for {}: {}", sink_key, e);
@@ -152,8 +166,11 @@ pub async fn run_program(
                 }
             }
 
-            if !sink_keys.is_empty() {
-                println!("  Sharing connection for {} sink(s)", sink_keys.len(),);
+            if created > 0 {
+                println!(
+                    "  Sharing connection for {} sink(s) on connector {}",
+                    created, connector_name
+                );
             }
         }
 
@@ -190,45 +207,41 @@ pub async fn run_program(
         let mut event_count = 0u64;
         let spinner = output::create_spinner("Waiting for events...");
 
-        // Process events from all sources — batch when multiple are available
+        // Process event batches from all sources. Each `recv()` yields a
+        // `Vec<Event>` produced by the connector — typically up to 256
+        // events per batch. We further coalesce contiguous batches via
+        // `try_recv` to keep `process_batch` calls fat (one async wake-up
+        // can drain thousands of events).
         loop {
             tokio::select! {
-                Some(event) = event_rx.recv() => {
-                    event_count += 1;
+                Some(mut batch) = event_rx.recv() => {
+                    // Coalesce any additional batches that are already
+                    // buffered — this is essentially free and lets
+                    // process_batch amortize over even larger groups.
+                    while let Ok(extra) = event_rx.try_recv() {
+                        batch.extend(extra);
+                    }
+                    event_count += batch.len() as u64;
 
                     if let Some(ref mut orchestrator) = orchestrator {
-                        let shared = std::sync::Arc::new(event);
-                        match orchestrator.try_process(shared) {
-                            Ok(()) => {}
-                            Err(varpulis_runtime::DispatchError::ChannelFull(msg)) => {
-                                if let varpulis_runtime::ContextMessage::Event(event) = msg {
-                                    if let Err(e) = orchestrator.process(event).await {
-                                        tracing::warn!("Orchestrator error: {}", e);
+                        for event in batch {
+                            let shared = std::sync::Arc::new(event);
+                            match orchestrator.try_process(shared) {
+                                Ok(()) => {}
+                                Err(varpulis_runtime::DispatchError::ChannelFull(msg)) => {
+                                    if let varpulis_runtime::ContextMessage::Event(event) = msg {
+                                        if let Err(e) = orchestrator.process(event).await {
+                                            tracing::warn!("Orchestrator error: {}", e);
+                                        }
                                     }
                                 }
-                            }
-                            Err(varpulis_runtime::DispatchError::ChannelClosed(_)) => {
-                                tracing::warn!("Context channel closed");
-                            }
-                        }
-                    } else {
-                        // Check if more events are immediately available for batch processing
-                        if event_rx.is_empty() {
-                            // Single event — fast path
-                            if let Err(e) = engine.process(event).await {
-                                tracing::warn!("Engine error: {}", e);
-                            }
-                        } else {
-                            // Multiple events buffered — drain and batch
-                            let mut batch = vec![event];
-                            while let Ok(extra) = event_rx.try_recv() {
-                                batch.push(extra);
-                            }
-                            event_count += (batch.len() - 1) as u64;
-                            if let Err(e) = engine.process_batch(batch).await {
-                                tracing::warn!("Engine batch error: {}", e);
+                                Err(varpulis_runtime::DispatchError::ChannelClosed(_)) => {
+                                    tracing::warn!("Context channel closed");
+                                }
                             }
                         }
+                    } else if let Err(e) = engine.process_batch(batch).await {
+                        tracing::warn!("Engine batch error: {}", e);
                     }
 
                     // Progress report every 2 seconds

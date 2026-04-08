@@ -77,7 +77,7 @@ impl ManagedMqttConnector {
     /// Ensure the source MQTT client and event loop are running.
     fn ensure_source_connected(
         &mut self,
-        tx: mpsc::Sender<Event>,
+        tx: mpsc::Sender<Vec<Event>>,
     ) -> Result<AsyncClient, ConnectorError> {
         if let Some(client) = &self.source_client {
             return Ok(client.clone());
@@ -131,7 +131,11 @@ impl ManagedMqttConnector {
                         if let Ok(payload) = std::str::from_utf8(&publish.payload) {
                             let topic = std::str::from_utf8(&publish.topic).unwrap_or("");
                             if let Some(event) = parse_mqtt_payload(payload, topic) {
-                                if tx.send(event).await.is_err() {
+                                // Wrap in a single-element batch — MQTT
+                                // delivers one packet at a time, so there's
+                                // nothing to coalesce. Run-loop will drain
+                                // any contiguous batches together.
+                                if tx.send(vec![event]).await.is_err() {
                                     warn!("Managed MQTT {} source channel closed", name);
                                     break;
                                 }
@@ -169,7 +173,7 @@ impl ManagedMqttConnector {
     fn create_dedicated_source(
         &mut self,
         client_id: &str,
-        tx: mpsc::Sender<Event>,
+        tx: mpsc::Sender<Vec<Event>>,
     ) -> Result<AsyncClient, ConnectorError> {
         let mut mqtt_opts = MqttOptions::new(client_id, &self.config.broker, self.config.port);
         mqtt_opts.set_keep_alive(60);
@@ -194,7 +198,7 @@ impl ManagedMqttConnector {
                         if let Ok(payload) = std::str::from_utf8(&publish.payload) {
                             let topic = std::str::from_utf8(&publish.topic).unwrap_or("");
                             if let Some(event) = parse_mqtt_payload(payload, topic) {
-                                if tx.send(event).await.is_err() {
+                                if tx.send(vec![event]).await.is_err() {
                                     break;
                                 }
                             }
@@ -349,7 +353,7 @@ impl ManagedConnector for ManagedMqttConnector {
     async fn start_source(
         &mut self,
         topic: &str,
-        tx: mpsc::Sender<Event>,
+        tx: mpsc::Sender<Vec<Event>>,
         params: &std::collections::HashMap<String, String>,
     ) -> Result<(), ConnectorError> {
         let qos_override = params

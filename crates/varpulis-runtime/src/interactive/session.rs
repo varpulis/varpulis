@@ -49,10 +49,10 @@ pub struct InteractiveSession {
     /// Receiver for generated events (populated when a generator is running).
     generator_rx: Option<mpsc::Receiver<Event>>,
     // Connector state
-    /// Sender for connector-sourced events.
-    connector_tx: mpsc::Sender<Event>,
-    /// Receiver for connector-sourced events (polled like generator).
-    connector_rx: Option<mpsc::Receiver<Event>>,
+    /// Sender for connector-sourced event batches.
+    connector_tx: mpsc::Sender<Vec<Event>>,
+    /// Receiver for connector-sourced event batches (polled like generator).
+    connector_rx: Option<mpsc::Receiver<Vec<Event>>>,
     /// Managed connector registry (owns live connections).
     connector_registry: Option<crate::connector::ManagedConnectorRegistry>,
     // Subscriptions (None = all streams)
@@ -89,7 +89,7 @@ impl InteractiveSession {
         let (output_tx, output_rx) = mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
         let engine = Engine::new(output_tx);
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
-        let (connector_tx, connector_rx) = mpsc::channel::<Event>(8192);
+        let (connector_tx, connector_rx) = mpsc::channel::<Vec<Event>>(1024);
 
         Self {
             engine,
@@ -190,14 +190,16 @@ impl InteractiveSession {
 
         let mut events = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        while let Ok(event) = rx.try_recv() {
+        while let Ok(batch) = rx.try_recv() {
             // Deduplicate — MQTT managed connectors may deliver messages
             // twice when multiple topics are subscribed on the same connection.
             // Use event_type + timestamp nanoseconds as dedup key.
-            let ts_nanos = event.timestamp.timestamp_nanos_opt().unwrap_or(0);
-            let key = (event.event_type.clone(), ts_nanos);
-            if seen.insert(key) {
-                events.push(event);
+            for event in batch {
+                let ts_nanos = event.timestamp.timestamp_nanos_opt().unwrap_or(0);
+                let key = (event.event_type.clone(), ts_nanos);
+                if seen.insert(key) {
+                    events.push(event);
+                }
             }
         }
 

@@ -267,11 +267,16 @@ async fn test_managed_nats_source_and_sink() {
     sink.send(&event).await.unwrap();
     sink.flush().await.unwrap();
 
-    // Receive via managed source
-    let received = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+    // Receive via managed source — managed connectors emit Vec<Event>
+    // batches; NATS delivers one message at a time so the batch has len 1.
+    let batch = tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("timeout")
         .expect("closed");
+    let received = batch
+        .into_iter()
+        .next()
+        .expect("empty batch from managed NATS source");
     assert_eq!(received.event_type.as_ref(), "ManagedEvt");
     assert_eq!(received.get_str("key"), Some("val"));
 

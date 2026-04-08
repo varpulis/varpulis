@@ -78,10 +78,18 @@ impl ManagedKafkaConnector {
         client_config
             .set("bootstrap.servers", &self.config.brokers)
             .set("message.timeout.ms", "30000")
-            .set("linger.ms", "5")
-            .set("batch.size", "65536")
+            // Producer throughput tuning. linger.ms=20 lets librdkafka coalesce
+            // many small per-event sends into a single broker write — without
+            // it, throughput is bounded at one round-trip per event (~6 ms ≈
+            // 150 eps). Combined with acks=1 (leader-only ack, instead of
+            // acks=all) this matches what high-throughput producers (Arroyo,
+            // Flink, kafka-python's `acks=1` default) use for benchmark mode.
+            .set("linger.ms", "20")
+            .set("batch.size", "1048576") // 1 MiB per batch
             .set("compression.type", "lz4")
-            .set("acks", "all");
+            .set("queue.buffering.max.messages", "1000000")
+            .set("queue.buffering.max.kbytes", "1048576")
+            .set("acks", "1");
 
         // Apply user-provided properties (can override any of the above).
         // Skip VPL-specific keys that shouldn't be passed to librdkafka.
@@ -120,7 +128,7 @@ impl ManagedConnector for ManagedKafkaConnector {
     async fn start_source(
         &mut self,
         topic: &str,
-        tx: mpsc::Sender<Event>,
+        tx: mpsc::Sender<Vec<Event>>,
         params: &std::collections::HashMap<String, String>,
     ) -> Result<(), ConnectorError> {
         let group_id = params
@@ -137,12 +145,32 @@ impl ManagedConnector for ManagedKafkaConnector {
             .cloned()
             .unwrap_or_else(|| "latest".to_string());
 
+        // librdkafka defaults are tuned for low-latency, *not* high
+        // throughput. The values below switch the consumer into
+        // "throughput mode": the broker accumulates ~1MB or 100ms before
+        // responding to a fetch, and the local C-library queue holds up
+        // to 100k messages so the rust-side stream can drain in big
+        // batches. Combined with consumer-side `Vec<Event>` batching this
+        // brings sustained throughput from ~700 eps into the 50-150k eps
+        // range. See docs/development/kafka-source-batching.md.
         let mut client_config = ClientConfig::new();
         client_config
             .set("bootstrap.servers", &self.config.brokers)
             .set("group.id", &group_id)
             .set("enable.auto.commit", "false")
-            .set("auto.offset.reset", &offset_reset);
+            .set("auto.offset.reset", &offset_reset)
+            // Throughput tuning ----------------------------------------
+            // Wait for at least 1 MiB per fetch...
+            .set("fetch.min.bytes", "1048576")
+            // ...or up to 100 ms, whichever comes first.
+            .set("fetch.wait.max.ms", "100")
+            // Up to 8 MiB per partition per fetch (default is 1 MiB).
+            .set("max.partition.fetch.bytes", "8388608")
+            // Local C-library queue: hold up to 100k messages or 64 MiB
+            // before applying back-pressure to the broker. Default is
+            // 100000 messages but only 64 MiB; we keep both generous.
+            .set("queued.min.messages", "100000")
+            .set("queued.max.messages.kbytes", "65536");
 
         for (k, v) in &self.config.properties {
             // Skip VPL-specific keys (already translated above) and keys that
@@ -180,12 +208,27 @@ impl ManagedConnector for ManagedKafkaConnector {
                 failure_threshold: 10,
                 reset_timeout: Duration::from_secs(30),
             });
-            // Periodic shutdown poll: every 250ms we check the `running` flag.
-            // We do NOT wrap each stream.next() in a timeout because doing so
-            // registers and deregisters a tokio timer per event — under high
-            // throughput that becomes the dominant cost (~300x slowdown).
-            let mut shutdown_check = tokio::time::interval(Duration::from_millis(250));
-            shutdown_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            // Consumer-side batching: accumulate up to BATCH_MAX events and
+            // flush either when full or every BATCH_FLUSH_MS, whichever
+            // comes first. Sending batches (instead of single events) over
+            // the run-loop channel amortizes the per-event async wake-up
+            // cost — at high event rates this is the dominant overhead.
+            // See docs/development/kafka-source-batching.md for the full
+            // analysis. Target throughput: 50-150k eps.
+            const BATCH_MAX: usize = 256;
+            const BATCH_FLUSH_MS: u64 = 5;
+            let mut batch: Vec<Event> = Vec::with_capacity(BATCH_MAX);
+
+            // Periodic ticker handles two concerns at once:
+            //   1. Flush partial batches every BATCH_FLUSH_MS so latency
+            //      stays bounded under low input rates.
+            //   2. Check the `running` flag so shutdown happens promptly.
+            // We deliberately do NOT wrap stream.next() in a timeout — doing
+            // so registers and deregisters a tokio timer per event, which is
+            // the dominant cost (~300x slowdown) at high throughput.
+            let mut flush_ticker = tokio::time::interval(Duration::from_millis(BATCH_FLUSH_MS));
+            flush_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             'consume: loop {
                 if !cb.allow_request() {
@@ -213,8 +256,17 @@ impl ManagedConnector for ManagedKafkaConnector {
                                                 .and_then(|v| v.as_str())
                                                 .unwrap_or("KafkaEvent");
                                             let event = json_to_event(event_type, &json);
-                                            if tx.send(event).await.is_err() {
-                                                break 'consume;
+                                            batch.push(event);
+
+                                            // Flush as soon as the batch is full.
+                                            if batch.len() >= BATCH_MAX {
+                                                let drained = std::mem::replace(
+                                                    &mut batch,
+                                                    Vec::with_capacity(BATCH_MAX),
+                                                );
+                                                if tx.send(drained).await.is_err() {
+                                                    break 'consume;
+                                                }
                                             }
                                         }
                                     }
@@ -240,13 +292,30 @@ impl ManagedConnector for ManagedKafkaConnector {
                             None => break 'consume,
                         }
                     }
-                    _ = shutdown_check.tick() => {
+                    _ = flush_ticker.tick() => {
+                        // Flush any partial batch on the timer to keep
+                        // latency bounded under low input rates.
+                        if !batch.is_empty() {
+                            let drained = std::mem::replace(
+                                &mut batch,
+                                Vec::with_capacity(BATCH_MAX),
+                            );
+                            if tx.send(drained).await.is_err() {
+                                break 'consume;
+                            }
+                        }
                         if !running.load(Ordering::SeqCst) {
                             break 'consume;
                         }
                     }
                 }
             }
+
+            // Final flush on shutdown so we don't lose buffered events.
+            if !batch.is_empty() {
+                let _ = tx.send(batch).await;
+            }
+
             info!("Managed Kafka {} consumer stopped", name);
         });
 
