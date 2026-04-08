@@ -1,0 +1,44 @@
+# Scenario 3 (Arroyo bench): Stream-stream window join
+# Join Trade events with Quote events on the same symbol within a 5-second window.
+
+event Trade:
+    ts: int
+    symbol: str
+    price: float
+    volume: int
+
+event Quote:
+    ts: int
+    symbol: str
+    bid: float
+    ask: float
+
+connector RedpandaIn = kafka(
+    brokers: ["localhost:29092"],
+    topic: "scenario-03-join",
+    auto_offset_reset: "earliest"
+)
+
+connector RedpandaOut = kafka(
+    brokers: ["localhost:29092"],
+    topic: "scenario-03-join-out"
+)
+
+stream Trades = Trade
+    .from(RedpandaIn)
+    .emit(symbol: symbol, price: price)
+
+stream Quotes = Quote
+    .from(RedpandaIn)
+    .emit(symbol: symbol, bid: bid, ask: ask)
+
+stream Enriched = join(Trades, Quotes)
+    .on(Trades.symbol == Quotes.symbol)
+    .window(5s)
+    .select(
+        symbol: Trades.symbol,
+        trade_price: Trades.price,
+        bid: Quotes.bid,
+        ask: Quotes.ask
+    )
+    .to(RedpandaOut)

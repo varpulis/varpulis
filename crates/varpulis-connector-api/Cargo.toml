@@ -11,6 +11,7 @@ description = "Shared traits and types for Varpulis connector crates"
 [dependencies]
 varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
 tokio = { workspace = true }
+chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }

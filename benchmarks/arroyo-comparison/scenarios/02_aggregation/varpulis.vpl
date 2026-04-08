@@ -1,0 +1,38 @@
+# Scenario 2 (Arroyo bench): Tumbling 1-second window aggregation per device
+# Equivalent Arroyo SQL:
+#   SELECT window.start, device_id,
+#          SUM(temperature), AVG(temperature), MIN(temperature), MAX(temperature)
+#   FROM TUMBLE(readings, INTERVAL '1' SECOND)
+#   GROUP BY window, device_id
+
+event Reading:
+    ts: int
+    device_id: str
+    temperature: float
+
+connector RedpandaIn = kafka(
+    brokers: ["localhost:29092"],
+    topic: "scenario-02-agg",
+    auto_offset_reset: "earliest"
+)
+
+connector RedpandaOut = kafka(
+    brokers: ["localhost:29092"],
+    topic: "scenario-02-agg-out"
+)
+
+stream DeviceAgg = Reading
+    .from(RedpandaIn)
+    .partition_by(device_id)
+    .window(1s)
+    .aggregate(
+        s: sum(temperature),
+        a: avg(temperature),
+        mn: min(temperature),
+        mx: max(temperature)
+    )
+    .emit(
+        device_id: device_id,
+        s: s, a: a, mn: mn, mx: mx
+    )
+    .to(RedpandaOut)
