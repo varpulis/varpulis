@@ -58,7 +58,7 @@ zstd = { version = "0.13", optional = true }
 # Apache Arrow columnar processing
 arrow-array = { version = "54", optional = true, default-features = false }
 arrow-schema = { version = "54", optional = true, default-features = false }
-arrow-arith = { version = "54", optional = true, default-features = false }
+arrow-arith = { version = "58", optional = true, default-features = false }
 # arrow-row: SIMD-friendly comparison encoding for multi-column group keys.
 # Used by the streaming columnar grouped aggregator to hash partition keys
 # in bulk, the same way DataFusion's GroupedHashAggregateStream does.
