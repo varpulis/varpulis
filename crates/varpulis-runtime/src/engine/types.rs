@@ -686,10 +686,9 @@ pub struct LateDataConfig {
 
 #[cfg(all(test, feature = "arrow"))]
 mod arrow_parity_tests {
-    use super::*;
-
     use std::collections::BTreeMap;
 
+    use super::*;
     use crate::aggregation::{Aggregator, Avg, Count, Max, Min, Sum};
     use crate::event::Event;
 

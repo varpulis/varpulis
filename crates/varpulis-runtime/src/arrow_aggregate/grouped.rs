@@ -179,13 +179,13 @@ fn array_value_at(arr: &dyn Array, i: usize) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Arc;
 
     use arrow_array::{Float64Array, StringArray};
     use arrow_schema::{DataType, Schema};
 
     use super::super::accumulator::make_accumulator_for;
+    use super::*;
 
     fn build_batch() -> RecordBatch {
         let schema = Arc::new(Schema::new(vec![

@@ -96,8 +96,9 @@ impl ColumnarAccumulator for SumAccumulator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use arrow_array::Float64Array;
+
+    use super::*;
 
     fn make_values(vs: &[f64]) -> Float64Array {
         Float64Array::from(vs.to_vec())

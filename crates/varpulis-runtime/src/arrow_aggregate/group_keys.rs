@@ -115,11 +115,12 @@ impl GroupKeyEncoder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Arc;
 
     use arrow_array::{Int64Array, StringArray};
     use arrow_schema::DataType;
+
+    use super::*;
 
     #[test]
     fn roundtrip_single_string_key() {

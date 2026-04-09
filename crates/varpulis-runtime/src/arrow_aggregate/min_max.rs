@@ -140,8 +140,9 @@ impl ColumnarAccumulator for MaxAccumulator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use arrow_array::{Array as _, Float64Array};
+
+    use super::*;
 
     #[test]
     fn min_picks_smallest() {

@@ -88,8 +88,9 @@ impl ColumnarAccumulator for AvgAccumulator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use arrow_array::Float64Array;
+
+    use super::*;
 
     #[test]
     fn grouped_avg() {
