@@ -59,6 +59,10 @@ zstd = { version = "0.13", optional = true }
 arrow-array = { version = "54", optional = true, default-features = false }
 arrow-schema = { version = "54", optional = true, default-features = false }
 arrow-arith = { version = "54", optional = true, default-features = false }
+# arrow-row: SIMD-friendly comparison encoding for multi-column group keys.
+# Used by the streaming columnar grouped aggregator to hash partition keys
+# in bulk, the same way DataFusion's GroupedHashAggregateStream does.
+arrow-row = { version = "54", optional = true, default-features = false }
 
 # Encryption at rest
 aes-gcm = { version = "0.10", optional = true }
@@ -74,7 +78,12 @@ varpulis-wasm = { version = "0.10.0", path = "../varpulis-wasm", optional = true
 varpulis-datagen = { version = "0.10.0", path = "../varpulis-datagen", optional = true }
 
 [features]
-default = ["async-runtime"]
+# `arrow` is in default so the release binary and web-ui preview mode get
+# the streaming columnar aggregation fast path automatically. WASM builds
+# must pass `--no-default-features --features wasm` (already the documented
+# way to build for wasm32-unknown-unknown); the `wasm` feature set does NOT
+# enable `arrow`, keeping the sync-only build path lean.
+default = ["async-runtime", "arrow"]
 # Full async runtime with tokio, connectors, metrics, and all async infrastructure.
 # Disable this (use --no-default-features) for WASM or pure-sync builds.
 async-runtime = [
@@ -99,7 +108,7 @@ s3 = ["varpulis-connectors/s3", "async-runtime"]
 nats = ["varpulis-connectors/nats", "async-runtime"]
 elasticsearch = ["varpulis-connectors/elasticsearch", "async-runtime"]
 pulsar = ["varpulis-connectors/pulsar", "async-runtime"]
-arrow = ["arrow-array", "arrow-schema", "arrow-arith"]
+arrow = ["arrow-array", "arrow-schema", "arrow-arith", "arrow-row"]
 onnx = ["ort"]
 gpu = ["onnx"]
 binary-codec = ["rmp-serde"]
@@ -158,6 +167,11 @@ harness = false
 name = "cdc_benchmark"
 harness = false
 required-features = ["cdc"]
+
+[[bench]]
+name = "columnar_agg_benchmark"
+harness = false
+required-features = ["arrow"]
 
 [lints]
 workspace = true

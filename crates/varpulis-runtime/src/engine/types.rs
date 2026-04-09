@@ -482,20 +482,64 @@ impl PartitionedSlidingCountWindowState {
 }
 
 /// State for partitioned aggregators
+#[derive(Debug)]
 pub struct PartitionedAggregatorState {
     pub partition_key: String,
     pub aggregator_template: Aggregator,
+    /// Schema cache reused across calls so every fire doesn't re-infer the
+    /// event schema. Only populated on the columnar fast path.
+    #[cfg(feature = "arrow")]
+    pub(crate) schema_cache: crate::arrow_bridge::SchemaCache,
 }
 
 impl PartitionedAggregatorState {
-    pub const fn new(partition_key: String, aggregator: Aggregator) -> Self {
+    pub fn new(partition_key: String, aggregator: Aggregator) -> Self {
         Self {
             partition_key,
             aggregator_template: aggregator,
+            #[cfg(feature = "arrow")]
+            schema_cache: crate::arrow_bridge::SchemaCache::new(),
         }
     }
 
+    /// Entry point called by the pipeline executor. Dispatches between the
+    /// row-oriented path (always available) and the streaming columnar
+    /// path (behind `arrow` feature, gated on batch size and supported
+    /// aggregate-function set).
     pub fn apply(&mut self, events: &[SharedEvent]) -> Vec<(String, IndexMap<String, Value>)> {
+        #[cfg(feature = "arrow")]
+        {
+            // Columnar fast path. Criteria:
+            //   1. Batch is large enough to amortize the RecordBatch
+            //      conversion overhead (`ARROW_BATCH_THRESHOLD` events).
+            //   2. Every aggregation function is one of sum/avg/min/max/count
+            //      (the phase-1 supported set — `StdDev`, `Percentile`,
+            //      `First`, `Last`, etc. still go row-oriented).
+            if events.len() >= crate::arrow_bridge::ARROW_BATCH_THRESHOLD
+                && self.aggregator_template.supported_for_columnar()
+            {
+                if let Some(results) = self.apply_columnar(events) {
+                    return results;
+                }
+                // Fall through to the row path on any error (schema
+                // inference failure, unexpected column type, etc.). The
+                // row path is always correct, just slower.
+            }
+        }
+        self.apply_row(events)
+    }
+
+    /// Row-oriented path — the original implementation. Preserved both as
+    /// a fallback and for aggregation functions the columnar path doesn't
+    /// support yet. This is the hot path for batches smaller than
+    /// `ARROW_BATCH_THRESHOLD` and for pipelines that use StdDev /
+    /// Percentile / First / Last / etc.
+    ///
+    /// Exposed as `#[doc(hidden)] pub` so internal tests and benchmarks
+    /// can measure each path directly. NOT part of the public API and
+    /// may change without notice.
+    #[doc(hidden)]
+    pub fn apply_row(&mut self, events: &[SharedEvent]) -> Vec<(String, IndexMap<String, Value>)> {
         // Group events by partition key - use Arc::clone to avoid deep clones
         let mut partitions: FxHashMap<String, Vec<SharedEvent>> = FxHashMap::default();
 
@@ -515,6 +559,60 @@ impl PartitionedAggregatorState {
         }
 
         results
+    }
+
+    /// Streaming columnar path. Converts `events` to a RecordBatch, runs
+    /// one bulk `arrow_row::RowConverter` hash pass over the partition-key
+    /// column, and updates per-group accumulators in SIMD-friendly loops.
+    ///
+    /// Returns `None` on any failure (unknown field name, schema mismatch,
+    /// unsupported column type); the caller falls back to the row path.
+    ///
+    /// Exposed as `#[doc(hidden)] pub` so internal tests and benchmarks
+    /// can measure each path directly. NOT part of the public API and
+    /// may change without notice.
+    #[doc(hidden)]
+    #[cfg(feature = "arrow")]
+    pub fn apply_columnar(
+        &mut self,
+        events: &[SharedEvent],
+    ) -> Option<Vec<(String, IndexMap<String, Value>)>> {
+        use crate::arrow_aggregate::grouped::AggSpec;
+        use crate::arrow_aggregate::{make_accumulator_for, ColumnarGroupedAggregator};
+
+        // 1. Infer schema & build RecordBatch for all events.
+        let schema = self.schema_cache.get_or_infer(events);
+        let batch = crate::arrow_bridge::events_to_record_batch(events, &schema).ok()?;
+
+        // 2. Locate the partition key field in the inferred schema. If
+        //    the field isn't present (e.g. all events had it null and
+        //    `infer_schema` skipped it), fall back to the row path —
+        //    which handles that case via `map_or_else("default", ..)`.
+        let key_field = schema.field_with_name(&self.partition_key).ok()?.clone();
+
+        // 3. Build one accumulator per (alias, func_name, field) spec.
+        //    `supported_for_columnar()` already guaranteed every func is
+        //    in the sum/avg/min/max/count set, so `make_accumulator_for`
+        //    should never return None — but we still handle it to avoid
+        //    panicking inside an aggregator.
+        let specs: Vec<AggSpec> = self
+            .aggregator_template
+            .iter_specs()
+            .map(|(alias, func_name, field)| {
+                let accumulator = make_accumulator_for(func_name)?;
+                Some(AggSpec {
+                    alias: alias.clone(),
+                    accumulator,
+                    field: field.clone(),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+
+        let mut agg = ColumnarGroupedAggregator::try_new(&[key_field], specs).ok()?;
+
+        // 4. Feed the batch (one call in phase 1; phase 2 streams).
+        agg.update(&batch).ok()?;
+        Some(agg.drain_as_row_results())
     }
 }
 
@@ -574,4 +672,252 @@ pub struct LateDataConfig {
     /// Optional stream name to route late events that exceed allowed_lateness.
     /// If None, late events are dropped.
     pub side_output_stream: Option<String>,
+}
+
+// =============================================================================
+// Parity tests — row-oriented vs columnar PartitionedAggregatorState::apply
+// =============================================================================
+//
+// These tests sit inside the `types` module so they have access to the
+// private `apply_row` and `apply_columnar` methods. The core guarantee:
+// for any input, the two paths produce equivalent results (modulo float
+// reassociation). This is the regression gate for the streaming columnar
+// grouped aggregator.
+
+#[cfg(all(test, feature = "arrow"))]
+mod arrow_parity_tests {
+    use super::*;
+
+    use std::collections::BTreeMap;
+
+    use crate::aggregation::{Aggregator, Avg, Count, Max, Min, Sum};
+    use crate::event::Event;
+
+    /// Normalise an `apply` result to a sorted-by-key representation so
+    /// we can compare the two paths without caring about iteration order.
+    fn normalise(
+        results: Vec<(String, IndexMap<String, Value>)>,
+    ) -> BTreeMap<String, BTreeMap<String, Value>> {
+        results
+            .into_iter()
+            .map(|(k, inner)| (k, inner.into_iter().collect()))
+            .collect()
+    }
+
+    /// Compare two normalised results, treating `Value::Float` equality
+    /// via tolerance and every other variant via exact equality. Returns
+    /// the first mismatch as a formatted string, or None on equality.
+    fn diff(
+        row: &BTreeMap<String, BTreeMap<String, Value>>,
+        col: &BTreeMap<String, BTreeMap<String, Value>>,
+        tol: f64,
+    ) -> Option<String> {
+        if row.len() != col.len() {
+            return Some(format!(
+                "partition count mismatch: row={}, col={}",
+                row.len(),
+                col.len()
+            ));
+        }
+        for (k, row_inner) in row {
+            let Some(col_inner) = col.get(k) else {
+                return Some(format!("partition '{k}' missing in columnar output"));
+            };
+            if row_inner.len() != col_inner.len() {
+                return Some(format!(
+                    "partition '{k}' alias count mismatch: row={}, col={}",
+                    row_inner.len(),
+                    col_inner.len()
+                ));
+            }
+            for (alias, row_v) in row_inner {
+                let Some(col_v) = col_inner.get(alias) else {
+                    return Some(format!("alias '{alias}' missing in partition '{k}'"));
+                };
+                match (row_v, col_v) {
+                    (Value::Float(a), Value::Float(b)) => {
+                        if !a.is_finite() && !b.is_finite() {
+                            continue;
+                        }
+                        if (a - b).abs() > tol {
+                            return Some(format!(
+                                "float mismatch in '{k}'.'{alias}': row={a}, col={b}"
+                            ));
+                        }
+                    }
+                    (Value::Null, Value::Null) => {}
+                    (Value::Int(a), Value::Int(b)) => {
+                        if a != b {
+                            return Some(format!(
+                                "int mismatch in '{k}'.'{alias}': row={a}, col={b}"
+                            ));
+                        }
+                    }
+                    (a, b) => {
+                        if a != b {
+                            return Some(format!(
+                                "value mismatch in '{k}'.'{alias}': row={a:?}, col={b:?}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Build a state freshly configured with sum/avg/min/max/count on `value`.
+    fn make_state() -> PartitionedAggregatorState {
+        PartitionedAggregatorState::new(
+            "device_id".to_string(),
+            Aggregator::new()
+                .add("s", Box::new(Sum), Some("value".to_string()))
+                .add("a", Box::new(Avg), Some("value".to_string()))
+                .add("mn", Box::new(Min), Some("value".to_string()))
+                .add("mx", Box::new(Max), Some("value".to_string()))
+                .add("c", Box::new(Count), None),
+        )
+    }
+
+    /// Synthetic events matching scenario 02's shape: `n_devices` distinct
+    /// device ids, each receiving `per_device` events with sequential
+    /// float values.
+    fn make_events(n_devices: usize, per_device: usize) -> Vec<SharedEvent> {
+        let mut events = Vec::with_capacity(n_devices * per_device);
+        for i in 0..(n_devices * per_device) {
+            let dev = i % n_devices;
+            let v = (i as f64) * 1.5 + 10.0;
+            let e = Event::new("Reading")
+                .with_field("device_id", Value::Str(format!("d{dev}").into()))
+                .with_field("value", Value::Float(v));
+            events.push(Arc::new(e));
+        }
+        events
+    }
+
+    #[test]
+    fn scenario_02_shape_row_matches_columnar() {
+        // 100 devices × 1000 events per device = 100k events, 100 groups.
+        // Matches `benchmarks/arroyo-comparison/scenarios/02_aggregation`.
+        let events = make_events(100, 1000);
+        let row = normalise(make_state().apply_row(&events));
+        let col = normalise(
+            make_state()
+                .apply_columnar(&events)
+                .expect("columnar path should succeed for a homogeneous schema"),
+        );
+        if let Some(msg) = diff(&row, &col, 1e-6) {
+            panic!("scenario-02 parity failed: {msg}");
+        }
+    }
+
+    #[test]
+    fn sparse_groups_row_matches_columnar() {
+        // Extreme sparsity: 50 devices × 1 event each — worst case for
+        // row path (one event per group means per-event overhead dominates).
+        let events = make_events(50, 1);
+        let row = normalise(make_state().apply_row(&events));
+        let col = normalise(
+            make_state()
+                .apply_columnar(&events)
+                .expect("columnar path should succeed"),
+        );
+        if let Some(msg) = diff(&row, &col, 1e-9) {
+            panic!("sparse groups parity failed: {msg}");
+        }
+    }
+
+    #[test]
+    fn dense_few_groups_row_matches_columnar() {
+        // 2 devices × 5000 events each — the "analytics" shape.
+        let events = make_events(2, 5000);
+        let row = normalise(make_state().apply_row(&events));
+        let col = normalise(
+            make_state()
+                .apply_columnar(&events)
+                .expect("columnar path should succeed"),
+        );
+        if let Some(msg) = diff(&row, &col, 1e-5) {
+            panic!("dense groups parity failed: {msg}");
+        }
+    }
+
+    #[test]
+    fn single_group_row_matches_columnar() {
+        // Everyone is on "d0" — degenerate case, tests that the columnar
+        // path handles `total_groups == 1` correctly.
+        let mut events = Vec::new();
+        for i in 0..200 {
+            events.push(Arc::new(
+                Event::new("Reading")
+                    .with_field("device_id", Value::Str("d0".into()))
+                    .with_field("value", Value::Float(i as f64)),
+            ));
+        }
+        let row = normalise(make_state().apply_row(&events));
+        let col = normalise(
+            make_state()
+                .apply_columnar(&events)
+                .expect("columnar path should succeed"),
+        );
+        if let Some(msg) = diff(&row, &col, 1e-9) {
+            panic!("single group parity failed: {msg}");
+        }
+    }
+
+    #[test]
+    fn handles_int_partition_key() {
+        // Row path's to_partition_key() renders Int as its decimal
+        // string; the columnar path hashes it through RowConverter on
+        // Int64. Both should produce the same group identity.
+        let mut events = Vec::new();
+        for i in 0..100 {
+            events.push(Arc::new(
+                Event::new("Reading")
+                    .with_field("device_id", Value::Int(i % 5))
+                    .with_field("value", Value::Float(i as f64 * 2.0)),
+            ));
+        }
+        let row = normalise(make_state().apply_row(&events));
+        let col = normalise(
+            make_state()
+                .apply_columnar(&events)
+                .expect("columnar path should succeed"),
+        );
+        if let Some(msg) = diff(&row, &col, 1e-9) {
+            panic!("int partition key parity failed: {msg}");
+        }
+    }
+
+    #[test]
+    fn handles_nan_values() {
+        // Scatter NaN into the value column. Both paths should skip
+        // NaN when computing sum/avg/min/max.
+        let mut events = Vec::new();
+        for i in 0..200 {
+            let v = if i % 10 == 0 { f64::NAN } else { i as f64 };
+            events.push(Arc::new(
+                Event::new("Reading")
+                    .with_field("device_id", Value::Str(format!("d{}", i % 4).into()))
+                    .with_field("value", Value::Float(v)),
+            ));
+        }
+        let row = normalise(make_state().apply_row(&events));
+        let col = normalise(
+            make_state()
+                .apply_columnar(&events)
+                .expect("columnar path should succeed"),
+        );
+        if let Some(msg) = diff(&row, &col, 1e-6) {
+            panic!("NaN handling parity failed: {msg}");
+        }
+    }
+
+    #[test]
+    fn empty_input_is_empty_output() {
+        let events: Vec<SharedEvent> = vec![];
+        // apply() dispatches to row path for empty input (below threshold).
+        let out = make_state().apply(&events);
+        assert!(out.is_empty());
+    }
 }

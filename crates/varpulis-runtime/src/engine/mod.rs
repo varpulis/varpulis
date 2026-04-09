@@ -39,7 +39,10 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 // Re-export NamedPattern from types
 pub use types::NamedPattern;
-pub use types::{EngineConfig, EngineMetrics, ReloadReport, SourceBinding, UserFunction};
+pub use types::{
+    EngineConfig, EngineMetrics, PartitionedAggregatorState, ReloadReport, SourceBinding,
+    UserFunction,
+};
 // Re-export internal types for use within the engine module
 use types::{RuntimeOp, RuntimeSource, StreamDefinition, WindowType};
 use varpulis_core::ast::{ConfigItem, Program, Stmt};

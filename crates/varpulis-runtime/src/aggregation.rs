@@ -1063,6 +1063,28 @@ impl Aggregator {
         }
         result
     }
+
+    /// True iff every registered aggregation function has a
+    /// `ColumnarAccumulator` implementation in phase 1 (sum, avg, min,
+    /// max, count). Used by `PartitionedAggregatorState::apply` to gate
+    /// the streaming columnar fast path.
+    #[cfg(feature = "arrow")]
+    pub fn supported_for_columnar(&self) -> bool {
+        self.aggregations
+            .iter()
+            .all(|(_, f, _)| matches!(f.name(), "sum" | "avg" | "min" | "max" | "count"))
+    }
+
+    /// Expose `(alias, func_name, field)` for every registered aggregation
+    /// in declaration order, so the columnar driver can build matching
+    /// accumulators via `arrow_aggregate::make_accumulator_for`. Callers
+    /// must gate with `supported_for_columnar()` first.
+    #[cfg(feature = "arrow")]
+    pub fn iter_specs(&self) -> impl Iterator<Item = (&String, &str, &Option<String>)> {
+        self.aggregations
+            .iter()
+            .map(|(alias, f, field)| (alias, f.name(), field))
+    }
 }
 
 impl Default for Aggregator {
