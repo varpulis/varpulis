@@ -43,6 +43,7 @@ pub(crate) mod count;
 pub(crate) mod group_keys;
 pub(crate) mod grouped;
 pub(crate) mod min_max;
+pub(crate) mod streaming;
 pub(crate) mod sum;
 
 pub(crate) use accumulator::make_accumulator_for;

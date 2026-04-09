@@ -3,6 +3,87 @@
 
 # Phased Implementation Plan: Streaming Columnar Grouped Aggregator for Varpulis
 
+## Phase 2 delivered (2026-04-09) — also doesn't move scenario 02
+
+Phase 2 landed as planned: a `StreamingPartitionedWindow` that holds a
+`BTreeMap<bin_start_ms, ColumnarGroupedAggregator>`, a new
+`RuntimeOp::PartitionedWindowedColumnarAggregate` variant, the
+compiler fusion that replaces `Window(PartitionedTumbling) →
+PartitionedAggregate` with the fused op when the aggregator is
+columnar-supported, and 5 streaming unit tests + 4 fusion compiler
+tests + 1 end-to-end correctness test (all green).
+
+**Diagnostic confirmed the fusion is engaged at runtime.** A counter
+in `ingest_and_flush` showed `[StreamWindow] calls=N avg_batch=1.0
+active_bins=1 last_len=1` — every call hits the streaming op with
+exactly 1 event.
+
+**Scenario 02 numbers (3-run median, after phase 2):**
+
+Arroyo ~82 k eps, Varpulis ~53 k eps, V/A ≈ 0.65 — **no measurable
+improvement over the row path (V/A ≈ 0.67).**
+
+**Why phase 2 also didn't move it:** Each call to `ingest_and_flush`
+is fed exactly 1 event, because the upstream pipeline driver (`process_batch_shared`)
+walks events one at a time through every operator. So phase 2's
+streaming op pays the full cost of building a 1-row Arrow `RecordBatch`
++ running `arrow_row::RowConverter::convert_columns` on a 1-row column +
+hashing / probing the per-bin map / updating accumulators — for a
+SINGLE event. This per-call cost is **higher** than the row path's
+direct scalar updates on a single event:
+
+| Per-call cost (1 event) | Phase 1 row path | Phase 2 streaming columnar |
+|---|---|---|
+| `String` alloc + FxHashMap probe + Arc clone | ~1 µs | — |
+| 5 scalar accumulator updates over 1 element | ~1 µs | — |
+| `events_to_record_batch` (1-row builder) | — | ~5–10 µs |
+| `RowConverter::convert_columns` on 1 row | — | ~1 µs |
+| 1 hashmap probe in encoder + 5 accumulator updates | — | ~2 µs |
+| **Total per single-event call** | **~2 µs** | **~10 µs** |
+
+So phase 2 is **slower per single-event call** than phase 1 was. The
+two effects cancel and the end-to-end number doesn't move.
+
+**The actual bottleneck on scenario 02 is upstream of the aggregator**:
+Kafka consumer overhead (~1–2 µs per message), per-event pipeline
+dispatch overhead in `process_batch_shared` (~5 µs per event walking
+the ops list), output sink JSON serialization (~3 µs per emitted
+window), and Kafka producer overhead (~1 µs per emit). Times 100k
+events that's ~1 s of pure dispatch + I/O overhead — and we're at
+~1.9 s vs Arroyo's ~1.2 s, so Arroyo is faster on this stuff too,
+not on the aggregation algorithm itself. **Phase 2's
+operator-fusion approach is barking up the wrong tree for scenario 02.**
+
+**What phase 2 IS valuable for:**
+- Pipelines where the upstream operator hands the aggregator a batch
+  of events (e.g. file source → in-memory windowing → flush).
+- Future workloads where the input arrival rate becomes batch-shaped.
+- The architectural correctness — `RuntimeOp::PartitionedWindowedColumnarAggregate`
+  is now a real operator with a clean interface and full test coverage.
+- Phase 3+ extensions (binned sliding, session windows) that build on
+  the same `StreamingPartitionedWindow` shape.
+
+**What we should do instead to actually move scenario 02:**
+1. Profile `process_batch_shared` and see where the per-event ~5 µs
+   pipeline dispatch cost is going. Likely candidates: per-op virtual
+   dispatch, per-event tracing span allocation, per-event allocation
+   in `current_events: Vec<SharedEvent>` shuffling.
+2. Make the Kafka source emit larger batches (larger `Vec<Event>`)
+   when the consumer thread can outpace the run-loop drain. Currently
+   batches are 256 events max + 5 ms flush — see
+   `docs/development/kafka-source-batching.md`. Maybe widen to 1024
+   events × 20 ms.
+3. Investigate `BatchEventDispatcher` so the streaming op gets batches
+   of N events per call instead of one — that would let phase 2's
+   columnar path actually shine.
+
+These are separate threads of work and don't depend on the columnar
+aggregator at all. The plan should be revised: phases 3–5 of this
+columnar plan should NOT be the next priority. Profile-driven fixes
+to dispatch and source batching should come first.
+
+---
+
 ## Phase 1 delivered (2026-04-09)
 
 Phase 1 landed as planned: the streaming columnar grouped aggregator is

@@ -731,6 +731,12 @@ impl PartitionedTumblingWindow {
         }
     }
 
+    /// Bin width. Used by the phase-2 columnar fusion compiler pass to
+    /// build a `StreamingPartitionedWindow` with the same bin size.
+    pub const fn duration(&self) -> Duration {
+        self.duration
+    }
+
     /// Add a shared event to the appropriate partition window.
     pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let key = event.get(&self.partition_key).map_or_else(

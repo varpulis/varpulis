@@ -841,7 +841,50 @@ impl Engine {
                             aggregator = aggregator.add(item.alias.clone(), func, field);
                         }
                     }
-                    // If we have a partition key, use partitioned aggregate
+
+                    // Phase-2 fusion: if the previously pushed op is a
+                    // PartitionedTumbling window AND every aggregation
+                    // function is one of sum/avg/min/max/count, replace
+                    // the (window + partitioned aggregate) pair with a
+                    // single fused streaming columnar op. This keeps
+                    // accumulator state alive across arriving event
+                    // batches per (bin, group_idx) and is what closes
+                    // scenario 02 against Arroyo. See
+                    // `docs/development/columnar-aggregation-plan.md`.
+                    #[cfg(feature = "arrow")]
+                    {
+                        if let Some(ref key) = partition_key {
+                            if aggregator.supported_for_columnar() {
+                                if let Some(crate::engine::types::RuntimeOp::Window(
+                                    crate::engine::types::WindowType::PartitionedTumbling(w),
+                                )) = runtime_ops.last()
+                                {
+                                    let bin_duration_ms = w.duration().num_milliseconds();
+                                    if bin_duration_ms > 0 {
+                                        if let Some(state) = crate::engine::types::PartitionedWindowedColumnarAggregateState::try_new(
+                                            key.clone(),
+                                            bin_duration_ms,
+                                            &aggregator,
+                                        ) {
+                                            // Pop the window op — it's
+                                            // subsumed by the fused op.
+                                            runtime_ops.pop();
+                                            runtime_ops.push(
+                                                crate::engine::types::RuntimeOp::PartitionedWindowedColumnarAggregate(state),
+                                            );
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Fallback path: separate window + aggregator (or
+                    // plain aggregator). Used when the arrow feature is
+                    // off, when no partition_by was seen, when the
+                    // window isn't PartitionedTumbling, or when the
+                    // aggregator uses an unsupported function.
                     if let Some(ref key) = partition_key {
                         runtime_ops.push(RuntimeOp::PartitionedAggregate(
                             PartitionedAggregatorState::new(key.clone(), aggregator),
@@ -2072,5 +2115,252 @@ pub(super) fn extract_equality_join_key(expr: &varpulis_core::ast::Expr) -> Opti
             extract_equality_join_key(left).or_else(|| extract_equality_join_key(right))
         }
         _ => None,
+    }
+}
+
+// =============================================================================
+// Phase-2 fusion tests
+// =============================================================================
+//
+// Compile a small VPL program shaped like scenario 02 and inspect the
+// resulting `runtime_ops` to confirm that the compiler fuses the
+// `partition_by + window + aggregate` triple into a single
+// `PartitionedWindowedColumnarAggregate` op when the `arrow` feature
+// is enabled. Also verify that an unsupported aggregate function (e.g.
+// `stddev`) inhibits the fusion and falls back to the row path.
+
+#[cfg(all(test, feature = "arrow"))]
+mod arrow_fusion_tests {
+    use crate::engine::Engine;
+
+    fn compile(source: &str) -> Vec<&'static str> {
+        // Returns the runtime-op summary names for the first stream in
+        // the program, in declaration order.
+        let mut engine = Engine::builder().build();
+        let program =
+            varpulis_parser::parse(source).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+        engine
+            .load(&program)
+            .unwrap_or_else(|e| panic!("load failed: {e}"));
+        let stream_names = engine.stream_names();
+        let stream_name = stream_names.first().expect("at least one stream");
+        let stream = engine.streams.get(*stream_name).expect("stream registered");
+        stream
+            .operations
+            .iter()
+            .map(|op| op.summary_name())
+            .collect()
+    }
+
+    #[test]
+    fn fuses_partition_window_aggregate_into_columnar_op() {
+        // Scenario-02 shape: partition_by + tumbling window + aggregate
+        // with all-columnar-supported funcs.
+        let source = r"
+            event Reading:
+                ts: int
+                device_id: str
+                temperature: float
+
+            stream DeviceAgg = Reading
+                .partition_by(device_id)
+                .window(1s)
+                .aggregate(
+                    s: sum(temperature),
+                    a: avg(temperature),
+                    mn: min(temperature),
+                    mx: max(temperature)
+                )
+                .emit(device_id: device_id, s: s, a: a, mn: mn, mx: mx)
+        ";
+        let ops = compile(source);
+        // The fused op replaces both the window and the partitioned
+        // aggregate, so we expect ONE entry containing
+        // "PartitionedWindowedColumnarAggregate" and NO entries
+        // containing "Window" or "PartitionedAggregate".
+        assert!(
+            ops.contains(&"PartitionedWindowedColumnarAggregate"),
+            "expected fused op in pipeline; got {ops:?}"
+        );
+        assert!(
+            !ops.iter()
+                .any(|n| *n == "Window" || *n == "PartitionedAggregate"),
+            "fusion should remove Window and PartitionedAggregate; got {ops:?}"
+        );
+    }
+
+    #[test]
+    fn unsupported_aggregate_skips_fusion() {
+        // `stddev` is not in the columnar-supported set, so the
+        // compiler must NOT fuse — we should get a separate Window
+        // and PartitionedAggregate op.
+        let source = r"
+            event Reading:
+                ts: int
+                device_id: str
+                temperature: float
+
+            stream DeviceAgg = Reading
+                .partition_by(device_id)
+                .window(1s)
+                .aggregate(
+                    s: sum(temperature),
+                    sd: stddev(temperature)
+                )
+                .emit(device_id: device_id, s: s, sd: sd)
+        ";
+        let ops = compile(source);
+        assert!(
+            ops.contains(&"Window"),
+            "stddev should leave the Window op intact; got {ops:?}"
+        );
+        assert!(
+            ops.contains(&"PartitionedAggregate"),
+            "stddev should fall back to PartitionedAggregate; got {ops:?}"
+        );
+        assert!(
+            !ops.contains(&"PartitionedWindowedColumnarAggregate"),
+            "fusion must not occur for stddev; got {ops:?}"
+        );
+    }
+
+    #[test]
+    fn no_partition_by_skips_fusion() {
+        // Without `.partition_by`, the window is non-partitioned, so
+        // we get plain Aggregate (not PartitionedAggregate) and the
+        // fusion gate is "if let Some(partition_key)" — should skip.
+        let source = r"
+            event Reading:
+                ts: int
+                temperature: float
+
+            stream Agg = Reading
+                .window(1s)
+                .aggregate(
+                    s: sum(temperature),
+                    a: avg(temperature)
+                )
+                .emit(s: s, a: a)
+        ";
+        let ops = compile(source);
+        assert!(
+            ops.contains(&"Window"),
+            "non-partitioned shape leaves Window intact; got {ops:?}"
+        );
+        assert!(
+            ops.contains(&"Aggregate"),
+            "non-partitioned shape uses plain Aggregate; got {ops:?}"
+        );
+        assert!(
+            !ops.contains(&"PartitionedWindowedColumnarAggregate"),
+            "fusion is partition-only; got {ops:?}"
+        );
+    }
+
+    #[test]
+    fn fused_op_produces_correct_results() {
+        // End-to-end test: build the fused op directly, feed it events
+        // that span 3 bins for 2 devices, and check the drained
+        // results match what the row-path PartitionedAggregator would
+        // produce on the same data per-bin.
+        use std::sync::Arc;
+
+        use varpulis_core::Value;
+
+        use crate::aggregation::{Aggregator, Avg, Count, Max, Min, Sum};
+        use crate::engine::types::PartitionedWindowedColumnarAggregateState;
+        use crate::event::{Event, SharedEvent};
+
+        let agg = Aggregator::new()
+            .add("s", Box::new(Sum), Some("value".to_string()))
+            .add("a", Box::new(Avg), Some("value".to_string()))
+            .add("mn", Box::new(Min), Some("value".to_string()))
+            .add("mx", Box::new(Max), Some("value".to_string()))
+            .add("c", Box::new(Count), None);
+
+        let mut state = PartitionedWindowedColumnarAggregateState::try_new(
+            "device_id".to_string(),
+            1000, // 1-second bins
+            &agg,
+        )
+        .expect("supported funcs only");
+
+        let make_ev = |ts_ms: i64, dev: &str, v: f64| -> SharedEvent {
+            Arc::new(
+                Event::new("Reading")
+                    .with_timestamp(
+                        chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ts_ms).unwrap(),
+                    )
+                    .with_field("device_id", Value::Str(dev.into()))
+                    .with_field("value", Value::Float(v)),
+            )
+        };
+
+        // Bin 0 (ts 0..1000): d0 sees 10 + 30, d1 sees 20
+        // Bin 1 (ts 1000..2000): d0 sees 100
+        // Then advance watermark past bin 1 with a bin 2 event so both
+        // bin 0 and bin 1 flush.
+        let _ = state.ingest_and_flush(&[
+            make_ev(0, "d0", 10.0),
+            make_ev(500, "d1", 20.0),
+            make_ev(700, "d0", 30.0),
+        ]);
+        // Bin 0 hasn't flushed yet — watermark = 700, bin 0 ends at 1000
+        let _ = state.ingest_and_flush(&[make_ev(1100, "d0", 100.0)]);
+        // Now watermark = 1100, bin 0 (end 1000) flushes.
+        // Push past bin 1 to flush bin 1 too.
+        let flushed_for_bin_1 = state.ingest_and_flush(&[make_ev(2100, "d0", 999.0)]);
+        // After this call, bin 0 already flushed in the previous call;
+        // bin 1 (end 2000) is now ≤ watermark 2100 so it flushes here.
+        // bin 2 (end 3000) is still active.
+
+        // The flushed_for_bin_1 should contain bin 1's results.
+        // Reconstruct the union of all flushes by force-flushing the rest.
+        let remainder = state.flush_all();
+
+        // Combine all results.
+        let mut all_flushed: Vec<(i64, String, indexmap::IndexMap<String, Value>)> = Vec::new();
+        // We'd need the bin 0 results too — let's just rerun fresh
+        // and capture every flush deterministically.
+        let mut state2 =
+            PartitionedWindowedColumnarAggregateState::try_new("device_id".to_string(), 1000, &agg)
+                .unwrap();
+        all_flushed.extend(state2.ingest_and_flush(&[
+            make_ev(0, "d0", 10.0),
+            make_ev(500, "d1", 20.0),
+            make_ev(700, "d0", 30.0),
+        ]));
+        all_flushed.extend(state2.ingest_and_flush(&[make_ev(1100, "d0", 100.0)]));
+        all_flushed.extend(state2.ingest_and_flush(&[make_ev(2100, "d0", 999.0)]));
+        all_flushed.extend(state2.flush_all());
+
+        // Bin 0: d0 → sum 40, count 2; d1 → sum 20, count 1
+        // Bin 1: d0 → sum 100, count 1
+        // Bin 2: d0 → sum 999, count 1
+        let mut by_bin: std::collections::BTreeMap<
+            (i64, String),
+            indexmap::IndexMap<String, Value>,
+        > = Default::default();
+        for (bin, key, result) in all_flushed {
+            by_bin.insert((bin, key), result);
+        }
+
+        let bin0_d0 = &by_bin[&(0, "d0".to_string())];
+        assert_eq!(bin0_d0["s"], Value::Float(40.0));
+        assert_eq!(bin0_d0["c"], Value::Int(2));
+
+        let bin0_d1 = &by_bin[&(0, "d1".to_string())];
+        assert_eq!(bin0_d1["s"], Value::Float(20.0));
+        assert_eq!(bin0_d1["c"], Value::Int(1));
+
+        let bin1_d0 = &by_bin[&(1000, "d0".to_string())];
+        assert_eq!(bin1_d0["s"], Value::Float(100.0));
+
+        let bin2_d0 = &by_bin[&(2000, "d0".to_string())];
+        assert_eq!(bin2_d0["s"], Value::Float(999.0));
+
+        // Silence dead-code warnings on the first state's outputs.
+        let _ = flushed_for_bin_1;
+        let _ = remainder;
     }
 }

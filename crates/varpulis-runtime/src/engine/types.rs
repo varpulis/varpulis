@@ -196,6 +196,19 @@ pub enum RuntimeOp {
     Aggregate(Aggregator),
     /// Partitioned aggregate - maintains separate aggregators per partition key
     PartitionedAggregate(PartitionedAggregatorState),
+    /// Phase-2 fused operator: tumbling window + partitioned aggregate, with
+    /// columnar streaming accumulator state living per `(bin, group_idx)`
+    /// across arriving event batches. The compiler emits this in place of
+    /// `Window(PartitionedTumbling) → PartitionedAggregate` whenever the
+    /// `arrow` feature is enabled and the aggregator only uses
+    /// columnar-supported functions (sum/avg/min/max/count).
+    ///
+    /// Semantics differ from `PartitionedTumbling` in that bins are
+    /// **absolutely aligned** (`bin_start = floor(ts / bin_ms) * bin_ms`)
+    /// rather than per-partition-origin. This matches Flink/Arroyo and
+    /// most user expectations of "tumble every N seconds of wall clock".
+    #[cfg(feature = "arrow")]
+    PartitionedWindowedColumnarAggregate(PartitionedWindowedColumnarAggregateState),
     /// Having filter - filter aggregation results (post-aggregate filtering)
     Having(varpulis_core::ast::Expr),
     /// Select/projection with computed fields
@@ -248,6 +261,8 @@ impl RuntimeOp {
             Self::PartitionedSlidingCountWindow(_) => "PartitionedSlidingCountWindow",
             Self::Aggregate(_) => "Aggregate",
             Self::PartitionedAggregate(_) => "PartitionedAggregate",
+            #[cfg(feature = "arrow")]
+            Self::PartitionedWindowedColumnarAggregate(_) => "PartitionedWindowedColumnarAggregate",
             Self::Having(_) => "Having",
             Self::Select(_) => "Select",
             Self::Emit(_) => "Emit",
@@ -613,6 +628,78 @@ impl PartitionedAggregatorState {
         // 4. Feed the batch (one call in phase 1; phase 2 streams).
         agg.update(&batch).ok()?;
         Some(agg.drain_as_row_results())
+    }
+}
+
+/// State for the phase-2 fused tumbling-window + partitioned columnar
+/// aggregate operator. Lives behind the `arrow` feature flag.
+///
+/// Wraps a [`crate::arrow_aggregate::streaming::StreamingPartitionedWindow`]
+/// (the bin-keyed streaming aggregator) plus the per-bin duration. The
+/// pipeline dispatcher hands incoming events to `ingest_and_flush` and
+/// converts the row-shaped output back to `AggregationResult` events.
+#[cfg(feature = "arrow")]
+pub struct PartitionedWindowedColumnarAggregateState {
+    pub partition_key: String,
+    pub bin_duration_ms: i64,
+    pub(crate) inner: crate::arrow_aggregate::streaming::StreamingPartitionedWindow,
+}
+
+#[cfg(feature = "arrow")]
+impl std::fmt::Debug for PartitionedWindowedColumnarAggregateState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PartitionedWindowedColumnarAggregateState")
+            .field("partition_key", &self.partition_key)
+            .field("bin_duration_ms", &self.bin_duration_ms)
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
+#[cfg(feature = "arrow")]
+impl PartitionedWindowedColumnarAggregateState {
+    /// Build the fused operator from a partition key, bin duration, and
+    /// a phase-1 [`crate::aggregation::Aggregator`]. Returns `None` if
+    /// the aggregator uses any function the columnar path doesn't
+    /// support — callers must gate with `Aggregator::supported_for_columnar()`
+    /// first; this is a defensive double-check.
+    pub fn try_new(
+        partition_key: String,
+        bin_duration_ms: i64,
+        aggregator: &crate::aggregation::Aggregator,
+    ) -> Option<Self> {
+        let template =
+            crate::arrow_aggregate::streaming::StreamingAggregatorTemplate::from_aggregator(
+                partition_key.clone(),
+                aggregator,
+            )?;
+        let inner = crate::arrow_aggregate::streaming::StreamingPartitionedWindow::new(
+            template,
+            bin_duration_ms,
+        );
+        Some(Self {
+            partition_key,
+            bin_duration_ms,
+            inner,
+        })
+    }
+
+    /// Hand a batch of events to the streaming aggregator, drain any
+    /// bins flushed by the watermark advance, and return them in
+    /// `(bin_start_ms, partition_key, agg_results)` form.
+    pub fn ingest_and_flush(
+        &mut self,
+        events: &[SharedEvent],
+    ) -> Vec<(i64, String, IndexMap<String, Value>)> {
+        self.inner.ingest_and_flush(events)
+    }
+
+    /// Force-flush all remaining bins (engine shutdown / end-of-stream).
+    /// Wired into the engine teardown path so the final partial windows
+    /// aren't lost. Currently unused on the steady-state hot path.
+    #[allow(dead_code)]
+    pub fn flush_all(&mut self) -> Vec<(i64, String, IndexMap<String, Value>)> {
+        self.inner.flush_all()
     }
 }
 

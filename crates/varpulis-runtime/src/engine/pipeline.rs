@@ -611,6 +611,37 @@ fn execute_op_common(
                 .collect();
         }
 
+        #[cfg(feature = "arrow")]
+        RuntimeOp::PartitionedWindowedColumnarAggregate(state) => {
+            // Phase-2 fused operator: hand the incoming batch to the
+            // streaming bin-keyed aggregator. It buckets events by bin,
+            // updates per-bin accumulator state in place, advances the
+            // watermark to the running max event time, and drains any
+            // bins whose end is at or below the new watermark.
+            let flushed = state.ingest_and_flush(current_events);
+            *current_events = flushed
+                .into_iter()
+                .map(|(bin_start_ms, partition_key, result)| {
+                    let mut agg_event = Event::new("AggregationResult");
+                    // Use bin_end as the result timestamp so downstream
+                    // ordering matches the existing PartitionedAggregate
+                    // path (which uses the latest event's timestamp).
+                    if let Some(ts) = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+                        bin_start_ms + state.bin_duration_ms,
+                    ) {
+                        agg_event.timestamp = ts;
+                    }
+                    agg_event
+                        .data
+                        .insert("_partition".into(), Value::Str(partition_key.into()));
+                    for (key, value) in result {
+                        agg_event.data.insert(key.into(), value);
+                    }
+                    Arc::new(agg_event)
+                })
+                .collect();
+        }
+
         RuntimeOp::Having(expr) => {
             current_events.retain(|event| {
                 evaluator::eval_expr_with_functions(
