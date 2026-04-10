@@ -20,10 +20,6 @@ ignore = [
     # Cert parsing only, low attack surface. No upstream fix available yet.
     { id = "RUSTSEC-2025-0134", reason = "cert parsing only, no upstream fix for rumqttc/async-nats" },
 
-    # async-std 1.x: unmaintained. Transitive via pulsar crate (pulsar feature only).
-    # No upstream fix: pulsar-rs has not released a version without async-std.
-    { id = "RUSTSEC-2025-0052", reason = "transitive via pulsar crate, pulsar feature only" },
-
     # rsa 0.9: Marvin Attack timing side-channel. Transitive via sqlx-mysql.
     # We don't use MySQL TLS with RSA keys in production; PostgreSQL is primary.
     { id = "RUSTSEC-2023-0071", reason = "transitive via sqlx-mysql, not used in production" },
@@ -47,6 +43,21 @@ ignore = [
     # paste: unmaintained (dtolnay archived). Transitive via ratatui → varpulis-cli.
     # No safe upgrade: ratatui 0.29 depends on paste.
     { id = "RUSTSEC-2024-0436", reason = "transitive via ratatui 0.29, no upstream fix" },
+
+    # wasmtime 25.x: multiple CVEs published 2026-04-09. Transitive via
+    # varpulis-wasm (WASM UDF SmartModule feature). wasmtime 26.x fixes
+    # all of these but requires wasmtime API migration. Tracked separately.
+    { id = "RUSTSEC-2026-0085", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
+    { id = "RUSTSEC-2026-0086", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
+    { id = "RUSTSEC-2026-0087", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
+    { id = "RUSTSEC-2026-0088", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
+    { id = "RUSTSEC-2026-0089", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
+    { id = "RUSTSEC-2026-0091", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
+    { id = "RUSTSEC-2026-0092", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
+    { id = "RUSTSEC-2026-0093", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
+    { id = "RUSTSEC-2026-0094", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
+    { id = "RUSTSEC-2026-0095", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
+    { id = "RUSTSEC-2026-0096", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
 ]
 
 # ---------------------------------------------------------------------------

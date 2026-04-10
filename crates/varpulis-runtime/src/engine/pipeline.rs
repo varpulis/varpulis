@@ -722,16 +722,15 @@ fn execute_op_common(
             // lookups. This is the common case for `.emit(a: a, b: b)`
             // and saves ~200 ns per field per event (500k expression
             // evals on scenario 02's 100k output events × 5 fields).
-            let all_ident = config.fields.iter().all(|(_, expr)| {
-                matches!(expr, varpulis_core::ast::Expr::Ident(_))
-            });
+            let all_ident = config
+                .fields
+                .iter()
+                .all(|(_, expr)| matches!(expr, varpulis_core::ast::Expr::Ident(_)));
 
             if all_ident {
                 for event in current_events.iter() {
-                    let mut new_event = Event::with_capacity(
-                        Arc::clone(stream_name),
-                        config.fields.len(),
-                    );
+                    let mut new_event =
+                        Event::with_capacity(Arc::clone(stream_name), config.fields.len());
                     new_event.timestamp = event.timestamp;
                     for (out_name, expr) in &config.fields {
                         if let varpulis_core::ast::Expr::Ident(field_name) = expr {

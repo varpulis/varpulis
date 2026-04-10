@@ -117,8 +117,7 @@ impl ColumnarGroupedAggregator {
             None => {
                 let gi = self.next_fast_group;
                 self.next_fast_group += 1;
-                self.fast_group_map
-                    .insert(partition_key.into_owned(), gi);
+                self.fast_group_map.insert(partition_key.into_owned(), gi);
                 gi
             }
         };
