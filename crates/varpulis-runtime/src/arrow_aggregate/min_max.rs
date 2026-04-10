@@ -57,6 +57,16 @@ impl ColumnarAccumulator for MinAccumulator {
         }
     }
 
+    fn update_single(&mut self, group_idx: u32, value: Option<f64>) {
+        if let Some(v) = value {
+            let gi = group_idx as usize;
+            if !self.seen[gi] || v < self.values[gi] {
+                self.values[gi] = v;
+                self.seen[gi] = true;
+            }
+        }
+    }
+
     fn evaluate(&mut self) -> ArrayRef {
         let total = self.values.len();
         let mut builder = Float64Builder::with_capacity(total);
@@ -109,6 +119,16 @@ impl ColumnarAccumulator for MaxAccumulator {
                 continue;
             }
             let gi = gi as usize;
+            if !self.seen[gi] || v > self.values[gi] {
+                self.values[gi] = v;
+                self.seen[gi] = true;
+            }
+        }
+    }
+
+    fn update_single(&mut self, group_idx: u32, value: Option<f64>) {
+        if let Some(v) = value {
+            let gi = group_idx as usize;
             if !self.seen[gi] || v > self.values[gi] {
                 self.values[gi] = v;
                 self.seen[gi] = true;

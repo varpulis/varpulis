@@ -50,6 +50,16 @@ pub(crate) trait ColumnarAccumulator: Send + Sync {
     /// state being drained.
     fn evaluate(&mut self) -> ArrayRef;
 
+    /// Update a single group with a single scalar value. This is the
+    /// **fast path** for per-event updates that bypass Arrow
+    /// `RecordBatch` construction. Called by the streaming op when the
+    /// incoming batch has exactly 1 event — the value is extracted
+    /// directly from the `Event`'s field via `get_float()`.
+    ///
+    /// `value` is `None` for events where the field is missing or NaN
+    /// (the caller pre-filters). `Count` ignores `value` entirely.
+    fn update_single(&mut self, group_idx: u32, value: Option<f64>);
+
     /// Human-readable name (`"sum"`, `"avg"`, …) used for error messages
     /// and the debug output of the aggregator itself. Unused on the hot
     /// path in phase 1; phase 2's streaming driver needs it for the

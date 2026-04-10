@@ -63,6 +63,14 @@ impl ColumnarAccumulator for AvgAccumulator {
         }
     }
 
+    fn update_single(&mut self, group_idx: u32, value: Option<f64>) {
+        if let Some(v) = value {
+            let gi = group_idx as usize;
+            self.sums[gi] += v;
+            self.counts[gi] += 1;
+        }
+    }
+
     fn evaluate(&mut self) -> ArrayRef {
         let total = self.sums.len();
         let mut builder = Float64Builder::with_capacity(total);

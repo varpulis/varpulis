@@ -35,6 +35,11 @@ impl ColumnarAccumulator for CountAccumulator {
         }
     }
 
+    fn update_single(&mut self, group_idx: u32, _value: Option<f64>) {
+        // Count ignores the value — every call increments.
+        self.counts[group_idx as usize] += 1;
+    }
+
     fn evaluate(&mut self) -> ArrayRef {
         arc(Int64Array::from(self.counts.clone()))
     }

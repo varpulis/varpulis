@@ -35,6 +35,12 @@ pub(crate) struct ColumnarGroupedAggregator {
     specs: Vec<AggSpec>,
     key_field_names: Vec<String>,
     encoder: GroupKeyEncoder,
+    /// Lightweight string-keyed group lookup for the single-event fast
+    /// path. Populated lazily alongside the RowConverter-based `encoder`
+    /// so that both paths see the same group indices. Phase 2 fast path
+    /// uses this instead of building a 1-row RecordBatch.
+    fast_group_map: rustc_hash::FxHashMap<String, u32>,
+    next_fast_group: u32,
 }
 
 impl ColumnarGroupedAggregator {
@@ -48,6 +54,8 @@ impl ColumnarGroupedAggregator {
             specs,
             key_field_names: key_fields.iter().map(|f| f.name().clone()).collect(),
             encoder: GroupKeyEncoder::new(key_fields)?,
+            fast_group_map: rustc_hash::FxHashMap::default(),
+            next_fast_group: 0,
         })
     }
 
@@ -86,6 +94,47 @@ impl ColumnarGroupedAggregator {
         Ok(())
     }
 
+    /// Fast path for a single event: resolve the group index from the
+    /// partition key's display string (via a lightweight FxHashMap, no
+    /// RecordBatch / RowConverter), then call `update_single` on each
+    /// accumulator. The `event` reference is used to extract field
+    /// values directly via `get_float`.
+    ///
+    /// This is the phase-2 hot path for scenario 02 where 99% of calls
+    /// have exactly 1 event. Avoids the ~10 µs RecordBatch construction
+    /// overhead per single-event call.
+    pub(crate) fn update_single_event(
+        &mut self,
+        partition_key_display: &str,
+        event: &crate::event::Event,
+    ) {
+        // 1. Resolve group index from the display string.
+        let gi = *self
+            .fast_group_map
+            .entry(partition_key_display.to_string())
+            .or_insert_with(|| {
+                let idx = self.next_fast_group;
+                self.next_fast_group += 1;
+                idx
+            });
+        let total_groups = self.next_fast_group as usize;
+
+        // 2. Resize all accumulators to accommodate the new group count.
+        for spec in &mut self.specs {
+            spec.accumulator.resize(total_groups);
+        }
+
+        // 3. For each spec, extract the value from the event and call
+        //    update_single. NaN is skipped (matching the columnar path).
+        for spec in &mut self.specs {
+            let value: Option<f64> = match &spec.field {
+                Some(field_name) => event.get_float(field_name).filter(|v| !v.is_nan()),
+                None => None, // Count — update_single ignores value
+            };
+            spec.accumulator.update_single(gi, value);
+        }
+    }
+
     /// Drain results in the row-oriented shape that
     /// [`crate::engine::types::PartitionedAggregatorState::apply`] returns.
     ///
@@ -93,7 +142,15 @@ impl ColumnarGroupedAggregator {
     /// reassembles them into one `IndexMap<alias, Value>` per group,
     /// keyed by the display string cached in the encoder.
     pub(crate) fn drain_as_row_results(mut self) -> Vec<(String, IndexMap<String, Value>)> {
-        let total = self.encoder.total_groups();
+        // Groups may have been populated via the columnar `update()`
+        // path (uses the `encoder` / RowConverter) OR the single-event
+        // `update_single_event()` path (uses `fast_group_map`). In
+        // practice a given aggregator instance uses one or the other,
+        // never both in the same session, but we handle the union.
+        let total = self
+            .encoder
+            .total_groups()
+            .max(self.next_fast_group as usize);
 
         // Evaluate each accumulator once — returns a total-group-length
         // Arrow array, which we index per group below.
@@ -103,12 +160,23 @@ impl ColumnarGroupedAggregator {
             .map(|spec| (spec.alias.clone(), spec.accumulator.evaluate()))
             .collect();
 
-        // Collect display keys in group-index order.
-        let keys: Vec<(usize, String)> = self
+        // Collect display keys in group-index order. Merge from both
+        // sources (encoder for columnar path, fast_group_map for
+        // single-event path).
+        let mut keys: Vec<(usize, String)> = self
             .encoder
             .iter_keys()
             .map(|(gi, s)| (gi, s.to_string()))
             .collect();
+        // Add keys from the fast path that aren't already present.
+        let encoder_gis: std::collections::HashSet<usize> =
+            keys.iter().map(|(gi, _)| *gi).collect();
+        for (display_key, &gi) in &self.fast_group_map {
+            if !encoder_gis.contains(&(gi as usize)) {
+                keys.push((gi as usize, display_key.clone()));
+            }
+        }
+        keys.sort_unstable_by_key(|(gi, _)| *gi);
 
         let mut out = Vec::with_capacity(total);
         for (gi, display_key) in keys {

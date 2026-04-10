@@ -173,6 +173,10 @@ name = "columnar_agg_benchmark"
 harness = false
 required-features = ["arrow"]
 
+[[bench]]
+name = "dispatch_benchmark"
+harness = false
+
 [lints]
 workspace = true
 
