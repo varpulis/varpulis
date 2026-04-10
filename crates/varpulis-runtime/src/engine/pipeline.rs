@@ -93,7 +93,7 @@ pub async fn execute_pipeline(
     // Store the raw event for the Forecast op (it needs to learn from every
     // event, even when the Sequence op clears current_events on non-match).
     if stream.pst_forecaster.is_some() {
-        stream.last_raw_event = initial_events.last().cloned();
+        stream.last_raw_event = initial_events.first().cloned();
     }
 
     let mut current_events = initial_events;
@@ -1407,7 +1407,7 @@ pub fn execute_pipeline_sync(
 ) -> Result<StreamProcessResult, super::error::EngineError> {
     // Store the raw event for the Forecast op
     if stream.pst_forecaster.is_some() {
-        stream.last_raw_event = initial_events.last().cloned();
+        stream.last_raw_event = initial_events.first().cloned();
     }
 
     let mut current_events = initial_events;

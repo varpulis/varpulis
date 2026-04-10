@@ -52,6 +52,14 @@ Copy-paste. 30 seconds. No files, no connectors, no Docker.
 
 The default `varpulis interactive` opens a split-pane TUI with topology, live events, input, and metrics. Add `--no-tui` for a plain text shell, `--json` for agent automation.
 
+## Playground: Detect Rising Temperatures in 3 Lines
+
+<p align="center">
+  <img src="docs/assets/recordings/playground-demo.gif" alt="Varpulis Playground — detect rising temperatures with .increasing()" width="720">
+</p>
+
+`.increasing(temperature)` detects strictly rising sensor values — emits one alert when the trend breaks. 8 events in, 1 alert out: HVAC-01 rose from 22 to 55 in 4 steps. [Try it live](https://varpulis-cep.com/playground).
+
 ## Security: Kill Chain Detection
 
 Varpulis detects **multi-step attack sequences** that single-event SIEM rules miss. Renamed PsExec? Different C2 tool? Doesn't matter — behavioral patterns catch what signature rules can't.

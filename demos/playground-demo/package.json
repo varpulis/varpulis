@@ -1,0 +1,12 @@
+{
+  "name": "varpulis-playground-demo",
+  "private": true,
+  "scripts": {
+    "record": "npx playwright test --headed",
+    "record:headless": "npx playwright test",
+    "gif": "ffmpeg -i test-results/demo-Record-rising-temperature-demo-demo/video.webm -vf 'fps=12,scale=1280:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer' -loop 0 demo.gif"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.0"
+  }
+}
