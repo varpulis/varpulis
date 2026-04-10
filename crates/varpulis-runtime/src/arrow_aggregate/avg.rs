@@ -63,6 +63,16 @@ impl ColumnarAccumulator for AvgAccumulator {
         }
     }
 
+    fn drain_single(&self, group_idx: u32) -> varpulis_core::Value {
+        let gi = group_idx as usize;
+        let c = self.counts[gi];
+        if c == 0 {
+            varpulis_core::Value::Null
+        } else {
+            varpulis_core::Value::Float(self.sums[gi] / c as f64)
+        }
+    }
+
     fn update_single(&mut self, group_idx: u32, value: Option<f64>) {
         if let Some(v) = value {
             let gi = group_idx as usize;

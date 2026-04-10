@@ -60,6 +60,16 @@ pub(crate) trait ColumnarAccumulator: Send + Sync {
     /// (the caller pre-filters). `Count` ignores `value` entirely.
     fn update_single(&mut self, group_idx: u32, value: Option<f64>);
 
+    /// Read the scalar value for a single group WITHOUT building an
+    /// Arrow array. This is the fast drain path used when
+    /// `drain_as_row_results` is called after `update_single`-only
+    /// sessions — avoids the Arrow array roundtrip of `evaluate() →
+    /// array_value_at()`.
+    ///
+    /// Returns `Value::Float`, `Value::Int`, or `Value::Null` depending
+    /// on the accumulator type and whether the group has data.
+    fn drain_single(&self, group_idx: u32) -> varpulis_core::Value;
+
     /// Human-readable name (`"sum"`, `"avg"`, …) used for error messages
     /// and the debug output of the aggregator itself. Unused on the hot
     /// path in phase 1; phase 2's streaming driver needs it for the

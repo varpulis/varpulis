@@ -35,6 +35,10 @@ impl ColumnarAccumulator for CountAccumulator {
         }
     }
 
+    fn drain_single(&self, group_idx: u32) -> varpulis_core::Value {
+        varpulis_core::Value::Int(self.counts[group_idx as usize])
+    }
+
     fn update_single(&mut self, group_idx: u32, _value: Option<f64>) {
         // Count ignores the value — every call increments.
         self.counts[group_idx as usize] += 1;

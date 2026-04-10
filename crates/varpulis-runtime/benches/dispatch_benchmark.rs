@@ -59,35 +59,101 @@ fn make_engine() -> Engine {
     engine
 }
 
+fn make_engine_noop() -> Engine {
+    // Minimal pipeline: event type declared but no operations at all.
+    // Measures the pure dispatch loop cost: Arc::new, VecDeque, route
+    // lookup, stream lookup, Vec alloc per call, etc.
+    let source = r"
+        event Reading:
+            ts: int
+            device_id: str
+            temperature: float
+
+        stream PassThrough = Reading
+    ";
+    let program = parse(source).expect("VPL parse failed");
+    let mut engine = Engine::builder().build();
+    engine.load(&program).expect("engine load failed");
+    engine
+}
+
+fn make_engine_filter() -> Engine {
+    // One cheap op (filter expression evaluation). Measures dispatch +
+    // one expression eval per event.
+    let source = r"
+        event Reading:
+            ts: int
+            device_id: str
+            temperature: float
+
+        stream Filtered = Reading
+            .where(temperature > 0.0)
+    ";
+    let program = parse(source).expect("VPL parse failed");
+    let mut engine = Engine::builder().build();
+    engine.load(&program).expect("engine load failed");
+    engine
+}
+
 fn bench_dispatch(c: &mut Criterion) {
-    let configs = [
-        ("10k_100dev", 10_000, 100),
-        ("100k_100dev", 100_000, 100),
-    ];
+    let events_100k = make_scenario_02_events(100_000, 100);
 
     let mut group = c.benchmark_group("dispatch");
-    for (label, total, devices) in configs {
-        let events = make_scenario_02_events(total, devices);
 
-        // Measure process_batch_sync — synchronous, no async overhead.
-        // This includes the full pipeline dispatch per event.
-        group.bench_with_input(
-            BenchmarkId::new("process_batch_sync", label),
-            &events,
-            |b, events| {
-                b.iter_batched(
-                    make_engine,
-                    |mut engine| {
-                        engine
-                            .process_batch_sync(events.clone())
-                            .expect("batch sync should not fail");
-                        black_box(&engine);
-                    },
-                    criterion::BatchSize::LargeInput,
-                );
-            },
-        );
-    }
+    // A. Pure dispatch plumbing — no ops. Baseline for the loop itself.
+    group.bench_with_input(
+        BenchmarkId::new("noop", "100k"),
+        &events_100k,
+        |b, events| {
+            b.iter_batched(
+                make_engine_noop,
+                |mut engine| {
+                    engine
+                        .process_batch_sync(events.clone())
+                        .expect("batch sync should not fail");
+                    black_box(&engine);
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        },
+    );
+
+    // B. Dispatch + one filter expression per event.
+    group.bench_with_input(
+        BenchmarkId::new("filter_only", "100k"),
+        &events_100k,
+        |b, events| {
+            b.iter_batched(
+                make_engine_filter,
+                |mut engine| {
+                    engine
+                        .process_batch_sync(events.clone())
+                        .expect("batch sync should not fail");
+                    black_box(&engine);
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        },
+    );
+
+    // C. Full scenario 02 pipeline: fused window+agg + emit.
+    group.bench_with_input(
+        BenchmarkId::new("scenario02", "100k"),
+        &events_100k,
+        |b, events| {
+            b.iter_batched(
+                make_engine,
+                |mut engine| {
+                    engine
+                        .process_batch_sync(events.clone())
+                        .expect("batch sync should not fail");
+                    black_box(&engine);
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        },
+    );
+
     group.finish();
 }
 

@@ -76,6 +76,11 @@ impl ColumnarAccumulator for SumAccumulator {
         }
     }
 
+    fn drain_single(&self, group_idx: u32) -> varpulis_core::Value {
+        // Sum: empty group → 0.0 (matches row path).
+        varpulis_core::Value::Float(self.sums[group_idx as usize])
+    }
+
     fn update_single(&mut self, group_idx: u32, value: Option<f64>) {
         if let Some(v) = value {
             let gi = group_idx as usize;

@@ -105,18 +105,23 @@ impl ColumnarGroupedAggregator {
     /// overhead per single-event call.
     pub(crate) fn update_single_event(
         &mut self,
-        partition_key_display: &str,
+        partition_key: std::borrow::Cow<'_, str>,
         event: &crate::event::Event,
     ) {
-        // 1. Resolve group index from the display string.
-        let gi = *self
-            .fast_group_map
-            .entry(partition_key_display.to_string())
-            .or_insert_with(|| {
-                let idx = self.next_fast_group;
+        // 1. Resolve group index from the display string. Allocate
+        //    an owned String ONLY for the first sighting of each group.
+        //    Subsequent events for the same partition key hit the
+        //    `get()` fast path with zero allocation.
+        let gi = match self.fast_group_map.get(partition_key.as_ref()) {
+            Some(&gi) => gi,
+            None => {
+                let gi = self.next_fast_group;
                 self.next_fast_group += 1;
-                idx
-            });
+                self.fast_group_map
+                    .insert(partition_key.into_owned(), gi);
+                gi
+            }
+        };
         let total_groups = self.next_fast_group as usize;
 
         // 2. Resize all accumulators to accommodate the new group count.
@@ -141,6 +146,38 @@ impl ColumnarGroupedAggregator {
     /// This consumes the per-group evaluation of each accumulator and
     /// reassembles them into one `IndexMap<alias, Value>` per group,
     /// keyed by the display string cached in the encoder.
+    /// Fast drain path that reads directly from the accumulator's scalar
+    /// state (`Vec<f64>` / `Vec<u64>`) via `drain_single()` — no Arrow
+    /// array construction at all. Used when the streaming op populated
+    /// this aggregator exclusively via `update_single_event()`.
+    ///
+    /// Falls back to the Arrow-based `drain_as_row_results()` if the
+    /// fast_group_map is empty (meaning the columnar `update()` path
+    /// was used, where only the RowConverter has the key mappings).
+    pub(crate) fn drain_fast(self) -> Vec<(String, IndexMap<String, Value>)> {
+        if self.fast_group_map.is_empty() {
+            return self.drain_as_row_results();
+        }
+
+        // Collect keys sorted by group index.
+        let mut keys: Vec<(u32, &String)> = self
+            .fast_group_map
+            .iter()
+            .map(|(display, &gi)| (gi, display))
+            .collect();
+        keys.sort_unstable_by_key(|(gi, _)| *gi);
+
+        let mut out = Vec::with_capacity(keys.len());
+        for (gi, display_key) in keys {
+            let mut map = IndexMap::with_capacity(self.specs.len());
+            for spec in &self.specs {
+                map.insert(spec.alias.clone(), spec.accumulator.drain_single(gi));
+            }
+            out.push((display_key.clone(), map));
+        }
+        out
+    }
+
     pub(crate) fn drain_as_row_results(mut self) -> Vec<(String, IndexMap<String, Value>)> {
         // Groups may have been populated via the columnar `update()`
         // path (uses the `encoder` / RowConverter) OR the single-event

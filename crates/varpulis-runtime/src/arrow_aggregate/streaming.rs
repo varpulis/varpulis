@@ -243,7 +243,7 @@ impl StreamingPartitionedWindow {
         let mut output: Vec<(i64, String, IndexMap<String, Value>)> = Vec::new();
         for bin_start in to_flush {
             let agg = self.bins.remove(&bin_start).expect("present");
-            for (key, result) in agg.drain_as_row_results() {
+            for (key, result) in agg.drain_fast() {
                 output.push((bin_start, key, result));
             }
         }
@@ -305,17 +305,21 @@ impl StreamingPartitionedWindow {
             }
         }
 
-        // Extract partition key display string from the event.
-        let key_display = event
+        // Extract partition key as Cow<str> — zero allocation for
+        // existing groups (Cow::Borrowed stays borrowed through the
+        // FxHashMap lookup). Only new groups trigger into_owned().
+        let key_cow = event
             .get(&self.template.partition_key)
-            .map_or_else(|| "default".to_string(), |v| v.to_partition_key().into_owned());
+            .map_or(std::borrow::Cow::Borrowed("default"), |v| {
+                v.to_partition_key()
+            });
 
         // Call the fast scalar update on the bin's aggregator.
         let agg = self
             .bins
             .get_mut(&bin_start)
             .expect("just inserted or pre-existing");
-        agg.update_single_event(&key_display, event);
+        agg.update_single_event(key_cow, event);
 
         // Drain bins below watermark.
         let to_flush: Vec<i64> = self
@@ -327,7 +331,7 @@ impl StreamingPartitionedWindow {
         let mut output: Vec<(i64, String, IndexMap<String, Value>)> = Vec::new();
         for flushed_bin in to_flush {
             let agg = self.bins.remove(&flushed_bin).expect("present");
-            for (key, result) in agg.drain_as_row_results() {
+            for (key, result) in agg.drain_fast() {
                 output.push((flushed_bin, key, result));
             }
         }
@@ -343,7 +347,7 @@ impl StreamingPartitionedWindow {
         let mut output = Vec::new();
         for bin_start in bin_starts {
             let agg = self.bins.remove(&bin_start).expect("present");
-            for (key, result) in agg.drain_as_row_results() {
+            for (key, result) in agg.drain_fast() {
                 output.push((bin_start, key, result));
             }
         }
