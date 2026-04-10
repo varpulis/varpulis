@@ -359,6 +359,57 @@ impl Engine {
         }
     }
 
+    /// Async variant of [`send_output_shared`] that yields to the
+    /// **tokio task scheduler** (via `tokio::task::yield_now().await`)
+    /// instead of the OS thread scheduler (via `std::thread::yield_now()`)
+    /// when the output channel is full. The sync version deadlocks on
+    /// tokio when a single `process_batch` call emits more events than
+    /// the channel capacity because `std::thread::yield_now()` does not
+    /// allow the drain task to be polled.
+    #[cfg(feature = "async-runtime")]
+    #[inline]
+    #[allow(dead_code)] // Foundation for async batch dispatch — not yet wired into process_batch
+    pub(super) async fn send_output_shared_async(&mut self, event: &SharedEvent) {
+        use tokio::sync::mpsc::error::TrySendError;
+        match &self.output_channel {
+            Some(OutputChannel::Shared(tx)) => {
+                let mut item = Arc::clone(event);
+                loop {
+                    match tx.try_send(item) {
+                        Ok(()) => break,
+                        Err(TrySendError::Full(returned)) => {
+                            item = returned;
+                            tokio::task::yield_now().await;
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            warn!("output channel closed; dropping output event");
+                            break;
+                        }
+                    }
+                }
+            }
+            Some(OutputChannel::Owned(tx)) => {
+                let mut item = (**event).clone();
+                loop {
+                    match tx.try_send(item) {
+                        Ok(()) => break,
+                        Err(TrySendError::Full(returned)) => {
+                            item = returned;
+                            tokio::task::yield_now().await;
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            warn!("output channel closed; dropping output event");
+                            break;
+                        }
+                    }
+                }
+            }
+            None => {
+                self.collected_outputs.push((**event).clone());
+            }
+        }
+    }
+
     /// Collect output event into internal buffer (WASM/sync-only mode).
     #[cfg(not(feature = "async-runtime"))]
     #[inline]

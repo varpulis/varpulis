@@ -681,7 +681,8 @@ fn execute_op_common(
         RuntimeOp::Emit(config) => {
             let mut emitted: Vec<SharedEvent> = Vec::with_capacity(current_events.len());
             for event in current_events.iter() {
-                let mut new_event = Event::new(Arc::clone(stream_name));
+                let mut new_event =
+                    Event::with_capacity(Arc::clone(stream_name), config.fields.len());
                 new_event.timestamp = event.timestamp;
                 for (out_name, source) in &config.fields {
                     if let Some(value) = event.get(source) {
@@ -733,7 +734,8 @@ fn execute_op_common(
                 }
             } else {
                 for event in current_events.iter() {
-                    let mut new_event = Event::new(Arc::clone(stream_name));
+                    let mut new_event =
+                        Event::with_capacity(Arc::clone(stream_name), config.fields.len());
                     new_event.timestamp = event.timestamp;
                     for (out_name, expr) in &config.fields {
                         if let Some(value) = evaluator::eval_expr_with_functions(
