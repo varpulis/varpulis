@@ -137,16 +137,28 @@ pub async fn execute_pipeline(
         }
     }
 
-    // Rename event_type to stream name for downstream routing
-    let name_arc = &stream.name_arc;
-    let output_events = current_events
-        .into_iter()
-        .map(|e| {
-            let mut owned = Arc::try_unwrap(e).unwrap_or_else(|arc| (*arc).clone());
-            owned.event_type = Arc::clone(name_arc);
-            Arc::new(owned)
-        })
-        .collect();
+    // Rename event_type to stream name for downstream routing.
+    //
+    // PERF: When emitted_events is non-empty, the dispatch loop
+    // ignores output_events entirely (only emitted_events go to the
+    // output channel, and output_events are NOT re-routed). The
+    // rename does Arc::try_unwrap which deep-clones when refcount > 1
+    // (always true after EmitExpr's `emitted_events.extend(Arc::clone)`).
+    // Skipping it avoids one full Event clone per emitted event.
+    let output_events = if !emitted_events.is_empty() {
+        // Caller ignores these — pass through without cloning.
+        current_events
+    } else {
+        let name_arc = &stream.name_arc;
+        current_events
+            .into_iter()
+            .map(|e| {
+                let mut owned = Arc::try_unwrap(e).unwrap_or_else(|arc| (*arc).clone());
+                owned.event_type = Arc::clone(name_arc);
+                Arc::new(owned)
+            })
+            .collect()
+    };
 
     Ok(StreamProcessResult {
         emitted_events,
@@ -1451,8 +1463,11 @@ pub fn execute_pipeline_sync(
         }
     }
 
-    // Skip rename + clone when no downstream consumers need the renamed event_type
-    let output_events = if skip_output_rename {
+    // Skip rename + clone when no downstream consumers need the renamed
+    // event_type, OR when emitted_events is non-empty (the caller
+    // ignores output_events when emits exist — skipping the deep clone
+    // avoids wasted Arc::try_unwrap + Event::clone per emitted event).
+    let output_events = if skip_output_rename || !emitted_events.is_empty() {
         current_events
     } else {
         let name_arc = &stream.name_arc;

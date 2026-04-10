@@ -216,8 +216,15 @@ impl ManagedConnector for ManagedKafkaConnector {
             // cost — at high event rates this is the dominant overhead.
             // See docs/development/kafka-source-batching.md for the full
             // analysis. Target throughput: 50-150k eps.
-            const BATCH_MAX: usize = 256;
-            const BATCH_FLUSH_MS: u64 = 5;
+            // Larger batches amortize the per-batch overhead in the
+            // run-loop's mpsc channel + tokio::select! + process_batch
+            // call chain. The Kafka I/O agent showed the run.rs channel
+            // interaction costs ~30% (104k passthrough → 71k end-to-end).
+            // Widening from 256/5ms to 1024/20ms reduces the number of
+            // channel sends by 4× and lets process_batch see fatter
+            // batches. Latency impact: +15ms worst-case per batch.
+            const BATCH_MAX: usize = 1024;
+            const BATCH_FLUSH_MS: u64 = 20;
             let mut batch: Vec<Event> = Vec::with_capacity(BATCH_MAX);
 
             // Periodic ticker handles two concerns at once:
