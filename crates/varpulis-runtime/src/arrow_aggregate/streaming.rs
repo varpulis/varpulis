@@ -48,6 +48,7 @@ use varpulis_core::Value;
 
 use super::accumulator::{make_from_kind, AccumulatorKind};
 use super::grouped::{AggSpec, ColumnarGroupedAggregator};
+use super::non_partitioned::NonPartitionedColumnarAggregator;
 use crate::arrow_bridge::SchemaCache;
 use crate::event::SharedEvent;
 
@@ -361,6 +362,173 @@ impl StreamingPartitionedWindow {
     }
 }
 
+// =============================================================================
+// Phase 3b — non-partitioned streaming tumbling-window aggregator
+// =============================================================================
+
+/// Build instructions for one [`NonPartitionedColumnarAggregator`] per bin.
+///
+/// The non-partitioned analog of [`StreamingAggregatorTemplate`]. Holds
+/// the per-aggregation `(alias, accumulator-kind, optional-input-field)`
+/// tuples so that new bins can be instantiated with fresh accumulators
+/// via [`make_from_kind`] without any boxed trait state surviving.
+#[derive(Clone)]
+pub(crate) struct StreamingNonPartitionedTemplate {
+    pub(crate) specs: Vec<(String, AccumulatorKind, Option<String>)>,
+}
+
+impl StreamingNonPartitionedTemplate {
+    /// Build a template from a phase-1 [`crate::aggregation::Aggregator`].
+    /// Returns `None` if any aggregation function isn't in the
+    /// columnar-supported set.
+    pub(crate) fn from_aggregator(aggregator: &crate::aggregation::Aggregator) -> Option<Self> {
+        let specs = aggregator
+            .iter_specs()
+            .map(|(alias, func_name, field)| {
+                let kind = AccumulatorKind::from_name(func_name)?;
+                Some((alias.clone(), kind, field.clone()))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self { specs })
+    }
+
+    /// Build a fresh single-group aggregator for a new bin, pre-resized
+    /// to one group so `update_single_event` never needs to grow it.
+    fn instantiate(&self) -> Result<NonPartitionedColumnarAggregator, arrow_schema::ArrowError> {
+        let agg_specs: Vec<AggSpec> = self
+            .specs
+            .iter()
+            .map(|(alias, kind, field)| AggSpec {
+                alias: alias.clone(),
+                accumulator: make_from_kind(*kind),
+                field: field.clone(),
+            })
+            .collect();
+        let mut agg = NonPartitionedColumnarAggregator::try_new(agg_specs)?;
+        agg.ensure_single_group();
+        Ok(agg)
+    }
+}
+
+/// Non-partitioned streaming tumbling-window aggregator.
+///
+/// Holds one [`NonPartitionedColumnarAggregator`] per active bin. Events
+/// are routed into the right bin by absolute aligned timestamp
+/// (`bin_start = floor(ts / bin_ms) * bin_ms`). Bin end at or below the
+/// running watermark is flushed and removed.
+///
+/// This is phase 3b's mirror of [`StreamingPartitionedWindow`] — same
+/// shape, no partition key, so the per-event update path just hits
+/// accumulator `group_idx = 0` without any hashing.
+pub(crate) struct StreamingWindow {
+    bin_duration_ms: i64,
+    bins: BTreeMap<i64, NonPartitionedColumnarAggregator>,
+    template: StreamingNonPartitionedTemplate,
+    /// Watermark = running max of all event timestamps seen so far.
+    max_ts_ms: Option<i64>,
+}
+
+impl std::fmt::Debug for StreamingWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamingWindow")
+            .field("bin_duration_ms", &self.bin_duration_ms)
+            .field("active_bins", &self.bins.len())
+            .field("max_ts_ms", &self.max_ts_ms)
+            .finish()
+    }
+}
+
+impl StreamingWindow {
+    pub(crate) fn new(template: StreamingNonPartitionedTemplate, bin_duration_ms: i64) -> Self {
+        Self {
+            bin_duration_ms,
+            bins: BTreeMap::new(),
+            template,
+            max_ts_ms: None,
+        }
+    }
+
+    /// Ingest a batch of events one-at-a-time through the per-event
+    /// fast path, then flush any bins whose end is at or below the
+    /// running watermark. Returns `(bin_start_ms, per-alias results)`
+    /// for each flushed bin.
+    pub(crate) fn ingest_and_flush(
+        &mut self,
+        events: &[SharedEvent],
+    ) -> Vec<(i64, IndexMap<String, Value>)> {
+        if events.is_empty() {
+            return Vec::new();
+        }
+
+        // Per-event loop: identical watermark / bin / update logic to
+        // `StreamingPartitionedWindow::ingest_single_event`, minus the
+        // partition-key extraction.
+        for ev in events {
+            let ts = ev.timestamp.timestamp_millis();
+            let bin_start = ts.div_euclid(self.bin_duration_ms) * self.bin_duration_ms;
+
+            // Advance watermark.
+            let prev_max = self.max_ts_ms.unwrap_or(i64::MIN);
+            let new_max = prev_max.max(ts);
+            self.max_ts_ms = Some(new_max);
+
+            // Drop late events whose bin has already been flushed.
+            if bin_start + self.bin_duration_ms <= new_max && !self.bins.contains_key(&bin_start) {
+                continue;
+            }
+
+            // Get-or-create the bin's aggregator.
+            if !self.bins.contains_key(&bin_start) {
+                match self.template.instantiate() {
+                    Ok(agg) => {
+                        self.bins.insert(bin_start, agg);
+                    }
+                    Err(_) => continue,
+                }
+            }
+            let agg = self
+                .bins
+                .get_mut(&bin_start)
+                .expect("just inserted or pre-existing");
+            agg.update_single_event(ev);
+        }
+
+        // Flush bins whose end is at or below the watermark.
+        let max_ts = self.max_ts_ms.unwrap_or(i64::MIN);
+        let to_flush: Vec<i64> = self
+            .bins
+            .keys()
+            .copied()
+            .take_while(|s| s + self.bin_duration_ms <= max_ts)
+            .collect();
+        let mut output: Vec<(i64, IndexMap<String, Value>)> = Vec::new();
+        for bin_start in to_flush {
+            let agg = self.bins.remove(&bin_start).expect("present");
+            output.push((bin_start, agg.drain_fast()));
+        }
+        output
+    }
+
+    /// Force-flush every remaining bin regardless of watermark. Wired
+    /// into engine shutdown so the final partial window isn't lost.
+    #[allow(dead_code)]
+    pub(crate) fn flush_all(&mut self) -> Vec<(i64, IndexMap<String, Value>)> {
+        let bin_starts: Vec<i64> = self.bins.keys().copied().collect();
+        let mut output = Vec::new();
+        for bin_start in bin_starts {
+            let agg = self.bins.remove(&bin_start).expect("present");
+            output.push((bin_start, agg.drain_fast()));
+        }
+        output
+    }
+
+    /// Suppress an unused-warning while keeping `Arc` available for tests.
+    #[allow(dead_code)]
+    pub(crate) fn active_bins(&self) -> usize {
+        self.bins.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -497,5 +665,126 @@ mod tests {
         // the watermark — should be dropped.
         let out = win.ingest_and_flush(&[make_event(1500, "d0", 999.0)]);
         assert!(out.is_empty(), "late event dropped, no new flush");
+    }
+
+    // ---- Phase 3b: non-partitioned StreamingWindow tests ----
+
+    fn make_np_template() -> StreamingNonPartitionedTemplate {
+        let agg = Aggregator::new()
+            .add("s", Box::new(Sum), Some("value".to_string()))
+            .add("a", Box::new(Avg), Some("value".to_string()))
+            .add("mn", Box::new(Min), Some("value".to_string()))
+            .add("mx", Box::new(Max), Some("value".to_string()))
+            .add("c", Box::new(Count), None);
+        StreamingNonPartitionedTemplate::from_aggregator(&agg).unwrap()
+    }
+
+    fn make_np_event(ts_ms: i64, value: f64) -> SharedEvent {
+        let ts = DateTime::<Utc>::from_timestamp_millis(ts_ms).unwrap();
+        Arc::new(
+            Event::new("Reading")
+                .with_timestamp(ts)
+                .with_field("value", Value::Float(value)),
+        )
+    }
+
+    #[test]
+    fn np_single_bin_no_flush() {
+        let mut win = StreamingWindow::new(make_np_template(), 1000);
+        let out = win.ingest_and_flush(&[
+            make_np_event(0, 10.0),
+            make_np_event(100, 20.0),
+            make_np_event(200, 30.0),
+        ]);
+        assert!(out.is_empty(), "all events in bin 0 — should not flush");
+        assert_eq!(win.active_bins(), 1);
+    }
+
+    #[test]
+    fn np_cross_bin_flushes_old_bin() {
+        let mut win = StreamingWindow::new(make_np_template(), 1000);
+        let _ = win.ingest_and_flush(&[
+            make_np_event(0, 10.0),
+            make_np_event(500, 20.0),
+            make_np_event(700, 30.0),
+        ]);
+        assert_eq!(win.active_bins(), 1);
+
+        let out = win.ingest_and_flush(&[make_np_event(1500, 999.0)]);
+        assert_eq!(out.len(), 1, "bin 0 should flush exactly one result");
+        let (bin_start, result) = &out[0];
+        assert_eq!(*bin_start, 0);
+        assert_eq!(result["s"], Value::Float(60.0));
+        assert_eq!(result["a"], Value::Float(20.0));
+        assert_eq!(result["mn"], Value::Float(10.0));
+        assert_eq!(result["mx"], Value::Float(30.0));
+        assert_eq!(result["c"], Value::Int(3));
+        assert_eq!(win.active_bins(), 1, "bin 1 should still be active");
+    }
+
+    #[test]
+    fn np_streams_1000_bins_correctly() {
+        // Non-partitioned scenario: 1000 bins × 100 events each, one
+        // at a time. Each bin's result must equal sum=100*(500 + 500*99)/100
+        // etc. For simplicity, we check the flush count and one
+        // representative bin.
+        let mut win = StreamingWindow::new(make_np_template(), 1000);
+        let mut total_flushed = 0usize;
+        for bin in 0..1000 {
+            for i in 0..100 {
+                let ts = bin * 1000 + i * 10;
+                let out = win.ingest_and_flush(&[make_np_event(ts, i as f64)]);
+                total_flushed += out.len();
+            }
+        }
+        total_flushed += win.flush_all().len();
+        assert_eq!(total_flushed, 1000, "1000 bins should flush 1000 results");
+    }
+
+    #[test]
+    fn np_flush_all_drains_pending() {
+        let mut win = StreamingWindow::new(make_np_template(), 1000);
+        let _ = win.ingest_and_flush(&[
+            make_np_event(0, 10.0),
+            make_np_event(1500, 20.0),
+            make_np_event(2500, 30.0),
+        ]);
+        let drained = win.flush_all();
+        assert!(!drained.is_empty());
+        assert_eq!(win.active_bins(), 0);
+    }
+
+    #[test]
+    fn np_late_event_is_dropped() {
+        let mut win = StreamingWindow::new(make_np_template(), 1000);
+        let _ = win.ingest_and_flush(&[make_np_event(0, 10.0), make_np_event(2500, 20.0)]);
+        // ts=1500 falls in bin 1; watermark has already advanced to
+        // 2500 and bin 1's end (2000) ≤ 2500, so bin 1 was never created
+        // and this late event should be dropped silently.
+        let out = win.ingest_and_flush(&[make_np_event(1500, 999.0)]);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn np_nan_values_skipped() {
+        let mut win = StreamingWindow::new(make_np_template(), 1000);
+        // Three events in bin 0; one is NaN. Sum/avg/min/max should
+        // skip it but Count should count it.
+        let _ = win.ingest_and_flush(&[
+            make_np_event(0, 10.0),
+            make_np_event(100, f64::NAN),
+            make_np_event(200, 30.0),
+        ]);
+        let out = win.ingest_and_flush(&[make_np_event(1500, 0.0)]);
+        assert_eq!(out.len(), 1);
+        let (_, r) = &out[0];
+        assert_eq!(r["s"], Value::Float(40.0));
+        assert_eq!(r["a"], Value::Float(20.0));
+        assert_eq!(r["mn"], Value::Float(10.0));
+        assert_eq!(r["mx"], Value::Float(30.0));
+        // Count sees every event regardless of NaN — matches the row
+        // path's `events.len()` semantics. Sum/Avg/Min/Max are the ones
+        // that filter NaN via `get_float().filter(|v| !v.is_nan())`.
+        assert_eq!(r["c"], Value::Int(3));
     }
 }

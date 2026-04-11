@@ -209,6 +209,14 @@ pub enum RuntimeOp {
     /// most user expectations of "tumble every N seconds of wall clock".
     #[cfg(feature = "arrow")]
     PartitionedWindowedColumnarAggregate(PartitionedWindowedColumnarAggregateState),
+    /// Phase-3b fused operator: tumbling window + non-partitioned columnar
+    /// aggregate. Non-partitioned mirror of
+    /// [`Self::PartitionedWindowedColumnarAggregate`] emitted by the
+    /// compiler in place of `Window(Tumbling) → Aggregate` when no
+    /// `.partition_by(...)` is present and the aggregator uses only
+    /// columnar-supported functions (sum/avg/min/max/count).
+    #[cfg(feature = "arrow")]
+    WindowedColumnarAggregate(WindowedColumnarAggregateState),
     /// Having filter - filter aggregation results (post-aggregate filtering)
     Having(varpulis_core::ast::Expr),
     /// Select/projection with computed fields
@@ -263,6 +271,8 @@ impl RuntimeOp {
             Self::PartitionedAggregate(_) => "PartitionedAggregate",
             #[cfg(feature = "arrow")]
             Self::PartitionedWindowedColumnarAggregate(_) => "PartitionedWindowedColumnarAggregate",
+            #[cfg(feature = "arrow")]
+            Self::WindowedColumnarAggregate(_) => "WindowedColumnarAggregate",
             Self::Having(_) => "Having",
             Self::Select(_) => "Select",
             Self::Emit(_) => "Emit",
@@ -719,6 +729,72 @@ impl PartitionedAggregatorState {
         // 4. Feed the batch (one call in phase 1; phase 2 streams).
         agg.update(&batch).ok()?;
         Some(agg.drain_as_row_results())
+    }
+}
+
+/// Phase-3b fused tumbling-window + non-partitioned columnar aggregate.
+///
+/// Non-partitioned analog of [`PartitionedWindowedColumnarAggregateState`].
+/// Wraps a [`crate::arrow_aggregate::streaming::StreamingWindow`]
+/// (bin-keyed single-group streaming aggregator) plus the per-bin
+/// duration.
+///
+/// Emitted by `engine::compilation` when `Window(Tumbling) → Aggregate`
+/// is seen without a preceding `.partition_by(...)` and every
+/// aggregation function is in the columnar-supported set.
+#[cfg(feature = "arrow")]
+pub struct WindowedColumnarAggregateState {
+    pub bin_duration_ms: i64,
+    pub(crate) inner: crate::arrow_aggregate::streaming::StreamingWindow,
+}
+
+#[cfg(feature = "arrow")]
+impl std::fmt::Debug for WindowedColumnarAggregateState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WindowedColumnarAggregateState")
+            .field("bin_duration_ms", &self.bin_duration_ms)
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
+#[cfg(feature = "arrow")]
+impl WindowedColumnarAggregateState {
+    /// Build the fused operator from a bin duration and a phase-1
+    /// [`crate::aggregation::Aggregator`]. Returns `None` if the
+    /// aggregator uses any function the columnar path doesn't support.
+    /// Callers must gate with `Aggregator::supported_for_columnar()`
+    /// first; this is a defensive double-check.
+    pub fn try_new(
+        bin_duration_ms: i64,
+        aggregator: &crate::aggregation::Aggregator,
+    ) -> Option<Self> {
+        let template =
+            crate::arrow_aggregate::streaming::StreamingNonPartitionedTemplate::from_aggregator(
+                aggregator,
+            )?;
+        let inner =
+            crate::arrow_aggregate::streaming::StreamingWindow::new(template, bin_duration_ms);
+        Some(Self {
+            bin_duration_ms,
+            inner,
+        })
+    }
+
+    /// Ingest a batch, flush any bins whose end is at or below the
+    /// watermark. Returns `(bin_start_ms, per-alias results)` for each
+    /// flushed bin.
+    pub fn ingest_and_flush(
+        &mut self,
+        events: &[SharedEvent],
+    ) -> Vec<(i64, IndexMap<String, Value>)> {
+        self.inner.ingest_and_flush(events)
+    }
+
+    /// Force-flush all remaining bins (engine shutdown / end-of-stream).
+    #[allow(dead_code)]
+    pub fn flush_all(&mut self) -> Vec<(i64, IndexMap<String, Value>)> {
+        self.inner.flush_all()
     }
 }
 

@@ -610,6 +610,29 @@ fn execute_op_common(
         }
 
         #[cfg(feature = "arrow")]
+        RuntimeOp::WindowedColumnarAggregate(state) => {
+            // Phase-3b fused operator: hand the incoming batch to the
+            // streaming bin-keyed single-group aggregator. Flushed bins
+            // become `AggregationResult` events timestamped to bin_end.
+            let flushed = state.ingest_and_flush(current_events);
+            *current_events = flushed
+                .into_iter()
+                .map(|(bin_start_ms, result)| {
+                    let mut agg_event = Event::new("AggregationResult");
+                    if let Some(ts) = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+                        bin_start_ms + state.bin_duration_ms,
+                    ) {
+                        agg_event.timestamp = ts;
+                    }
+                    for (key, value) in result {
+                        agg_event.data.insert(key.into(), value);
+                    }
+                    Arc::new(agg_event)
+                })
+                .collect();
+        }
+
+        #[cfg(feature = "arrow")]
         RuntimeOp::PartitionedWindowedColumnarAggregate(state) => {
             // Phase-2 fused operator: hand the incoming batch to the
             // streaming bin-keyed aggregator. It buckets events by bin,

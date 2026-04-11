@@ -75,6 +75,47 @@ impl NonPartitionedColumnarAggregator {
         }
         out
     }
+
+    /// Resize every accumulator to exactly one group. The phase-3b
+    /// streaming op calls this once per bin at construction, so the
+    /// per-event `update_single_event` path doesn't pay a per-call
+    /// resize. Idempotent — a second call is a no-op.
+    pub(crate) fn ensure_single_group(&mut self) {
+        for spec in &mut self.specs {
+            spec.accumulator.resize(1);
+        }
+    }
+
+    /// Per-event fast path: update every accumulator with the single
+    /// value extracted from `event` via `get_float`, directly on
+    /// `group_idx = 0`. Bypasses Arrow `RecordBatch` construction
+    /// entirely — this is the scenario-02-equivalent hot path for
+    /// non-partitioned tumbling windows.
+    ///
+    /// Callers must have invoked [`Self::ensure_single_group`] before
+    /// the first call (the phase-3b streaming op does this at bin
+    /// construction). NaN values are skipped to match the row path.
+    pub(crate) fn update_single_event(&mut self, event: &crate::event::Event) {
+        for spec in &mut self.specs {
+            let value: Option<f64> = match &spec.field {
+                Some(field_name) => event.get_float(field_name).filter(|v| !v.is_nan()),
+                None => None, // Count ignores value
+            };
+            spec.accumulator.update_single(0, value);
+        }
+    }
+
+    /// Drain via the accumulator's scalar `drain_single(0)` — parallel
+    /// to `ColumnarGroupedAggregator::drain_fast`. Used by the phase-3b
+    /// streaming op after its per-event updates to avoid the Arrow
+    /// array roundtrip of `evaluate() → array_value_at()`.
+    pub(crate) fn drain_fast(self) -> IndexMap<String, Value> {
+        let mut out = IndexMap::with_capacity(self.specs.len());
+        for spec in self.specs {
+            out.insert(spec.alias.clone(), spec.accumulator.drain_single(0));
+        }
+        out
+    }
 }
 
 #[cfg(test)]

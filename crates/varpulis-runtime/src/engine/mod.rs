@@ -39,6 +39,8 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 // Re-export NamedPattern from types
 pub use types::NamedPattern;
+#[cfg(feature = "arrow")]
+pub use types::WindowedColumnarAggregateState;
 pub use types::{
     AggregatorState, EngineConfig, EngineMetrics, PartitionedAggregatorState, ReloadReport,
     SourceBinding, UserFunction,

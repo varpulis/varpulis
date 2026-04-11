@@ -39,6 +39,13 @@ impl TumblingWindow {
         }
     }
 
+    /// Bin width for this tumbling window. Used by the phase-3b
+    /// fusion logic in `engine::compilation` to convert a
+    /// `Window(Tumbling)` into a `WindowedColumnarAggregate` op.
+    pub const fn duration(&self) -> Duration {
+        self.duration
+    }
+
     /// Add a shared event to the window, returning completed window if triggered.
     pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let event_time = event.timestamp;

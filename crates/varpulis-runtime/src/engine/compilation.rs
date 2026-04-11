@@ -880,6 +880,37 @@ impl Engine {
                         }
                     }
 
+                    // Phase-3b fusion: mirror of phase 2 but for the
+                    // non-partitioned case. If the previously pushed op
+                    // is a plain `Tumbling` window AND no partition_by
+                    // preceded AND every aggregation function is
+                    // columnar-supported, emit the
+                    // `WindowedColumnarAggregate` fused op instead of
+                    // `Window(Tumbling) + Aggregate`.
+                    #[cfg(feature = "arrow")]
+                    {
+                        if partition_key.is_none() && aggregator.supported_for_columnar() {
+                            if let Some(crate::engine::types::RuntimeOp::Window(
+                                crate::engine::types::WindowType::Tumbling(w),
+                            )) = runtime_ops.last()
+                            {
+                                let bin_duration_ms = w.duration().num_milliseconds();
+                                if bin_duration_ms > 0 {
+                                    if let Some(state) = crate::engine::types::WindowedColumnarAggregateState::try_new(
+                                        bin_duration_ms,
+                                        &aggregator,
+                                    ) {
+                                        runtime_ops.pop();
+                                        runtime_ops.push(
+                                            crate::engine::types::RuntimeOp::WindowedColumnarAggregate(state),
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Fallback path: separate window + aggregator (or
                     // plain aggregator). Used when the arrow feature is
                     // off, when no partition_by was seen, when the
@@ -2227,10 +2258,11 @@ mod arrow_fusion_tests {
     }
 
     #[test]
-    fn no_partition_by_skips_fusion() {
-        // Without `.partition_by`, the window is non-partitioned, so
-        // we get plain Aggregate (not PartitionedAggregate) and the
-        // fusion gate is "if let Some(partition_key)" — should skip.
+    fn no_partition_by_uses_phase_3b_fusion() {
+        // Phase 3b extends fusion to the non-partitioned shape as well:
+        // `Window(Tumbling) + Aggregate` (no partition_by) becomes
+        // `WindowedColumnarAggregate`, the non-partitioned mirror of
+        // phase 2's `PartitionedWindowedColumnarAggregate`.
         let source = r"
             event Reading:
                 ts: int
@@ -2246,16 +2278,20 @@ mod arrow_fusion_tests {
         ";
         let ops = compile(source);
         assert!(
-            ops.contains(&"Window"),
-            "non-partitioned shape leaves Window intact; got {ops:?}"
+            ops.contains(&"WindowedColumnarAggregate"),
+            "non-partitioned shape should fuse into WindowedColumnarAggregate; got {ops:?}"
         );
         assert!(
-            ops.contains(&"Aggregate"),
-            "non-partitioned shape uses plain Aggregate; got {ops:?}"
+            !ops.contains(&"Window"),
+            "Window op should be subsumed by the fused op; got {ops:?}"
+        );
+        assert!(
+            !ops.contains(&"Aggregate"),
+            "raw Aggregate should be subsumed by the fused op; got {ops:?}"
         );
         assert!(
             !ops.contains(&"PartitionedWindowedColumnarAggregate"),
-            "fusion is partition-only; got {ops:?}"
+            "partitioned fusion should not apply here; got {ops:?}"
         );
     }
 
@@ -2364,5 +2400,70 @@ mod arrow_fusion_tests {
         // Silence dead-code warnings on the first state's outputs.
         let _ = flushed_for_bin_1;
         let _ = remainder;
+    }
+
+    #[test]
+    fn phase_3b_fused_op_produces_correct_results() {
+        // Phase-3b end-to-end: build the non-partitioned fused op
+        // directly, feed it events across 3 bins, and verify the
+        // flushed outputs match hand-computed sum/avg/min/max/count.
+        use std::sync::Arc;
+
+        use varpulis_core::Value;
+
+        use crate::aggregation::{Aggregator, Avg, Count, Max, Min, Sum};
+        use crate::engine::types::WindowedColumnarAggregateState;
+        use crate::event::{Event, SharedEvent};
+
+        let agg = Aggregator::new()
+            .add("s", Box::new(Sum), Some("value".to_string()))
+            .add("a", Box::new(Avg), Some("value".to_string()))
+            .add("mn", Box::new(Min), Some("value".to_string()))
+            .add("mx", Box::new(Max), Some("value".to_string()))
+            .add("c", Box::new(Count), None);
+
+        let mut state =
+            WindowedColumnarAggregateState::try_new(1000, &agg).expect("supported funcs only");
+
+        let make_ev = |ts_ms: i64, v: f64| -> SharedEvent {
+            Arc::new(
+                Event::new("Reading")
+                    .with_timestamp(
+                        chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ts_ms).unwrap(),
+                    )
+                    .with_field("value", Value::Float(v)),
+            )
+        };
+
+        // Bin 0 (ts 0..1000): values 10, 20, 30 → sum 60, avg 20, min 10, max 30, count 3
+        // Bin 1 (ts 1000..2000): value 100 → sum 100, avg 100, min 100, max 100, count 1
+        // Bin 2 (ts 2000..3000): value 999 → still active at end
+        let mut all_flushed: Vec<(i64, indexmap::IndexMap<String, Value>)> = Vec::new();
+        all_flushed.extend(state.ingest_and_flush(&[
+            make_ev(0, 10.0),
+            make_ev(500, 20.0),
+            make_ev(700, 30.0),
+        ]));
+        all_flushed.extend(state.ingest_and_flush(&[make_ev(1100, 100.0)]));
+        all_flushed.extend(state.ingest_and_flush(&[make_ev(2100, 999.0)]));
+        all_flushed.extend(state.flush_all());
+
+        let by_bin: std::collections::BTreeMap<i64, indexmap::IndexMap<String, Value>> =
+            all_flushed.into_iter().collect();
+
+        let bin0 = &by_bin[&0];
+        assert_eq!(bin0["s"], Value::Float(60.0));
+        assert_eq!(bin0["a"], Value::Float(20.0));
+        assert_eq!(bin0["mn"], Value::Float(10.0));
+        assert_eq!(bin0["mx"], Value::Float(30.0));
+        assert_eq!(bin0["c"], Value::Int(3));
+
+        let bin1 = &by_bin[&1000];
+        assert_eq!(bin1["s"], Value::Float(100.0));
+        assert_eq!(bin1["c"], Value::Int(1));
+
+        let bin2 = &by_bin[&2000];
+        assert_eq!(bin2["s"], Value::Float(999.0));
+        assert_eq!(bin2["c"], Value::Int(1));
     }
 }
