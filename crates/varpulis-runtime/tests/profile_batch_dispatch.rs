@@ -4,8 +4,6 @@
 //! Run: cargo test -p varpulis-runtime --features arrow --test profile_batch_dispatch --release -- --nocapture
 #![cfg(unix)]
 
-use std::sync::Arc;
-
 use tokio::sync::mpsc;
 use varpulis_core::Value;
 use varpulis_parser::parse;

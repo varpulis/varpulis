@@ -27,4 +27,20 @@ ignore = [
     # Transitive via async-nats 0.46 which pins rustls-webpki 0.102.x.
     # Fix requires >=0.103.10. No upstream fix for async-nats yet.
     "RUSTSEC-2026-0049",
+
+    # wasmtime 25.x: 11 CVEs published 2026-04-09. Transitive via
+    # varpulis-wasm (WASM UDF SmartModule feature). wasmtime 26.x fixes
+    # all of these but requires API migration. Already ignored in
+    # deny.toml; mirrored here so `cargo audit` matches.
+    "RUSTSEC-2026-0085",
+    "RUSTSEC-2026-0086",
+    "RUSTSEC-2026-0087",
+    "RUSTSEC-2026-0088",
+    "RUSTSEC-2026-0089",
+    "RUSTSEC-2026-0091",
+    "RUSTSEC-2026-0092",
+    "RUSTSEC-2026-0093",
+    "RUSTSEC-2026-0094",
+    "RUSTSEC-2026-0095",
+    "RUSTSEC-2026-0096",
 ]
