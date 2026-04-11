@@ -146,6 +146,17 @@ pub struct Engine {
     pub(super) udf_registry: UdfRegistry,
     /// Pipeline trace collector (zero-cost when disabled)
     pub(super) trace_collector: trace::TraceCollector,
+    /// Source offset registry: connector name → (partition → last-consumed offset).
+    ///
+    /// Sources (currently only Kafka) push their highest-consumed offset per
+    /// partition into this map as events flow into the engine. At checkpoint
+    /// time the map is snapshotted into `EngineCheckpoint::source_offsets`,
+    /// and on commit the source is asked to persist those offsets to its
+    /// own group-coordinator or equivalent. This is the input-side half of
+    /// end-to-end exactly-once, paired with the 2PC sink interface.
+    pub(super) source_offsets: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, std::collections::HashMap<i32, i64>>>,
+    >,
 }
 
 impl std::fmt::Debug for Engine {
@@ -246,6 +257,9 @@ impl Engine {
             udf_registry: UdfRegistry::new(),
             trace_collector: trace::TraceCollector::new(),
             collected_outputs: Vec::new(),
+            source_offsets: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
         }
     }
 
@@ -285,6 +299,9 @@ impl Engine {
                 physical_plan: None,
                 udf_registry: UdfRegistry::new(),
                 trace_collector: trace::TraceCollector::new(),
+                source_offsets: std::sync::Arc::new(std::sync::Mutex::new(
+                    std::collections::HashMap::new(),
+                )),
             }
         }
     }
@@ -1555,6 +1572,21 @@ impl Engine {
     // Checkpointing
     // =========================================================================
 
+    /// Return a shared handle to the source-offset registry.
+    ///
+    /// Source connectors (e.g. Kafka) clone this handle and update the map
+    /// under their own connector name as events flow in, so that the next
+    /// checkpoint snapshot reflects exactly which input records are already
+    /// reflected in engine state. On commit the driver should call the
+    /// source's commit API with the snapshotted offsets to close the 2PC loop.
+    pub fn source_offsets_handle(
+        &self,
+    ) -> std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, std::collections::HashMap<i32, i64>>>,
+    > {
+        self.source_offsets.clone()
+    }
+
     /// Create a checkpoint of the engine state (windows, SASE engines, joins, variables).
     pub fn create_checkpoint(&self) -> crate::persistence::EngineCheckpoint {
         use crate::persistence::{EngineCheckpoint, WindowCheckpoint};
@@ -1643,6 +1675,12 @@ impl Engine {
 
         let watermark_state = self.watermark_tracker.as_ref().map(|t| t.checkpoint());
 
+        let source_offsets = self
+            .source_offsets
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+
         EngineCheckpoint {
             version: crate::persistence::CHECKPOINT_VERSION,
             window_states,
@@ -1654,6 +1692,7 @@ impl Engine {
             watermark_state,
             distinct_states,
             limit_states,
+            source_offsets,
         }
     }
 
@@ -1667,6 +1706,10 @@ impl Engine {
 
         self.events_processed = cp.events_processed;
         self.output_events_emitted = cp.output_events_emitted;
+
+        if let Ok(mut guard) = self.source_offsets.lock() {
+            *guard = cp.source_offsets.clone();
+        }
 
         for (k, sv) in &cp.variables {
             self.variables

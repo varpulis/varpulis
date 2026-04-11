@@ -102,6 +102,7 @@ proptest! {
             watermark_state: None,
             distinct_states: Default::default(),
             limit_states: Default::default(),
+            source_offsets: Default::default(),
         };
 
         let json = serde_json::to_string(&cp).expect("checkpoint should serialize");
@@ -127,6 +128,7 @@ proptest! {
             watermark_state: None,
             distinct_states: Default::default(),
             limit_states: Default::default(),
+            source_offsets: Default::default(),
         };
 
         let result = cp.validate_and_migrate();
@@ -152,6 +154,7 @@ proptest! {
             watermark_state: None,
             distinct_states: Default::default(),
             limit_states: Default::default(),
+            source_offsets: Default::default(),
         };
 
         let result = cp.validate_and_migrate();

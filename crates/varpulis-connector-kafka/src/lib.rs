@@ -6,8 +6,9 @@
 
 pub mod managed;
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -15,7 +16,7 @@ pub use managed::ManagedKafkaConnector;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
-use rdkafka::Message;
+use rdkafka::{Message, Offset, TopicPartitionList};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use varpulis_connector_api::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
@@ -299,12 +300,47 @@ pub(crate) fn apply_properties(
 // Kafka Source
 // =============================================================================
 
-/// Kafka source connector with rdkafka
-#[derive(Debug)]
+/// Engine-wide source offset registry: connector name → (partition → last offset).
+pub type EngineOffsetRegistry = Arc<Mutex<HashMap<String, HashMap<i32, i64>>>>;
+
+/// Kafka source connector with rdkafka.
+///
+/// ## Offset tracking and exactly-once
+///
+/// The consumer is created with `enable.auto.commit = false`, and this source
+/// does **not** commit offsets on a per-message basis. Instead, every record
+/// that has been successfully handed off to the engine channel updates an
+/// in-memory `offsets: HashMap<partition, last_offset>`. The engine snapshots
+/// that map into `EngineCheckpoint::source_offsets` at barrier time, and on
+/// 2PC commit it calls [`SourceConnector::commit_offsets`], which translates
+/// the map into a `TopicPartitionList` and commits it synchronously to the
+/// consumer group coordinator. A subsequent recovery reads from those
+/// committed offsets, giving end-to-end exactly-once when paired with a
+/// transactional sink.
 pub struct KafkaSource {
     name: String,
     config: KafkaConfig,
     running: Arc<AtomicBool>,
+    /// Shared consumer handle, set during `start()`. Used by both the
+    /// consume task and `commit_offsets()`.
+    consumer: Arc<std::sync::RwLock<Option<Arc<StreamConsumer>>>>,
+    /// Latest consumed offset per partition, updated only after the
+    /// corresponding event has been accepted by the engine channel.
+    offsets: Arc<Mutex<HashMap<i32, i64>>>,
+    /// Optional engine-level registry. When set, the consume task mirrors
+    /// `offsets` into `engine_offsets[self.name]` so the engine sees a
+    /// consistent snapshot without having to poll the source.
+    engine_offsets: Option<EngineOffsetRegistry>,
+}
+
+impl std::fmt::Debug for KafkaSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KafkaSource")
+            .field("name", &self.name)
+            .field("topic", &self.config.topic)
+            .field("running", &self.running.load(Ordering::SeqCst))
+            .finish_non_exhaustive()
+    }
 }
 
 impl KafkaSource {
@@ -314,7 +350,18 @@ impl KafkaSource {
             name: name.to_string(),
             config,
             running: Arc::new(AtomicBool::new(false)),
+            consumer: Arc::new(std::sync::RwLock::new(None)),
+            offsets: Arc::new(Mutex::new(HashMap::new())),
+            engine_offsets: None,
         }
+    }
+
+    /// Bind this source to an engine-wide offset registry so that the
+    /// engine's checkpoint snapshots see this source's latest offsets
+    /// without having to reach into the source itself.
+    pub fn with_engine_offsets(mut self, registry: EngineOffsetRegistry) -> Self {
+        self.engine_offsets = Some(registry);
+        self
     }
 }
 
@@ -348,9 +395,16 @@ impl SourceConnector for KafkaSource {
             .subscribe(&[&self.config.topic])
             .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 
+        let consumer = Arc::new(consumer);
+        if let Ok(mut slot) = self.consumer.write() {
+            *slot = Some(consumer.clone());
+        }
+
         self.running.store(true, Ordering::SeqCst);
         let running = self.running.clone();
         let name = self.name.clone();
+        let offsets = self.offsets.clone();
+        let engine_offsets = self.engine_offsets.clone();
 
         tokio::spawn(async move {
             info!("Kafka source {} started, consuming from topic", name);
@@ -372,6 +426,10 @@ impl SourceConnector for KafkaSource {
                 match tokio::time::timeout(Duration::from_millis(100), stream.next()).await {
                     Ok(Some(Ok(msg))) => {
                         cb.record_success();
+
+                        let partition = msg.partition();
+                        let msg_offset = msg.offset();
+                        let mut accepted = false;
 
                         if let Some(payload) = msg.payload() {
                             if payload.len()
@@ -397,6 +455,7 @@ impl SourceConnector for KafkaSource {
                                             warn!("Kafka source {}: channel closed", name);
                                             break;
                                         }
+                                        accepted = true;
                                     }
                                     Err(e) => {
                                         warn!("Kafka source {}: failed to parse JSON: {}", name, e);
@@ -405,8 +464,26 @@ impl SourceConnector for KafkaSource {
                             }
                         }
 
-                        if let Err(e) = consumer.commit_message(&msg, CommitMode::Async) {
-                            warn!("Kafka source {}: offset commit failed: {}", name, e);
+                        // Record the offset only once the engine has accepted
+                        // the event. Offsets committed at checkpoint time will
+                        // therefore always refer to records whose effects are
+                        // already in engine state.
+                        if accepted {
+                            if let Ok(mut map) = offsets.lock() {
+                                let slot = map.entry(partition).or_insert(msg_offset);
+                                if msg_offset > *slot {
+                                    *slot = msg_offset;
+                                }
+                            }
+                            if let Some(registry) = &engine_offsets {
+                                if let Ok(mut reg) = registry.lock() {
+                                    let entry = reg.entry(name.clone()).or_default();
+                                    let slot = entry.entry(partition).or_insert(msg_offset);
+                                    if msg_offset > *slot {
+                                        *slot = msg_offset;
+                                    }
+                                }
+                            }
                         }
                     }
                     Ok(Some(Err(e))) => {
@@ -441,6 +518,46 @@ impl SourceConnector for KafkaSource {
 
     fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+
+    fn supports_offset_checkpoint(&self) -> bool {
+        true
+    }
+
+    fn snapshot_offsets(&self) -> HashMap<i32, i64> {
+        self.offsets.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    async fn commit_offsets(&self, offsets: &HashMap<i32, i64>) -> Result<(), ConnectorError> {
+        if offsets.is_empty() {
+            return Ok(());
+        }
+        let consumer = {
+            let guard = self
+                .consumer
+                .read()
+                .map_err(|_| ConnectorError::SendFailed("consumer lock poisoned".into()))?;
+            match guard.as_ref() {
+                Some(c) => c.clone(),
+                None => {
+                    return Err(ConnectorError::SendFailed(
+                        "commit_offsets called before start()".into(),
+                    ));
+                }
+            }
+        };
+
+        let mut tpl = TopicPartitionList::new();
+        for (&partition, &offset) in offsets {
+            // Kafka commit semantics: committed offset = next offset to read.
+            // We track last-consumed offset, so commit offset + 1.
+            tpl.add_partition_offset(&self.config.topic, partition, Offset::Offset(offset + 1))
+                .map_err(|e| ConnectorError::SendFailed(format!("build TPL for commit: {e}")))?;
+        }
+
+        consumer
+            .commit(&tpl, CommitMode::Sync)
+            .map_err(|e| ConnectorError::SendFailed(format!("commit offsets: {e}")))
     }
 }
 

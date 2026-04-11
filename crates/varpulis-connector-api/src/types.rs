@@ -77,6 +77,38 @@ pub trait SourceConnector: Send + Sync {
             ConnectorHealth::unhealthy("not running")
         }
     }
+
+    // ---- Checkpoint-aligned source offset tracking ----
+    //
+    // These hooks form the input-side half of end-to-end exactly-once,
+    // paired with the 2PC sink interface. Sources that support replayable
+    // offsets (Kafka, Pulsar, file-based sources with seekable positions)
+    // override them; others keep the no-op defaults and fall back to
+    // at-least-once.
+
+    /// Whether this source tracks replayable per-partition offsets.
+    fn supports_offset_checkpoint(&self) -> bool {
+        false
+    }
+
+    /// Return the latest consumed offset per partition since `start()`.
+    ///
+    /// The snapshot must be consistent with what has already been pushed
+    /// into the engine's event channel — i.e. every returned offset
+    /// corresponds to a record whose event has successfully flowed into
+    /// the pipeline.
+    fn snapshot_offsets(&self) -> std::collections::HashMap<i32, i64> {
+        std::collections::HashMap::new()
+    }
+
+    /// Commit the given offsets back to the source's consumer group
+    /// (or equivalent) as part of a 2PC checkpoint commit.
+    async fn commit_offsets(
+        &self,
+        _offsets: &std::collections::HashMap<i32, i64>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
 }
 
 /// Trait for sink connectors that send events to external systems.

@@ -1172,7 +1172,7 @@ impl AsyncCheckpointManager {
 }
 
 /// Current checkpoint schema version.
-pub const CHECKPOINT_VERSION: u32 = 1;
+pub const CHECKPOINT_VERSION: u32 = 2;
 
 /// Default version for deserialized checkpoints that lack a version field (pre-versioning).
 const fn default_checkpoint_version() -> u32 {
@@ -1206,6 +1206,14 @@ pub struct EngineCheckpoint {
     /// Limit operator states by stream name (counter snapshot)
     #[serde(default)]
     pub limit_states: HashMap<String, LimitCheckpoint>,
+    /// Source offsets per connector, partition → last-consumed offset.
+    ///
+    /// For Kafka sources this is the offset of the last event that flowed
+    /// into the engine before the checkpoint barrier passed. On recovery,
+    /// the source must seek to `offset + 1` for each partition so that the
+    /// 2PC'd sink output and the re-consumed input are aligned end-to-end.
+    #[serde(default)]
+    pub source_offsets: HashMap<String, HashMap<i32, i64>>,
 }
 
 impl EngineCheckpoint {
@@ -1222,12 +1230,12 @@ impl EngineCheckpoint {
         }
 
         // Apply sequential migrations: v1 → v2 → … → CHECKPOINT_VERSION
-        // Currently at v1 — no migrations needed yet.
-        // Future example:
-        // if self.version < 2 {
-        //     migrate_v1_to_v2(self);
-        //     self.version = 2;
-        // }
+        // v1 → v2: source_offsets added. `#[serde(default)]` on the field
+        // means older payloads deserialize with an empty map, so the only
+        // migration step is bumping the stored version.
+        if self.version < 2 {
+            self.version = 2;
+        }
 
         Ok(())
     }

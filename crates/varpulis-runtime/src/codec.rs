@@ -105,6 +105,7 @@ mod tests {
             watermark_state: None,
             distinct_states: Default::default(),
             limit_states: Default::default(),
+            source_offsets: Default::default(),
         };
 
         let data = serialize(&cp, CheckpointFormat::Json).unwrap();
@@ -130,6 +131,7 @@ mod tests {
             watermark_state: None,
             distinct_states: Default::default(),
             limit_states: Default::default(),
+            source_offsets: Default::default(),
         };
 
         let data = serialize(&cp, CheckpointFormat::MessagePack).unwrap();
@@ -187,6 +189,7 @@ mod tests {
             watermark_state: None,
             distinct_states: Default::default(),
             limit_states: Default::default(),
+            source_offsets: Default::default(),
         };
 
         let json_data = serialize(&cp, CheckpointFormat::Json).unwrap();
