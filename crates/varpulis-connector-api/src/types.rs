@@ -54,6 +54,16 @@ impl ConnectorConfig {
     }
 }
 
+/// Engine-wide source offset registry.
+///
+/// Maps connector name → (partition → last-consumed offset). Source
+/// connectors update entries as events flow into the engine; the engine
+/// snapshots the whole map at checkpoint time and the driver commits the
+/// per-source entries as part of the 2PC commit phase.
+pub type EngineOffsetRegistry = std::sync::Arc<
+    std::sync::Mutex<std::collections::HashMap<String, std::collections::HashMap<i32, i64>>>,
+>;
+
 /// Trait for source connectors that ingest events from external systems.
 #[async_trait]
 pub trait SourceConnector: Send + Sync {

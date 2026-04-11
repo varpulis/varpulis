@@ -25,7 +25,10 @@ pub mod types;
 pub use component::{ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory};
 pub use managed::{ConnectorHealthReport, ManagedConnector};
 pub use sink::{Sink, SinkConnectorAdapter, SinkError};
-pub use types::{ConnectorConfig, ConnectorError, ConnectorHealth, SinkConnector, SourceConnector};
+pub use types::{
+    ConnectorConfig, ConnectorError, ConnectorHealth, EngineOffsetRegistry, SinkConnector,
+    SourceConnector,
+};
 
 #[cfg(test)]
 mod tests {

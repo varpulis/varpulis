@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use varpulis_core::Event;
 
 use super::managed::{ConnectorHealthReport, ManagedConnector};
-use super::types::{ConnectorConfig, ConnectorError};
+use super::types::{ConnectorConfig, ConnectorError, EngineOffsetRegistry};
 use crate::sink::Sink;
 
 /// Registry that owns one [`ManagedConnector`] per declared connector name.
@@ -77,6 +77,32 @@ impl ManagedConnectorRegistry {
         })?;
 
         connector.create_sink(topic, params)
+    }
+
+    /// Propagate an engine-wide offset registry into every managed
+    /// connector. Replayable sources (currently only Kafka) will mirror
+    /// their consumed offsets into the registry so the engine can snapshot
+    /// them at checkpoint time; other connectors ignore the call.
+    pub fn set_engine_offsets_registry(&mut self, registry: EngineOffsetRegistry) {
+        for connector in self.connectors.values_mut() {
+            connector.set_engine_offsets_registry(registry.clone());
+        }
+    }
+
+    /// Commit per-partition source offsets for a given (connector, topic)
+    /// pair. Called by the driver after a checkpoint has been durably
+    /// persisted and all 2PC sinks have committed, closing the loop for
+    /// end-to-end exactly-once.
+    pub async fn commit_source_offsets(
+        &self,
+        connector_name: &str,
+        topic: &str,
+        offsets: &HashMap<i32, i64>,
+    ) -> Result<(), ConnectorError> {
+        let connector = self.connectors.get(connector_name).ok_or_else(|| {
+            ConnectorError::ConfigError(format!("Unknown connector: {connector_name}"))
+        })?;
+        connector.commit_source_offsets(topic, offsets).await
     }
 
     /// Collect health reports from all managed connectors.

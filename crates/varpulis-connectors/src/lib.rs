@@ -40,7 +40,10 @@ pub use registry::ConnectorRegistry;
 pub use rest_api::{RestApiClient, RestApiConfig, RestApiSink};
 // Sink trait, error, and adapter
 pub use sink::{Sink, SinkConnectorAdapter, SinkError};
-pub use types::{ConnectorConfig, ConnectorError, ConnectorHealth, SinkConnector, SourceConnector};
+pub use types::{
+    ConnectorConfig, ConnectorError, ConnectorHealth, EngineOffsetRegistry, SinkConnector,
+    SourceConnector,
+};
 // PostgreSQL CDC connector
 #[cfg(feature = "cdc")]
 pub use varpulis_connector_cdc as postgres_cdc;

@@ -2488,6 +2488,7 @@ mod tests {
             watermark_state: None,
             distinct_states: std::collections::HashMap::new(),
             limit_states: std::collections::HashMap::new(),
+            source_offsets: std::collections::HashMap::new(),
         };
 
         let resp = test_request()

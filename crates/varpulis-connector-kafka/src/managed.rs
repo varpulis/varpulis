@@ -1,20 +1,21 @@
 //! Managed Kafka connector -- shares a single producer across all sinks
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use rdkafka::config::ClientConfig;
-use rdkafka::consumer::{Consumer, StreamConsumer};
+use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
-use rdkafka::Message;
+use rdkafka::{Message, Offset, TopicPartitionList};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 use varpulis_connector_api::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use varpulis_connector_api::helpers::json_to_event;
 use varpulis_connector_api::sink::{Sink, SinkError};
-use varpulis_connector_api::{ConnectorError, ManagedConnector};
+use varpulis_connector_api::{ConnectorError, EngineOffsetRegistry, ManagedConnector};
 use varpulis_core::Event;
 
 use crate::KafkaConfig;
@@ -37,16 +38,71 @@ fn is_vpl_only_property(key: &str) -> bool {
     )
 }
 
+/// Per-topic source state: the shared consumer handle used by
+/// `commit_source_offsets` to translate a per-partition offset map into a
+/// `TopicPartitionList` and issue a sync commit.
+///
+/// The highest-observed offset per partition is maintained in a separate
+/// map inside the consume task, mirrored into the engine-wide registry,
+/// and the offset values flow into this connector via the `offsets`
+/// argument to `commit_source_offsets` — so we deliberately don't store a
+/// second copy here.
+struct SourceState {
+    consumer: Arc<StreamConsumer>,
+}
+
+/// Apply the pending per-partition offsets collected in the current batch
+/// to both the source-local `offsets` map and (optionally) the engine-wide
+/// registry keyed by connector name. Called only after `tx.send(batch)` has
+/// successfully handed ownership of the events to the engine.
+fn commit_pending_offsets(
+    pending: &mut HashMap<i32, i64>,
+    offsets: &Arc<Mutex<HashMap<i32, i64>>>,
+    engine_offsets: Option<&EngineOffsetRegistry>,
+    connector_name: &str,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    if let Ok(mut map) = offsets.lock() {
+        for (partition, offset) in pending.iter() {
+            let slot = map.entry(*partition).or_insert(*offset);
+            if *offset > *slot {
+                *slot = *offset;
+            }
+        }
+    }
+    if let Some(registry) = engine_offsets {
+        if let Ok(mut reg) = registry.lock() {
+            let entry = reg.entry(connector_name.to_string()).or_default();
+            for (partition, offset) in pending.iter() {
+                let slot = entry.entry(*partition).or_insert(*offset);
+                if *offset > *slot {
+                    *slot = *offset;
+                }
+            }
+        }
+    }
+    pending.clear();
+}
+
 /// Managed Kafka connector that owns a single producer connection.
 ///
 /// - **Sources**: each `start_source` call creates a new `StreamConsumer`
-///   (Kafka consumers are not Clone).
+///   (Kafka consumers are not Clone) and registers its state in
+///   `sources` so the connector can snapshot and commit offsets per topic.
 /// - **Sinks**: the `FutureProducer` is Clone-able and shared across all sinks.
 pub struct ManagedKafkaConnector {
     connector_name: String,
     config: KafkaConfig,
     producer: Option<FutureProducer>,
     running: Arc<AtomicBool>,
+    /// topic → source state (consumer + offsets map).
+    sources: Arc<RwLock<HashMap<String, SourceState>>>,
+    /// Optional engine-wide registry that mirrors offsets into a shared
+    /// map keyed by connector name, so the engine's checkpoint can pick
+    /// them up without polling each source.
+    engine_offsets: Option<EngineOffsetRegistry>,
 }
 
 impl std::fmt::Debug for ManagedKafkaConnector {
@@ -66,6 +122,8 @@ impl ManagedKafkaConnector {
             config,
             producer: None,
             running: Arc::new(AtomicBool::new(false)),
+            sources: Arc::new(RwLock::new(HashMap::new())),
+            engine_offsets: None,
         }
     }
 
@@ -189,10 +247,26 @@ impl ManagedConnector for ManagedKafkaConnector {
             .subscribe(&[topic])
             .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 
+        let consumer = Arc::new(consumer);
+
+        if let Ok(mut map) = self.sources.write() {
+            map.insert(
+                topic.to_string(),
+                SourceState {
+                    consumer: consumer.clone(),
+                },
+            );
+        }
+
+        // Task-local offset map; mirrored into the engine-wide registry
+        // (if any) after each successful batch send.
+        let offsets: Arc<Mutex<HashMap<i32, i64>>> = Arc::new(Mutex::new(HashMap::new()));
+
         self.running.store(true, Ordering::SeqCst);
         let running = self.running.clone();
         let name = self.connector_name.clone();
         let topic_owned = topic.to_string();
+        let engine_offsets = self.engine_offsets.clone();
 
         tokio::spawn(async move {
             use futures_util::StreamExt;
@@ -226,6 +300,11 @@ impl ManagedConnector for ManagedKafkaConnector {
             const BATCH_MAX: usize = 1024;
             const BATCH_FLUSH_MS: u64 = 20;
             let mut batch: Vec<Event> = Vec::with_capacity(BATCH_MAX);
+            // Highest offset per partition seen in the current batch, applied
+            // to the shared `offsets` map only after tx.send() succeeds — so
+            // the checkpoint snapshot always refers to records that are
+            // already in the engine's pipeline.
+            let mut pending_offsets: HashMap<i32, i64> = HashMap::new();
 
             // Periodic ticker handles two concerns at once:
             //   1. Flush partial batches every BATCH_FLUSH_MS so latency
@@ -253,6 +332,10 @@ impl ManagedConnector for ManagedKafkaConnector {
                             Some(Ok(msg)) => {
                                 cb.record_success();
 
+                                let partition = msg.partition();
+                                let msg_offset = msg.offset();
+                                let mut pushed = false;
+
                                 if let Some(payload) = msg.payload() {
                                     if let Ok(text) = std::str::from_utf8(payload) {
                                         if let Ok(json) =
@@ -264,27 +347,37 @@ impl ManagedConnector for ManagedKafkaConnector {
                                                 .unwrap_or("KafkaEvent");
                                             let event = json_to_event(event_type, &json);
                                             batch.push(event);
-
-                                            // Flush as soon as the batch is full.
-                                            if batch.len() >= BATCH_MAX {
-                                                let drained = std::mem::replace(
-                                                    &mut batch,
-                                                    Vec::with_capacity(BATCH_MAX),
-                                                );
-                                                if tx.send(drained).await.is_err() {
-                                                    break 'consume;
-                                                }
-                                            }
+                                            pushed = true;
                                         }
                                     }
                                 }
-                                // Note: per-message offset commit deliberately omitted.
-                                // Per-message async commits create lock contention with
-                                // the consumer poll loop and dominate throughput on
-                                // high-volume topics. Offsets are flushed implicitly on
-                                // rebalance / close; for at-least-once delivery, callers
-                                // should periodically call commit_consumer_state().
-                                let _ = &msg;
+
+                                // Track the highest offset per partition in
+                                // the pending batch. Committed only after
+                                // the batch is accepted by the engine channel.
+                                if pushed {
+                                    let slot = pending_offsets.entry(partition).or_insert(msg_offset);
+                                    if msg_offset > *slot {
+                                        *slot = msg_offset;
+                                    }
+                                }
+
+                                // Flush as soon as the batch is full.
+                                if batch.len() >= BATCH_MAX {
+                                    let drained = std::mem::replace(
+                                        &mut batch,
+                                        Vec::with_capacity(BATCH_MAX),
+                                    );
+                                    if tx.send(drained).await.is_err() {
+                                        break 'consume;
+                                    }
+                                    commit_pending_offsets(
+                                        &mut pending_offsets,
+                                        &offsets,
+                                        engine_offsets.as_ref(),
+                                        &name,
+                                    );
+                                }
                             }
                             Some(Err(e)) => {
                                 cb.record_failure();
@@ -310,6 +403,12 @@ impl ManagedConnector for ManagedKafkaConnector {
                             if tx.send(drained).await.is_err() {
                                 break 'consume;
                             }
+                            commit_pending_offsets(
+                                &mut pending_offsets,
+                                &offsets,
+                                engine_offsets.as_ref(),
+                                &name,
+                            );
                         }
                         if !running.load(Ordering::SeqCst) {
                             break 'consume;
@@ -319,8 +418,13 @@ impl ManagedConnector for ManagedKafkaConnector {
             }
 
             // Final flush on shutdown so we don't lose buffered events.
-            if !batch.is_empty() {
-                let _ = tx.send(batch).await;
+            if !batch.is_empty() && tx.send(batch).await.is_ok() {
+                commit_pending_offsets(
+                    &mut pending_offsets,
+                    &offsets,
+                    engine_offsets.as_ref(),
+                    &name,
+                );
             }
 
             info!("Managed Kafka {} consumer stopped", name);
@@ -353,8 +457,51 @@ impl ManagedConnector for ManagedKafkaConnector {
     async fn shutdown(&mut self) -> Result<(), ConnectorError> {
         self.running.store(false, Ordering::SeqCst);
         self.producer = None;
+        if let Ok(mut map) = self.sources.write() {
+            map.clear();
+        }
         info!("Managed Kafka {} shut down", self.connector_name);
         Ok(())
+    }
+
+    fn set_engine_offsets_registry(&mut self, registry: EngineOffsetRegistry) {
+        self.engine_offsets = Some(registry);
+    }
+
+    async fn commit_source_offsets(
+        &self,
+        topic: &str,
+        offsets: &HashMap<i32, i64>,
+    ) -> Result<(), ConnectorError> {
+        if offsets.is_empty() {
+            return Ok(());
+        }
+        let consumer = {
+            let guard = self
+                .sources
+                .read()
+                .map_err(|_| ConnectorError::SendFailed("sources lock poisoned".into()))?;
+            match guard.get(topic) {
+                Some(state) => state.consumer.clone(),
+                None => {
+                    return Err(ConnectorError::SendFailed(format!(
+                        "commit_source_offsets called before start_source for topic {topic}"
+                    )));
+                }
+            }
+        };
+
+        let mut tpl = TopicPartitionList::new();
+        for (&partition, &offset) in offsets {
+            // Kafka commit semantics: committed offset = next offset to read.
+            // We track the highest offset we've accepted, so commit offset + 1.
+            tpl.add_partition_offset(topic, partition, Offset::Offset(offset + 1))
+                .map_err(|e| ConnectorError::SendFailed(format!("build TPL for commit: {e}")))?;
+        }
+
+        consumer
+            .commit(&tpl, CommitMode::Sync)
+            .map_err(|e| ConnectorError::SendFailed(format!("commit offsets: {e}")))
     }
 }
 

@@ -23,7 +23,8 @@ use varpulis_connector_api::circuit_breaker::{CircuitBreaker, CircuitBreakerConf
 use varpulis_connector_api::helpers::json_to_event;
 use varpulis_connector_api::{
     ConfigParamInfo, ConnectorComponentInfo, ConnectorConfig, ConnectorError, ConnectorFactory,
-    ManagedConnector, Sink, SinkConnector, SinkConnectorAdapter, SourceConnector,
+    EngineOffsetRegistry, ManagedConnector, Sink, SinkConnector, SinkConnectorAdapter,
+    SourceConnector,
 };
 use varpulis_core::Event;
 
@@ -299,9 +300,6 @@ pub(crate) fn apply_properties(
 // =============================================================================
 // Kafka Source
 // =============================================================================
-
-/// Engine-wide source offset registry: connector name → (partition → last offset).
-pub type EngineOffsetRegistry = Arc<Mutex<HashMap<String, HashMap<i32, i64>>>>;
 
 /// Kafka source connector with rdkafka.
 ///

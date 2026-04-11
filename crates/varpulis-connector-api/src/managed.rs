@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use varpulis_core::Event;
 
 use crate::sink::Sink;
-use crate::types::ConnectorError;
+use crate::types::{ConnectorError, EngineOffsetRegistry};
 
 /// Health report from a managed connector.
 #[derive(Debug, Clone, Serialize)]
@@ -90,4 +90,23 @@ pub trait ManagedConnector: Send + Sync {
 
     /// Disconnect everything and release resources.
     async fn shutdown(&mut self) -> Result<(), ConnectorError>;
+
+    // ---- Checkpoint-aligned source offset tracking ----
+
+    /// Bind this connector to an engine-wide offset registry. Replayable
+    /// sources (Kafka) mirror their consumed offsets into the registry so
+    /// the engine can snapshot them at checkpoint time. Non-replayable
+    /// connectors (MQTT, NATS) ignore this.
+    fn set_engine_offsets_registry(&mut self, _registry: EngineOffsetRegistry) {}
+
+    /// Commit the given per-partition offsets back to the external system
+    /// (e.g. Kafka consumer group coordinator) as part of a 2PC checkpoint
+    /// commit. Default no-op for connectors without replayable offsets.
+    async fn commit_source_offsets(
+        &self,
+        _topic: &str,
+        _offsets: &HashMap<i32, i64>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
 }

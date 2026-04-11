@@ -6,9 +6,74 @@ use tokio::sync::mpsc;
 use tracing::info;
 use varpulis_cli::output;
 use varpulis_connectors::credentials::CredentialsStore;
+use varpulis_connectors::ManagedConnectorRegistry;
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;
+use varpulis_runtime::SourceBinding;
+
+/// Run a full 2PC checkpoint barrier sequence.
+///
+/// This is the end-to-end exactly-once commit path:
+/// 1. Snapshot engine state (windows, SASE runs, join buffers, source offsets).
+/// 2. `prepare_commit` on transactional sinks — flushes in-flight records
+///    into the open Kafka transaction but keeps them invisible to consumers.
+/// 3. `commit` on transactional sinks — makes the pre-committed data visible
+///    AND begins the next epoch so subsequent events land in a fresh transaction.
+/// 4. Commit per-source consumer-group offsets via the registry, closing the
+///    loop: the next restart will re-read from exactly where the engine's
+///    committed sink output left off.
+///
+/// If `prepare_commit` fails we abort the current epoch and return early —
+/// source offsets are deliberately NOT committed so the next run re-consumes
+/// the corresponding records and replays their effects into a fresh sink
+/// transaction.
+async fn barrier_commit_2pc(
+    engine: &Engine,
+    registry: &ManagedConnectorRegistry,
+    bindings: &[SourceBinding],
+    checkpoint_id: u64,
+) {
+    // Phase 1 — state snapshot (fast, in-memory).
+    let snapshot = engine.create_checkpoint();
+
+    // Phase 2 — prepare commit on transactional sinks (flush producer queues).
+    engine.prepare_commit_sinks(checkpoint_id).await;
+
+    // Phase 3 — commit transactional sinks. This is the point of no return:
+    // once the Kafka `commit_transaction` succeeds, downstream consumers can
+    // see the emitted events, and we MUST commit the corresponding source
+    // offsets or a restart would double-emit.
+    engine.commit_sinks(checkpoint_id).await;
+
+    // Phase 4 — commit source consumer-group offsets.
+    for binding in bindings {
+        let Some(offsets) = snapshot.source_offsets.get(&binding.connector_name) else {
+            continue;
+        };
+        if offsets.is_empty() {
+            continue;
+        }
+        let Some(config) = engine.get_connector(&binding.connector_name) else {
+            continue;
+        };
+        let topic = binding
+            .topic_override
+            .as_deref()
+            .or(config.topic.as_deref())
+            .unwrap_or("varpulis/events/#");
+
+        if let Err(e) = registry
+            .commit_source_offsets(&binding.connector_name, topic, offsets)
+            .await
+        {
+            tracing::warn!(
+                "Source offset commit failed (checkpoint {checkpoint_id}, connector {}): {e}",
+                binding.connector_name
+            );
+        }
+    }
+}
 
 pub async fn run_program(
     source: &str,
@@ -93,6 +158,13 @@ pub async fn run_program(
         // Build managed connector registry — one connection per connector
         let mut registry = ManagedConnectorRegistry::from_configs(engine.connector_configs())
             .map_err(|e| anyhow::anyhow!("Registry build error: {e}"))?;
+
+        // Bind the engine's source-offset registry to every managed connector
+        // so replayable sources (Kafka) mirror their consumed offsets into
+        // the engine's checkpoint state. Non-replayable connectors ignore
+        // the call. Must happen BEFORE start_source so the consumer task
+        // picks up the shared handle on its first iteration.
+        registry.set_engine_offsets_registry(engine.source_offsets_handle());
 
         // Start sources (connector-type-agnostic)
         for binding in &bindings {
@@ -206,6 +278,10 @@ pub async fn run_program(
         let mut last_report = std::time::Instant::now();
         let mut event_count = 0u64;
         let spinner = output::create_spinner("Waiting for events...");
+        // Monotonic checkpoint epoch counter. Incremented on every barrier
+        // so that 2PC sink `commit(id)` / `begin_epoch(id+1)` calls see a
+        // strictly increasing id and can reject replays out of order.
+        let mut checkpoint_id: u64 = 0;
 
         // Process event batches from all sources. Each `recv()` yields a
         // `Vec<Event>` produced by the connector — typically up to 256
@@ -248,18 +324,26 @@ pub async fn run_program(
                     if last_report.elapsed() >= std::time::Duration::from_secs(2) {
                         let metrics = engine.metrics();
                         spinner.set_message(format!(
-                            "Events: {} | Output: {} | Rate: {:.0}/s",
+                            "Events: {} | Output: {} | Rate: {:.0}/s | Epoch: {}",
                             metrics.events_processed,
                             metrics.output_events_emitted,
-                            event_count as f64 / start.elapsed().as_secs_f64()
+                            event_count as f64 / start.elapsed().as_secs_f64(),
+                            checkpoint_id
                         ));
                         last_report = std::time::Instant::now();
 
-                        // Periodic checkpoint tick (piggybacks on progress interval)
                         if let Some(ref mut orch) = orchestrator {
+                            // Context-mode pipelines still use the legacy
+                            // periodic `checkpoint_tick` path for now.
                             if let Err(e) = orch.checkpoint_tick() {
                                 tracing::warn!("Checkpoint error: {}", e);
                             }
+                        } else {
+                            // Non-context path: run a full 2PC barrier that
+                            // commits transactional sinks AND source offsets
+                            // as a single checkpoint epoch.
+                            checkpoint_id += 1;
+                            barrier_commit_2pc(&engine, &registry, &bindings, checkpoint_id).await;
                         }
                     }
                 }
