@@ -568,28 +568,14 @@ fn execute_op_common(
             *current_events = window_results;
         }
 
-        RuntimeOp::Aggregate(aggregator) => {
-            // Use the latest event's timestamp for the aggregation result
+        RuntimeOp::Aggregate(state) => {
+            // Use the latest event's timestamp for the aggregation result.
             let ts = current_events.last().map(|e| e.timestamp);
 
-            #[cfg(feature = "arrow")]
-            let result = if current_events.len() >= crate::arrow_bridge::ARROW_BATCH_THRESHOLD {
-                // Arrow path: vectorized aggregation via Arrow compute
-                let mut schema_cache = crate::arrow_bridge::SchemaCache::new();
-                let schema = schema_cache.get_or_infer(current_events);
-                if let Ok(batch) =
-                    crate::arrow_bridge::events_to_record_batch(current_events, &schema)
-                {
-                    aggregator.apply_arrow(&batch)
-                } else {
-                    aggregator.apply_shared(current_events)
-                }
-            } else {
-                aggregator.apply_shared(current_events)
-            };
-
-            #[cfg(not(feature = "arrow"))]
-            let result = aggregator.apply_shared(current_events);
+            // Phase 3a: `AggregatorState` owns a persistent `SchemaCache`
+            // and dispatches between the row path and a single-group
+            // columnar path driven by `NonPartitionedColumnarAggregator`.
+            let result = state.apply(current_events);
 
             let mut agg_event = Event::new("AggregationResult");
             if let Some(ts) = ts {

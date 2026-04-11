@@ -890,7 +890,9 @@ impl Engine {
                             PartitionedAggregatorState::new(key.clone(), aggregator),
                         ));
                     } else {
-                        runtime_ops.push(RuntimeOp::Aggregate(aggregator));
+                        runtime_ops.push(RuntimeOp::Aggregate(
+                            crate::engine::types::AggregatorState::new(aggregator),
+                        ));
                     }
                 }
                 StreamOp::Select(items) => {

@@ -25,7 +25,7 @@ use std::sync::Arc;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use varpulis_core::Value;
 use varpulis_runtime::aggregation::{Aggregator, Avg, Count, Max, Min, Sum};
-use varpulis_runtime::engine::PartitionedAggregatorState;
+use varpulis_runtime::engine::{AggregatorState, PartitionedAggregatorState};
 use varpulis_runtime::event::{Event, SharedEvent};
 
 fn make_state() -> PartitionedAggregatorState {
@@ -38,6 +38,26 @@ fn make_state() -> PartitionedAggregatorState {
             .add("mx", Box::new(Max), Some("value".to_string()))
             .add("c", Box::new(Count), None),
     )
+}
+
+fn make_np_state() -> AggregatorState {
+    AggregatorState::new(
+        Aggregator::new()
+            .add("s", Box::new(Sum), Some("value".to_string()))
+            .add("a", Box::new(Avg), Some("value".to_string()))
+            .add("mn", Box::new(Min), Some("value".to_string()))
+            .add("mx", Box::new(Max), Some("value".to_string()))
+            .add("c", Box::new(Count), None),
+    )
+}
+
+fn make_np_events(total: usize) -> Vec<SharedEvent> {
+    (0..total)
+        .map(|i| {
+            let v = (i as f64) * 1.5 + 10.0;
+            Arc::new(Event::new("Reading").with_field("value", Value::Float(v)))
+        })
+        .collect()
 }
 
 fn make_events(total: usize, groups: usize) -> Vec<SharedEvent> {
@@ -96,5 +116,45 @@ fn bench_apply(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_apply);
+/// Phase 3a: non-partitioned `AggregatorState::apply` row vs single-group
+/// columnar path. Tests the `.window(N).aggregate(...)` shape that sits
+/// behind pipelines without `.partition_by(...)`.
+fn bench_non_partitioned_apply(c: &mut Criterion) {
+    let sizes = [100, 1_000, 10_000, 100_000];
+
+    let mut group = c.benchmark_group("AggregatorState");
+    for total in sizes {
+        let events = make_np_events(total);
+        let label = format!("{total}");
+        group.bench_with_input(BenchmarkId::new("row", &label), &events, |b, events| {
+            b.iter_batched(
+                make_np_state,
+                |mut state: AggregatorState| {
+                    black_box(state.apply_row(events));
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        });
+        group.bench_with_input(
+            BenchmarkId::new("columnar", &label),
+            &events,
+            |b, events| {
+                b.iter_batched(
+                    make_np_state,
+                    |mut state: AggregatorState| {
+                        black_box(
+                            state
+                                .apply_columnar(events)
+                                .expect("columnar should succeed"),
+                        );
+                    },
+                    criterion::BatchSize::LargeInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_apply, bench_non_partitioned_apply);
 criterion_main!(benches);

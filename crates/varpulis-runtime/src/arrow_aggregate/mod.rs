@@ -43,11 +43,13 @@ pub(crate) mod count;
 pub(crate) mod group_keys;
 pub(crate) mod grouped;
 pub(crate) mod min_max;
+pub(crate) mod non_partitioned;
 pub(crate) mod streaming;
 pub(crate) mod sum;
 
 pub(crate) use accumulator::make_accumulator_for;
 pub(crate) use grouped::ColumnarGroupedAggregator;
+pub(crate) use non_partitioned::NonPartitionedColumnarAggregator;
 // `AccumulatorKind` / `ColumnarAccumulator` trait + `AggSpec` are referenced
 // through the `arrow_aggregate::grouped::*` / `arrow_aggregate::accumulator::*`
 // paths by call sites that need them (wire-in in `engine/types.rs`,

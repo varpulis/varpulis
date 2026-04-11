@@ -40,8 +40,8 @@ use tracing::{info, warn};
 // Re-export NamedPattern from types
 pub use types::NamedPattern;
 pub use types::{
-    EngineConfig, EngineMetrics, PartitionedAggregatorState, ReloadReport, SourceBinding,
-    UserFunction,
+    AggregatorState, EngineConfig, EngineMetrics, PartitionedAggregatorState, ReloadReport,
+    SourceBinding, UserFunction,
 };
 // Re-export internal types for use within the engine module
 use types::{RuntimeOp, RuntimeSource, StreamDefinition, WindowType};

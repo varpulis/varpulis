@@ -193,7 +193,7 @@ pub enum RuntimeOp {
     PartitionedWindow(PartitionedWindowState),
     /// Partitioned sliding count window - maintains separate sliding windows per partition key
     PartitionedSlidingCountWindow(PartitionedSlidingCountWindowState),
-    Aggregate(Aggregator),
+    Aggregate(AggregatorState),
     /// Partitioned aggregate - maintains separate aggregators per partition key
     PartitionedAggregate(PartitionedAggregatorState),
     /// Phase-2 fused operator: tumbling window + partitioned aggregate, with
@@ -493,6 +493,97 @@ impl PartitionedSlidingCountWindowState {
             .or_insert_with(|| SlidingCountWindow::new(self.window_size, self.slide_size));
 
         window.add_shared(event)
+    }
+}
+
+/// State for non-partitioned `.aggregate(...)`.
+///
+/// Phase 3a wrapper around [`Aggregator`] that owns a persistent
+/// [`crate::arrow_bridge::SchemaCache`] and dispatches between the
+/// row-oriented path and a single-group columnar path. Without this
+/// wrapper, the pipeline executor was rebuilding a fresh `SchemaCache`
+/// on every window fire (see `pipeline.rs` pre-phase-3a) and the four
+/// aggregate functions in `sum/avg/min/max` each ran their own
+/// `arrow_arith::aggregate::*` pass over the same column.
+#[derive(Debug)]
+pub struct AggregatorState {
+    pub aggregator_template: Aggregator,
+    /// Schema cache reused across calls so every fire doesn't re-infer the
+    /// event schema. Only populated on the columnar fast path.
+    #[cfg(feature = "arrow")]
+    pub(crate) schema_cache: crate::arrow_bridge::SchemaCache,
+}
+
+impl AggregatorState {
+    pub fn new(aggregator: Aggregator) -> Self {
+        Self {
+            aggregator_template: aggregator,
+            #[cfg(feature = "arrow")]
+            schema_cache: crate::arrow_bridge::SchemaCache::new(),
+        }
+    }
+
+    /// Entry point called by the pipeline executor. Dispatches between the
+    /// row-oriented path (always available) and the single-group columnar
+    /// path (behind `arrow` feature, gated on batch size and supported
+    /// aggregate-function set).
+    pub fn apply(&mut self, events: &[SharedEvent]) -> IndexMap<String, Value> {
+        #[cfg(feature = "arrow")]
+        {
+            if events.len() >= crate::arrow_bridge::ARROW_BATCH_THRESHOLD
+                && self.aggregator_template.supported_for_columnar()
+            {
+                if let Some(result) = self.apply_columnar(events) {
+                    return result;
+                }
+                // Fall through to the row path on any error — schema
+                // inference failure, unexpected column type, etc.
+            }
+        }
+        self.apply_row(events)
+    }
+
+    /// Row-oriented path — delegates to `Aggregator::apply_shared`. This is
+    /// the fallback for small batches, unsupported aggregate functions,
+    /// and columnar errors. Exposed as `#[doc(hidden)] pub` so benchmarks
+    /// can measure each path independently.
+    #[doc(hidden)]
+    pub fn apply_row(&mut self, events: &[SharedEvent]) -> IndexMap<String, Value> {
+        self.aggregator_template.apply_shared(events)
+    }
+
+    /// Single-group columnar path. Builds a `RecordBatch`, feeds it to
+    /// [`crate::arrow_aggregate::NonPartitionedColumnarAggregator`], and
+    /// drains the single-group result into `IndexMap<String, Value>`.
+    ///
+    /// Returns `None` on any failure (schema inference, RecordBatch
+    /// conversion, accumulator construction); the caller falls back to
+    /// the row path.
+    #[doc(hidden)]
+    #[cfg(feature = "arrow")]
+    pub fn apply_columnar(&mut self, events: &[SharedEvent]) -> Option<IndexMap<String, Value>> {
+        use crate::arrow_aggregate::grouped::AggSpec;
+        use crate::arrow_aggregate::{make_accumulator_for, NonPartitionedColumnarAggregator};
+
+        let schema = self.schema_cache.get_or_infer(events);
+        let batch = crate::arrow_bridge::events_to_record_batch(events, &schema).ok()?;
+
+        let specs: Vec<AggSpec> = self
+            .aggregator_template
+            .iter_specs()
+            .map(|(alias, func_name, field)| {
+                let accumulator = make_accumulator_for(func_name)?;
+                Some(AggSpec {
+                    alias: alias.clone(),
+                    accumulator,
+                    field: field.clone(),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+
+        let mut agg = NonPartitionedColumnarAggregator::try_new(specs).ok()?;
+        agg.update(&batch).ok()?;
+        Some(agg.drain())
     }
 }
 
@@ -1005,5 +1096,111 @@ mod arrow_parity_tests {
         // apply() dispatches to row path for empty input (below threshold).
         let out = make_state().apply(&events);
         assert!(out.is_empty());
+    }
+
+    // ---- Phase 3a: non-partitioned AggregatorState parity ----
+
+    /// Build a non-partitioned `AggregatorState` with sum/avg/min/max/count on `value`.
+    fn make_np_state() -> AggregatorState {
+        AggregatorState::new(
+            Aggregator::new()
+                .add("s", Box::new(Sum), Some("value".to_string()))
+                .add("a", Box::new(Avg), Some("value".to_string()))
+                .add("mn", Box::new(Min), Some("value".to_string()))
+                .add("mx", Box::new(Max), Some("value".to_string()))
+                .add("c", Box::new(Count), None),
+        )
+    }
+
+    /// Compare two `IndexMap<String, Value>` results allowing float tolerance.
+    fn diff_single(
+        row: &IndexMap<String, Value>,
+        col: &IndexMap<String, Value>,
+        tol: f64,
+    ) -> Option<String> {
+        if row.len() != col.len() {
+            return Some(format!(
+                "alias count mismatch: row={}, col={}",
+                row.len(),
+                col.len()
+            ));
+        }
+        for (alias, row_v) in row {
+            let Some(col_v) = col.get(alias) else {
+                return Some(format!("alias '{alias}' missing in columnar output"));
+            };
+            match (row_v, col_v) {
+                (Value::Float(a), Value::Float(b)) => {
+                    if (a - b).abs() > tol {
+                        return Some(format!("float mismatch on '{alias}': row={a}, col={b}"));
+                    }
+                }
+                (a, b) if a != b => {
+                    return Some(format!("value mismatch on '{alias}': row={a:?}, col={b:?}"));
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn np_bulk_row_matches_columnar() {
+        // 5000 events, no partition key. Both paths must agree.
+        let events = make_events(1, 5000);
+        let row = make_np_state().apply_row(&events);
+        let col = make_np_state()
+            .apply_columnar(&events)
+            .expect("columnar path should succeed");
+        if let Some(msg) = diff_single(&row, &col, 1e-5) {
+            panic!("non-partitioned bulk parity failed: {msg}");
+        }
+    }
+
+    #[test]
+    fn np_handles_nan_values() {
+        let mut events = Vec::new();
+        for i in 0..500 {
+            let v = if i % 10 == 0 { f64::NAN } else { i as f64 };
+            events.push(Arc::new(
+                Event::new("Reading").with_field("value", Value::Float(v)),
+            ));
+        }
+        let row = make_np_state().apply_row(&events);
+        let col = make_np_state()
+            .apply_columnar(&events)
+            .expect("columnar path should succeed");
+        if let Some(msg) = diff_single(&row, &col, 1e-6) {
+            panic!("non-partitioned NaN parity failed: {msg}");
+        }
+    }
+
+    #[test]
+    fn np_persistent_schema_cache() {
+        // Phase 3a-specific: two successive `apply()` calls must re-use
+        // the state's SchemaCache. We can't observe the cache directly,
+        // but we can call apply twice in a row and confirm that the
+        // second call still returns correct results (which it wouldn't
+        // if cache reuse broke the schema-inference path).
+        let mut state = make_np_state();
+        let events_a = make_events(1, 100);
+        let events_b = make_events(1, 100);
+        let out_a = state.apply(&events_a);
+        let out_b = state.apply(&events_b);
+        // Both inputs are identical shapes → identical outputs.
+        assert_eq!(out_a.get("s"), out_b.get("s"));
+        assert_eq!(out_a.get("c"), out_b.get("c"));
+    }
+
+    #[test]
+    fn np_empty_input_returns_zero_aggregates() {
+        // The non-partitioned path delegates empty input to the row path
+        // (under the ARROW_BATCH_THRESHOLD gate). The row path returns an
+        // IndexMap with all aliases populated — count=0, sum=null, etc.
+        // This behaviour predates phase 3a and must be preserved.
+        let events: Vec<SharedEvent> = vec![];
+        let out = make_np_state().apply(&events);
+        assert_eq!(out.len(), 5, "should have all 5 aliases present");
+        assert_eq!(out.get("c"), Some(&Value::Int(0)));
     }
 }

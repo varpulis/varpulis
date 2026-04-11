@@ -249,7 +249,7 @@ fn display_key_for_row(key_cols: &[ArrayRef], row_idx: usize) -> String {
 
 /// Read the scalar value at position `i` of a generic Arrow array.
 /// Supports the primitive types we care about; anything else → `Value::Null`.
-fn array_value_at(arr: &dyn Array, i: usize) -> Value {
+pub(super) fn array_value_at(arr: &dyn Array, i: usize) -> Value {
     use arrow_array::{BooleanArray, Float64Array, Int64Array, StringArray};
     use arrow_schema::DataType;
 
