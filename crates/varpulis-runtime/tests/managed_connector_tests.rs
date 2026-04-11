@@ -6,7 +6,7 @@
 //! Or use the provided Docker-based test:
 //!   ./tests/integration/run_managed_connector_tests.sh
 
-#![cfg(feature = "mqtt")]
+#![cfg(all(feature = "mqtt", unix))]
 
 use std::sync::Arc;
 use std::time::Duration;

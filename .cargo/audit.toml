@@ -43,4 +43,9 @@ ignore = [
     "RUSTSEC-2026-0094",
     "RUSTSEC-2026-0095",
     "RUSTSEC-2026-0096",
+
+    # RUSTSEC-2026-0097: rand unsound with custom logger calling rand::rng()
+    # during reseed. Preconditions (custom logger using rand::rng() with
+    # trace/warn logging) don't apply to us — mirrored from deny.toml.
+    "RUSTSEC-2026-0097",
 ]

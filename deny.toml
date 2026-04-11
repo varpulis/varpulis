@@ -58,6 +58,12 @@ ignore = [
     { id = "RUSTSEC-2026-0094", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
     { id = "RUSTSEC-2026-0095", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
     { id = "RUSTSEC-2026-0096", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
+
+    # rand: unsound with custom logger calling rand::rng() during reseed.
+    # Requires ALL of: `log` + `thread_rng` features, custom logger,
+    # that logger calling rand::rng() with trace/warn logging. We don't
+    # define a custom logger that uses rand, so the preconditions don't hold.
+    { id = "RUSTSEC-2026-0097", reason = "preconditions not applicable — no custom logger using rand::rng()" },
 ]
 
 # ---------------------------------------------------------------------------
