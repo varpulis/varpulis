@@ -734,8 +734,8 @@ impl PartitionedAggregatorState {
 
 /// Phase-3b fused tumbling-window + non-partitioned columnar aggregate.
 ///
-/// Non-partitioned analog of [`PartitionedWindowedColumnarAggregateState`].
-/// Wraps a [`crate::arrow_aggregate::streaming::StreamingWindow`]
+/// Non-partitioned analog of `PartitionedWindowedColumnarAggregateState`.
+/// Wraps a `crate::arrow_aggregate::streaming::StreamingWindow`
 /// (bin-keyed single-group streaming aggregator) plus the per-bin
 /// duration.
 ///
