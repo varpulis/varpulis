@@ -50,11 +50,22 @@ impl ColumnarGroupedAggregator {
     /// `key_fields` describes the columns to group by; typical phase-1
     /// usage passes a single-element slice with just the partition key.
     pub(crate) fn try_new(key_fields: &[Field], specs: Vec<AggSpec>) -> Result<Self, ArrowError> {
+        Self::try_new_with_hint(key_fields, specs, 0)
+    }
+
+    pub(crate) fn try_new_with_hint(
+        key_fields: &[Field],
+        specs: Vec<AggSpec>,
+        group_count_hint: usize,
+    ) -> Result<Self, ArrowError> {
         Ok(Self {
             specs,
             key_field_names: key_fields.iter().map(|f| f.name().clone()).collect(),
             encoder: GroupKeyEncoder::new(key_fields)?,
-            fast_group_map: rustc_hash::FxHashMap::default(),
+            fast_group_map: rustc_hash::FxHashMap::with_capacity_and_hasher(
+                group_count_hint,
+                Default::default(),
+            ),
             next_fast_group: 0,
         })
     }

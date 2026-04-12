@@ -91,6 +91,7 @@ impl StreamingAggregatorTemplate {
     fn instantiate(
         &self,
         key_field: arrow_schema::Field,
+        group_count_hint: usize,
     ) -> Result<ColumnarGroupedAggregator, arrow_schema::ArrowError> {
         let agg_specs: Vec<AggSpec> = self
             .specs
@@ -101,7 +102,7 @@ impl StreamingAggregatorTemplate {
                 field: field.clone(),
             })
             .collect();
-        ColumnarGroupedAggregator::try_new(&[key_field], agg_specs)
+        ColumnarGroupedAggregator::try_new_with_hint(&[key_field], agg_specs, group_count_hint)
     }
 }
 
@@ -120,6 +121,9 @@ pub(crate) struct StreamingPartitionedWindow {
     /// Watermark = running max of all event timestamps seen so far.
     /// Used to decide which bins to flush on each call.
     max_ts_ms: Option<i64>,
+    /// Remembered group count from previous drained bins so new bins
+    /// can pre-size their `fast_group_map` and skip rehash doublings.
+    group_count_hint: usize,
 }
 
 impl std::fmt::Debug for StreamingPartitionedWindow {
@@ -142,6 +146,7 @@ impl StreamingPartitionedWindow {
             template,
             key_field: None,
             max_ts_ms: None,
+            group_count_hint: 0,
         }
     }
 
@@ -212,7 +217,10 @@ impl StreamingPartitionedWindow {
             }
 
             if !self.bins.contains_key(&bin_start) {
-                let agg = match self.template.instantiate(key_field.clone()) {
+                let agg = match self
+                    .template
+                    .instantiate(key_field.clone(), self.group_count_hint)
+                {
                     Ok(a) => a,
                     Err(_) => continue,
                 };
@@ -244,7 +252,9 @@ impl StreamingPartitionedWindow {
         let mut output: Vec<(i64, String, IndexMap<String, Value>)> = Vec::new();
         for bin_start in to_flush {
             let agg = self.bins.remove(&bin_start).expect("present");
-            for (key, result) in agg.drain_fast() {
+            let results = agg.drain_fast();
+            self.group_count_hint = self.group_count_hint.max(results.len());
+            for (key, result) in results {
                 output.push((bin_start, key, result));
             }
         }
@@ -295,10 +305,10 @@ impl StreamingPartitionedWindow {
                     true,
                 ));
             }
-            match self
-                .template
-                .instantiate(self.key_field.clone().expect("just set"))
-            {
+            match self.template.instantiate(
+                self.key_field.clone().expect("just set"),
+                self.group_count_hint,
+            ) {
                 Ok(agg) => {
                     self.bins.insert(bin_start, agg);
                 }
@@ -332,7 +342,9 @@ impl StreamingPartitionedWindow {
         let mut output: Vec<(i64, String, IndexMap<String, Value>)> = Vec::new();
         for flushed_bin in to_flush {
             let agg = self.bins.remove(&flushed_bin).expect("present");
-            for (key, result) in agg.drain_fast() {
+            let results = agg.drain_fast();
+            self.group_count_hint = self.group_count_hint.max(results.len());
+            for (key, result) in results {
                 output.push((flushed_bin, key, result));
             }
         }

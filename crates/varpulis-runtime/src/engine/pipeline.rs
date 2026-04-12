@@ -20,6 +20,19 @@ use crate::sequence::SequenceContext;
 static EMPTY_VARS: std::sync::LazyLock<FxHashMap<String, Value>> =
     std::sync::LazyLock::new(FxHashMap::default);
 
+/// Reusable `Arc<str>` for the `_partition` field injected by the
+/// partitioned aggregate dispatch arms. `Arc::from("_partition")` was
+/// showing up in the flamegraph as a per-event allocation; interning
+/// the Arc once saves an allocation per emitted aggregation result.
+static PARTITION_FIELD_KEY: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from("_partition"));
+
+/// Reusable `Arc<str>` for the `AggregationResult` event-type name.
+/// Every fused-op fire creates a fresh `Event` typed
+/// `"AggregationResult"`; interning avoids the per-event `Arc::from`.
+static AGGREGATION_RESULT_TYPE: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from("AggregationResult"));
+
 /// Returns a reference to a shared empty variables map for read-only operations.
 /// PERF: Avoids allocating a new HashMap for each expression evaluation.
 #[inline]
@@ -577,10 +590,15 @@ fn execute_op_common(
             // columnar path driven by `NonPartitionedColumnarAggregator`.
             let result = state.apply(current_events);
 
-            let mut agg_event = Event::new("AggregationResult");
-            if let Some(ts) = ts {
-                agg_event.timestamp = ts;
-            }
+            // Pre-size the IndexMap to the exact alias count so insert_full
+            // doesn't rehash/grow, and use with_capacity_at to skip the
+            // wasted Utc::now() syscall that `Event::new()` performs.
+            let mut agg_event = match ts {
+                Some(ts) => {
+                    Event::with_capacity_at(AGGREGATION_RESULT_TYPE.clone(), result.len(), ts)
+                }
+                None => Event::with_capacity(AGGREGATION_RESULT_TYPE.clone(), result.len()),
+            };
             for (key, value) in result {
                 agg_event.data.insert(key.into(), value);
             }
@@ -594,13 +612,18 @@ fn execute_op_common(
             *current_events = results
                 .into_iter()
                 .map(|(partition_key, result)| {
-                    let mut agg_event = Event::new("AggregationResult");
-                    if let Some(ts) = ts {
-                        agg_event.timestamp = ts;
-                    }
-                    agg_event
-                        .data
-                        .insert("_partition".into(), Value::Str(partition_key.into()));
+                    // `+ 1` for the `_partition` field injected below.
+                    let cap = result.len() + 1;
+                    let mut agg_event = match ts {
+                        Some(ts) => {
+                            Event::with_capacity_at(AGGREGATION_RESULT_TYPE.clone(), cap, ts)
+                        }
+                        None => Event::with_capacity(AGGREGATION_RESULT_TYPE.clone(), cap),
+                    };
+                    agg_event.data.insert(
+                        PARTITION_FIELD_KEY.clone(),
+                        Value::Str(partition_key.into()),
+                    );
                     for (key, value) in result {
                         agg_event.data.insert(key.into(), value);
                     }
@@ -618,12 +641,12 @@ fn execute_op_common(
             *current_events = flushed
                 .into_iter()
                 .map(|(bin_start_ms, result)| {
-                    let mut agg_event = Event::new("AggregationResult");
-                    if let Some(ts) = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+                    let ts = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
                         bin_start_ms + state.bin_duration_ms,
-                    ) {
-                        agg_event.timestamp = ts;
-                    }
+                    )
+                    .unwrap_or_else(chrono::Utc::now);
+                    let mut agg_event =
+                        Event::with_capacity_at(AGGREGATION_RESULT_TYPE.clone(), result.len(), ts);
                     for (key, value) in result {
                         agg_event.data.insert(key.into(), value);
                     }
@@ -643,18 +666,23 @@ fn execute_op_common(
             *current_events = flushed
                 .into_iter()
                 .map(|(bin_start_ms, partition_key, result)| {
-                    let mut agg_event = Event::new("AggregationResult");
                     // Use bin_end as the result timestamp so downstream
                     // ordering matches the existing PartitionedAggregate
                     // path (which uses the latest event's timestamp).
-                    if let Some(ts) = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+                    let ts = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
                         bin_start_ms + state.bin_duration_ms,
-                    ) {
-                        agg_event.timestamp = ts;
-                    }
-                    agg_event
-                        .data
-                        .insert("_partition".into(), Value::Str(partition_key.into()));
+                    )
+                    .unwrap_or_else(chrono::Utc::now);
+                    // `+ 1` for the `_partition` field injected below.
+                    let mut agg_event = Event::with_capacity_at(
+                        AGGREGATION_RESULT_TYPE.clone(),
+                        result.len() + 1,
+                        ts,
+                    );
+                    agg_event.data.insert(
+                        PARTITION_FIELD_KEY.clone(),
+                        Value::Str(partition_key.into()),
+                    );
                     for (key, value) in result {
                         agg_event.data.insert(key.into(), value);
                     }
@@ -681,8 +709,11 @@ fn execute_op_common(
             *current_events = current_events
                 .iter()
                 .map(|event| {
-                    let mut new_event = Event::new(event.event_type.clone());
-                    new_event.timestamp = event.timestamp;
+                    let mut new_event = Event::with_capacity_at(
+                        event.event_type.clone(),
+                        config.fields.len(),
+                        event.timestamp,
+                    );
                     for (out_name, expr) in &config.fields {
                         if let Some(value) = evaluator::eval_expr_with_functions(
                             expr,
@@ -702,9 +733,11 @@ fn execute_op_common(
         RuntimeOp::Emit(config) => {
             let mut emitted: Vec<SharedEvent> = Vec::with_capacity(current_events.len());
             for event in current_events.iter() {
-                let mut new_event =
-                    Event::with_capacity(Arc::clone(stream_name), config.fields.len());
-                new_event.timestamp = event.timestamp;
+                let mut new_event = Event::with_capacity_at(
+                    Arc::clone(stream_name),
+                    config.fields.len(),
+                    event.timestamp,
+                );
                 for (out_name, source) in &config.fields {
                     if let Some(value) = event.get(source) {
                         new_event
@@ -738,9 +771,11 @@ fn execute_op_common(
 
             if all_ident {
                 for event in current_events.iter() {
-                    let mut new_event =
-                        Event::with_capacity(Arc::clone(stream_name), config.fields.len());
-                    new_event.timestamp = event.timestamp;
+                    let mut new_event = Event::with_capacity_at(
+                        Arc::clone(stream_name),
+                        config.fields.len(),
+                        event.timestamp,
+                    );
                     for (out_name, expr) in &config.fields {
                         if let varpulis_core::ast::Expr::Ident(field_name) = expr {
                             if let Some(value) = event.get(field_name) {
@@ -754,9 +789,11 @@ fn execute_op_common(
                 }
             } else {
                 for event in current_events.iter() {
-                    let mut new_event =
-                        Event::with_capacity(Arc::clone(stream_name), config.fields.len());
-                    new_event.timestamp = event.timestamp;
+                    let mut new_event = Event::with_capacity_at(
+                        Arc::clone(stream_name),
+                        config.fields.len(),
+                        event.timestamp,
+                    );
                     for (out_name, expr) in &config.fields {
                         if let Some(value) = evaluator::eval_expr_with_functions(
                             expr,
