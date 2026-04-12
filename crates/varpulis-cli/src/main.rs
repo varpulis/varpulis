@@ -56,6 +56,16 @@ enum Commands {
         /// becomes the dominant cost (~300x slowdown).
         #[arg(short, long)]
         quiet: bool,
+
+        /// Enable auto-checkpointing to this directory.
+        /// On restart, the engine auto-restores from the latest checkpoint,
+        /// enabling exactly-once with stateful pipelines (windows, SASE, joins).
+        #[arg(long, env = "VARPULIS_CHECKPOINT_DIR")]
+        checkpoint_dir: Option<PathBuf>,
+
+        /// Checkpoint interval in seconds (default: 2, aligned with the 2PC barrier)
+        #[arg(long, default_value = "2")]
+        checkpoint_interval: u64,
     },
 
     /// Parse a VPL file and show the AST
@@ -748,7 +758,13 @@ async fn main() -> Result<()> {
     };
 
     match cli.command {
-        Commands::Run { file, code, quiet } => {
+        Commands::Run {
+            file,
+            code,
+            quiet,
+            checkpoint_dir,
+            checkpoint_interval,
+        } => {
             let (source, base_path) = if let Some(ref path) = file {
                 (
                     std::fs::read_to_string(path)?,
@@ -760,8 +776,15 @@ async fn main() -> Result<()> {
                 anyhow::bail!("Either --file or --code must be provided");
             };
 
-            commands::run::run_program(&source, base_path.as_ref(), credentials_store, quiet)
-                .await?;
+            commands::run::run_program(
+                &source,
+                base_path.as_ref(),
+                credentials_store,
+                quiet,
+                checkpoint_dir,
+                checkpoint_interval,
+            )
+            .await?;
         }
 
         Commands::Parse { file } => {

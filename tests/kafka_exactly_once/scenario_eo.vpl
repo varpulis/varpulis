@@ -1,0 +1,31 @@
+# Exactly-once passthrough pipeline for crash recovery tests.
+#
+# Input: JSON events with {event_type: "Reading", id: <int>, value: <float>}
+# Output: same events, written transactionally to the output topic.
+#
+# The connector uses exactly_once: true which auto-generates a
+# transactional_id of "varpulis-KafkaOut", enabling Kafka transactions
+# (init_transactions / begin_transaction / commit_transaction) on the
+# producer side.
+
+event Reading:
+    id: int
+    value: float
+
+connector KafkaIn = kafka(
+    brokers: ["localhost:29092"],
+    topic: "test-eo-input",
+    group_id: "eo-test-consumer",
+    auto_offset_reset: "earliest"
+)
+
+connector KafkaOut = kafka(
+    brokers: ["localhost:29092"],
+    topic: "test-eo-output",
+    exactly_once: true
+)
+
+stream Passthrough = Reading
+    .from(KafkaIn)
+    .emit(id: id, value: value)
+    .to(KafkaOut)

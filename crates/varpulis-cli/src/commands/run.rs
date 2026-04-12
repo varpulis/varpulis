@@ -29,13 +29,22 @@ use varpulis_runtime::SourceBinding;
 /// the corresponding records and replays their effects into a fresh sink
 /// transaction.
 async fn barrier_commit_2pc(
-    engine: &Engine,
+    engine: &mut Engine,
     registry: &ManagedConnectorRegistry,
     bindings: &[SourceBinding],
     checkpoint_id: u64,
 ) {
     // Phase 1 — state snapshot (fast, in-memory).
     let snapshot = engine.create_checkpoint();
+
+    // Phase 1b — persist checkpoint to disk (if checkpointing is enabled).
+    // This must happen BEFORE the sink commit so that on crash-recovery the
+    // restored engine state is consistent with the last committed offset.
+    if engine.has_checkpointing() {
+        if let Err(e) = engine.force_checkpoint() {
+            tracing::warn!("Checkpoint persist failed (epoch {checkpoint_id}): {e}");
+        }
+    }
 
     // Phase 2 — prepare commit on transactional sinks (flush producer queues).
     engine.prepare_commit_sinks(checkpoint_id).await;
@@ -80,6 +89,8 @@ pub async fn run_program(
     base_path: Option<&PathBuf>,
     credentials_store: Option<Arc<CredentialsStore>>,
     quiet: bool,
+    checkpoint_dir: Option<PathBuf>,
+    checkpoint_interval: u64,
 ) -> Result<()> {
     use varpulis_runtime::connector::ManagedConnectorRegistry;
     use varpulis_runtime::ContextOrchestrator;
@@ -140,6 +151,33 @@ pub async fn run_program(
              \n\
              stream Events = SensorReading\n\
                  .from(MyMqtt, topic: \"sensors/#\")\n"
+        );
+    }
+
+    // Enable disk-based checkpointing so stateful engine state (windows,
+    // SASE runs, join buffers, variables, watermarks, source offsets) survives
+    // crashes. On restart the engine auto-restores from the latest checkpoint,
+    // and the 2PC barrier persists a fresh checkpoint before committing sinks.
+    if let Some(ref cp_dir) = checkpoint_dir {
+        std::fs::create_dir_all(cp_dir)?;
+        let store: std::sync::Arc<dyn varpulis_runtime::persistence::StateStore> =
+            std::sync::Arc::new(
+                varpulis_runtime::persistence::FileStore::open(cp_dir)
+                    .map_err(|e| anyhow::anyhow!("Checkpoint store error: {e}"))?,
+            );
+        let config = varpulis_runtime::persistence::CheckpointConfig {
+            interval: std::time::Duration::from_secs(checkpoint_interval),
+            max_checkpoints: 3,
+            checkpoint_on_shutdown: true,
+            key_prefix: "varpulis-run".to_string(),
+        };
+        engine
+            .enable_checkpointing(store, config)
+            .map_err(|e| anyhow::anyhow!("Checkpoint init error: {e}"))?;
+        info!(
+            "Checkpointing enabled: {} (every {}s)",
+            cp_dir.display(),
+            checkpoint_interval
         );
     }
 
@@ -347,13 +385,23 @@ pub async fn run_program(
                             // commits transactional sinks AND source offsets
                             // as a single checkpoint epoch.
                             checkpoint_id += 1;
-                            barrier_commit_2pc(&engine, &registry, &bindings, checkpoint_id).await;
+                            barrier_commit_2pc(&mut engine, &registry, &bindings, checkpoint_id).await;
                         }
                     }
                 }
                 _ = tokio::signal::ctrl_c() => {
                     spinner.finish_and_clear();
                     println!("\nStopping...");
+
+                    // Final 2PC barrier: commit any pending transactional
+                    // sink data + source offsets before shutting down.
+                    // Without this, events processed since the last barrier
+                    // would be lost (uncommitted transaction).
+                    if orchestrator.is_none() {
+                        checkpoint_id += 1;
+                        barrier_commit_2pc(&mut engine, &registry, &bindings, checkpoint_id).await;
+                    }
+
                     registry.shutdown().await;
                     break;
                 }
