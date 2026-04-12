@@ -254,6 +254,10 @@ pub async fn run_program(
                 .map_err(|e| anyhow::anyhow!("Sink connection error: {e}"))?;
         }
 
+        // Start the first transactional epoch for any exactly-once sinks.
+        // Subsequent epochs are opened by commit_sinks(id) → begin_epoch(id+1).
+        engine.begin_epoch_sinks(0).await;
+
         // Spawn output event handler. In `--quiet` mode we drain the channel
         // without formatting/printing — this avoids the global stdout lock and
         // Debug-format cost on every event, which becomes the dominant cost

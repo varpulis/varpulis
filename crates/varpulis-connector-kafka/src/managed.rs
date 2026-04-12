@@ -1,7 +1,7 @@
 //! Managed Kafka connector -- shares a single producer across all sinks
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -35,6 +35,8 @@ fn is_vpl_only_property(key: &str) -> bool {
             | "auto_offset_reset"
             | "brokers"
             | "topic"
+            | "exactly_once"
+            | "transactional_id"
     )
 }
 
@@ -86,12 +88,39 @@ fn commit_pending_offsets(
     pending.clear();
 }
 
+/// Shared transaction coordination for all `KafkaSharedSink` instances
+/// that share a single `FutureProducer`.
+///
+/// Kafka transactions are producer-scoped: `begin_transaction`,
+/// `commit_transaction`, and `abort_transaction` must be called exactly
+/// once per epoch, not once per sink. The engine's `commit_sinks()` loop
+/// iterates ALL sinks and calls each 2PC method on each, so we use CAS
+/// on an atomic `phase` to ensure only the first caller per transition
+/// reaches librdkafka.
+///
+/// Phase state machine: `0 (idle)` → `1 (active)` → `2 (prepared)` → `0`.
+struct SharedTxnState {
+    epoch: AtomicU64,
+    phase: AtomicU8,
+}
+
+impl SharedTxnState {
+    fn new() -> Self {
+        Self {
+            epoch: AtomicU64::new(0),
+            phase: AtomicU8::new(0),
+        }
+    }
+}
+
 /// Managed Kafka connector that owns a single producer connection.
 ///
 /// - **Sources**: each `start_source` call creates a new `StreamConsumer`
 ///   (Kafka consumers are not Clone) and registers its state in
 ///   `sources` so the connector can snapshot and commit offsets per topic.
-/// - **Sinks**: the `FutureProducer` is Clone-able and shared across all sinks.
+/// - **Sinks**: the `FutureProducer` is Clone-able and shared across all
+///   sinks. When `exactly_once` is enabled the producer is transactional
+///   and all sinks share a `SharedTxnState` to coordinate 2PC calls.
 pub struct ManagedKafkaConnector {
     connector_name: String,
     config: KafkaConfig,
@@ -103,6 +132,9 @@ pub struct ManagedKafkaConnector {
     /// map keyed by connector name, so the engine's checkpoint can pick
     /// them up without polling each source.
     engine_offsets: Option<EngineOffsetRegistry>,
+    /// Shared transaction state for exactly-once sinks. `None` when
+    /// operating in fire-and-forget (at-least-once) mode.
+    txn_state: Option<Arc<SharedTxnState>>,
 }
 
 impl std::fmt::Debug for ManagedKafkaConnector {
@@ -124,6 +156,7 @@ impl ManagedKafkaConnector {
             running: Arc::new(AtomicBool::new(false)),
             sources: Arc::new(RwLock::new(HashMap::new())),
             engine_offsets: None,
+            txn_state: None,
         }
     }
 
@@ -132,25 +165,28 @@ impl ManagedKafkaConnector {
             return Ok(producer.clone());
         }
 
+        let transactional = self.config.transactional_id.is_some();
+
         let mut client_config = ClientConfig::new();
         client_config
             .set("bootstrap.servers", &self.config.brokers)
             .set("message.timeout.ms", "30000")
-            // Producer throughput tuning. linger.ms=20 lets librdkafka coalesce
-            // many small per-event sends into a single broker write — without
-            // it, throughput is bounded at one round-trip per event (~6 ms ≈
-            // 150 eps). Combined with acks=1 (leader-only ack, instead of
-            // acks=all) this matches what high-throughput producers (Arroyo,
-            // Flink, kafka-python's `acks=1` default) use for benchmark mode.
             .set("linger.ms", "20")
-            .set("batch.size", "1048576") // 1 MiB per batch
+            .set("batch.size", "1048576")
             .set("compression.type", "lz4")
             .set("queue.buffering.max.messages", "1000000")
-            .set("queue.buffering.max.kbytes", "1048576")
-            .set("acks", "1");
+            .set("queue.buffering.max.kbytes", "1048576");
 
-        // Apply user-provided properties (can override any of the above).
-        // Skip VPL-specific keys that shouldn't be passed to librdkafka.
+        if transactional {
+            let tid = self.config.transactional_id.as_deref().unwrap();
+            client_config
+                .set("transactional.id", tid)
+                .set("enable.idempotence", "true")
+                .set("acks", "all");
+        } else {
+            client_config.set("acks", "1");
+        }
+
         for (k, v) in &self.config.properties {
             if is_vpl_only_property(k) {
                 continue;
@@ -161,6 +197,17 @@ impl ManagedKafkaConnector {
         let producer: FutureProducer = client_config
             .create()
             .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+        if transactional {
+            producer
+                .init_transactions(Duration::from_secs(30))
+                .map_err(|e| ConnectorError::ConnectionFailed(format!("init_transactions: {e}")))?;
+            self.txn_state = Some(Arc::new(SharedTxnState::new()));
+            info!(
+                "Managed Kafka {} producer initialized with exactly-once semantics",
+                self.connector_name
+            );
+        }
 
         self.producer = Some(producer.clone());
         self.running.store(true, Ordering::SeqCst);
@@ -450,12 +497,21 @@ impl ManagedConnector for ManagedKafkaConnector {
             sink_name: format!("{}::{}", self.connector_name, topic),
             topic: topic.to_string(),
             producer,
+            txn_state: self.txn_state.clone(),
         }))
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
     async fn shutdown(&mut self) -> Result<(), ConnectorError> {
         self.running.store(false, Ordering::SeqCst);
+        if let Some(ref state) = self.txn_state {
+            if state.phase.load(Ordering::SeqCst) > 0 {
+                if let Some(ref producer) = self.producer {
+                    let _ = producer.abort_transaction(Duration::from_secs(5));
+                }
+                state.phase.store(0, Ordering::SeqCst);
+            }
+        }
         self.producer = None;
         if let Ok(mut map) = self.sources.write() {
             map.clear();
@@ -506,10 +562,17 @@ impl ManagedConnector for ManagedKafkaConnector {
 }
 
 /// Lightweight sink handle that publishes via a shared `FutureProducer`.
+///
+/// When `txn_state` is `Some`, the sink participates in exactly-once 2PC.
+/// Multiple sinks sharing the same producer coordinate via CAS on the
+/// shared `SharedTxnState` so that `begin_transaction` /
+/// `commit_transaction` / `abort_transaction` are called exactly once
+/// per epoch regardless of how many sinks the engine iterates.
 struct KafkaSharedSink {
     sink_name: String,
     topic: String,
     producer: FutureProducer,
+    txn_state: Option<Arc<SharedTxnState>>,
 }
 
 #[async_trait]
@@ -525,13 +588,6 @@ impl Sink for KafkaSharedSink {
             .payload(&payload)
             .key(&*event.event_type);
 
-        // Non-blocking enqueue: hand the record to librdkafka's internal queue
-        // and rely on `linger.ms` + `batch.size` to coalesce many enqueued
-        // records into a single broker round-trip. Awaiting on every send
-        // serialises producer throughput at the broker round-trip latency
-        // (~10ms = ~100 events/sec ceiling), which negates batching entirely.
-        // Errors at enqueue-time are returned synchronously; in-flight
-        // delivery errors are reported by the producer's background thread.
         match self.producer.send_result(record) {
             Ok(_delivery_future) => Ok(()),
             Err((e, _)) => Err(SinkError::other(format!("kafka enqueue: {e}"))),
@@ -546,5 +602,66 @@ impl Sink for KafkaSharedSink {
 
     async fn close(&self) -> Result<(), SinkError> {
         self.flush().await
+    }
+
+    fn supports_exactly_once(&self) -> bool {
+        self.txn_state.is_some()
+    }
+
+    async fn begin_epoch(&self, checkpoint_id: u64) -> Result<(), SinkError> {
+        if let Some(ref state) = self.txn_state {
+            if state
+                .phase
+                .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                state.epoch.store(checkpoint_id, Ordering::SeqCst);
+                self.producer
+                    .begin_transaction()
+                    .map_err(|e| SinkError::other(format!("begin_transaction: {e}")))?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn prepare_commit(&self, _checkpoint_id: u64) -> Result<(), SinkError> {
+        if let Some(ref state) = self.txn_state {
+            if state
+                .phase
+                .compare_exchange(1, 2, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                self.producer
+                    .flush(Duration::from_secs(30))
+                    .map_err(|e| SinkError::other(format!("prepare_commit flush: {e}")))?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn commit(&self, _checkpoint_id: u64) -> Result<(), SinkError> {
+        if let Some(ref state) = self.txn_state {
+            if state
+                .phase
+                .compare_exchange(2, 0, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                self.producer
+                    .commit_transaction(Duration::from_secs(30))
+                    .map_err(|e| SinkError::other(format!("commit_transaction: {e}")))?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn abort(&self, _checkpoint_id: u64) -> Result<(), SinkError> {
+        if let Some(ref state) = self.txn_state {
+            if state.phase.swap(0, Ordering::SeqCst) > 0 {
+                self.producer
+                    .abort_transaction(Duration::from_secs(10))
+                    .map_err(|e| SinkError::other(format!("abort_transaction: {e}")))?;
+            }
+        }
+        Ok(())
     }
 }

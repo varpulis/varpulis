@@ -168,6 +168,18 @@ impl ConnectorFactory for KafkaFactory {
         if let Some(group_id) = config.properties.get("group_id") {
             kafka_config = kafka_config.with_group_id(group_id);
         }
+        if config
+            .properties
+            .get("exactly_once")
+            .is_some_and(|v| v == "true")
+        {
+            let tid = config
+                .properties
+                .get("transactional_id")
+                .cloned()
+                .unwrap_or_else(|| format!("varpulis-{name}"));
+            kafka_config = kafka_config.with_transactional_id(&tid);
+        }
         Ok(Box::new(ManagedKafkaConnector::new(name, kafka_config)))
     }
 

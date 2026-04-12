@@ -1243,6 +1243,23 @@ impl Engine {
         }
     }
 
+    /// Call `begin_epoch` on all exactly-once sinks to start a transaction epoch.
+    ///
+    /// Must be called once after sinks are connected but before events start
+    /// flowing so that the first events land inside an open transaction.
+    /// Subsequent epochs are opened by `commit_sinks(id)` which calls
+    /// `begin_epoch(id + 1)` after each `commit(id)`.
+    #[cfg(feature = "async-runtime")]
+    pub async fn begin_epoch_sinks(&self, checkpoint_id: u64) {
+        for (key, sink) in self.sinks.cache() {
+            if sink.supports_exactly_once() {
+                if let Err(e) = sink.begin_epoch(checkpoint_id).await {
+                    tracing::error!("Sink '{key}' begin_epoch failed: {e}");
+                }
+            }
+        }
+    }
+
     /// Inject a pre-built sink into the engine's registry (async-runtime only).
     #[cfg(feature = "async-runtime")]
     pub fn inject_sink(&mut self, key: &str, sink: Arc<dyn crate::sink::Sink>) {
