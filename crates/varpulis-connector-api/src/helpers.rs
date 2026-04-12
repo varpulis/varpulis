@@ -16,31 +16,31 @@ use crate::limits;
 /// Kafka-sourced events all get wall-clock time and collapse into a
 /// single window.
 pub fn json_to_event(event_type: &str, json: &serde_json::Value) -> Event {
-    let mut event = Event::new(event_type);
+    let Some(obj) = json.as_object() else {
+        return Event::new(event_type);
+    };
 
-    if let Some(obj) = json.as_object() {
-        // Extract event time from well-known fields. Tried in the order
-        // `@timestamp` > `ts` > `timestamp` so that explicit ISO8601
-        // tagging wins over generator-specific integer fields.
-        if let Some(ts) = extract_event_time(obj) {
-            event.timestamp = ts;
-        }
+    // Pre-size the IndexMap to the field count to avoid rehashing.
+    let mut event = Event::with_capacity(event_type, obj.len());
 
-        let mut field_count = 0;
-        for (key, value) in obj {
-            if key != "event_type" {
-                if field_count >= limits::MAX_FIELDS_PER_EVENT {
-                    warn!(
-                        event_type,
-                        "Event exceeded max field count ({}), remaining fields dropped",
-                        limits::MAX_FIELDS_PER_EVENT
-                    );
-                    break;
-                }
-                if let Some(v) = json_to_value(value) {
-                    event = event.with_field(key.as_str(), v);
-                    field_count += 1;
-                }
+    if let Some(ts) = extract_event_time(obj) {
+        event.timestamp = ts;
+    }
+
+    let mut field_count = 0;
+    for (key, value) in obj {
+        if key != "event_type" {
+            if field_count >= limits::MAX_FIELDS_PER_EVENT {
+                warn!(
+                    event_type,
+                    "Event exceeded max field count ({}), remaining fields dropped",
+                    limits::MAX_FIELDS_PER_EVENT
+                );
+                break;
+            }
+            if let Some(v) = json_to_value(value) {
+                event = event.with_field(key.as_str(), v);
+                field_count += 1;
             }
         }
     }

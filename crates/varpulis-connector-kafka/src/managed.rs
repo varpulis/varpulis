@@ -384,18 +384,16 @@ impl ManagedConnector for ManagedKafkaConnector {
                                 let mut pushed = false;
 
                                 if let Some(payload) = msg.payload() {
-                                    if let Ok(text) = std::str::from_utf8(payload) {
-                                        if let Ok(json) =
-                                            serde_json::from_str::<serde_json::Value>(text)
-                                        {
-                                            let event_type = json
-                                                .get("event_type")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("KafkaEvent");
-                                            let event = json_to_event(event_type, &json);
-                                            batch.push(event);
-                                            pushed = true;
-                                        }
+                                    if let Ok(json) =
+                                        serde_json::from_slice::<serde_json::Value>(payload)
+                                    {
+                                        let event_type = json
+                                            .get("event_type")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("KafkaEvent");
+                                        let event = json_to_event(event_type, &json);
+                                        batch.push(event);
+                                        pushed = true;
                                     }
                                 }
 
