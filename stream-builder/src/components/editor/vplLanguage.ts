@@ -121,3 +121,30 @@ export const vplTheme = {
     'editor.lineHighlightBackground': '#1e293b',
   },
 }
+
+export const vplThemeLight = {
+  base: 'vs' as const,
+  inherit: true,
+  rules: [
+    { token: 'keyword', foreground: '7c3aed', fontStyle: 'bold' },
+    { token: 'keyword.operator', foreground: '0891b2' },
+    { token: 'support.function', foreground: 'b45309' },
+    { token: 'type', foreground: '059669' },
+    { token: 'string', foreground: '15803d' },
+    { token: 'number', foreground: 'c2410c' },
+    { token: 'number.float', foreground: 'c2410c' },
+    { token: 'number.duration', foreground: 'ea580c' },
+    { token: 'comment', foreground: '9ca3af', fontStyle: 'italic' },
+    { token: 'operator.sequence', foreground: 'dc2626', fontStyle: 'bold' },
+    { token: 'identifier', foreground: '1e293b' },
+    { token: 'delimiter.dot', foreground: '64748b' },
+  ],
+  colors: {
+    'editor.background': '#ffffff',
+    'editor.foreground': '#1e293b',
+    'editorLineNumber.foreground': '#94a3b8',
+    'editorCursor.foreground': '#7c3aed',
+    'editor.selectionBackground': '#e2e8f0',
+    'editor.lineHighlightBackground': '#f8fafc',
+  },
+}

@@ -42,19 +42,96 @@ async function apiCall(method: string, path: string, body?: unknown): Promise<{ 
   }
 }
 
+/** A single diagnostic from server validation */
+export interface VplDiagnostic {
+  severity: 'error' | 'warning' | 'info' | 'hint'
+  message: string
+  hint?: string
+  code?: string
+  start_line: number
+  start_col: number
+  end_line: number
+  end_col: number
+}
+
 /** Validate VPL syntax via the server */
-export async function validateVpl(source: string): Promise<{ valid: boolean; error?: string; diagnostics?: unknown[] }> {
+export async function validateVpl(source: string): Promise<{ valid: boolean; error?: string; diagnostics: VplDiagnostic[] }> {
   const result = await apiCall('POST', '/api/v1/playground/validate', { vpl: source })
   if (result.ok) {
-    const data = result.data as { ok: boolean; diagnostics?: unknown[] }
-    if (data.ok) {
-      return { valid: true, diagnostics: data.diagnostics }
+    const data = result.data as { ok: boolean; diagnostics?: VplDiagnostic[] }
+    const diags = (data.diagnostics ?? []) as VplDiagnostic[]
+    if (data.ok && diags.every((d) => d.severity !== 'error')) {
+      return { valid: true, diagnostics: diags }
     }
-    return { valid: false, error: 'Validation returned errors' }
+    const errors = diags.filter((d) => d.severity === 'error')
+    return { valid: false, error: errors[0]?.message || 'Validation returned errors', diagnostics: diags }
   }
-  // Parse error from server
   const data = result.data as { error?: string; code?: string } | null
-  return { valid: false, error: data?.error || result.error }
+  const errMsg = data?.error || result.error || 'Unknown error'
+  return {
+    valid: false,
+    error: errMsg,
+    diagnostics: [{ severity: 'error', message: errMsg, start_line: 1, start_col: 0, end_line: 1, end_col: 0 }],
+  }
+}
+
+/** Cluster-aware validation: tries /cluster/validate then falls back to /playground/validate */
+export async function validateVplServer(source: string): Promise<{ valid: boolean; error?: string; diagnostics: VplDiagnostic[] }> {
+  // Try cluster endpoint first (uses injected connectors for better validation)
+  const clusterResult = await apiCall('POST', '/api/v1/cluster/validate', { source })
+  if (clusterResult.ok) {
+    const data = clusterResult.data as { valid: boolean; diagnostics?: Array<{ severity: string; line: number; column: number; message: string; hint?: string }> }
+    const diags: VplDiagnostic[] = (data.diagnostics ?? []).map((d) => ({
+      severity: d.severity as VplDiagnostic['severity'],
+      message: d.message,
+      hint: d.hint,
+      start_line: d.line,
+      start_col: Math.max(0, d.column - 1),
+      end_line: d.line,
+      end_col: d.column + 10, // approximate end column
+    }))
+    if (data.valid) {
+      return { valid: true, diagnostics: diags }
+    }
+    const errors = diags.filter((d) => d.severity === 'error')
+    return { valid: false, error: errors[0]?.message || 'Validation returned errors', diagnostics: diags }
+  }
+
+  // Fall back to playground endpoint
+  return validateVpl(source)
+}
+
+/** Convert VPL code to a visual graph via the server (authoritative parse) */
+export async function parseVplToGraph(vpl: string): Promise<{ ok: boolean; graph?: { nodes: GraphNode[]; edges: GraphEdge[] }; error?: string }> {
+  const result = await apiCall('POST', '/api/v1/pipeline/graph', { vpl })
+  if (result.ok && result.data) {
+    return { ok: true, graph: result.data as { nodes: GraphNode[]; edges: GraphEdge[] } }
+  }
+  return { ok: false, error: result.error }
+}
+
+/** Convert a visual graph back to VPL code via the server */
+export async function generateVplFromGraph(graph: { nodes: GraphNode[]; edges: GraphEdge[] }): Promise<{ ok: boolean; vpl?: string; error?: string }> {
+  const result = await apiCall('POST', '/api/v1/pipeline/generate', graph)
+  if (result.ok && result.data) {
+    const data = result.data as { vpl: string }
+    return { ok: true, vpl: data.vpl }
+  }
+  return { ok: false, error: result.error }
+}
+
+export interface GraphNode {
+  id: string
+  label: string
+  node_type: string
+  config: Record<string, unknown>
+  position?: [number, number] | null
+}
+
+export interface GraphEdge {
+  id: string
+  source: string
+  target: string
 }
 
 /** Deploy a pipeline to the server */
@@ -78,11 +155,20 @@ export async function checkHealth(): Promise<{ healthy: boolean; version?: strin
 }
 
 /** List deployed pipelines */
-export async function listPipelines(): Promise<{ pipelines: Array<{ id: string; name: string; status: string }>; error?: string }> {
+export async function listPipelines(): Promise<{ pipelines: Array<{ id: string; name: string; status: string; source?: string }>; error?: string }> {
   const result = await apiCall('GET', '/api/v1/pipelines')
   if (result.ok && result.data) {
-    const data = result.data as { pipelines: Array<{ id: string; name: string; status: string }> }
+    const data = result.data as { pipelines: Array<{ id: string; name: string; status: string; source?: string }> }
     return { pipelines: data.pipelines }
   }
   return { pipelines: [], error: result.error }
+}
+
+/** Get a single pipeline by ID */
+export async function getPipeline(id: string): Promise<{ ok: boolean; pipeline?: { id: string; name: string; status: string; source: string }; error?: string }> {
+  const result = await apiCall('GET', `/api/v1/pipelines/${encodeURIComponent(id)}`)
+  if (result.ok && result.data) {
+    return { ok: true, pipeline: result.data as { id: string; name: string; status: string; source: string } }
+  }
+  return { ok: false, error: result.error }
 }
