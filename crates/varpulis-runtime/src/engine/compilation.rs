@@ -2162,6 +2162,211 @@ pub(super) fn extract_equality_join_key(expr: &varpulis_core::ast::Expr) -> Opti
 // is enabled. Also verify that an unsupported aggregate function (e.g.
 // `stddev`) inhibits the fusion and falls back to the row path.
 
+// =============================================================================
+// Topic-routing compilation tests
+// =============================================================================
+//
+// Verify that the compiler maps `topic:` param variants to the correct
+// `TopicSpec` enum values in the resulting `RuntimeOp::To(ToConfig)`.
+
+#[cfg(test)]
+mod topic_routing_tests {
+    use varpulis_core::ast::{BinOp, Expr};
+
+    use super::super::types::{RuntimeOp, TopicSpec};
+    use crate::engine::Engine;
+
+    #[test]
+    fn static_topic_produces_static_spec() {
+        let source = r#"
+            connector Broker = kafka(brokers: "localhost:9092")
+            stream Out = Input.to(Broker, topic: "events")
+        "#;
+        let mut engine = Engine::builder().build();
+        let program = varpulis_parser::parse(source).expect("parse");
+        engine.load(&program).expect("load");
+        let stream = engine.streams.values().next().expect("stream");
+        let to_config = stream
+            .operations
+            .iter()
+            .find_map(|op| {
+                if let RuntimeOp::To(c) = op {
+                    Some(c)
+                } else {
+                    None
+                }
+            })
+            .expect("To op");
+
+        assert!(matches!(&to_config.topic, Some(TopicSpec::Static(s)) if s == "events"));
+        assert_eq!(to_config.sink_key, "Broker::events");
+        assert_eq!(to_config.connector_name, "Broker");
+    }
+
+    #[test]
+    fn ident_topic_produces_dynamic_spec() {
+        let source = r#"
+            connector Broker = kafka(brokers: "localhost:9092")
+            stream Out = Input.to(Broker, topic: category)
+        "#;
+        let mut engine = Engine::builder().build();
+        let program = varpulis_parser::parse(source).expect("parse");
+        engine.load(&program).expect("load");
+        let stream = engine.streams.values().next().expect("stream");
+        let to_config = stream
+            .operations
+            .iter()
+            .find_map(|op| {
+                if let RuntimeOp::To(c) = op {
+                    Some(c)
+                } else {
+                    None
+                }
+            })
+            .expect("To op");
+
+        match &to_config.topic {
+            Some(TopicSpec::Dynamic(Expr::Ident(field))) => {
+                assert_eq!(field, "category");
+            }
+            other => panic!("Expected Dynamic(Ident), got {:?}", other.is_some()),
+        }
+        assert_eq!(to_config.sink_key, "Broker");
+    }
+
+    #[test]
+    fn concat_topic_produces_dynamic_spec() {
+        let source = r#"
+            connector Broker = kafka(brokers: "localhost:9092")
+            stream Out = Input.to(Broker, topic: "events-" + region)
+        "#;
+        let mut engine = Engine::builder().build();
+        let program = varpulis_parser::parse(source).expect("parse");
+        engine.load(&program).expect("load");
+        let stream = engine.streams.values().next().expect("stream");
+        let to_config = stream
+            .operations
+            .iter()
+            .find_map(|op| {
+                if let RuntimeOp::To(c) = op {
+                    Some(c)
+                } else {
+                    None
+                }
+            })
+            .expect("To op");
+
+        match &to_config.topic {
+            Some(TopicSpec::Dynamic(Expr::Binary { op, left, right })) => {
+                assert!(matches!(op, BinOp::Add));
+                assert!(matches!(left.as_ref(), Expr::Str(s) if s == "events-"));
+                assert!(matches!(right.as_ref(), Expr::Ident(s) if s == "region"));
+            }
+            other => panic!("Expected Dynamic(Binary), got {:?}", other.is_some()),
+        }
+        assert_eq!(to_config.sink_key, "Broker");
+    }
+
+    #[test]
+    fn concat_three_parts_produces_nested_binary() {
+        let source = r#"
+            connector Broker = kafka(brokers: "localhost:9092")
+            stream Out = Input.to(Broker, topic: "tenant." + tenant_id + ".events")
+        "#;
+        let mut engine = Engine::builder().build();
+        let program = varpulis_parser::parse(source).expect("parse");
+        engine.load(&program).expect("load");
+        let stream = engine.streams.values().next().expect("stream");
+        let to_config = stream
+            .operations
+            .iter()
+            .find_map(|op| {
+                if let RuntimeOp::To(c) = op {
+                    Some(c)
+                } else {
+                    None
+                }
+            })
+            .expect("To op");
+
+        // Should be: ("tenant." + tenant_id) + ".events"  -- left-associative
+        match &to_config.topic {
+            Some(TopicSpec::Dynamic(Expr::Binary { op, left, right })) => {
+                assert!(matches!(op, BinOp::Add));
+                assert!(matches!(right.as_ref(), Expr::Str(s) if s == ".events"));
+                match left.as_ref() {
+                    Expr::Binary {
+                        op: inner_op,
+                        left: inner_l,
+                        right: inner_r,
+                    } => {
+                        assert!(matches!(inner_op, BinOp::Add));
+                        assert!(matches!(inner_l.as_ref(), Expr::Str(s) if s == "tenant."));
+                        assert!(matches!(inner_r.as_ref(), Expr::Ident(s) if s == "tenant_id"));
+                    }
+                    other => panic!("Expected nested Binary, got {:?}", other),
+                }
+            }
+            other => panic!("Expected Dynamic(Binary), got {:?}", other.is_some()),
+        }
+    }
+
+    #[test]
+    fn no_topic_param_produces_none() {
+        let source = r"
+            connector out = console()
+            stream Out = Input.to(out)
+        ";
+        let mut engine = Engine::builder().build();
+        let program = varpulis_parser::parse(source).expect("parse");
+        engine.load(&program).expect("load");
+        let stream = engine.streams.values().next().expect("stream");
+        let to_config = stream
+            .operations
+            .iter()
+            .find_map(|op| {
+                if let RuntimeOp::To(c) = op {
+                    Some(c)
+                } else {
+                    None
+                }
+            })
+            .expect("To op");
+
+        assert!(to_config.topic.is_none());
+        assert_eq!(to_config.connector_name, "out");
+    }
+
+    #[test]
+    fn extra_params_preserved_alongside_topic() {
+        let source = r#"
+            connector Broker = kafka(brokers: "localhost:9092")
+            stream Out = Input.to(Broker, topic: category, client_id: "myapp")
+        "#;
+        let mut engine = Engine::builder().build();
+        let program = varpulis_parser::parse(source).expect("parse");
+        engine.load(&program).expect("load");
+        let stream = engine.streams.values().next().expect("stream");
+        let to_config = stream
+            .operations
+            .iter()
+            .find_map(|op| {
+                if let RuntimeOp::To(c) = op {
+                    Some(c)
+                } else {
+                    None
+                }
+            })
+            .expect("To op");
+
+        assert!(matches!(&to_config.topic, Some(TopicSpec::Dynamic(_))));
+        assert_eq!(
+            to_config.extra_params.get("client_id"),
+            Some(&"myapp".to_string())
+        );
+    }
+}
+
 #[cfg(all(test, feature = "arrow"))]
 mod arrow_fusion_tests {
     use crate::engine::Engine;

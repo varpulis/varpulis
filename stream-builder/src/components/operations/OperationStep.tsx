@@ -1,9 +1,13 @@
 import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { usePipelineStore } from '@/stores/pipelineStore'
 import type { StreamOperation } from '@/types/pipeline'
 import { OPERATION_CATALOG, CATEGORY_COLORS, type OperationCategory } from '@/types/pipeline'
+import { WhereEditor } from './editors/WhereEditor'
+import { AggregateEditor } from './editors/AggregateEditor'
+import { WindowEditor } from './editors/WindowEditor'
+import { EmitEditor } from './editors/EmitEditor'
+import { ExpressionInput } from './editors/ExpressionInput'
 
 interface OperationStepProps {
   operation: StreamOperation
@@ -15,6 +19,59 @@ export function OperationStep({ operation, streamId }: OperationStepProps) {
   const meta = OPERATION_CATALOG.find((m) => m.name === operation.type)
   const category = meta?.category ?? 'io'
   const color = CATEGORY_COLORS[category as OperationCategory] ?? '#6b7280'
+
+  const handleValueChange = (value: string) => {
+    updateOperation(streamId, operation.id, { value })
+  }
+
+  const renderEditor = () => {
+    switch (operation.type) {
+      case 'where':
+      case 'filter':
+      case 'having':
+        return (
+          <WhereEditor
+            value={operation.value}
+            onChange={handleValueChange}
+            streamId={streamId}
+          />
+        )
+      case 'aggregate':
+        return (
+          <AggregateEditor
+            value={operation.value}
+            onChange={handleValueChange}
+            streamId={streamId}
+          />
+        )
+      case 'window':
+        return (
+          <WindowEditor
+            value={operation.value}
+            onChange={handleValueChange}
+          />
+        )
+      case 'emit':
+        return (
+          <EmitEditor
+            value={operation.value}
+            onChange={handleValueChange}
+            streamId={streamId}
+          />
+        )
+      default:
+        // Use ExpressionInput with autocomplete for remaining operations
+        return (
+          <ExpressionInput
+            value={operation.value}
+            onChange={handleValueChange}
+            placeholder={meta?.description ?? `${operation.type} expression`}
+            streamId={streamId}
+            showOperators={false}
+          />
+        )
+    }
+  }
 
   return (
     <div className="group relative">
@@ -42,13 +99,11 @@ export function OperationStep({ operation, streamId }: OperationStepProps) {
         </Button>
       </div>
       {operation.expanded && (
-        <div className="px-2 py-1.5 ml-3 border-l-2 border-border">
-          <Input
-            className="h-7 text-xs font-mono"
-            placeholder={meta?.description ?? `${operation.type} expression`}
-            value={operation.value}
-            onChange={(e) => updateOperation(streamId, operation.id, { value: e.target.value })}
-          />
+        <div
+          className="px-2 py-1.5 ml-3 border-l-2 border-border"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {renderEditor()}
         </div>
       )}
     </div>
