@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![warn(clippy::unwrap_used)]
 //! # Varpulis Core
 //!

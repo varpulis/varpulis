@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! # VPL Parser
 //!
 //! Lexing and parsing for the VPL streaming analytics language.

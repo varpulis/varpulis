@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! SASE+ Pattern Matching Engine
 //!
 //! Implementation of the SASE+ algorithm for Complex Event Processing.
