@@ -54,6 +54,7 @@ Validated against real [MORDOR APT29](https://securitydatasets.com/) datasets at
 
 - [`examples/security-demo/`](examples/security-demo/) — 11 detection VPLs (lateral movement, credential dumping, persistence, exfil burst, full kill chain, predictive kill chain) + 5 paired Sigma-vs-behavioral comparisons + asciinema run.
 - [SIEM Evasion Lab](docs/siem-evasion-lab-01-psexec.md) — deep-dives on Sigma blind spots: [PsExec](docs/siem-evasion-lab-01-psexec.md), [credential dump](docs/siem-evasion-lab-02-credential-dump.md), [lateral movement](docs/siem-evasion-lab-03-lateral-movement.md), [persistence](docs/siem-evasion-lab-04-persistence.md).
+- [Replacing Trellix ACE with Varpulis](docs/replacing-trellix-ace.md) — ESM → Kafka → Varpulis migration guide: architectural seam, why ACE rules go silent under load, rule translation, parallel-run cutover.
 - [`varpulis security init`](crates/varpulis-cli/src/commands/security_init.rs) scaffolds a starter project; [`varpulis deploy-rules`](crates/varpulis-cli/src/commands/deploy_rules.rs) deploys to a running coordinator.
 
 ## Quick Start
