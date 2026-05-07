@@ -1,0 +1,22 @@
+# Branchwork repo-level configuration.
+#
+# Forward-looking: branchwork's plan phases 0-2 (which read this file) have
+# not shipped yet, so this file is currently a no-op. Branchwork ignores
+# unknown config, so committing it now is safe and means the file activates
+# automatically once branchwork ships — no further cep changes required.
+#
+# `blocking_workflows` lists the GitHub Actions workflows whose `name:` field
+# (top of each .github/workflows/*.yml) must succeed before a branch is
+# considered mergeable. Only the canonical "CI" workflow is blocking.
+# Everything else (Docker, Docker Publish (Release), Fuzz Testing,
+# Performance Regression, Release, Publish to crates.io,
+# VPL Check (Self-Test)) is non-blocking by omission.
+#
+# `verification` is the local pre-merge gate branchwork runs on the agent's
+# machine. Mirrors `make verify` so CI and local stay in lockstep.
+
+[ci]
+blocking_workflows = ["CI"]
+
+[phase]
+verification = "bash scripts/verify.sh"
