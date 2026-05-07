@@ -32,6 +32,36 @@ For the Web UI (optional):
 cd web-ui && npm ci && npm run type-check
 ```
 
+## Scope of Contributions
+
+Varpulis is open-source under MIT/Apache-2.0 and we welcome contributions across most of the codebase:
+
+**PRs welcome:**
+- **Runtime** (`crates/varpulis-runtime/`, `crates/varpulis-sase/`, `crates/varpulis-zdd/`) — engine, SASE+ pattern matching, Hamlet, PST forecasting, optimizations.
+- **VPL language** (`crates/varpulis-parser/`, `crates/varpulis-core/`) — grammar, AST, type/semantic checks, new operators.
+- **CLI** (`crates/varpulis-cli/`) — commands, output formats, ergonomics, `varpulis interactive`.
+- **Connectors** (`crates/varpulis-connector-*/`) — new sources/sinks, fixes, hardening (MQTT, Kafka, NATS, HTTP, database, Redis, S3, Kinesis, Elasticsearch, Pulsar, Sysmon, etc.).
+- **Security demo & detection rules** (`examples/security-demo/`) — new MITRE ATT&CK detections, evasion-resistant rules, Sigma-comparison pairs, MORDOR/APT dataset coverage.
+- **LSP / MCP** (`crates/varpulis-lsp/`, `crates/varpulis-mcp/`) — diagnostics, completion, AI-assisted authoring.
+- **Documentation** (`docs/`, examples, READMEs, tutorials, ADRs).
+- **Tests, benchmarks, CI hardening, performance work** anywhere in the workspace.
+
+**Out of scope for OSS contributions:**
+- **Managed cloud control plane** — multi-tenant orchestration, billing, customer onboarding flows.
+- **Enterprise connectors** — proprietary SIEM/EDR vendor integrations developed under commercial agreements.
+- **Hosted SaaS infrastructure** — deployment automation, tenant isolation, and operational tooling for varpulis-cep.com.
+
+PRs touching those areas will be redirected — usually to a discussion about whether the same need can be met by an OSS extension point (a connector trait, a webhook, a plugin), which we are happy to add. Open an issue first if you're unsure where a change lands.
+
+## Maintainer & Review Cadence
+
+Varpulis is maintained by a solo author today. That has practical consequences for contributors:
+
+- **Review SLA is best-effort.** First response usually within a few business days; complex PRs can take longer. If a PR has been quiet for more than two weeks, ping the issue or the [Discord](https://discord.gg/nVyctE8vPz) — it's not personal, it's bandwidth.
+- **Open an issue for non-trivial work first.** A 50-line bug fix or doc tweak is fine to send directly. A new operator, connector, or refactor is much faster to land if we agree on direction first — saves you rework and saves me a hard "no" review.
+- **Small, focused PRs land fastest.** One logical change, tests included, CI green. PRs that bundle five unrelated changes will be asked to split.
+- **Be patient with breaking-change discussions.** Anything that touches public APIs, the VPL grammar, wire formats, or persisted state needs an ADR (see Pull Request Process below) and may take a release cycle to land.
+
 ## Code Style
 
 All code must pass formatting and linting checks before merge. CI enforces both.
@@ -107,6 +137,28 @@ Scopes are optional but encouraged. Common scopes: `engine`, `parser`, `runtime`
 5. Update relevant documentation if your change affects user-facing behavior.
 6. For changes that affect public APIs, wire formats, or performance characteristics, write an [Architecture Decision Record](design/decisions/README.md) (ADR). See the template in the ADR directory.
 7. Respond to review feedback with fixup commits; the maintainer will squash on merge.
+
+### Sign-off (DCO)
+
+Every commit must carry a `Signed-off-by:` trailer asserting agreement with the [Developer Certificate of Origin 1.1](https://developercertificate.org/). The DCO is a lightweight, in-commit affirmation that you wrote the patch (or otherwise have the right to submit it under the project's MIT/Apache-2.0 license) — there is no separate CLA to sign.
+
+Add the trailer automatically with `git commit -s`:
+
+```bash
+git commit -s -m "feat(engine): add sliding window support"
+```
+
+This appends a line like:
+
+```
+Signed-off-by: Jane Doe <jane@example.com>
+```
+
+If you forget on an existing commit, amend with `git commit --amend -s --no-edit`. For a series of commits, `git rebase --signoff <base>` will sign-off all of them.
+
+Use the same name and email you'd be willing to have appear in the public git log. Anonymous or pseudonymous sign-offs (`anon@example.com`, single first name) are not accepted.
+
+Note: this project uses DCO rather than a CLA on purpose — DCO keeps copyright with contributors and avoids paperwork friction. If your employer requires a CLA before you can contribute, open an issue and we'll discuss.
 
 ## Running Benchmarks
 
@@ -216,6 +268,14 @@ cargo llvm-cov --workspace --html --open
 ```
 
 Coverage is uploaded to Codecov on every push and PR. If your PR drops coverage below the threshold, add tests before requesting review.
+
+## Security
+
+**Do not file public issues for security vulnerabilities.** See [SECURITY.md](SECURITY.md) for the full reporting policy, scope, response SLAs, and disclosure timeline.
+
+Quick path: email [security@varpulis-cep.com](mailto:security@varpulis-cep.com) with a description, reproduction steps, and any PoC. We acknowledge within 48 hours and aim to communicate a fix timeline within two weeks.
+
+Functional bugs (crashes from valid input, parser errors, runtime panics that aren't exploitable) are fine to file as regular GitHub issues.
 
 ## License
 
