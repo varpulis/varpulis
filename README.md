@@ -169,6 +169,17 @@ Each connector is an independent crate. The default binary includes all; build w
 | [Cluster Tutorial](docs/tutorials/cluster-tutorial.md) | [Production Deployment](docs/PRODUCTION_DEPLOYMENT.md) |
 | [System Architecture](docs/architecture/system.md) | [All Tutorials →](docs/tutorials/) |
 
+## Build & Test
+
+```bash
+cargo build               # build the workspace
+cargo test                # unit + integration tests
+cargo clippy              # lint
+make verify               # full local gate: fmt + clippy + audit + deny
+```
+
+`make verify` is a thin wrapper around `scripts/verify.sh` and runs the same gates as CI. Subsets are available: `make verify-fmt`, `make verify-clippy`, `make verify-audit`, `make verify-deny`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow.
+
 ## Contributing
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).

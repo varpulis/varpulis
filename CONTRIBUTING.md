@@ -38,6 +38,10 @@ All code must pass formatting and linting checks before merge. CI enforces both.
 
 - **Format**: `cargo fmt --all`
 - **Lint**: `cargo clippy --workspace --all-targets -- -D warnings`
+- **One-shot pre-push gate**: `make verify` runs fmt + clippy + audit + deny
+  using the same script CI invokes (`scripts/verify.sh`). A clean local pass
+  should keep CI green. Use `make verify-fmt`, `make verify-clippy`,
+  `make verify-audit`, or `make verify-deny` to iterate on a single gate.
 
 Key conventions:
 - Use `!x.is_empty()` instead of `x.len() > 0`
