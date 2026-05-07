@@ -2,73 +2,41 @@
   <img src="docs/assets/logo.png" width="320" alt="Varpulis">
 </p>
 
-<p align="center"><strong>The Rust stream processing engine for real-time detection.</strong><br>Open-source Apache Flink alternative built for detection engineering, fraud prevention, and MITRE ATT&amp;CK coverage.<br>1.5M events/sec · Single 15MB binary · No JVM</p>
+<p align="center"><strong>Open-source SASE+ engine for SIEM correlation and MITRE ATT&amp;CK kill-chain detection.</strong></p>
 
 [![CI](https://github.com/varpulis/varpulis/actions/workflows/ci.yml/badge.svg)](https://github.com/varpulis/varpulis/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/varpulis-cli.svg)](https://crates.io/crates/varpulis-cli)
 [![docs.rs](https://docs.rs/varpulis-core/badge.svg)](https://docs.rs/varpulis-core)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 
-[Documentation](https://www.varpulis-cep.com/docs/) · [Live Demo](https://demo.varpulis-cep.com) · [Quick Start](#quick-start) · [Examples](examples/) · [Benchmarks](docs/PERFORMANCE_ANALYSIS.md)
+[Documentation](https://www.varpulis-cep.com/docs/) · [Live Demo](https://demo.varpulis-cep.com) · [Quick Start](#quick-start) · [Security Demo](examples/security-demo/) · [SIEM Evasion Lab](docs/siem-evasion-lab-01-psexec.md)
 
 ---
 
-Varpulis detects **patterns across event streams in real-time** — the *what followed by what followed by what* that single-event rules miss. Write detections as declarative VPL programs, deploy as a single binary, process 1.5M events per second per core. It's what you'd use instead of Apache Flink CEP when you don't want a JVM cluster, instead of Esper when you want an actively-developed engine, and instead of writing custom Rust when you want a query language.
+- **Sequence detection SIEMs can't model.** Multi-step kill chains (`A -> all B -> C within 5m`) — Sigma and KQL match single events; behavioral patterns survive renamed binaries, swapped C2, novel evasions.
+- **250K events/sec real-time** on a single core, end-to-end (file → match → emit). 1.5M evt/s on the SASE+ core. Single 15 MB Rust binary, no JVM.
+- **VPL: rules a blue team can read.** Declarative, auditable, version-controlled. Compiles to a Rust state machine — no DSL-on-DSL, no XML, no Spark job to babysit.
 
 ```python
-stream FraudAlert = Login as login
-    -> all Transfer where user_id == login.user_id as txs
-    -> Logout where user_id == login.user_id
-    .within(5m)
-    .trend_aggregate(total: sum_trends(txs.amount), transfers: count_events(txs))
-    .where(total > 10000)
-    .forecast(confidence: 0.7, horizon: 2m, warmup: 50)
-    .emit(user: login.user_id, total: total, transfers: transfers)
+# Lateral movement: SMB connect → remote service exec within 2 minutes
+# MITRE T1021.002 — catches PsExec, renamed PsExec, WMI remote exec, same pattern
+stream LateralMovement = SysmonNetworkConnect .where(DestinationPort == 445) as smb
+    -> SysmonProcessCreate .where(ParentImage.contains("services.exe")) as remote_exec
+    .within(2m)
+    .emit(rule: "lateral_movement_smb", mitre: "T1021.002",
+          source: smb.Hostname, target: smb.DestinationIp,
+          process: remote_exec.Image, cmdline: remote_exec.CommandLine)
 ```
 
-Login → *all* transfers → logout within 5 minutes. Every transfer is captured; aggregated in O(n). Fires only when the total exceeds $10K. `.forecast()` predicts that the pattern is **about to** complete — before the final event arrives. No other open-source streaming engine does this.
-
-## Quick Start
-
-```bash
-curl -sSf https://raw.githubusercontent.com/varpulis/varpulis/main/scripts/install.sh | sh
-varpulis interactive --no-tui
-```
-
-```
-vpl> event Tick: price: float
-vpl> stream Spike = Tick .where(price > 100) .emit(alert: "spike", price: price)
-vpl> Tick { price: 42.0 }
-vpl> Tick { price: 150.0 }
-→ Spike: {"alert":"spike","price":150}
-vpl> :save spike_detector.vpl
-```
-
-Copy-paste. 30 seconds. No files, no connectors, no Docker.
-
-<p align="center">
-  <img src="docs/assets/recordings/tui-split-pane.gif" alt="Varpulis TUI" width="720">
-</p>
-
-The default `varpulis interactive` opens a split-pane TUI with topology, live events, input, and metrics. Add `--no-tui` for a plain text shell, `--json` for agent automation.
-
-## Playground: Detect Rising Temperatures in 3 Lines
-
-<p align="center">
-  <img src="docs/assets/recordings/playground-demo.gif" alt="Varpulis Playground — detect rising temperatures with .increasing()" width="720">
-</p>
-
-`.increasing(temperature)` detects strictly rising sensor values — emits one alert when the trend breaks. 8 events in, 1 alert out: HVAC-01 rose from 22 to 55 in 4 steps. [Try it live](https://varpulis-cep.com/playground).
+A SIEM rule sees `services.exe` start a child — looks normal in isolation. Varpulis sees the SMB→exec sequence within 2 minutes — that's the behavioral signature of remote execution, regardless of which tool executed it.
 
 ## Security: Kill Chain Detection
-
-Varpulis detects **multi-step attack sequences** that single-event SIEM rules miss. Renamed PsExec? Different C2 tool? Doesn't matter — behavioral patterns catch what signature rules can't.
 
 ```bash
 # Blue mode: detect kill chains in Sysmon logs
 varpulis detect --rules rules/ --events sysmon.jsonl
 
-# Red mode: test which rules survive evasion
+# Red mode: test which rules survive evasion (Sigma vs. behavioral, head-to-head)
 varpulis analyze --rules rules/ --baseline normal.jsonl --evasion evasion.jsonl
 ```
 
@@ -82,7 +50,32 @@ varpulis analyze --rules rules/ --baseline normal.jsonl --evasion evasion.jsonl
 └───────────────────┴─────────────────────┴────────────┴────────────┴───────────┘
 ```
 
-Validated against real [MORDOR APT29](https://securitydatasets.com/) datasets at 25K+ events/sec. See the [SIEM Evasion Lab](docs/siem-evasion-lab-01-psexec.md) series for deep-dives on Sigma blind spots.
+Validated against real [MORDOR APT29](https://securitydatasets.com/) datasets at 25K+ events/sec.
+
+- [`examples/security-demo/`](examples/security-demo/) — 11 detection VPLs (lateral movement, credential dumping, persistence, exfil burst, full kill chain, predictive kill chain) + 5 paired Sigma-vs-behavioral comparisons + asciinema run.
+- [SIEM Evasion Lab](docs/siem-evasion-lab-01-psexec.md) — deep-dives on Sigma blind spots: [PsExec](docs/siem-evasion-lab-01-psexec.md), [credential dump](docs/siem-evasion-lab-02-credential-dump.md), [lateral movement](docs/siem-evasion-lab-03-lateral-movement.md), [persistence](docs/siem-evasion-lab-04-persistence.md).
+- [`varpulis security init`](crates/varpulis-cli/src/commands/security_init.rs) scaffolds a starter project; [`varpulis deploy-rules`](crates/varpulis-cli/src/commands/deploy_rules.rs) deploys to a running coordinator.
+
+## Quick Start
+
+```bash
+cargo install varpulis-cli
+varpulis interactive --no-tui
+```
+
+```
+vpl> event Tick: price: float
+vpl> stream Spike = Tick .where(price > 100) .emit(alert: "spike", price: price)
+vpl> Tick { price: 42.0 }
+vpl> Tick { price: 150.0 }
+→ Spike: {"alert":"spike","price":150}
+```
+
+The default `varpulis interactive` opens a split-pane TUI with topology, live events, input, and metrics. Add `--no-tui` for a plain text shell, `--json` for agent automation.
+
+<p align="center">
+  <img src="docs/assets/recordings/tui-split-pane.gif" alt="Varpulis TUI" width="720">
+</p>
 
 ## Why Varpulis?
 
@@ -96,7 +89,7 @@ Validated against real [MORDOR APT29](https://securitydatasets.com/) datasets at
 
 ¹ Approximate figures from published benchmarks and vendor documentation; workload-dependent.
 
-**`.forecast()` is unique.** It uses Probabilistic Suffix Trees to predict that a pattern is *about to* complete — before the final event arrives. Combined with Hawkes process intensity estimation and conformal prediction intervals, it turns reactive CEP into proactive alerting.
+**`.forecast()` is unique.** It uses Probabilistic Suffix Trees to predict that a pattern is *about to* complete — before the final event arrives. Combined with Hawkes process intensity estimation and conformal prediction intervals, it turns reactive detection into proactive alerting.
 
 ## Performance
 
@@ -117,6 +110,7 @@ Single core. [Detailed benchmarks →](docs/PERFORMANCE_ANALYSIS.md)
 | MQTT, Kafka, NATS, HTTP | **Battle-tested** | In/Out |
 | PostgreSQL/MySQL/SQLite, Redis | Tested | In/Out |
 | Kinesis, S3, Elasticsearch, Pulsar, CDC | Available | Varies |
+| Sysmon, Splunk HEC, Slack | Security-focused | Varies |
 
 Each connector is an independent crate. The default binary includes all; build with `--features mqtt,kafka` for a minimal binary.
 
@@ -159,6 +153,10 @@ Each connector is an independent crate. The default binary includes all; build w
 - Circuit breaker, dead letter queue, backpressure signaling
 </details>
 
+## Beyond Security
+
+Varpulis is a general SASE+ engine — fraud detection, IoT anomalies, trend prediction. The [playground](https://varpulis-cep.com/playground) shows `.increasing(temperature)` detecting rising HVAC sensor values; `.forecast()` predicts pattern completion before the final event. See [`examples/`](examples/) for fraud, finance, and sensor pipelines.
+
 ## Documentation
 
 | | |
@@ -191,3 +189,9 @@ Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).
 ## Acknowledgments
 
 SASE/SASE+ — [Wu et al. SIGMOD 2006](https://dl.acm.org/doi/abs/10.1145/1142473.1142520), [Agrawal et al. SIGMOD 2008](https://www.lix.polytechnique.fr/~yanlei.diao/publications/sase-sigmod08-long.pdf) · Hamlet — [Poppe et al. SIGMOD 2021](https://arxiv.org/abs/2101.00361) · Built with [Pest](https://pest.rs/) and [Tower-LSP](https://github.com/ebkalderon/tower-lsp)
+
+---
+
+<p align="center">
+  <strong>Production deployment · managed cloud · enterprise connectors → <a href="https://varpulis-cep.com/poc">varpulis-cep.com/poc</a></strong>
+</p>
