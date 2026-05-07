@@ -5,6 +5,10 @@
 //!
 //! Or use the provided Docker-based test:
 //!   ./tests/integration/run_managed_connector_tests.sh
+//!
+//! Failure-mode tests (broker outage / reconnection) live in the sibling
+//! `managed_connector_failure_tests.rs` — they cover MQTT, NATS, and Kafka
+//! and require docker access to pause/unpause the broker container.
 
 #![cfg(all(feature = "mqtt", unix))]
 
