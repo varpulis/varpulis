@@ -28,6 +28,13 @@ ignore = [
     # async-nats pins rustls-webpki 0.102; fix requires >=0.103.10. No upstream fix yet.
     { id = "RUSTSEC-2026-0049", reason = "transitive via async-nats 0.46, no upstream fix yet" },
 
+    # rustls-webpki 0.102.x advisories published 2026-04. Same async-nats 0.46 pin as 0049;
+    # fix requires upstream bump to rustls-webpki >=0.103.10. URI/wildcard name-constraints
+    # and CRL-parse paths are not exposed to attacker-controlled certs in our deployments.
+    { id = "RUSTSEC-2026-0098", reason = "transitive via async-nats 0.46, no upstream fix yet" },
+    { id = "RUSTSEC-2026-0099", reason = "transitive via async-nats 0.46, no upstream fix yet" },
+    { id = "RUSTSEC-2026-0104", reason = "transitive via async-nats 0.46, no upstream fix yet" },
+
     # instant: unmaintained, replaced by web-time. Transitive via notify → varpulis-cli.
     # No safe upgrade: notify-types 1.0 still depends on instant.
     { id = "RUSTSEC-2024-0384", reason = "transitive via notify-types, no upstream fix" },
@@ -58,6 +65,7 @@ ignore = [
     { id = "RUSTSEC-2026-0094", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
     { id = "RUSTSEC-2026-0095", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
     { id = "RUSTSEC-2026-0096", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
+    { id = "RUSTSEC-2026-0114", reason = "transitive via varpulis-wasm, wasmtime 26.x migration pending" },
 
     # rand: unsound with custom logger calling rand::rng() during reseed.
     # Requires ALL of: `log` + `thread_rng` features, custom logger,

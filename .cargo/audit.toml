@@ -28,6 +28,16 @@ ignore = [
     # Fix requires >=0.103.10. No upstream fix for async-nats yet.
     "RUSTSEC-2026-0049",
 
+    # rustls-webpki 0.102.x advisories from 2026-04. Same upstream pin as
+    # RUSTSEC-2026-0049 (async-nats 0.46 → rustls-webpki 0.102). Fix
+    # requires async-nats bumping to a release that pins >=0.103.10.
+    # We do not feed attacker-controlled certificates through async-nats
+    # in production, so the URI/wildcard name-constraint and CRL-parse
+    # paths are not on the live attack surface.
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+
     # wasmtime 25.x: 11 CVEs published 2026-04-09. Transitive via
     # varpulis-wasm (WASM UDF SmartModule feature). wasmtime 26.x fixes
     # all of these but requires API migration. Already ignored in
@@ -43,6 +53,11 @@ ignore = [
     "RUSTSEC-2026-0094",
     "RUSTSEC-2026-0095",
     "RUSTSEC-2026-0096",
+
+    # RUSTSEC-2026-0114: wasmtime panic on table-allocation overflow.
+    # Same wasmtime 25.x pin as 0085-0096; awaiting wasmtime 26.x API
+    # migration in varpulis-wasm.
+    "RUSTSEC-2026-0114",
 
     # RUSTSEC-2026-0097: rand unsound with custom logger calling rand::rng()
     # during reseed. Preconditions (custom logger using rand::rng() with
