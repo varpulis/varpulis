@@ -53,6 +53,9 @@ persistent = ["raft", "rocksdb"]
 nats-transport = ["async-nats", "futures-util"]
 federation = ["nats-transport"]
 otel = ["opentelemetry", "tracing-opentelemetry"]
+# Distributed exactly-once checkpoint protocol (Flink-parity plan, Phase 1).
+# Off by default — single-node mode is unaffected.
+distributed-checkpoint = []
 
 [dependencies.kube]
 version = "3"

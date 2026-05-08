@@ -28,6 +28,8 @@
 
 pub mod api;
 pub mod chat;
+#[cfg(feature = "distributed-checkpoint")]
+pub mod checkpoint_protocol;
 pub mod connector_config;
 pub mod coordinator;
 #[cfg(feature = "federation")]
