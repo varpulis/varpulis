@@ -23,13 +23,7 @@ fn prev_event_has_referenced_fields(
             ref_alias,
             ref_field,
             ..
-        } => {
-            if ref_alias == alias {
-                prev.get(ref_field).is_some()
-            } else {
-                true
-            }
-        }
+        } => ref_alias != alias || prev.get(ref_field).is_some(),
         Predicate::And(l, r) | Predicate::Or(l, r) => {
             prev_event_has_referenced_fields(l, prev, alias)
                 && prev_event_has_referenced_fields(r, prev, alias)

@@ -50,67 +50,31 @@ run_step() {
         "$GREEN" "$label" "$RESET" "$DIM" "$duration_ms" "$RESET"
 }
 
-# ----- clippy allowlist -----------------------------------------------------
+# ----- clippy strategy ------------------------------------------------------
 #
-# Why an explicit allowlist rather than `--workspace`?
+# We run clippy in two passes, mirroring what CI does for `cargo check` and
+# `cargo test` (`.github/workflows/ci.yml`):
 #
-# Workspace-wide clippy unifies optional features across all members,
-# which forces optional connectors that pull in `openssl-sys` (Pulsar
-# via tokio-runtime, Kafka via rdkafka-sys) to compile even when a
-# developer only changed an unrelated crate. On systems without
-# `libssl-dev` headers that build fails noisily and is the single
-# most common verify-suite paper cut on this project.
+#   1. **Workspace pass with excludes.** One `cargo clippy --workspace
+#      --exclude X --exclude Y --exclude Z --all-targets -- -D warnings`
+#      analyzes the dep graph ONCE for every crate except the three
+#      problematic connectors, instead of 30+ separate clippy
+#      invocations each rebuilding shared deps. ~10× faster.
 #
-# Per-crate clippy avoids the unification trap: each crate compiles
-# only its own (default) features. The allowlist below is every
-# workspace member that builds clean on a Linux dev box with stable
-# rustc and no extra system packages beyond what `cargo build`
-# already needs. CI installs libssl-dev/protobuf-compiler/zlib1g-dev
-# and runs the same set workspace-wide as a belt-and-braces check.
+#   2. **Per-crate pass for the excluded connectors.** Workspace clippy
+#      would unify optional features across all members, forcing
+#      `openssl-sys` (Pulsar via tokio-runtime, Kafka via rdkafka-sys)
+#      and elasticsearch's TLS chain to compile with the wrong feature
+#      set. Per-crate clippy each gets its own clean default features.
 #
-# `varpulis-wasm` is included: the host-target build (default features,
-# no `smartmodule`) is clippy-clean and is what `cargo clippy -p` picks
-# unless an explicit `--target wasm32-unknown-unknown` is passed. The
-# wasm32 build is covered by a dedicated CI job.
-#
-# Keep this list sorted; add any new workspace member here.
-CLIPPY_CRATES=(
-    varpulis
-    varpulis-actors
-    varpulis-cli
-    varpulis-cluster
-    varpulis-connector-api
-    varpulis-connector-cdc
-    varpulis-connector-database
+# CONNECTOR_CRATES is intentionally short — only the three that hit the
+# openssl-sys / feature-unification trap. New "well-behaved" connectors
+# (no openssl-sys-via-features, no rdkafka-sys) belong in the workspace
+# pass, not here.
+CONNECTOR_CRATES=(
     varpulis-connector-elasticsearch
-    varpulis-connector-http
     varpulis-connector-kafka
-    varpulis-connector-kinesis
-    varpulis-connector-mqtt
-    varpulis-connector-nats
     varpulis-connector-pulsar
-    varpulis-connector-redis
-    varpulis-connector-s3
-    varpulis-connector-slack
-    varpulis-connector-splunk
-    varpulis-connector-syslog
-    varpulis-connectors
-    varpulis-core
-    varpulis-datagen
-    varpulis-db
-    varpulis-dead-letter
-    varpulis-engine-wasm
-    varpulis-enrichment
-    varpulis-hamlet
-    varpulis-lsp
-    varpulis-mcp
-    varpulis-parser
-    varpulis-pst
-    varpulis-runtime
-    varpulis-sase
-    varpulis-simd
-    varpulis-wasm
-    varpulis-zdd
 )
 
 # Anchor to repo root so relative paths inside cargo behave the same
@@ -137,7 +101,11 @@ unset _candidate
 OVERALL_START=$(date +%s%N)
 echo "${BOLD}verify suite${RESET}  ${DIM}(${REPO_ROOT})${RESET}"
 
-# ----- 1. nightly rustfmt ---------------------------------------------------
+# Steps are ordered cheapest-first so a failing commit fails fast: a
+# license violation should cost ~10s to detect, not 90s of clippy
+# compilation. fmt → audit → deny → clippy.
+
+# ----- 1. nightly rustfmt (~1s) ---------------------------------------------
 fmt_step() {
     cargo +nightly fmt --all -- --check
 }
@@ -147,20 +115,7 @@ else
     echo "${YELLOW}  · skipping fmt (SKIP_FMT=1)${RESET}"
 fi
 
-# ----- 2. per-crate clippy --------------------------------------------------
-clippy_step() {
-    for crate in "${CLIPPY_CRATES[@]}"; do
-        printf '  %s· clippy %s%s\n' "$DIM" "$crate" "$RESET"
-        cargo clippy -p "$crate" --all-targets -- -D warnings
-    done
-}
-if [[ "${SKIP_CLIPPY:-0}" != "1" ]]; then
-    run_step "cargo clippy (per-crate, --all-targets, -D warnings)" clippy_step
-else
-    echo "${YELLOW}  · skipping clippy (SKIP_CLIPPY=1)${RESET}"
-fi
-
-# ----- 3. cargo audit -------------------------------------------------------
+# ----- 2. cargo audit (~5s) -------------------------------------------------
 audit_step() {
     cargo audit
 }
@@ -170,7 +125,7 @@ else
     echo "${YELLOW}  · skipping audit (SKIP_AUDIT=1)${RESET}"
 fi
 
-# ----- 4. cargo deny --------------------------------------------------------
+# ----- 3. cargo deny (~10s) -------------------------------------------------
 deny_step() {
     cargo deny check
 }
@@ -178,6 +133,30 @@ if [[ "${SKIP_DENY:-0}" != "1" ]]; then
     run_step "cargo deny check" deny_step
 else
     echo "${YELLOW}  · skipping deny (SKIP_DENY=1)${RESET}"
+fi
+
+# ----- 4. clippy (workspace pass + per-crate excluded connectors) ----------
+clippy_step() {
+    # Pass 1: single workspace clippy excluding the openssl-sys connectors.
+    # Same exclude list CI uses for `cargo check --workspace`.
+    printf '  %s· workspace (excluding openssl-sys connectors)%s\n' "$DIM" "$RESET"
+    local exclude_args=()
+    for c in "${CONNECTOR_CRATES[@]}"; do
+        exclude_args+=("--exclude" "$c")
+    done
+    cargo clippy --workspace "${exclude_args[@]}" --all-targets -- -D warnings
+
+    # Pass 2: per-crate for the excluded connectors (avoids feature
+    # unification triggering openssl-sys with the wrong feature set).
+    for crate in "${CONNECTOR_CRATES[@]}"; do
+        printf '  %s· clippy %s%s\n' "$DIM" "$crate" "$RESET"
+        cargo clippy -p "$crate" --all-targets -- -D warnings
+    done
+}
+if [[ "${SKIP_CLIPPY:-0}" != "1" ]]; then
+    run_step "cargo clippy (workspace + 3 connectors, -D warnings)" clippy_step
+else
+    echo "${YELLOW}  · skipping clippy (SKIP_CLIPPY=1)${RESET}"
 fi
 
 # ----- summary --------------------------------------------------------------
