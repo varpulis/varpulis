@@ -665,10 +665,8 @@ fn parse_pattern_arrow_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Sa
             match p.as_rule() {
                 Rule::match_all_keyword => match_all = true,
                 Rule::sase_not_keyword => negated = true,
-                Rule::identifier => {
-                    if event_type.is_empty() {
-                        event_type = p.as_str().to_string();
-                    }
+                Rule::identifier if event_type.is_empty() => {
+                    event_type = p.as_str().to_string();
                 }
                 Rule::monotonic_op => monotonic = Some(parse_monotonic_op(p)?),
                 Rule::sase_where_clause => {
@@ -1339,21 +1337,17 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                                     let raw = value_pair.as_str();
                                     model_path = raw.trim_matches('"').to_string();
                                 }
-                                "inputs" => {
-                                    if value_pair.as_rule() == Rule::score_field_list {
-                                        for field in value_pair.into_inner() {
-                                            if field.as_rule() == Rule::identifier {
-                                                inputs.push(field.as_str().to_string());
-                                            }
+                                "inputs" if value_pair.as_rule() == Rule::score_field_list => {
+                                    for field in value_pair.into_inner() {
+                                        if field.as_rule() == Rule::identifier {
+                                            inputs.push(field.as_str().to_string());
                                         }
                                     }
                                 }
-                                "outputs" => {
-                                    if value_pair.as_rule() == Rule::score_field_list {
-                                        for field in value_pair.into_inner() {
-                                            if field.as_rule() == Rule::identifier {
-                                                outputs.push(field.as_str().to_string());
-                                            }
+                                "outputs" if value_pair.as_rule() == Rule::score_field_list => {
+                                    for field in value_pair.into_inner() {
+                                        if field.as_rule() == Rule::identifier {
+                                            outputs.push(field.as_str().to_string());
                                         }
                                     }
                                 }
