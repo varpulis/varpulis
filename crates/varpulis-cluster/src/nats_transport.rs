@@ -48,6 +48,48 @@ pub fn subject_raft_wildcard(node_id: u64) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Distributed checkpoint subjects (Flink-parity Phase 1, Task 1.2)
+// ---------------------------------------------------------------------------
+//
+// Used by the coordinated exactly-once protocol defined in
+// [`crate::checkpoint_protocol`]. Barrier requests are sent on the per-worker
+// `cmd` namespace so they share the worker's existing wildcard subscription;
+// acks/complete/abort live under a dedicated `checkpoint` namespace keyed by
+// group id so the coordinator can multiplex many in-flight checkpoints.
+
+/// Coordinator → worker barrier request: "snapshot pipeline at checkpoint id".
+///
+/// Sits under the per-worker `cmd` prefix so the worker's existing
+/// [`subject_cmd_wildcard`] subscription picks it up alongside `deploy`,
+/// `inject`, and other commands.
+pub fn subject_checkpoint_barrier(worker_id: &str) -> String {
+    subject_cmd(worker_id, "checkpoint_barrier")
+}
+
+/// Worker → coordinator ack: "I have prepared the snapshot for `checkpoint_id`".
+///
+/// Keyed by `group_id` so the coordinator subscribes once per in-flight
+/// distributed checkpoint and receives acks from every participant in that
+/// group.
+pub fn subject_checkpoint_ack(group_id: &str) -> String {
+    format!("{PREFIX}.checkpoint.ack.{group_id}")
+}
+
+/// Coordinator → workers broadcast: "checkpoint is durable, commit and resume".
+///
+/// All workers running pipelines in `group_id` subscribe to this subject.
+pub fn subject_checkpoint_complete(group_id: &str) -> String {
+    format!("{PREFIX}.checkpoint.complete.{group_id}")
+}
+
+/// Coordinator → workers broadcast: "abort checkpoint, discard prepared state".
+///
+/// All workers running pipelines in `group_id` subscribe to this subject.
+pub fn subject_checkpoint_abort(group_id: &str) -> String {
+    format!("{PREFIX}.checkpoint.abort.{group_id}")
+}
+
+// ---------------------------------------------------------------------------
 // Federation subjects
 // ---------------------------------------------------------------------------
 
@@ -211,5 +253,42 @@ mod tests {
     #[test]
     fn test_subject_raft_wildcard() {
         assert_eq!(subject_raft_wildcard(2), "varpulis.cluster.raft.2.>");
+    }
+
+    #[test]
+    fn test_subject_checkpoint_barrier() {
+        assert_eq!(
+            subject_checkpoint_barrier("w0"),
+            "varpulis.cluster.cmd.w0.checkpoint_barrier"
+        );
+        // Must be a child of the worker's cmd wildcard so the worker's
+        // existing subscription picks barriers up.
+        let wildcard = subject_cmd_wildcard("w0");
+        let prefix = wildcard.trim_end_matches('>');
+        assert!(subject_checkpoint_barrier("w0").starts_with(prefix));
+    }
+
+    #[test]
+    fn test_subject_checkpoint_ack() {
+        assert_eq!(
+            subject_checkpoint_ack("group-42"),
+            "varpulis.cluster.checkpoint.ack.group-42"
+        );
+    }
+
+    #[test]
+    fn test_subject_checkpoint_complete() {
+        assert_eq!(
+            subject_checkpoint_complete("group-42"),
+            "varpulis.cluster.checkpoint.complete.group-42"
+        );
+    }
+
+    #[test]
+    fn test_subject_checkpoint_abort() {
+        assert_eq!(
+            subject_checkpoint_abort("group-42"),
+            "varpulis.cluster.checkpoint.abort.group-42"
+        );
     }
 }
