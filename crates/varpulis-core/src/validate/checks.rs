@@ -376,12 +376,11 @@ fn check_stream_ops(
     // Build alias → event type mapping for field reference validation
     let mut alias_to_event: HashMap<String, String> = HashMap::new();
     match source {
-        StreamSource::Ident(name) => {
+        StreamSource::Ident(name) if v.symbols.events.contains_key(name) => {
             // Direct source: bare name can be used as qualifier
-            if v.symbols.events.contains_key(name) {
-                alias_to_event.insert(name.clone(), name.clone());
-            }
+            alias_to_event.insert(name.clone(), name.clone());
         }
+        StreamSource::Ident(_) => {}
         StreamSource::IdentWithAlias { name, alias } => {
             alias_to_event.insert(alias.clone(), name.clone());
         }
