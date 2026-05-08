@@ -59,7 +59,7 @@ pub struct CheckpointConfig {
 impl Default for CheckpointConfig {
     fn default() -> Self {
         Self {
-            interval: Duration::from_secs(60),
+            interval: Duration::from_mins(1),
             max_checkpoints: 3,
             checkpoint_on_shutdown: true,
             key_prefix: "varpulis".to_string(),

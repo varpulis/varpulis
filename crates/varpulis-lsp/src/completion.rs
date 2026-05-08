@@ -1192,11 +1192,7 @@ fn split_merge_parts(content: &str) -> Vec<&str> {
     for (i, c) in content.char_indices() {
         match c {
             '(' => depth += 1,
-            ')' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
-            }
+            ')' if depth > 0 => depth -= 1,
             ',' if depth == 0 => {
                 parts.push(&content[start..i]);
                 start = i + 1;

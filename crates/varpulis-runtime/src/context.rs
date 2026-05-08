@@ -577,7 +577,7 @@ impl ContextRuntime {
             .engine
             .min_session_gap()
             .and_then(|d| d.to_std().ok())
-            .unwrap_or(std::time::Duration::from_secs(60));
+            .unwrap_or(std::time::Duration::from_mins(1));
 
         let mut sweep_timer = tokio::time::interval(sweep_interval);
         sweep_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

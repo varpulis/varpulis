@@ -494,7 +494,7 @@ impl InteractiveSession {
 
         let handle = tokio::spawn(async move {
             let mut gen = create_schema(schema_type, None);
-            let interval_micros = if rate > 0 { 1_000_000 / rate } else { 1000 };
+            let interval_micros = 1_000_000_u64.checked_div(rate).unwrap_or(1000);
             let mut interval =
                 tokio::time::interval(std::time::Duration::from_micros(interval_micros));
             let start = tokio::time::Instant::now();

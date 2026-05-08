@@ -117,16 +117,15 @@ impl PerSourceWatermarkTracker {
         let mut min_wm: Option<DateTime<Utc>> = None;
         for sw in self.sources.values() {
             match (min_wm, sw.watermark) {
-                (Some(current_min), Some(source_wm)) => {
-                    if source_wm < current_min {
-                        min_wm = Some(source_wm);
-                    }
+                (Some(current_min), Some(source_wm)) if source_wm < current_min => {
+                    min_wm = Some(source_wm);
                 }
                 (None, Some(source_wm)) => {
                     min_wm = Some(source_wm);
                 }
                 // If any source has no watermark yet, effective watermark stays at current
-                // (we don't block on uninitialized sources)
+                // (we don't block on uninitialized sources). Same for the
+                // (Some, Some) arm when source_wm >= current_min — no update.
                 _ => {}
             }
         }

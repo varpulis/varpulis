@@ -364,7 +364,7 @@ impl Engine {
                             ))
                         })?;
                     let cache_ttl = config.cache_ttl_ns.map_or(
-                        std::time::Duration::from_secs(300),
+                        std::time::Duration::from_mins(5),
                         std::time::Duration::from_nanos,
                     );
                     let cache = crate::enrichment::EnrichmentCache::new(cache_ttl);
