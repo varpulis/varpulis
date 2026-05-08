@@ -15,7 +15,7 @@ use super::ProcessCluster;
 #[tokio::test]
 #[ignore]
 async fn test_failover_latency() {
-    let timeout = tokio::time::timeout(Duration::from_secs(120), async {
+    let timeout = tokio::time::timeout(Duration::from_mins(2), async {
         let mut cluster = ProcessCluster::start(2).await;
 
         // Deploy pipeline to chaos-w0.
@@ -65,7 +65,7 @@ async fn test_failover_latency() {
             }
 
             assert!(
-                start.elapsed() <= Duration::from_secs(60),
+                start.elapsed() <= Duration::from_mins(1),
                 "Pipeline never migrated to chaos-w1 within 60s"
             );
         }
@@ -83,7 +83,7 @@ async fn test_failover_latency() {
 #[tokio::test]
 #[ignore]
 async fn test_migration_throughput() {
-    let timeout = tokio::time::timeout(Duration::from_secs(120), async {
+    let timeout = tokio::time::timeout(Duration::from_mins(2), async {
         let cluster = ProcessCluster::start(2).await;
 
         // Deploy 5 pipeline groups, all with affinity to chaos-w0.
@@ -154,7 +154,7 @@ async fn test_migration_throughput() {
 #[tokio::test]
 #[ignore]
 async fn test_replica_throughput_scaling() {
-    let timeout = tokio::time::timeout(Duration::from_secs(120), async {
+    let timeout = tokio::time::timeout(Duration::from_mins(2), async {
         let cluster = ProcessCluster::start(3).await;
         let event_count = 100;
 

@@ -373,7 +373,7 @@ pub async fn run_coordinator(
             }
 
             // Clean up stale completed migrations (older than 1 hour)
-            coord.cleanup_completed_migrations(std::time::Duration::from_secs(3600));
+            coord.cleanup_completed_migrations(std::time::Duration::from_hours(1));
 
             // Reconcile stale placements: re-deploy pipelines to workers
             // that restarted and lost their in-memory state.
@@ -520,7 +520,7 @@ pub async fn run_coordinator(
             if let Some(ref mgr) = session_manager {
                 let mgr_cleanup = mgr.clone();
                 tokio::spawn(async move {
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+                    let mut interval = tokio::time::interval(std::time::Duration::from_mins(5));
                     loop {
                         interval.tick().await;
                         let removed = mgr_cleanup.write().await.cleanup_expired();

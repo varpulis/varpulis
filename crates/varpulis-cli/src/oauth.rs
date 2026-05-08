@@ -273,7 +273,7 @@ impl SessionStore {
     /// Remove entries older than 24 hours (tokens expire anyway).
     pub fn cleanup(&mut self) {
         if let Some(cutoff) =
-            std::time::Instant::now().checked_sub(std::time::Duration::from_secs(86400))
+            std::time::Instant::now().checked_sub(std::time::Duration::from_hours(24))
         {
             self.revoked.retain(|_, instant| *instant > cutoff);
         }
@@ -2070,7 +2070,7 @@ pub fn oauth_routes(state: Option<SharedOAuthState>) -> Router {
 /// Spawn a background task to periodically clean up revoked tokens.
 pub fn spawn_session_cleanup(state: SharedOAuthState) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        let mut interval = tokio::time::interval(std::time::Duration::from_hours(1));
         loop {
             interval.tick().await;
             state.sessions.write().await.cleanup();

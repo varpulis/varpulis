@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use varpulis_runtime::interactive::{InteractiveSession, SessionCommand, SessionResponse};
 
 /// Idle timeout after which sessions are reaped.
-const SESSION_TIMEOUT: Duration = Duration::from_secs(600);
+const SESSION_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// Thread-safe handle to the session manager, suitable for embedding in the
 /// MCP server struct (which must be `Clone + Send + Sync`).

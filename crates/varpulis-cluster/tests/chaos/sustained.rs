@@ -72,7 +72,7 @@ fn chaos_duration_from_env() -> Duration {
 async fn test_chaos_monkey() {
     let chaos_duration = chaos_duration_from_env();
     // Allow generous setup + teardown overhead on top of the chaos window.
-    let test_timeout = chaos_duration + Duration::from_secs(120);
+    let test_timeout = chaos_duration + Duration::from_mins(2);
 
     let timeout = tokio::time::timeout(test_timeout, async {
         let mut cluster = ProcessCluster::start(3).await;
@@ -108,7 +108,7 @@ async fn test_chaos_monkey() {
 
         // Periodic topology health-check cadence: every 10% of the run, with a
         // 60 s cap so even short CI runs get a few snapshots.
-        let health_check_interval = (chaos_duration / 10).min(Duration::from_secs(60));
+        let health_check_interval = (chaos_duration / 10).min(Duration::from_mins(1));
         let mut next_health_check = Instant::now() + health_check_interval;
 
         eprintln!(

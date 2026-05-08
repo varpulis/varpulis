@@ -266,10 +266,11 @@ impl TuiApp {
                 self.active_pane = (self.active_pane + PANE_COUNT - 1) % PANE_COUNT;
             }
             // Up/Down in events pane: scroll
-            (_, KeyCode::Up) if self.active_pane == PANE_EVENTS => {
-                if self.event_log_offset < self.event_log.len().saturating_sub(1) {
-                    self.event_log_offset += 1;
-                }
+            (_, KeyCode::Up)
+                if self.active_pane == PANE_EVENTS
+                    && self.event_log_offset < self.event_log.len().saturating_sub(1) =>
+            {
+                self.event_log_offset += 1;
             }
             (_, KeyCode::Down) if self.active_pane == PANE_EVENTS => {
                 self.event_log_offset = self.event_log_offset.saturating_sub(1);
@@ -288,24 +289,22 @@ impl TuiApp {
                 self.input_buffer.insert(self.cursor_pos, c);
                 self.cursor_pos += 1;
             }
-            (_, KeyCode::Backspace) if self.active_pane == PANE_INPUT => {
-                if self.cursor_pos > 0 {
-                    self.cursor_pos -= 1;
-                    self.input_buffer.remove(self.cursor_pos);
-                }
+            (_, KeyCode::Backspace) if self.active_pane == PANE_INPUT && self.cursor_pos > 0 => {
+                self.cursor_pos -= 1;
+                self.input_buffer.remove(self.cursor_pos);
             }
-            (_, KeyCode::Delete) if self.active_pane == PANE_INPUT => {
-                if self.cursor_pos < self.input_buffer.len() {
-                    self.input_buffer.remove(self.cursor_pos);
-                }
+            (_, KeyCode::Delete)
+                if self.active_pane == PANE_INPUT && self.cursor_pos < self.input_buffer.len() =>
+            {
+                self.input_buffer.remove(self.cursor_pos);
             }
             (_, KeyCode::Left) if self.active_pane == PANE_INPUT => {
                 self.cursor_pos = self.cursor_pos.saturating_sub(1);
             }
-            (_, KeyCode::Right) if self.active_pane == PANE_INPUT => {
-                if self.cursor_pos < self.input_buffer.len() {
-                    self.cursor_pos += 1;
-                }
+            (_, KeyCode::Right)
+                if self.active_pane == PANE_INPUT && self.cursor_pos < self.input_buffer.len() =>
+            {
+                self.cursor_pos += 1;
             }
             (_, KeyCode::Home) if self.active_pane == PANE_INPUT => {
                 self.cursor_pos = 0;

@@ -40,7 +40,7 @@ fn make_engine_checkpoint() -> EngineCheckpoint {
 fn make_checkpoint_manager() -> CheckpointManager {
     let store = Arc::new(MemoryStore::new());
     let config = CheckpointConfig {
-        interval: Duration::from_secs(300),
+        interval: Duration::from_mins(5),
         max_checkpoints: 5,
         checkpoint_on_shutdown: false,
         key_prefix: "test".to_string(),

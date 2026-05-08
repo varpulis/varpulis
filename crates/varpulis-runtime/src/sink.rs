@@ -1011,7 +1011,7 @@ mod tests {
             max_retries: 5,
             initial_delay: std::time::Duration::from_millis(200),
             max_delay: std::time::Duration::from_secs(10),
-            timeout: std::time::Duration::from_secs(60),
+            timeout: std::time::Duration::from_mins(1),
         };
         let sink =
             HttpSinkWithRetry::new("test", "http://localhost:8080").with_retry_config(config);
@@ -1089,7 +1089,7 @@ mod tests {
         let cb = Arc::new(crate::circuit_breaker::CircuitBreaker::new(
             crate::circuit_breaker::CircuitBreakerConfig {
                 failure_threshold: 3,
-                reset_timeout: std::time::Duration::from_secs(60),
+                reset_timeout: std::time::Duration::from_mins(1),
             },
         ));
         let resilient = ResilientSink::new(mock.clone(), cb.clone(), None, None);
@@ -1108,7 +1108,7 @@ mod tests {
         let cb = Arc::new(crate::circuit_breaker::CircuitBreaker::new(
             crate::circuit_breaker::CircuitBreakerConfig {
                 failure_threshold: 2,
-                reset_timeout: std::time::Duration::from_secs(60),
+                reset_timeout: std::time::Duration::from_mins(1),
             },
         ));
 

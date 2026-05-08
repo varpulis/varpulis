@@ -1206,10 +1206,8 @@ mod arrow_parity_tests {
                 return Some(format!("alias '{alias}' missing in columnar output"));
             };
             match (row_v, col_v) {
-                (Value::Float(a), Value::Float(b)) => {
-                    if (a - b).abs() > tol {
-                        return Some(format!("float mismatch on '{alias}': row={a}, col={b}"));
-                    }
+                (Value::Float(a), Value::Float(b)) if (a - b).abs() > tol => {
+                    return Some(format!("float mismatch on '{alias}': row={a}, col={b}"));
                 }
                 (a, b) if a != b => {
                     return Some(format!("value mismatch on '{alias}': row={a:?}, col={b:?}"));

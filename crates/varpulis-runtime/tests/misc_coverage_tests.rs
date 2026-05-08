@@ -440,7 +440,7 @@ mod sequence_tests {
     #[test]
     fn test_active_correlation_timeout_cleared_on_advance() {
         let mut corr = ActiveCorrelation::new();
-        corr.set_timeout(Duration::from_secs(60));
+        corr.set_timeout(Duration::from_mins(1));
         assert!(!corr.is_timed_out());
 
         // Advance should clear timeout

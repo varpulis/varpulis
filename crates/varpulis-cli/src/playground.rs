@@ -28,10 +28,10 @@ const MAX_EVENTS_PER_RUN: usize = 10_000;
 const MAX_EXECUTION_SECS: u64 = 10;
 
 /// Session expiry after inactivity.
-const SESSION_EXPIRY: Duration = Duration::from_secs(3600); // 1 hour
+const SESSION_EXPIRY: Duration = Duration::from_hours(1); // 1 hour
 
 /// Reaper interval — how often to clean up expired sessions.
-const REAPER_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
+const REAPER_INTERVAL: Duration = Duration::from_mins(5); // 5 minutes
 
 /// Maximum VPL source length.
 const MAX_VPL_LENGTH: usize = 50_000;

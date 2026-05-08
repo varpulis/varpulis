@@ -803,7 +803,7 @@ async fn rate_limiter_cleanup_keeps_recent() {
     limiter.check(ip).await;
 
     // Cleanup with long max_age should keep the entry
-    limiter.cleanup(Duration::from_secs(3600)).await;
+    limiter.cleanup(Duration::from_hours(1)).await;
     assert_eq!(limiter.client_count().await, 1);
 }
 

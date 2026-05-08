@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn test_cache_insert_and_get() {
-        let cache = EnrichmentCache::new(Duration::from_secs(60));
+        let cache = EnrichmentCache::new(Duration::from_mins(1));
         let mut fields = HashMap::new();
         fields.insert("name".to_string(), Value::Str("alice".into()));
         fields.insert("score".to_string(), Value::Int(42));
@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_cache_miss() {
-        let cache = EnrichmentCache::new(Duration::from_secs(60));
+        let cache = EnrichmentCache::new(Duration::from_mins(1));
 
         let result = cache.get("nonexistent");
         assert!(result.is_none());
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_cache_hit_counter() {
-        let cache = EnrichmentCache::new(Duration::from_secs(60));
+        let cache = EnrichmentCache::new(Duration::from_mins(1));
         let mut fields = HashMap::new();
         fields.insert("k".to_string(), Value::Bool(true));
         cache.insert("key".to_string(), fields);
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_cache_stats() {
-        let cache = EnrichmentCache::new(Duration::from_secs(60));
+        let cache = EnrichmentCache::new(Duration::from_mins(1));
         let mut fields = HashMap::new();
         fields.insert("v".to_string(), Value::Null);
         cache.insert("a".to_string(), fields);

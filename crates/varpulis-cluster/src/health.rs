@@ -134,7 +134,7 @@ mod tests {
             "key".into(),
         );
         w.status = WorkerStatus::Draining;
-        w.last_heartbeat = Instant::now() - Duration::from_secs(60);
+        w.last_heartbeat = Instant::now() - Duration::from_mins(1);
         workers.insert(w.id.clone(), w);
 
         let result = health_sweep(&mut workers, Duration::from_secs(15));
@@ -154,7 +154,7 @@ mod tests {
             "key".into(),
         );
         // WorkerNode::new sets Registering by default
-        w.last_heartbeat = Instant::now() - Duration::from_secs(60);
+        w.last_heartbeat = Instant::now() - Duration::from_mins(1);
         workers.insert(w.id.clone(), w);
 
         let result = health_sweep(&mut workers, Duration::from_secs(15));
@@ -202,7 +202,7 @@ mod tests {
             "key".into(),
         );
         w4.status = WorkerStatus::Unhealthy;
-        w4.last_heartbeat = Instant::now() - Duration::from_secs(60);
+        w4.last_heartbeat = Instant::now() - Duration::from_mins(1);
         workers.insert(w4.id.clone(), w4);
 
         let result = health_sweep(&mut workers, Duration::from_secs(15));

@@ -129,7 +129,7 @@ mod tests {
     fn test_circuit_breaker_opens_after_threshold() {
         let cb = circuit_breaker::CircuitBreaker::new(circuit_breaker::CircuitBreakerConfig {
             failure_threshold: 3,
-            reset_timeout: std::time::Duration::from_secs(60),
+            reset_timeout: std::time::Duration::from_mins(1),
         });
 
         cb.record_failure();
@@ -145,7 +145,7 @@ mod tests {
     fn test_circuit_breaker_success_resets_failures() {
         let cb = circuit_breaker::CircuitBreaker::new(circuit_breaker::CircuitBreakerConfig {
             failure_threshold: 3,
-            reset_timeout: std::time::Duration::from_secs(60),
+            reset_timeout: std::time::Duration::from_mins(1),
         });
 
         cb.record_failure();

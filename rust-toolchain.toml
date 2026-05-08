@@ -1,0 +1,23 @@
+# Pin the Rust toolchain so local development matches CI exactly.
+#
+# Why this exists: CI uses `dtolnay/rust-toolchain@stable` which floats to
+# whatever the latest stable release is. Without this file, a developer on
+# an older Rust (e.g. 1.94) won't see new lints introduced by a stable
+# upgrade (e.g. 1.95's `duration_suboptimal_units`, `manual_checked_ops`),
+# and the local verify suite gives false confidence — the pre-push gate
+# passes locally, then CI fails with lints the local toolchain didn't
+# know about.
+#
+# How dtolnay/rust-toolchain interacts with this file: when CI runs
+# `cargo clippy`, cargo consults rust-toolchain.toml and (via rustup)
+# auto-installs the pinned version even though the action installed
+# `stable` as the default. Net effect: both local and CI converge on
+# whatever channel is pinned here.
+#
+# When to bump: deliberately, in a separate commit, after running
+# `make verify` locally on the new version to surface any newly-fired
+# lints. Don't bump as a side-effect of unrelated work.
+[toolchain]
+channel = "1.95.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

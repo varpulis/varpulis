@@ -320,7 +320,7 @@ for row in 0..2:
         }
     }
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
     tokio::task::spawn_blocking(move || {
         orchestrator.shutdown();

@@ -1279,7 +1279,7 @@ impl Coordinator {
 
             let mut all_migrations = Vec::new();
             for wid in &to_drain {
-                match self.drain_worker(wid, Some(Duration::from_secs(300))).await {
+                match self.drain_worker(wid, Some(Duration::from_mins(5))).await {
                     Ok(migration_ids) => {
                         info!(
                             "Drained worker {} ({} migrations)",

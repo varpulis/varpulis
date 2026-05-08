@@ -15,7 +15,7 @@ use super::ProcessCluster;
 #[tokio::test]
 #[ignore]
 async fn test_all_workers_die() {
-    let timeout = tokio::time::timeout(Duration::from_secs(60), async {
+    let timeout = tokio::time::timeout(Duration::from_mins(1), async {
         let mut cluster = ProcessCluster::start(2).await;
 
         // Deploy a pipeline.
@@ -81,7 +81,7 @@ async fn test_all_workers_die() {
 #[tokio::test]
 #[ignore]
 async fn test_failover_target_also_dies() {
-    let timeout = tokio::time::timeout(Duration::from_secs(120), async {
+    let timeout = tokio::time::timeout(Duration::from_mins(2), async {
         let mut cluster = ProcessCluster::start(3).await;
 
         // Deploy pipeline with affinity to chaos-w0.
@@ -149,7 +149,7 @@ async fn test_failover_target_also_dies() {
 #[tokio::test]
 #[ignore]
 async fn test_double_drain() {
-    let timeout = tokio::time::timeout(Duration::from_secs(60), async {
+    let timeout = tokio::time::timeout(Duration::from_mins(1), async {
         let cluster = ProcessCluster::start(2).await;
 
         // Deploy a pipeline to chaos-w0.

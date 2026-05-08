@@ -39,10 +39,10 @@ pub struct SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
-            idle_timeout: Duration::from_secs(30 * 60), // 30 minutes
-            absolute_timeout: Duration::from_secs(24 * 3600), // 24 hours
+            idle_timeout: Duration::from_mins(30),      // 30 minutes
+            absolute_timeout: Duration::from_hours(24), // 24 hours
             max_parallel_sessions: 5,
-            renewal_window: Duration::from_secs(5 * 60), // 5 minutes before expiry
+            renewal_window: Duration::from_mins(5), // 5 minutes before expiry
         }
     }
 }

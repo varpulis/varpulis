@@ -208,7 +208,7 @@ async fn test_enrich_requires_compatible_connector() {
 
 #[test]
 fn test_cache_insert_and_get() {
-    let cache = EnrichmentCache::new(Duration::from_secs(60));
+    let cache = EnrichmentCache::new(Duration::from_mins(1));
 
     let mut fields = HashMap::new();
     fields.insert("name".to_string(), Value::str("Alice"));
@@ -225,7 +225,7 @@ fn test_cache_insert_and_get() {
 
 #[test]
 fn test_cache_miss_on_unknown_key() {
-    let cache = EnrichmentCache::new(Duration::from_secs(60));
+    let cache = EnrichmentCache::new(Duration::from_mins(1));
     assert!(cache.get("nonexistent").is_none());
 }
 
@@ -248,7 +248,7 @@ fn test_cache_ttl_expiry() {
 
 #[test]
 fn test_cache_stats() {
-    let cache = EnrichmentCache::new(Duration::from_secs(60));
+    let cache = EnrichmentCache::new(Duration::from_mins(1));
 
     let mut fields = HashMap::new();
     fields.insert("name".to_string(), Value::str("Carol"));
@@ -266,7 +266,7 @@ fn test_cache_stats() {
 
 #[test]
 fn test_cache_eviction_at_capacity() {
-    let cache = EnrichmentCache::new(Duration::from_secs(3600));
+    let cache = EnrichmentCache::new(Duration::from_hours(1));
 
     // Insert enough entries to trigger eviction
     for i in 0..100_010 {

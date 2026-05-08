@@ -765,7 +765,7 @@ fn file_store_empty_value() {
 #[test]
 fn checkpoint_config_default_values() {
     let config = CheckpointConfig::default();
-    assert_eq!(config.interval, std::time::Duration::from_secs(60));
+    assert_eq!(config.interval, std::time::Duration::from_mins(1));
     assert_eq!(config.max_checkpoints, 3);
     assert!(config.checkpoint_on_shutdown);
     assert_eq!(config.key_prefix, "varpulis");

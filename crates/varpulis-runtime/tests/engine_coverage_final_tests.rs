@@ -1691,7 +1691,7 @@ async fn enable_checkpointing_with_memory_store() {
 
     let store = Arc::new(varpulis_runtime::MemoryStore::new());
     let config = varpulis_runtime::CheckpointConfig {
-        interval: std::time::Duration::from_secs(60),
+        interval: std::time::Duration::from_mins(1),
         max_checkpoints: 3,
         checkpoint_on_shutdown: false,
         key_prefix: "test".to_string(),

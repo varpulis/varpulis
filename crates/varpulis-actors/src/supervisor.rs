@@ -57,7 +57,7 @@ impl Default for SupervisorConfig {
         Self {
             restart_policy: RestartPolicy::OnFailure,
             max_restarts: 5,
-            restart_window: Duration::from_secs(60),
+            restart_window: Duration::from_mins(1),
             base_restart_delay: Duration::from_millis(100),
             mailbox_capacity: 100,
         }

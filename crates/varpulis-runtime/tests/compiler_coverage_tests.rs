@@ -1015,13 +1015,13 @@ fn resolver_with_followed_by_clauses() {
 #[test]
 fn resolver_with_within_duration() {
     let source = StreamSource::Ident("Alert".to_string());
-    let duration = Duration::from_secs(300);
+    let duration = Duration::from_mins(5);
     let pattern =
         compile_to_sase_pattern_with_resolver(&source, &[], &[], Some(duration), &no_resolve)
             .unwrap();
     match pattern {
         SasePattern::Within(inner, dur) => {
-            assert_eq!(dur, Duration::from_secs(300));
+            assert_eq!(dur, Duration::from_mins(5));
             match inner.as_ref() {
                 SasePattern::Event { event_type, .. } => {
                     assert_eq!(event_type, "Alert");

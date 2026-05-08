@@ -606,7 +606,7 @@ pub async fn run_server(
             if let Some(ref mgr) = session_manager {
                 let mgr_cleanup = mgr.clone();
                 tokio::spawn(async move {
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+                    let mut interval = tokio::time::interval(std::time::Duration::from_mins(5));
                     loop {
                         interval.tick().await;
                         let removed = mgr_cleanup.write().await.cleanup_expired();

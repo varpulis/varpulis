@@ -1372,7 +1372,7 @@ fn test_audit_entry_all_actions_serialize() {
 #[test]
 fn test_session_needs_renewal_expired() {
     let config = varpulis_cli::users::SessionConfig {
-        renewal_window: std::time::Duration::from_secs(300),
+        renewal_window: std::time::Duration::from_mins(5),
         absolute_timeout: std::time::Duration::from_secs(1), // very short
         ..Default::default()
     };

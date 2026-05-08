@@ -1112,12 +1112,12 @@ mod tests {
         // Use checked_sub to avoid panic on Windows when system uptime < 7200s
         // (Instant on Windows starts from boot and cannot go below zero).
         let old_instant = Instant::now()
-            .checked_sub(Duration::from_secs(7200))
+            .checked_sub(Duration::from_hours(2))
             .unwrap_or(Instant::now());
 
         // If we couldn't actually go back in time, the "old" tasks won't be
         // older than the TTL, so cleanup won't remove them. Skip the test.
-        if old_instant.elapsed() < Duration::from_secs(3600) {
+        if old_instant.elapsed() < Duration::from_hours(1) {
             // System uptime too short to represent a 2-hour-old instant.
             return;
         }
@@ -1156,7 +1156,7 @@ mod tests {
         assert_eq!(coord.active_migrations.len(), 4);
 
         // Cleanup with 1 hour TTL
-        coord.cleanup_completed_migrations(Duration::from_secs(3600));
+        coord.cleanup_completed_migrations(Duration::from_hours(1));
 
         // m1 (completed, old) and m3 (failed, old) should be removed
         // m2 (completed, recent) and m4 (in-progress, old) should remain
@@ -1168,7 +1168,7 @@ mod tests {
     #[test]
     fn test_cleanup_completed_migrations_noop_when_empty() {
         let mut coord = Coordinator::new();
-        coord.cleanup_completed_migrations(Duration::from_secs(3600));
+        coord.cleanup_completed_migrations(Duration::from_hours(1));
         assert!(coord.active_migrations.is_empty());
     }
 
@@ -1189,7 +1189,7 @@ mod tests {
         };
         coord.active_migrations.insert("m1".into(), task);
 
-        coord.cleanup_completed_migrations(Duration::from_secs(3600));
+        coord.cleanup_completed_migrations(Duration::from_hours(1));
         assert_eq!(coord.active_migrations.len(), 1);
     }
 

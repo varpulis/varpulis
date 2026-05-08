@@ -180,7 +180,7 @@ async fn test_failover_preserves_state() {
 #[tokio::test]
 #[ignore]
 async fn test_drain_worker() {
-    let timeout = tokio::time::timeout(Duration::from_secs(60), async {
+    let timeout = tokio::time::timeout(Duration::from_mins(1), async {
         let cluster = ProcessCluster::start(2).await;
 
         // Deploy a pipeline with affinity to chaos-w0.
@@ -333,7 +333,7 @@ async fn test_rebalance_on_join() {
 #[tokio::test]
 #[ignore]
 async fn test_replica_deployment() {
-    let timeout = tokio::time::timeout(Duration::from_secs(60), async {
+    let timeout = tokio::time::timeout(Duration::from_mins(1), async {
         // Start with 3 workers.
         let cluster = ProcessCluster::start(3).await;
 
@@ -414,7 +414,7 @@ async fn test_replica_deployment() {
 #[tokio::test]
 #[ignore]
 async fn test_replica_hash_partitioning() {
-    let timeout = tokio::time::timeout(Duration::from_secs(60), async {
+    let timeout = tokio::time::timeout(Duration::from_mins(1), async {
         let cluster = ProcessCluster::start(2).await;
 
         // Deploy with partition_key: "source".
