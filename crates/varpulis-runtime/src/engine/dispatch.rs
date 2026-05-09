@@ -26,6 +26,7 @@ impl Engine {
     #[tracing::instrument(level = "trace", skip(self))]
     pub async fn process(&mut self, event: Event) -> Result<(), super::error::EngineError> {
         self.events_processed += 1;
+        self.observe_pause_on_ingest(1);
         self.process_inner(Arc::new(event)).await
     }
 
@@ -37,7 +38,30 @@ impl Engine {
         event: SharedEvent,
     ) -> Result<(), super::error::EngineError> {
         self.events_processed += 1;
+        self.observe_pause_on_ingest(1);
         self.process_inner(event).await
+    }
+
+    /// Hot-path check for the source pause flag.
+    ///
+    /// Single relaxed atomic load on the not-paused fast path (compiles to a
+    /// plain load on x86/aarch64). When the flag is set, increments
+    /// `events_ingested_while_paused` so operators and tests can verify the
+    /// pause signal reached the connectors. Does NOT refuse the batch — the
+    /// in-flight events must drain so the next checkpoint snapshot is
+    /// coherent; refusing connector input mid-flight is the connector's job
+    /// (it cooperates by checking [`source_pause_handle`] before polling
+    /// upstream).
+    #[inline]
+    pub(super) fn observe_pause_on_ingest(&mut self, batch_size: usize) {
+        if self
+            .source_paused
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            self.events_ingested_while_paused = self
+                .events_ingested_while_paused
+                .saturating_add(batch_size as u64);
+        }
     }
 
     /// Internal processing logic shared by process() and process_shared() (async-runtime only).
@@ -242,6 +266,7 @@ impl Engine {
 
         let batch_size = events.len();
         self.events_processed += batch_size as u64;
+        self.observe_pause_on_ingest(batch_size);
 
         // Update Prometheus metrics
         if let Some(ref m) = self.metrics {
@@ -376,6 +401,7 @@ impl Engine {
 
         let batch_size = events.len();
         self.events_processed += batch_size as u64;
+        self.observe_pause_on_ingest(batch_size);
 
         // Pre-allocate pending events with capacity for batch + some derived events
         // Use VecDeque so we can process in FIFO order (push_back + pop_front)
@@ -561,6 +587,7 @@ impl Engine {
 
         let batch_size = events.len();
         self.events_processed += batch_size as u64;
+        self.observe_pause_on_ingest(batch_size);
 
         // Update Prometheus metrics
         if let Some(ref m) = self.metrics {

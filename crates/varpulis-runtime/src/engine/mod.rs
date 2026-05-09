@@ -157,6 +157,24 @@ pub struct Engine {
     pub(super) source_offsets: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, std::collections::HashMap<i32, i64>>>,
     >,
+    /// Source pause flag for distributed checkpoint barrier alignment.
+    ///
+    /// Set via [`pause_sources`](Self::pause_sources) when a checkpoint barrier
+    /// arrives at the worker; source connectors that have cloned the handle
+    /// via [`source_pause_handle`](Self::source_pause_handle) observe the flag
+    /// in their poll loop and stop pulling new events from external systems
+    /// (Kafka, MQTT, etc.). In-flight batches already submitted via
+    /// `process_batch*` continue draining so the next checkpoint snapshot is
+    /// coherent. Pause window target: <50ms (drain current 256-event batch +
+    /// checkpoint + prepare).
+    pub(super) source_paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Count of events that entered the engine via `process_batch*` (or
+    /// `process` / `process_shared`) while [`source_paused`] was set.
+    /// Observability hook — lets tests and operators verify that the pause
+    /// signal reached the connectors. A non-zero value means a source pushed
+    /// events past the pause flag, either because it was already mid-batch
+    /// when the flag flipped (expected) or because it ignored the flag.
+    pub(super) events_ingested_while_paused: u64,
 }
 
 impl std::fmt::Debug for Engine {
@@ -260,6 +278,8 @@ impl Engine {
             source_offsets: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
+            source_paused: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            events_ingested_while_paused: 0,
         }
     }
 
@@ -302,6 +322,8 @@ impl Engine {
                 source_offsets: std::sync::Arc::new(std::sync::Mutex::new(
                     std::collections::HashMap::new(),
                 )),
+                source_paused: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                events_ingested_while_paused: 0,
             }
         }
     }
@@ -1602,6 +1624,67 @@ impl Engine {
         std::sync::Mutex<std::collections::HashMap<String, std::collections::HashMap<i32, i64>>>,
     > {
         self.source_offsets.clone()
+    }
+
+    // -------------------------------------------------------------------------
+    // Source pause / resume (Flink-style barrier alignment)
+    // -------------------------------------------------------------------------
+
+    /// Pause source ingestion ahead of a checkpoint barrier.
+    ///
+    /// Source connectors that have cloned [`source_pause_handle`](Self::source_pause_handle)
+    /// observe the flag in their poll loop and stop pulling new events from
+    /// external systems (Kafka, MQTT, NATS, etc.). Events already in-flight
+    /// — submitted via `process_batch*` before the pause — continue to drain
+    /// so the next checkpoint captures a coherent snapshot.
+    ///
+    /// Cheap O(1) atomic store; safe to call from any thread.
+    #[inline]
+    pub fn pause_sources(&self) {
+        self.source_paused
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Resume source ingestion after a checkpoint completes (or aborts).
+    ///
+    /// Counterpart to [`pause_sources`](Self::pause_sources).
+    #[inline]
+    pub fn resume_sources(&self) {
+        self.source_paused
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Whether source ingestion is currently paused.
+    #[inline]
+    pub fn is_sources_paused(&self) -> bool {
+        self.source_paused
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Shared handle to the source pause flag.
+    ///
+    /// Source connectors should clone this handle once at startup and check it
+    /// before each poll batch with a `Relaxed` load — the engine flips the
+    /// flag with `Release` ordering, so a single `Relaxed` load on the
+    /// connector side observes any flip published by the time the next poll
+    /// runs. While the flag is set, the connector should stop polling
+    /// upstream (sleep briefly — the pause window targets <50ms — and
+    /// re-check) so the engine can drain in-flight events and snapshot.
+    pub fn source_pause_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.source_paused.clone()
+    }
+
+    /// Number of events that arrived via `process_batch*` (or `process` /
+    /// `process_shared`) while [`is_sources_paused`](Self::is_sources_paused)
+    /// was true.
+    ///
+    /// Observability hook: a non-zero value is expected and benign — it
+    /// represents the in-flight 256-event batch being drained after the
+    /// pause flag was raised. A persistently growing value while the flag
+    /// is held would mean a connector is ignoring the flag.
+    #[inline]
+    pub const fn events_ingested_while_paused(&self) -> u64 {
+        self.events_ingested_while_paused
     }
 
     /// Create a checkpoint of the engine state (windows, SASE engines, joins, variables).
