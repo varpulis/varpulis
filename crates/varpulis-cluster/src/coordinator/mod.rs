@@ -1,6 +1,8 @@
 //! Coordinator state machine: worker registry, pipeline group management, event routing.
 
 mod deployment;
+#[cfg(feature = "distributed-checkpoint")]
+pub mod distributed_checkpoint;
 mod rebalance;
 
 use std::collections::HashMap;
