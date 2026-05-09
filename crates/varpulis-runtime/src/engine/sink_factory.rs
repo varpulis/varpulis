@@ -14,6 +14,30 @@ use crate::connector;
 #[cfg(feature = "kafka")]
 use crate::connector::SinkConnector;
 
+/// Compose the auto-generated Kafka `transactional.id` for a sink.
+///
+/// `prefix` is the cluster identity composed by the worker as
+/// `"{group_id}-{pipeline_name}-{worker_id}"`. When set, the result is
+/// `"varpulis-{prefix}-{name}"` — globally unique across replicas of the
+/// same pipeline. When `None`, falls back to `"varpulis-{name}"` for
+/// single-process deployments where no replica conflict is possible.
+///
+/// Including `name` (the sink connector name) in both formats keeps
+/// multi-Kafka-sink pipelines safe: each sink gets its own producer-fenced
+/// `transactional.id`.
+///
+/// `dead_code` is allowed because the only non-test caller lives behind
+/// `#[cfg(feature = "kafka")]`. Tests for this helper are pure-string and
+/// run unconditionally — feature-gating them would couple format checks to
+/// rdkafka availability.
+#[allow(dead_code)]
+pub(crate) fn auto_transactional_id(name: &str, prefix: Option<&str>) -> String {
+    match prefix {
+        Some(p) => format!("varpulis-{p}-{name}"),
+        None => format!("varpulis-{name}"),
+    }
+}
+
 /// Convert AST ConnectorParams to a runtime ConnectorConfig
 pub fn connector_params_to_config(
     connector_type: &str,
@@ -252,6 +276,12 @@ impl crate::sink::Sink for BatchKafkaSinkAdapter {
 ///
 /// Tries the inventory-based `find_factory()` first, then falls back to the
 /// match-arm dispatch for connectors that haven't been migrated yet.
+///
+/// `transactional_id_prefix` is composed by the cluster worker as
+/// `"{group_id}-{pipeline_name}-{worker_id}"` and is used to disambiguate
+/// auto-generated Kafka `transactional.id` values across replicas of the
+/// same pipeline. When `None`, the legacy `"varpulis-{name}"` format is
+/// used (single-process deployments).
 #[allow(unused_variables)]
 pub fn create_sink_from_config(
     name: &str,
@@ -259,6 +289,7 @@ pub fn create_sink_from_config(
     topic_override: Option<&str>,
     context_name: Option<&str>,
     topic_prefix: Option<&str>,
+    transactional_id_prefix: Option<&str>,
 ) -> Option<Arc<dyn crate::sink::Sink>> {
     // Try inventory-based factory first
     if let Some(factory) = connector::component::find_factory(&config.connector_type) {
@@ -323,7 +354,8 @@ pub fn create_sink_from_config(
                 };
 
                 // Extract transactional_id from properties or auto-generate when
-                // exactly_once is requested
+                // exactly_once is requested. See `auto_transactional_id` for the
+                // replica-disambiguation rationale.
                 let transactional_id =
                     config
                         .properties
@@ -334,7 +366,7 @@ pub fn create_sink_from_config(
                                 .properties
                                 .get("exactly_once")
                                 .filter(|v| v == &"true")
-                                .map(|_| format!("varpulis-{}", name))
+                                .map(|_| auto_transactional_id(name, transactional_id_prefix))
                         });
 
                 // Note: underscore→dot translation (e.g. sasl_username → sasl.username)
@@ -623,13 +655,19 @@ impl SinkRegistry {
         topic_overrides: &[(String, String, String)],
         context_name: Option<&str>,
         topic_prefix: Option<&str>,
+        transactional_id_prefix: Option<&str>,
     ) {
         // Create sinks for directly referenced connectors
         for (name, config) in connectors {
             if referenced_keys.contains(name) {
-                if let Some(sink) =
-                    create_sink_from_config(name, config, None, context_name, topic_prefix)
-                {
+                if let Some(sink) = create_sink_from_config(
+                    name,
+                    config,
+                    None,
+                    context_name,
+                    topic_prefix,
+                    transactional_id_prefix,
+                ) {
                     self.cache.insert(name.clone(), sink);
                 }
             }
@@ -645,6 +683,7 @@ impl SinkRegistry {
                         Some(topic),
                         context_name,
                         topic_prefix,
+                        transactional_id_prefix,
                     ) {
                         self.cache.insert(sink_key.clone(), sink);
                     }
@@ -718,14 +757,14 @@ mod tests {
     #[test]
     fn test_console_sink_creation() {
         let config = connector::ConnectorConfig::new("console", "");
-        let sink = create_sink_from_config("test_console", &config, None, None, None);
+        let sink = create_sink_from_config("test_console", &config, None, None, None, None);
         assert!(sink.is_some());
     }
 
     #[test]
     fn test_unknown_connector_returns_none() {
         let config = connector::ConnectorConfig::new("unknown_type", "");
-        let sink = create_sink_from_config("test", &config, None, None, None);
+        let sink = create_sink_from_config("test", &config, None, None, None, None);
         assert!(sink.is_none());
     }
 
@@ -778,5 +817,46 @@ mod tests {
             config.properties.get("transactional_id"),
             Some(&"my-app-txn".to_string())
         );
+    }
+
+    #[test]
+    fn test_auto_transactional_id_legacy_format_without_prefix() {
+        // No cluster identity → legacy single-process format keeps the sink
+        // connector name as the only disambiguator.
+        assert_eq!(
+            auto_transactional_id("alerts-sink", None),
+            "varpulis-alerts-sink"
+        );
+    }
+
+    #[test]
+    fn test_auto_transactional_id_includes_cluster_identity() {
+        // With cluster identity, all four dimensions (group, pipeline, worker,
+        // sink) appear in the id. Two replicas of the same pipeline would
+        // differ on worker_id and so receive distinct ids — preventing the
+        // transaction coordinator from fencing one replica when the other
+        // calls `init_transactions`.
+        let prefix = "tenant42-fraud_pipeline-worker-3";
+        assert_eq!(
+            auto_transactional_id("alerts-sink", Some(prefix)),
+            "varpulis-tenant42-fraud_pipeline-worker-3-alerts-sink",
+        );
+    }
+
+    #[test]
+    fn test_auto_transactional_id_unique_per_worker() {
+        // Same pipeline, different workers → distinct ids.
+        let id_w1 = auto_transactional_id("k", Some("g-p-w1"));
+        let id_w2 = auto_transactional_id("k", Some("g-p-w2"));
+        assert_ne!(id_w1, id_w2);
+    }
+
+    #[test]
+    fn test_auto_transactional_id_unique_per_sink() {
+        // Same worker, different sinks in one pipeline → distinct ids
+        // (multiple Kafka sinks in a single pipeline must not collide).
+        let id_a = auto_transactional_id("sink-a", Some("g-p-w1"));
+        let id_b = auto_transactional_id("sink-b", Some("g-p-w1"));
+        assert_ne!(id_a, id_b);
     }
 }

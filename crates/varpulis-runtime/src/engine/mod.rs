@@ -123,6 +123,17 @@ pub struct Engine {
     pub(super) context_name: Option<String>,
     /// Topic prefix for multi-tenant Kafka/MQTT isolation (prepended to all topic names)
     pub(super) topic_prefix: Option<String>,
+    /// Cluster identity prefix for transactional sink IDs (e.g. Kafka `transactional.id`).
+    ///
+    /// When the same pipeline runs on multiple workers (replicas), each worker's
+    /// sink must have a globally unique `transactional.id` — otherwise the Kafka
+    /// broker's transaction coordinator fences one producer the moment another
+    /// with the same id calls `init_transactions`. The cluster worker sets this
+    /// prefix to `"{group_id}-{pipeline_name}-{worker_id}"` so the auto-generated
+    /// id is `"varpulis-{group_id}-{pipeline_name}-{worker_id}-{name}"`. When
+    /// `None`, the legacy `"varpulis-{name}"` format is used (single-process
+    /// deployments — no replica conflict possible).
+    pub(super) transactional_id_prefix: Option<String>,
     /// Shared Hamlet aggregators for multi-query optimization
     pub(super) shared_hamlet_aggregators:
         Vec<std::sync::Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
@@ -263,6 +274,7 @@ impl Engine {
             late_data_configs: FxHashMap::default(),
             context_name: None,
             topic_prefix: None,
+            transactional_id_prefix: None,
             shared_hamlet_aggregators: Vec::new(),
             checkpoint_manager: None,
             #[cfg(feature = "async-runtime")]
@@ -311,6 +323,7 @@ impl Engine {
                 late_data_configs: FxHashMap::default(),
                 context_name: None,
                 topic_prefix: None,
+                transactional_id_prefix: None,
                 shared_hamlet_aggregators: Vec::new(),
                 checkpoint_manager: None,
                 dlq_path: None,
@@ -537,6 +550,18 @@ impl Engine {
     /// `{prefix}.` to enforce per-tenant topic isolation.
     pub fn set_topic_prefix(&mut self, prefix: &str) {
         self.topic_prefix = Some(prefix.to_string());
+    }
+
+    /// Set the transactional-id prefix for replica disambiguation (call before `load()`).
+    ///
+    /// The cluster worker should pass `"{group_id}-{pipeline_name}-{worker_id}"`
+    /// so the auto-generated Kafka `transactional.id` becomes
+    /// `"varpulis-{group_id}-{pipeline_name}-{worker_id}-{name}"` — globally
+    /// unique across replicas of the same pipeline. Without this, two workers
+    /// running the same pipeline would collide on `transactional.id` and the
+    /// transaction coordinator would fence one of them mid-commit.
+    pub fn set_transactional_id_prefix(&mut self, prefix: &str) {
+        self.transactional_id_prefix = Some(prefix.to_string());
     }
 
     /// Enable or disable pipeline trace collection.
@@ -986,6 +1011,7 @@ impl Engine {
                 &topic_overrides,
                 self.context_name.as_deref(),
                 self.topic_prefix.as_deref(),
+                self.transactional_id_prefix.as_deref(),
             );
 
             // Wrap sinks with circuit breaker + DLQ when sink operations exist

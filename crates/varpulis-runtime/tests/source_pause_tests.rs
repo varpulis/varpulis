@@ -76,7 +76,9 @@ fn sync_batch_drains_while_paused_and_increments_observed_counter() {
     engine.pause_sources();
 
     let events: Vec<Event> = (1..=5).map(tick).collect();
-    engine.process_batch_sync(events).expect("process_batch_sync");
+    engine
+        .process_batch_sync(events)
+        .expect("process_batch_sync");
 
     // Pause is cooperative — in-flight events drain so the checkpoint is
     // coherent. The counter records that the pause flag was set on entry.
@@ -88,7 +90,9 @@ fn sync_batch_drains_while_paused_and_increments_observed_counter() {
 fn sync_batch_does_not_increment_counter_when_unpaused() {
     let mut engine = make_engine();
     let events: Vec<Event> = (1..=5).map(tick).collect();
-    engine.process_batch_sync(events).expect("process_batch_sync");
+    engine
+        .process_batch_sync(events)
+        .expect("process_batch_sync");
 
     assert_eq!(engine.metrics().events_processed, 5);
     assert_eq!(engine.events_ingested_while_paused(), 0);
