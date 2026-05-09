@@ -143,6 +143,32 @@ pub enum ClusterCommand {
     ModelRemoved {
         name: String,
     },
+
+    // -- Distributed checkpoints (Flink-parity, Phase 1, Task 1.4) --
+    /// A distributed checkpoint for `group_id` was successfully persisted to
+    /// the shared state store. Replicating this through Raft makes the new
+    /// checkpoint id visible to every coordinator, which they use on recovery
+    /// to decide which assembled snapshot to restore from.
+    #[cfg(feature = "distributed-checkpoint")]
+    CheckpointCompleted {
+        /// Pipeline group whose checkpoint completed.
+        group_id: String,
+        /// Id of the durable checkpoint.
+        checkpoint_id: u64,
+    },
+    /// A distributed checkpoint for `group_id` was aborted (timeout, NACK,
+    /// persistence failure, …). Replicated for observability and so that
+    /// other coordinators do not retry the same id.
+    #[cfg(feature = "distributed-checkpoint")]
+    CheckpointAborted {
+        /// Pipeline group whose checkpoint aborted.
+        group_id: String,
+        /// Id of the aborted checkpoint.
+        checkpoint_id: u64,
+        /// Recorded reason — same string the coordinator broadcast in the
+        /// `CheckpointAbortNotification`.
+        reason: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

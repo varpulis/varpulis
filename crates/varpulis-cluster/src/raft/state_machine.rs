@@ -24,6 +24,33 @@ pub struct CoordinatorState {
     /// Per-worker pipeline metrics from heartbeats (replicated for monitoring).
     #[serde(default)]
     pub worker_pipeline_metrics: HashMap<String, Vec<crate::worker::PipelineMetrics>>,
+    /// Latest durable distributed checkpoint id per pipeline group.
+    ///
+    /// Populated from
+    /// [`ClusterCommand::CheckpointCompleted`](super::ClusterCommand::CheckpointCompleted).
+    /// On coordinator recovery, the value here points to the most recent
+    /// assembled snapshot in the shared state store
+    /// (`{prefix}/{group}/{id}.json`).
+    #[serde(default)]
+    pub latest_checkpoints: HashMap<String, GroupCheckpointStatus>,
+}
+
+/// Per-group checkpoint status replicated through Raft.
+///
+/// `latest_completed` is the last id that was durably persisted; it is the id
+/// recovery should restore from. `last_aborted` records the most recent
+/// abort for observability — it does not roll back `latest_completed`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GroupCheckpointStatus {
+    /// Most recent successfully-persisted checkpoint id, if any.
+    #[serde(default)]
+    pub latest_completed: Option<u64>,
+    /// Most recent aborted checkpoint id, if any.
+    #[serde(default)]
+    pub last_aborted: Option<u64>,
+    /// Recorded reason for the most recent abort.
+    #[serde(default)]
+    pub last_abort_reason: Option<String>,
 }
 
 /// Serializable worker entry (no `Instant` fields).
@@ -169,6 +196,31 @@ pub fn apply_command(state: &mut CoordinatorState, cmd: ClusterCommand) -> Clust
 
         ClusterCommand::ModelRemoved { name } => {
             state.models.remove(&name);
+            ClusterResponse::Ok
+        }
+
+        #[cfg(feature = "distributed-checkpoint")]
+        ClusterCommand::CheckpointCompleted {
+            group_id,
+            checkpoint_id,
+        } => {
+            let entry = state.latest_checkpoints.entry(group_id).or_default();
+            // Monotonic: never go backwards if a stale entry replays.
+            if entry.latest_completed.is_none_or(|cur| checkpoint_id > cur) {
+                entry.latest_completed = Some(checkpoint_id);
+            }
+            ClusterResponse::Ok
+        }
+
+        #[cfg(feature = "distributed-checkpoint")]
+        ClusterCommand::CheckpointAborted {
+            group_id,
+            checkpoint_id,
+            reason,
+        } => {
+            let entry = state.latest_checkpoints.entry(group_id).or_default();
+            entry.last_aborted = Some(checkpoint_id);
+            entry.last_abort_reason = Some(reason);
             ClusterResponse::Ok
         }
     }
@@ -376,5 +428,108 @@ mod tests {
             ClusterCommand::ScalingPolicySet { policy: None },
         );
         assert!(state.scaling_policy.is_none());
+    }
+
+    #[cfg(feature = "distributed-checkpoint")]
+    #[test]
+    fn test_apply_checkpoint_completed() {
+        let mut state = CoordinatorState::default();
+        apply_command(
+            &mut state,
+            ClusterCommand::CheckpointCompleted {
+                group_id: "g1".into(),
+                checkpoint_id: 7,
+            },
+        );
+        let entry = state.latest_checkpoints.get("g1").unwrap();
+        assert_eq!(entry.latest_completed, Some(7));
+        assert!(entry.last_aborted.is_none());
+
+        // Advancing forward updates the value.
+        apply_command(
+            &mut state,
+            ClusterCommand::CheckpointCompleted {
+                group_id: "g1".into(),
+                checkpoint_id: 8,
+            },
+        );
+        assert_eq!(state.latest_checkpoints["g1"].latest_completed, Some(8));
+
+        // Stale-id replays must not roll the pointer backwards.
+        apply_command(
+            &mut state,
+            ClusterCommand::CheckpointCompleted {
+                group_id: "g1".into(),
+                checkpoint_id: 3,
+            },
+        );
+        assert_eq!(state.latest_checkpoints["g1"].latest_completed, Some(8));
+    }
+
+    #[cfg(feature = "distributed-checkpoint")]
+    #[test]
+    fn test_apply_checkpoint_aborted() {
+        let mut state = CoordinatorState::default();
+        apply_command(
+            &mut state,
+            ClusterCommand::CheckpointAborted {
+                group_id: "g1".into(),
+                checkpoint_id: 9,
+                reason: "ack timeout".into(),
+            },
+        );
+        let entry = state.latest_checkpoints.get("g1").unwrap();
+        assert_eq!(entry.last_aborted, Some(9));
+        assert_eq!(entry.last_abort_reason.as_deref(), Some("ack timeout"));
+        // Abort does not populate latest_completed.
+        assert!(entry.latest_completed.is_none());
+    }
+
+    #[cfg(feature = "distributed-checkpoint")]
+    #[test]
+    fn test_apply_checkpoint_completed_then_aborted_preserves_latest() {
+        // An abort after a successful completion records the abort but does
+        // not roll back the recovery pointer.
+        let mut state = CoordinatorState::default();
+        apply_command(
+            &mut state,
+            ClusterCommand::CheckpointCompleted {
+                group_id: "g".into(),
+                checkpoint_id: 4,
+            },
+        );
+        apply_command(
+            &mut state,
+            ClusterCommand::CheckpointAborted {
+                group_id: "g".into(),
+                checkpoint_id: 5,
+                reason: "kafka NACK".into(),
+            },
+        );
+        let entry = &state.latest_checkpoints["g"];
+        assert_eq!(entry.latest_completed, Some(4));
+        assert_eq!(entry.last_aborted, Some(5));
+    }
+
+    #[cfg(feature = "distributed-checkpoint")]
+    #[test]
+    fn test_checkpoints_are_per_group() {
+        let mut state = CoordinatorState::default();
+        apply_command(
+            &mut state,
+            ClusterCommand::CheckpointCompleted {
+                group_id: "alpha".into(),
+                checkpoint_id: 1,
+            },
+        );
+        apply_command(
+            &mut state,
+            ClusterCommand::CheckpointCompleted {
+                group_id: "beta".into(),
+                checkpoint_id: 2,
+            },
+        );
+        assert_eq!(state.latest_checkpoints["alpha"].latest_completed, Some(1));
+        assert_eq!(state.latest_checkpoints["beta"].latest_completed, Some(2));
     }
 }

@@ -152,6 +152,76 @@ impl CheckpointRaftReplicator for NoopRaftReplicator {
     }
 }
 
+/// Raft-backed replicator that submits checkpoint outcomes through
+/// [`crate::raft::VarpulisRaft::client_write`].
+///
+/// Only available when both the `raft` and `distributed-checkpoint` features
+/// are enabled. Each call writes a [`crate::raft::ClusterCommand::CheckpointCompleted`]
+/// or [`crate::raft::ClusterCommand::CheckpointAborted`] entry that the
+/// state machine applies into [`crate::raft::state_machine::CoordinatorState::latest_checkpoints`].
+///
+/// Non-leader writes return a `ReplicateError` whose message carries the
+/// `ForwardToLeader` payload — callers should typically resolve a leader and
+/// retry, mirroring the pattern used by [`crate::coordinator::Coordinator::raft_replicate`].
+#[cfg(feature = "raft")]
+#[derive(Clone)]
+pub struct RaftCheckpointReplicator {
+    raft: Arc<crate::raft::VarpulisRaft>,
+}
+
+#[cfg(feature = "raft")]
+impl RaftCheckpointReplicator {
+    /// Build a new replicator backed by the supplied Raft handle.
+    pub fn new(raft: Arc<crate::raft::VarpulisRaft>) -> Self {
+        Self { raft }
+    }
+}
+
+#[cfg(feature = "raft")]
+impl std::fmt::Debug for RaftCheckpointReplicator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RaftCheckpointReplicator")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "raft")]
+impl CheckpointRaftReplicator for RaftCheckpointReplicator {
+    async fn replicate_completed(
+        &self,
+        group_id: &str,
+        checkpoint_id: CheckpointId,
+    ) -> Result<(), ReplicateError> {
+        let cmd = crate::raft::ClusterCommand::CheckpointCompleted {
+            group_id: group_id.to_string(),
+            checkpoint_id,
+        };
+        self.raft
+            .client_write(cmd)
+            .await
+            .map(|_| ())
+            .map_err(|e| ReplicateError::new(format!("client_write completed: {e}")))
+    }
+
+    async fn replicate_aborted(
+        &self,
+        group_id: &str,
+        checkpoint_id: CheckpointId,
+        reason: &str,
+    ) -> Result<(), ReplicateError> {
+        let cmd = crate::raft::ClusterCommand::CheckpointAborted {
+            group_id: group_id.to_string(),
+            checkpoint_id,
+            reason: reason.to_string(),
+        };
+        self.raft
+            .client_write(cmd)
+            .await
+            .map(|_| ())
+            .map_err(|e| ReplicateError::new(format!("client_write aborted: {e}")))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
