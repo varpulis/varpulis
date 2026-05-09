@@ -1,10 +1,17 @@
 //! Rebalancing, migration, failover, and scaling operations.
 
 use std::collections::HashMap;
+#[cfg(feature = "distributed-checkpoint")]
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tracing::{error, info, warn};
+use varpulis_runtime::persistence::EngineCheckpoint;
+#[cfg(feature = "distributed-checkpoint")]
+use varpulis_runtime::persistence::StateStore;
 
+#[cfg(feature = "distributed-checkpoint")]
+use crate::checkpoint_protocol::{DistributedCheckpoint, SnapshotLocation};
 use super::{
     CheckpointResponsePayload, Coordinator, DeployResponse, MigratePipelinePlan, ScalingAction,
 };
@@ -305,64 +312,84 @@ impl Coordinator {
     /// Execute migration HTTP steps (no coordinator lock needed).
     ///
     /// Returns `Ok(new_pipeline_id)` on success, or `Err(reason)` on failure.
+    ///
+    /// When the `distributed-checkpoint` feature is enabled, callers should
+    /// resolve the latest durable checkpoint for the group via
+    /// [`load_distributed_checkpoint`] and pass it through
+    /// [`execute_migrate_plan_with_checkpoint`]. The plain
+    /// [`execute_migrate_plan`] path always falls back to checkpointing the
+    /// source worker via HTTP — which only works when the source is alive.
     pub async fn execute_migrate_plan(
         http_client: &reqwest::Client,
         plan: &MigratePipelinePlan,
         source_alive: bool,
         connectors: &HashMap<String, ClusterConnector>,
     ) -> Result<String, String> {
-        // Step 1: Checkpoint (best-effort -- skip if source is dead)
-        let checkpoint = if source_alive {
-            let checkpoint_url = format!(
-                "{}/api/v1/pipelines/{}/checkpoint",
-                plan.deployment.worker_address, plan.deployment.pipeline_id
-            );
-            match http_client
-                .post(&checkpoint_url)
-                .header("x-api-key", &plan.deployment.worker_api_key)
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    match resp.json::<CheckpointResponsePayload>().await {
-                        Ok(cp_resp) => {
-                            info!(
-                                "Checkpoint captured for pipeline '{}' (id={}, {} events)",
-                                plan.pipeline_name, cp_resp.pipeline_id, cp_resp.events_processed
-                            );
-                            Some(cp_resp.checkpoint)
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to deserialize checkpoint for '{}': {}",
-                                plan.pipeline_name, e
-                            );
-                            None
-                        }
-                    }
-                }
-                Ok(resp) => {
-                    warn!(
-                        "Checkpoint HTTP error for '{}': {}",
-                        plan.pipeline_name,
-                        resp.status()
-                    );
-                    None
-                }
-                Err(e) => {
-                    warn!(
-                        "Checkpoint request failed for '{}': {}",
-                        plan.pipeline_name, e
-                    );
-                    None
-                }
-            }
-        } else {
+        Self::execute_migrate_plan_inner(http_client, plan, source_alive, connectors, None).await
+    }
+
+    /// Variant of [`execute_migrate_plan`] that accepts a pre-loaded engine
+    /// checkpoint sourced from the distributed checkpoint store.
+    ///
+    /// When `distributed_checkpoint` is `Some`, the function uses that
+    /// snapshot to restore state on the target worker and skips the
+    /// HTTP-checkpoint step against the source. This is the path that
+    /// makes failover work when the source worker is dead — the durable
+    /// state lives in S3 (or whichever [`StateStore`] backs the cluster),
+    /// not on the (possibly-gone) source worker.
+    ///
+    /// When `distributed_checkpoint` is `None` the behavior is identical
+    /// to [`execute_migrate_plan`].
+    ///
+    /// `recovery_commit` controls whether the target worker is asked to
+    /// commit any prepared 2PC sinks for the restored checkpoint id after
+    /// restore. On a freshly-deployed pipeline this is normally a no-op
+    /// (no transactions have been prepared on the new engine yet), but it
+    /// gives connectors that need to re-issue `commit` against an external
+    /// system a hook to do so. The HTTP path is best-effort and is not
+    /// considered fatal if the target rejects it.
+    #[cfg(feature = "distributed-checkpoint")]
+    pub async fn execute_migrate_plan_with_checkpoint(
+        http_client: &reqwest::Client,
+        plan: &MigratePipelinePlan,
+        source_alive: bool,
+        connectors: &HashMap<String, ClusterConnector>,
+        distributed_checkpoint: Option<EngineCheckpoint>,
+    ) -> Result<String, String> {
+        Self::execute_migrate_plan_inner(
+            http_client,
+            plan,
+            source_alive,
+            connectors,
+            distributed_checkpoint,
+        )
+        .await
+    }
+
+    async fn execute_migrate_plan_inner(
+        http_client: &reqwest::Client,
+        plan: &MigratePipelinePlan,
+        source_alive: bool,
+        connectors: &HashMap<String, ClusterConnector>,
+        distributed_checkpoint: Option<EngineCheckpoint>,
+    ) -> Result<String, String> {
+        // Step 1: Acquire a checkpoint to restore on the target.
+        //
+        // Preference order:
+        //   1. A pre-loaded distributed checkpoint (durable state in S3 /
+        //      RocksDB). This works even when the source worker is dead.
+        //   2. Best-effort HTTP checkpoint from the source worker, used
+        //      when no distributed checkpoint is available and the source
+        //      is still reachable.
+        //   3. Nothing — proceed with a stateless redeploy.
+        let checkpoint = if let Some(cp) = distributed_checkpoint {
             info!(
-                "Source worker {} is dead, proceeding without checkpoint for '{}'",
-                plan.source_worker_id, plan.pipeline_name
+                "Using distributed checkpoint for pipeline '{}' migration to {} ({} events)",
+                plan.pipeline_name, plan.target_worker_id, cp.events_processed
             );
-            None
+            Some(cp)
+        } else {
+            fetch_source_checkpoint(http_client, plan, source_alive).await
         };
 
         // Step 2: Deploy to target worker
@@ -1325,4 +1352,326 @@ pub struct RescaleResult {
     pub migrations: Vec<String>,
     /// Human-readable summary
     pub message: String,
+}
+
+// ============================================================================
+// Migration helpers
+// ============================================================================
+
+/// Best-effort capture of a checkpoint by hitting the source worker's HTTP
+/// `/checkpoint` endpoint. Returns `None` on any failure (network, HTTP
+/// error, deserialize error) so the caller can decide whether to proceed
+/// without state. Skips the call entirely when `source_alive` is false —
+/// that's the path that benefits from a distributed checkpoint instead.
+async fn fetch_source_checkpoint(
+    http_client: &reqwest::Client,
+    plan: &MigratePipelinePlan,
+    source_alive: bool,
+) -> Option<varpulis_runtime::persistence::EngineCheckpoint> {
+    if !source_alive {
+        info!(
+            "Source worker {} is dead, proceeding without source checkpoint for '{}'",
+            plan.source_worker_id, plan.pipeline_name
+        );
+        return None;
+    }
+
+    let checkpoint_url = format!(
+        "{}/api/v1/pipelines/{}/checkpoint",
+        plan.deployment.worker_address, plan.deployment.pipeline_id
+    );
+    match http_client
+        .post(&checkpoint_url)
+        .header("x-api-key", &plan.deployment.worker_api_key)
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            match resp.json::<CheckpointResponsePayload>().await {
+                Ok(cp_resp) => {
+                    info!(
+                        "Checkpoint captured for pipeline '{}' (id={}, {} events)",
+                        plan.pipeline_name, cp_resp.pipeline_id, cp_resp.events_processed
+                    );
+                    Some(cp_resp.checkpoint)
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to deserialize checkpoint for '{}': {}",
+                        plan.pipeline_name, e
+                    );
+                    None
+                }
+            }
+        }
+        Ok(resp) => {
+            warn!(
+                "Checkpoint HTTP error for '{}': {}",
+                plan.pipeline_name,
+                resp.status()
+            );
+            None
+        }
+        Err(e) => {
+            warn!(
+                "Checkpoint request failed for '{}': {}",
+                plan.pipeline_name, e
+            );
+            None
+        }
+    }
+}
+
+/// Build the canonical state-store key for a distributed checkpoint.
+///
+/// Mirrors [`crate::coordinator::distributed_checkpoint::DistributedCheckpointCoordinator::store_key_for`]
+/// so coordinators that recover after a leader change agree on the layout
+/// without needing access to the orchestrator instance that wrote it.
+#[cfg(feature = "distributed-checkpoint")]
+#[allow(dead_code)] // API-side wiring lands in a follow-up; tests cover this path
+pub fn distributed_checkpoint_store_key(
+    prefix: &str,
+    group_id: &str,
+    checkpoint_id: u64,
+) -> String {
+    format!("{prefix}/{group_id}/{checkpoint_id}.json")
+}
+
+/// Load the [`EngineCheckpoint`] for a single pipeline out of an assembled
+/// distributed checkpoint sitting in the state store.
+///
+/// `pipeline_name` is matched against the `pipeline_id` portion of the
+/// participant key (`"{worker_id}/{pipeline_id}"`) — we don't require a
+/// specific worker, since this is exactly the path used when the source
+/// worker is dead and we're migrating to a different worker.
+///
+/// Returns:
+/// - `Ok(Some(cp))` when the snapshot was found and is shipped inline.
+/// - `Ok(None)` when the assembled checkpoint exists but contains no
+///   matching pipeline (e.g. wrong group), or when only a `Remote`
+///   snapshot is present (out-of-band upload not yet supported on the
+///   migration path — Task 1.2/1.5 will wire it).
+/// - `Err(_)` for store-level errors (read/deserialize failures).
+#[cfg(feature = "distributed-checkpoint")]
+#[allow(dead_code)] // API-side wiring lands in a follow-up; tests cover this path
+pub fn load_distributed_checkpoint(
+    state_store: &Arc<dyn StateStore>,
+    store_key: &str,
+    pipeline_name: &str,
+) -> Result<Option<EngineCheckpoint>, String> {
+    let bytes = state_store
+        .get(store_key)
+        .map_err(|e| format!("state store read failed for '{store_key}': {e}"))?;
+    let Some(bytes) = bytes else {
+        return Ok(None);
+    };
+    let assembled: DistributedCheckpoint = serde_json::from_slice(&bytes).map_err(|e| {
+        format!(
+            "failed to deserialize DistributedCheckpoint at '{store_key}': {e}"
+        )
+    })?;
+
+    // Search the snapshot map for a participant whose pipeline_id matches.
+    // Participant keys are "{worker_id}/{pipeline_id}" — split on the first
+    // `/` to recover the pipeline portion. We accept the first match: a
+    // single distributed checkpoint should not contain multiple snapshots
+    // for the same logical pipeline (replicas use different pipeline_ids
+    // like `p1#0`, `p1#1`).
+    let snapshot = assembled.snapshots.iter().find_map(|(participant, loc)| {
+        participant
+            .split_once('/')
+            .map(|(_, pid)| pid)
+            .filter(|pid| *pid == pipeline_name)
+            .map(|_| loc)
+    });
+
+    match snapshot {
+        Some(SnapshotLocation::Inline { checkpoint }) => Ok(Some((**checkpoint).clone())),
+        Some(SnapshotLocation::Remote { store_key: remote_key, size_bytes }) => {
+            warn!(
+                pipeline = %pipeline_name,
+                remote_key = %remote_key,
+                size_bytes,
+                "remote distributed-checkpoint snapshots are not yet supported on the migration path"
+            );
+            Ok(None)
+        }
+        None => Ok(None),
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(all(test, feature = "distributed-checkpoint"))]
+mod distributed_migration_tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use varpulis_runtime::persistence::{EngineCheckpoint, MemoryStore, StateStore};
+
+    use super::*;
+    use crate::checkpoint_protocol::{
+        participant_key, DistributedCheckpoint, SnapshotLocation,
+    };
+
+    fn empty_checkpoint() -> EngineCheckpoint {
+        EngineCheckpoint {
+            version: varpulis_runtime::persistence::CHECKPOINT_VERSION,
+            window_states: HashMap::new(),
+            sase_states: HashMap::new(),
+            join_states: HashMap::new(),
+            variables: HashMap::new(),
+            events_processed: 0,
+            output_events_emitted: 0,
+            watermark_state: None,
+            distinct_states: HashMap::new(),
+            limit_states: HashMap::new(),
+            source_offsets: HashMap::new(),
+        }
+    }
+
+    fn checkpoint_with_progress(events: u64) -> EngineCheckpoint {
+        let mut cp = empty_checkpoint();
+        cp.events_processed = events;
+        cp
+    }
+
+    fn put_distributed_checkpoint(
+        store: &Arc<dyn StateStore>,
+        group_id: &str,
+        checkpoint_id: u64,
+        snapshots: HashMap<String, SnapshotLocation>,
+    ) -> String {
+        let assembled = DistributedCheckpoint {
+            group_id: group_id.to_string(),
+            checkpoint_id,
+            timestamp_ms: 1_700_000_000_000,
+            snapshots,
+        };
+        let key = distributed_checkpoint_store_key("distributed_checkpoints", group_id, checkpoint_id);
+        let bytes = serde_json::to_vec(&assembled).unwrap();
+        store.put(&key, &bytes).unwrap();
+        key
+    }
+
+    #[test]
+    fn store_key_format_matches_orchestrator() {
+        // Pinned format: {prefix}/{group_id}/{checkpoint_id}.json. Must
+        // line up with DistributedCheckpointCoordinator::store_key_for so a
+        // coordinator that lost its in-memory orchestrator can still
+        // recover the assembled snapshot from Raft + the state store.
+        assert_eq!(
+            distributed_checkpoint_store_key("distributed_checkpoints", "g1", 7),
+            "distributed_checkpoints/g1/7.json"
+        );
+        assert_eq!(
+            distributed_checkpoint_store_key("custom/prefix", "alpha", 42),
+            "custom/prefix/alpha/42.json"
+        );
+    }
+
+    #[test]
+    fn load_distributed_checkpoint_returns_inline_snapshot() {
+        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
+        let cp = checkpoint_with_progress(123);
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            participant_key(&WorkerId("w0".into()), "p1"),
+            SnapshotLocation::Inline {
+                checkpoint: Box::new(cp),
+            },
+        );
+        let key = put_distributed_checkpoint(&store, "g1", 1, snapshots);
+
+        let loaded = load_distributed_checkpoint(&store, &key, "p1")
+            .expect("load")
+            .expect("snapshot present");
+        assert_eq!(loaded.events_processed, 123);
+    }
+
+    #[test]
+    fn load_distributed_checkpoint_finds_pipeline_regardless_of_worker() {
+        // The whole point of this path is to migrate AWAY from the source
+        // worker — the lookup must not require the participant key to
+        // match the source worker. Match purely on pipeline name.
+        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
+        let cp = checkpoint_with_progress(99);
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            participant_key(&WorkerId("w-dead".into()), "the-pipeline"),
+            SnapshotLocation::Inline {
+                checkpoint: Box::new(cp),
+            },
+        );
+        let key = put_distributed_checkpoint(&store, "grp", 5, snapshots);
+
+        let loaded = load_distributed_checkpoint(&store, &key, "the-pipeline")
+            .expect("load succeeds")
+            .expect("snapshot present");
+        assert_eq!(loaded.events_processed, 99);
+    }
+
+    #[test]
+    fn load_distributed_checkpoint_missing_key_returns_none() {
+        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
+        let loaded = load_distributed_checkpoint(
+            &store,
+            "distributed_checkpoints/g/1.json",
+            "p1",
+        )
+        .expect("missing key is not an error");
+        assert!(loaded.is_none());
+    }
+
+    #[test]
+    fn load_distributed_checkpoint_pipeline_not_in_group_returns_none() {
+        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            participant_key(&WorkerId("w0".into()), "other"),
+            SnapshotLocation::Inline {
+                checkpoint: Box::new(empty_checkpoint()),
+            },
+        );
+        let key = put_distributed_checkpoint(&store, "g1", 1, snapshots);
+
+        let loaded = load_distributed_checkpoint(&store, &key, "missing-pipeline")
+            .expect("load");
+        assert!(loaded.is_none());
+    }
+
+    #[test]
+    fn load_distributed_checkpoint_remote_snapshot_returns_none_with_warning() {
+        // Remote snapshots aren't yet supported on the migration path —
+        // we should fall back gracefully (returning None, NOT an error)
+        // so the caller can decide whether to proceed without state or
+        // try the source-worker HTTP fallback.
+        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            participant_key(&WorkerId("w0".into()), "p1"),
+            SnapshotLocation::Remote {
+                store_key: "checkpoints/g/1/w0.json".into(),
+                size_bytes: 4_500_000,
+            },
+        );
+        let key = put_distributed_checkpoint(&store, "g1", 1, snapshots);
+
+        let loaded = load_distributed_checkpoint(&store, &key, "p1").expect("load");
+        assert!(loaded.is_none());
+    }
+
+    #[test]
+    fn load_distributed_checkpoint_corrupt_payload_is_error() {
+        // A truncated / corrupt payload at the expected key must surface
+        // as an error rather than silently returning None — the caller
+        // needs to log it and probably fail the migration loudly.
+        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
+        let key = "distributed_checkpoints/g/1.json".to_string();
+        store.put(&key, b"not json at all").unwrap();
+        let err = load_distributed_checkpoint(&store, &key, "p1").unwrap_err();
+        assert!(err.contains("deserialize"));
+    }
 }
