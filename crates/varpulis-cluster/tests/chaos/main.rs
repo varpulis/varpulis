@@ -5,16 +5,18 @@
 //! the cluster REST API. No mocking — every test hits real processes communicating
 //! over TCP on localhost.
 
+#[cfg(all(feature = "distributed-checkpoint", feature = "raft"))]
+pub mod coordinator_failover;
 #[cfg(feature = "distributed-checkpoint")]
 pub mod distributed_checkpoint;
 pub mod edge_cases;
 pub mod functional;
 #[cfg(feature = "distributed-checkpoint")]
 pub mod multi_replica_checkpoint;
+#[cfg(feature = "distributed-checkpoint")]
+pub mod network_partition;
 pub mod perf;
 pub mod sustained;
-#[cfg(all(feature = "distributed-checkpoint", feature = "raft"))]
-pub mod coordinator_failover;
 
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};

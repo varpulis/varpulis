@@ -293,9 +293,7 @@ impl MultiRaftCluster {
 
     /// Find the cluster index of the coordinator whose `node_id` matches.
     fn find_index_for(&self, node_id: u64) -> Option<usize> {
-        self.coordinators
-            .iter()
-            .position(|c| c.node_id == node_id)
+        self.coordinators.iter().position(|c| c.node_id == node_id)
     }
 
     /// SIGKILL the coordinator at the given cluster index and remove it
@@ -567,17 +565,18 @@ async fn test_coordinator_failover_workers_self_abort() {
     let leader_idx = cluster
         .find_index_for(leader_info.leader_id)
         .expect("leader node id present");
-    let worker_id = cluster.add_worker_pointing_at(leader_idx, Some(&nats)).await;
-    eprintln!("  spawned worker {worker_id} attached to leader node {}", leader_info.leader_id);
+    let worker_id = cluster
+        .add_worker_pointing_at(leader_idx, Some(&nats))
+        .await;
+    eprintln!(
+        "  spawned worker {worker_id} attached to leader node {}",
+        leader_info.leader_id
+    );
 
     // Subscribe to the ack subject for our synthetic group BEFORE
     // publishing -- otherwise we race the worker's response.
-    use varpulis_cluster::checkpoint_protocol::{
-        CheckpointBarrierAck, CheckpointBarrierRequest,
-    };
-    use varpulis_cluster::nats_transport::{
-        subject_checkpoint_ack, subject_checkpoint_barrier,
-    };
+    use varpulis_cluster::checkpoint_protocol::{CheckpointBarrierAck, CheckpointBarrierRequest};
+    use varpulis_cluster::nats_transport::{subject_checkpoint_ack, subject_checkpoint_barrier};
 
     let group_id = format!("failover-test-{}", std::process::id());
     let ack_subject = subject_checkpoint_ack(&group_id);
@@ -603,10 +602,7 @@ async fn test_coordinator_failover_workers_self_abort() {
         .publish(barrier_subject.clone(), payload.into())
         .await
         .expect("publish barrier");
-    nats_client
-        .flush()
-        .await
-        .expect("flush nats publish");
+    nats_client.flush().await.expect("flush nats publish");
 
     // Wait for the worker's ack -- success or NACK is fine for this test.
     // What we need to confirm is that the worker emitted *something*.
