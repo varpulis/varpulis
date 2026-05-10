@@ -186,6 +186,12 @@ pub struct Engine {
     /// events past the pause flag, either because it was already mid-batch
     /// when the flag flipped (expected) or because it ignored the flag.
     pub(super) events_ingested_while_paused: u64,
+    /// Highest checkpoint id whose `commit_sinks` has been issued by this
+    /// engine instance. Updated by [`commit_sinks`](Self::commit_sinks)
+    /// after the commit pass completes; read by recovery helpers (Task 3.2)
+    /// to skip a redundant `commit_sinks(id)` when this engine has already
+    /// committed at or beyond `id`. Defaults to `0` for fresh engines.
+    pub(super) last_committed_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -292,6 +298,7 @@ impl Engine {
             )),
             source_paused: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             events_ingested_while_paused: 0,
+            last_committed_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -337,6 +344,7 @@ impl Engine {
                 )),
                 source_paused: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 events_ingested_while_paused: 0,
+                last_committed_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             }
         }
     }
@@ -1264,6 +1272,12 @@ impl Engine {
     }
 
     /// Call `commit` on all exactly-once sinks, then `begin_epoch` for the next epoch.
+    ///
+    /// Bumps [`last_committed_epoch`](Self::last_committed_epoch) to
+    /// `checkpoint_id` after the commit pass so recovery code (Task 3.2)
+    /// can detect whether a re-commit is still owed. The bump is monotonic:
+    /// out-of-order calls with a smaller `checkpoint_id` leave the marker
+    /// unchanged.
     #[cfg(feature = "async-runtime")]
     pub async fn commit_sinks(&self, checkpoint_id: u64) {
         for (key, sink) in self.sinks.cache() {
@@ -1277,6 +1291,8 @@ impl Engine {
                 }
             }
         }
+        self.last_committed_epoch
+            .fetch_max(checkpoint_id, std::sync::atomic::Ordering::AcqRel);
     }
 
     /// Call `abort` on all exactly-once sinks (recovery path).
@@ -1711,6 +1727,32 @@ impl Engine {
     #[inline]
     pub const fn events_ingested_while_paused(&self) -> u64 {
         self.events_ingested_while_paused
+    }
+
+    /// Highest checkpoint id this engine has issued `commit_sinks` for.
+    ///
+    /// Used by recovery helpers (`varpulis_cluster::migration::recovery_commit`,
+    /// Task 3.2) to decide whether a restored checkpoint still has a pending
+    /// 2PC commit owed to its sinks. Monotonic — `commit_sinks(id)` only ever
+    /// raises this value via `fetch_max`. Defaults to `0` for fresh engines
+    /// (no commits issued yet).
+    #[inline]
+    pub fn last_committed_epoch(&self) -> u64 {
+        self.last_committed_epoch
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Override the last-committed-epoch marker.
+    ///
+    /// Recovery code uses this to record an externally-observed commit that
+    /// was performed by another engine instance (e.g. the predecessor worker
+    /// for a migrated pipeline). Like [`commit_sinks`](Self::commit_sinks),
+    /// the update is monotonic: a smaller `checkpoint_id` leaves the marker
+    /// unchanged.
+    #[inline]
+    pub fn set_last_committed_epoch(&self, checkpoint_id: u64) {
+        self.last_committed_epoch
+            .fetch_max(checkpoint_id, std::sync::atomic::Ordering::AcqRel);
     }
 
     /// Create a checkpoint of the engine state (windows, SASE engines, joins, variables).

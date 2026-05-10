@@ -3,6 +3,7 @@
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
+use varpulis_runtime::engine::Engine;
 use varpulis_runtime::persistence::EngineCheckpoint;
 
 use crate::worker::WorkerId;
@@ -83,6 +84,47 @@ pub struct MigrationTask {
     pub reason: MigrationReason,
 }
 
+/// Re-issue `commit_sinks` on a freshly-restored engine when the persisted
+/// checkpoint is newer than what the engine has already committed.
+///
+/// ## When this fires
+///
+/// The distributed checkpoint protocol marks a checkpoint as durable
+/// (Raft-replicated) once every participating worker has acked the
+/// `prepare_commit` phase. The follow-up `CheckpointCompleteNotification`
+/// then triggers `commit_sinks` on each worker, which finalises the prepared
+/// 2PC transaction (e.g. Kafka `commit_transaction`).
+///
+/// If a worker crashes — or a pipeline is migrated — between *prepare* and
+/// *commit*, the prepared transaction outlives the engine that opened it.
+/// On recovery the new engine instance restores the same checkpoint state
+/// but its in-memory [`Engine::last_committed_epoch`] starts at `0`. This
+/// helper detects that gap and replays `commit_sinks(checkpoint_id)` so the
+/// prepared transaction is finalised.
+///
+/// ## Idempotence
+///
+/// Kafka 2PC commits are idempotent on the same `transactional.id` — calling
+/// `commit_transaction` against an already-committed transaction returns
+/// `ErrorCode::None`. Likewise, a sink that has no prepared transaction at
+/// `checkpoint_id` will treat the call as a no-op. So this helper is safe
+/// to call unconditionally after any restore, even when the original engine
+/// did manage to commit before crashing.
+///
+/// ## Returns
+///
+/// `true` if `commit_sinks` was issued, `false` if the engine had already
+/// committed at or beyond `checkpoint_id` (e.g. when the helper is invoked
+/// twice for the same checkpoint).
+pub async fn recovery_commit(engine: &Engine, checkpoint_id: u64) -> bool {
+    if checkpoint_id > engine.last_committed_epoch() {
+        engine.commit_sinks(checkpoint_id).await;
+        true
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +184,176 @@ mod tests {
             let json = serde_json::to_string(&reason).unwrap();
             let _parsed: MigrationReason = serde_json::from_str(&json).unwrap();
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // recovery_commit
+    // ---------------------------------------------------------------------
+
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+    use varpulis_runtime::event::Event;
+    use varpulis_runtime::sink::{Sink, SinkError};
+
+    /// Records the 2PC method calls (`begin_epoch`, `prepare_commit`,
+    /// `commit`, `abort`) issued against the sink so tests can assert that
+    /// `recovery_commit` actually replays the prepared commit phase.
+    #[derive(Debug, Default)]
+    struct RecordingSink {
+        calls: Mutex<Vec<(String, u64)>>,
+    }
+
+    impl RecordingSink {
+        fn calls(&self) -> Vec<(String, u64)> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        fn record(&self, op: &str, id: u64) {
+            self.calls.lock().unwrap().push((op.to_string(), id));
+        }
+    }
+
+    #[async_trait]
+    impl Sink for RecordingSink {
+        fn name(&self) -> &str {
+            "recording"
+        }
+        async fn send(&self, _event: &Event) -> Result<(), SinkError> {
+            Ok(())
+        }
+        async fn flush(&self) -> Result<(), SinkError> {
+            Ok(())
+        }
+        async fn close(&self) -> Result<(), SinkError> {
+            Ok(())
+        }
+        fn supports_exactly_once(&self) -> bool {
+            true
+        }
+        async fn begin_epoch(&self, id: u64) -> Result<(), SinkError> {
+            self.record("begin_epoch", id);
+            Ok(())
+        }
+        async fn prepare_commit(&self, id: u64) -> Result<(), SinkError> {
+            self.record("prepare_commit", id);
+            Ok(())
+        }
+        async fn commit(&self, id: u64) -> Result<(), SinkError> {
+            self.record("commit", id);
+            Ok(())
+        }
+        async fn abort(&self, id: u64) -> Result<(), SinkError> {
+            self.record("abort", id);
+            Ok(())
+        }
+    }
+
+    fn build_engine_with_recording_sink() -> (Engine, Arc<RecordingSink>) {
+        let (tx, _rx) = tokio::sync::mpsc::channel(16);
+        let mut engine = Engine::new(tx);
+        let sink = Arc::new(RecordingSink::default());
+        engine.inject_sink("recording", sink.clone() as Arc<dyn Sink>);
+        (engine, sink)
+    }
+
+    #[tokio::test]
+    async fn recovery_commit_issues_commit_when_checkpoint_is_newer() {
+        let (engine, sink) = build_engine_with_recording_sink();
+        assert_eq!(engine.last_committed_epoch(), 0);
+
+        let did_commit = recovery_commit(&engine, 5).await;
+
+        assert!(
+            did_commit,
+            "recovery_commit should fire when the checkpoint id is newer than last_committed_epoch"
+        );
+        let calls = sink.calls();
+        assert!(
+            calls.contains(&("commit".to_string(), 5)),
+            "expected commit(5) to be issued, got {:?}",
+            calls
+        );
+        assert!(
+            calls.contains(&("begin_epoch".to_string(), 6)),
+            "commit_sinks should also open the next epoch (6), got {:?}",
+            calls
+        );
+        assert_eq!(
+            engine.last_committed_epoch(),
+            5,
+            "last_committed_epoch must advance after a recovery commit"
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_commit_is_noop_when_already_committed_at_or_beyond() {
+        let (engine, sink) = build_engine_with_recording_sink();
+        // Simulate a successful first recovery: engine already committed at 7.
+        engine.set_last_committed_epoch(7);
+
+        let did_commit_at_7 = recovery_commit(&engine, 7).await;
+        assert!(
+            !did_commit_at_7,
+            "checkpoint_id == last_committed_epoch must be a no-op"
+        );
+        let did_commit_at_6 = recovery_commit(&engine, 6).await;
+        assert!(
+            !did_commit_at_6,
+            "checkpoint_id < last_committed_epoch must be a no-op"
+        );
+        assert!(
+            sink.calls().is_empty(),
+            "no sink calls should be issued for a no-op recovery, got {:?}",
+            sink.calls()
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_commit_is_idempotent_across_repeated_calls() {
+        let (engine, sink) = build_engine_with_recording_sink();
+
+        let first = recovery_commit(&engine, 9).await;
+        let second = recovery_commit(&engine, 9).await;
+        let third = recovery_commit(&engine, 9).await;
+
+        assert!(first, "first recovery_commit should fire");
+        assert!(
+            !second,
+            "second recovery_commit at the same id should be a no-op"
+        );
+        assert!(
+            !third,
+            "third recovery_commit at the same id should be a no-op"
+        );
+
+        let commit_count = sink
+            .calls()
+            .iter()
+            .filter(|(op, id)| op == "commit" && *id == 9)
+            .count();
+        assert_eq!(
+            commit_count, 1,
+            "commit(9) should be issued exactly once across repeated recovery_commit calls"
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_sinks_advances_last_committed_epoch_monotonically() {
+        let (engine, _sink) = build_engine_with_recording_sink();
+
+        engine.commit_sinks(3).await;
+        assert_eq!(engine.last_committed_epoch(), 3);
+
+        engine.commit_sinks(7).await;
+        assert_eq!(engine.last_committed_epoch(), 7);
+
+        // Out-of-order replay must not roll the marker backwards.
+        engine.commit_sinks(2).await;
+        assert_eq!(
+            engine.last_committed_epoch(),
+            7,
+            "last_committed_epoch must be monotonic"
+        );
     }
 }

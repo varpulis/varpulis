@@ -8588,6 +8588,7 @@ name = "varpulis-cluster"
 version = "0.10.0"
 dependencies = [
  "async-nats",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "chrono",

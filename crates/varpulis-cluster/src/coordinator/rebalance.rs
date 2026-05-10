@@ -10,11 +10,11 @@ use varpulis_runtime::persistence::EngineCheckpoint;
 #[cfg(feature = "distributed-checkpoint")]
 use varpulis_runtime::persistence::StateStore;
 
-#[cfg(feature = "distributed-checkpoint")]
-use crate::checkpoint_protocol::{DistributedCheckpoint, SnapshotLocation};
 use super::{
     CheckpointResponsePayload, Coordinator, DeployResponse, MigratePipelinePlan, ScalingAction,
 };
+#[cfg(feature = "distributed-checkpoint")]
+use crate::checkpoint_protocol::{DistributedCheckpoint, SnapshotLocation};
 use crate::connector_config::{self, ClusterConnector};
 use crate::migration::{MigrationReason, MigrationStatus, MigrationTask};
 use crate::pipeline_group::{GroupStatus, PipelineDeployment, PipelineDeploymentStatus};
@@ -1466,9 +1466,7 @@ pub fn load_distributed_checkpoint(
         return Ok(None);
     };
     let assembled: DistributedCheckpoint = serde_json::from_slice(&bytes).map_err(|e| {
-        format!(
-            "failed to deserialize DistributedCheckpoint at '{store_key}': {e}"
-        )
+        format!("failed to deserialize DistributedCheckpoint at '{store_key}': {e}")
     })?;
 
     // Search the snapshot map for a participant whose pipeline_id matches.
@@ -1487,7 +1485,10 @@ pub fn load_distributed_checkpoint(
 
     match snapshot {
         Some(SnapshotLocation::Inline { checkpoint }) => Ok(Some((**checkpoint).clone())),
-        Some(SnapshotLocation::Remote { store_key: remote_key, size_bytes }) => {
+        Some(SnapshotLocation::Remote {
+            store_key: remote_key,
+            size_bytes,
+        }) => {
             warn!(
                 pipeline = %pipeline_name,
                 remote_key = %remote_key,
@@ -1512,9 +1513,7 @@ mod distributed_migration_tests {
     use varpulis_runtime::persistence::{EngineCheckpoint, MemoryStore, StateStore};
 
     use super::*;
-    use crate::checkpoint_protocol::{
-        participant_key, DistributedCheckpoint, SnapshotLocation,
-    };
+    use crate::checkpoint_protocol::{participant_key, DistributedCheckpoint, SnapshotLocation};
 
     fn empty_checkpoint() -> EngineCheckpoint {
         EngineCheckpoint {
@@ -1550,7 +1549,8 @@ mod distributed_migration_tests {
             timestamp_ms: 1_700_000_000_000,
             snapshots,
         };
-        let key = distributed_checkpoint_store_key("distributed_checkpoints", group_id, checkpoint_id);
+        let key =
+            distributed_checkpoint_store_key("distributed_checkpoints", group_id, checkpoint_id);
         let bytes = serde_json::to_vec(&assembled).unwrap();
         store.put(&key, &bytes).unwrap();
         key
@@ -1616,12 +1616,8 @@ mod distributed_migration_tests {
     #[test]
     fn load_distributed_checkpoint_missing_key_returns_none() {
         let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
-        let loaded = load_distributed_checkpoint(
-            &store,
-            "distributed_checkpoints/g/1.json",
-            "p1",
-        )
-        .expect("missing key is not an error");
+        let loaded = load_distributed_checkpoint(&store, "distributed_checkpoints/g/1.json", "p1")
+            .expect("missing key is not an error");
         assert!(loaded.is_none());
     }
 
@@ -1637,8 +1633,7 @@ mod distributed_migration_tests {
         );
         let key = put_distributed_checkpoint(&store, "g1", 1, snapshots);
 
-        let loaded = load_distributed_checkpoint(&store, &key, "missing-pipeline")
-            .expect("load");
+        let loaded = load_distributed_checkpoint(&store, &key, "missing-pipeline").expect("load");
         assert!(loaded.is_none());
     }
 
