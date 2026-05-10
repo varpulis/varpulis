@@ -315,9 +315,9 @@ impl Coordinator {
     ///
     /// When the `distributed-checkpoint` feature is enabled, callers should
     /// resolve the latest durable checkpoint for the group via
-    /// [`load_distributed_checkpoint`] and pass it through
-    /// [`execute_migrate_plan_with_checkpoint`]. The plain
-    /// [`execute_migrate_plan`] path always falls back to checkpointing the
+    /// `load_distributed_checkpoint` and pass it through
+    /// `execute_migrate_plan_with_checkpoint`. The plain
+    /// `execute_migrate_plan` path always falls back to checkpointing the
     /// source worker via HTTP — which only works when the source is alive.
     pub async fn execute_migrate_plan(
         http_client: &reqwest::Client,
