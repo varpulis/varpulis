@@ -5,6 +5,8 @@
 //! the cluster REST API. No mocking — every test hits real processes communicating
 //! over TCP on localhost.
 
+#[cfg(feature = "distributed-checkpoint")]
+pub mod distributed_checkpoint;
 pub mod edge_cases;
 pub mod functional;
 pub mod perf;
