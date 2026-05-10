@@ -13,6 +13,8 @@ pub mod functional;
 pub mod multi_replica_checkpoint;
 pub mod perf;
 pub mod sustained;
+#[cfg(all(feature = "distributed-checkpoint", feature = "raft"))]
+pub mod coordinator_failover;
 
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
