@@ -191,11 +191,46 @@ async fn dispatch_command(
         "checkpoint" => handle_checkpoint(payload, api_key, tm).await,
         "restore" => handle_restore(payload, api_key, tm).await,
         "drain" => handle_drain(payload).await,
+        // Backward compatibility (Task 3.3): a coordinator running with
+        // `distributed-checkpoint` may publish barrier/complete/abort
+        // commands to a worker that was built WITHOUT the feature. We
+        // recognise the wire name explicitly so we (a) don't crash, (b)
+        // don't return a misleading "unknown command" error to the
+        // coordinator, and (c) emit a single informative log line per
+        // received command instead of silently dropping. The coordinator
+        // sees `feature_disabled: distributed-checkpoint` in the response
+        // and can choose to NACK the participant so it isn't included in
+        // the active checkpoint group.
+        "checkpoint_barrier" | "checkpoint_complete" | "checkpoint_abort" => {
+            feature_disabled_response(cmd)
+        }
         other => {
             warn!("Unknown command: {}", other);
             error_json(&format!("unknown command: {other}"))
         }
     }
+}
+
+/// Backward-compat response for distributed-checkpoint commands received
+/// by a worker built WITHOUT the `distributed-checkpoint` feature.
+///
+/// Returned as the reply payload on the worker's per-cmd subject so that
+/// a coordinator running the new protocol against a mixed-version worker
+/// pool sees a structured "this worker can't participate" answer rather
+/// than an `unknown command` error or a dropped request.
+#[cfg(all(feature = "nats-transport", not(feature = "distributed-checkpoint")))]
+fn feature_disabled_response(cmd: &str) -> Vec<u8> {
+    info!(
+        command = cmd,
+        feature = "distributed-checkpoint",
+        "Ignoring checkpoint command — worker built without `distributed-checkpoint` feature",
+    );
+    serde_json::to_vec(&serde_json::json!({
+        "ok": false,
+        "feature_disabled": "distributed-checkpoint",
+        "command": cmd,
+    }))
+    .unwrap_or_default()
 }
 
 #[cfg(all(feature = "nats-transport", feature = "distributed-checkpoint"))]
@@ -1153,5 +1188,85 @@ mod barrier_tests {
         // can't call handle_checkpoint_barrier without a NATS client, but
         // the parse step is what would NACK.
         let _ = state; // silence warning
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Backward-compat tests (Task 3.3): worker built WITHOUT
+// `distributed-checkpoint` should ignore checkpoint commands gracefully
+// instead of returning the catch-all "unknown command" error.
+// ---------------------------------------------------------------------------
+
+#[cfg(all(
+    test,
+    feature = "nats-transport",
+    not(feature = "distributed-checkpoint")
+))]
+mod backward_compat_tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[test]
+    fn feature_disabled_response_is_structured_for_known_commands() {
+        for cmd in [
+            "checkpoint_barrier",
+            "checkpoint_complete",
+            "checkpoint_abort",
+        ] {
+            let bytes = feature_disabled_response(cmd);
+            let v: serde_json::Value =
+                serde_json::from_slice(&bytes).expect("payload must be JSON");
+            assert_eq!(v["ok"], serde_json::Value::Bool(false));
+            assert_eq!(v["feature_disabled"], "distributed-checkpoint");
+            assert_eq!(v["command"], cmd);
+            // No `error` key — coordinator distinguishes "feature off" from
+            // a real failure.
+            assert!(v.get("error").is_none());
+        }
+    }
+
+    #[test]
+    fn feature_disabled_response_is_not_unknown_command_shape() {
+        // Sanity: a real `unknown command` response carries an `error` key
+        // and no `feature_disabled` marker. The two responses must NOT
+        // collide because the coordinator distinguishes them.
+        let unknown = error_json("unknown command: nope");
+        let v: serde_json::Value = serde_json::from_slice(&unknown).unwrap();
+        assert!(v.get("error").is_some());
+        assert!(v.get("feature_disabled").is_none());
+    }
+
+    #[tokio::test]
+    async fn dispatcher_returns_feature_disabled_for_checkpoint_commands() {
+        use tokio::sync::RwLock;
+        use varpulis_runtime::TenantManager;
+
+        let tm: SharedTenantManager = Arc::new(RwLock::new(TenantManager::new()));
+        for cmd in [
+            "checkpoint_barrier",
+            "checkpoint_complete",
+            "checkpoint_abort",
+        ] {
+            // Payload contents are irrelevant — the dispatcher short-circuits
+            // before parsing because the feature is disabled.
+            let bytes = dispatch_command(cmd, b"{}", "ignored", &tm).await;
+            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(v["feature_disabled"], "distributed-checkpoint");
+            assert_eq!(v["command"], cmd);
+            assert_eq!(v["ok"], serde_json::Value::Bool(false));
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatcher_still_rejects_truly_unknown_commands() {
+        use tokio::sync::RwLock;
+        use varpulis_runtime::TenantManager;
+
+        let tm: SharedTenantManager = Arc::new(RwLock::new(TenantManager::new()));
+        let bytes = dispatch_command("totally_made_up", b"{}", "ignored", &tm).await;
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(v.get("error").is_some());
+        assert!(v.get("feature_disabled").is_none());
     }
 }

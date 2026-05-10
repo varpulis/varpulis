@@ -25,6 +25,33 @@
 //! varpulis server --port 9000 --api-key test --coordinator http://localhost:9100 --worker-id w0
 //! varpulis server --port 9001 --api-key test --coordinator http://localhost:9100 --worker-id w1
 //! ```
+//!
+//! ## Backward compatibility (`distributed-checkpoint`)
+//!
+//! The Flink-parity distributed exactly-once protocol is gated behind the
+//! `distributed-checkpoint` Cargo feature, **off by default**. Three
+//! invariants hold for builds that omit the feature:
+//!
+//! 1. **Single-node mode is unaffected.** `varpulis run` (CLI) does not link
+//!    against the cluster crate's checkpoint protocol — it keeps using the
+//!    in-process `barrier_commit_2pc` path in
+//!    `crates/varpulis-cli/src/commands/run.rs`. No cluster overhead.
+//! 2. **Cluster builds without the feature compile and run unchanged.**
+//!    The `coordinator`, `nats_worker`, `migration`, and `raft` modules
+//!    expose the same public API; only the optional
+//!    `coordinator::distributed_checkpoint`, the
+//!    `checkpoint_protocol` module, and the worker-side
+//!    `WorkerCheckpointState`/`handle_checkpoint_*` helpers are
+//!    feature-gated out.
+//! 3. **Workers without the feature ignore checkpoint commands gracefully.**
+//!    A coordinator running the new protocol against a mixed-version pool
+//!    can publish `checkpoint_barrier`, `checkpoint_complete`, or
+//!    `checkpoint_abort` commands to a worker built without the feature.
+//!    The worker logs an info line and replies with
+//!    `{"ok": false, "feature_disabled": "distributed-checkpoint",
+//!    "command": "<cmd>"}` instead of the catch-all "unknown command"
+//!    error, letting the coordinator distinguish "this worker can't
+//!    participate" from a malformed request.
 
 pub mod api;
 pub mod chat;
