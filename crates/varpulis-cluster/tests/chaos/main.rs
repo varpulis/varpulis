@@ -9,6 +9,8 @@
 pub mod distributed_checkpoint;
 pub mod edge_cases;
 pub mod functional;
+#[cfg(feature = "distributed-checkpoint")]
+pub mod multi_replica_checkpoint;
 pub mod perf;
 pub mod sustained;
 
