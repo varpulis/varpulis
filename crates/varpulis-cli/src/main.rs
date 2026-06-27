@@ -49,7 +49,8 @@ enum Commands {
         file: Option<PathBuf>,
 
         /// Inline VPL code
-        #[arg(short, long)]
+        // `-c` is reserved for the global --config; --code is long-only.
+        #[arg(long)]
         code: Option<String>,
 
         /// Drain output events without printing them. Use this for high-throughput
