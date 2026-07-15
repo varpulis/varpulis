@@ -61,7 +61,10 @@ async fn coordinator_output_events_handler(
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if key != state.expected_api_key {
+    // Constant-time compare: a plain `!=` on strings short-circuits at the first
+    // differing byte, leaking per-byte timing that lets an attacker recover the
+    // internal API key one byte at a time.
+    if !varpulis_core::security::constant_time_compare(key, &state.expected_api_key) {
         return (
             axum::http::StatusCode::UNAUTHORIZED,
             axum::Json(serde_json::json!({"error": "unauthorized"})),
@@ -644,4 +647,51 @@ pub async fn run_coordinator(
 
     info!("Coordinator shutdown complete");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_state(expected_key: &str) -> Arc<CoordinatorAppState> {
+        let (tx, _rx) = tokio::sync::broadcast::channel::<String>(16);
+        Arc::new(CoordinatorAppState {
+            coordinator: Arc::new(tokio::sync::RwLock::new(
+                varpulis_cluster::Coordinator::new(),
+            )),
+            broadcast_tx: Arc::new(tx),
+            expected_api_key: expected_key.to_string(),
+        })
+    }
+
+    async fn call_status(state: Arc<CoordinatorAppState>, key: Option<&str>) -> u16 {
+        use axum::response::IntoResponse;
+        let mut headers = axum::http::HeaderMap::new();
+        if let Some(k) = key {
+            headers.insert("x-api-key", k.parse().unwrap());
+        }
+        coordinator_output_events_handler(
+            axum::extract::State(state),
+            headers,
+            axum::Json(vec!["{}".to_string()]),
+        )
+        .await
+        .into_response()
+        .status()
+        .as_u16()
+    }
+
+    #[tokio::test]
+    async fn internal_output_events_endpoint_enforces_api_key() {
+        let state = test_state("s3cr3t-internal-key");
+        // Wrong key → 401.
+        assert_eq!(call_status(state.clone(), Some("wrong")).await, 401);
+        // Missing key → 401.
+        assert_eq!(call_status(state.clone(), None).await, 401);
+        // A prefix of the real key (would pass a byte-by-byte short-circuit at
+        // the shared prefix but still be rejected) → 401.
+        assert_eq!(call_status(state.clone(), Some("s3cr3t")).await, 401);
+        // Correct key → 200.
+        assert_eq!(call_status(state, Some("s3cr3t-internal-key")).await, 200);
+    }
 }
