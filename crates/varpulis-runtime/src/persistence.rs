@@ -536,7 +536,45 @@ impl FileStore {
     pub fn open(dir: impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
         let dir = dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir).map_err(|e| StoreError::IoError(e.to_string()))?;
-        Ok(Self { dir })
+        let store = Self { dir };
+        // Reclaim orphaned "*.tmp" files left when a prior process died between
+        // the temp-write and the atomic rename in `put`. `list_checkpoints`
+        // already skips them (non-numeric names), so nothing else ever removes
+        // them and they accumulate on disk across every crash.
+        store.sweep_orphan_tmp();
+        Ok(store)
+    }
+
+    /// Best-effort recursive removal of orphaned `*.tmp` files under the store
+    /// directory. Errors are logged and ignored — a failed sweep must never
+    /// block opening the store (and a `.tmp` we can't delete is harmless).
+    fn sweep_orphan_tmp(&self) {
+        fn walk(dir: &std::path::Path, removed: &mut usize) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, removed);
+                } else if path
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("tmp"))
+                    && std::fs::remove_file(&path).is_ok()
+                {
+                    *removed += 1;
+                }
+            }
+        }
+        let mut removed = 0;
+        walk(&self.dir, &mut removed);
+        if removed > 0 {
+            tracing::warn!(
+                "FileStore: swept {removed} orphaned .tmp file(s) from {} \
+                 (incomplete writes from a prior crash)",
+                self.dir.display()
+            );
+        }
     }
 
     fn key_to_path(&self, key: &str) -> std::path::PathBuf {
@@ -1633,6 +1671,38 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn file_store_open_sweeps_orphan_tmp() {
+        // A crash between put()'s temp-write and its atomic rename leaves a
+        // "<key>.tmp" file behind. list_checkpoints skips non-numeric names, so
+        // nothing ever reclaims them — they accumulate on disk across crashes.
+        // FileStore::open must sweep them while leaving committed files intact.
+        let dir = tempfile::tempdir().unwrap();
+        let checkpoint_dir = dir.path().join("checkpoint");
+        std::fs::create_dir_all(&checkpoint_dir).unwrap();
+
+        // Simulate crashed writes: orphan .tmp at top level and in a subdir.
+        std::fs::write(dir.path().join("orphan.tmp"), b"partial").unwrap();
+        std::fs::write(checkpoint_dir.join("7.tmp"), b"partial").unwrap();
+        // A real, committed checkpoint file that MUST survive the sweep.
+        std::fs::write(checkpoint_dir.join("7"), b"real").unwrap();
+
+        let _store = FileStore::open(dir.path()).unwrap();
+
+        assert!(
+            !dir.path().join("orphan.tmp").exists(),
+            "top-level orphan .tmp must be swept"
+        );
+        assert!(
+            !checkpoint_dir.join("7.tmp").exists(),
+            "nested orphan .tmp must be swept"
+        );
+        assert!(
+            checkpoint_dir.join("7").exists(),
+            "committed (non-.tmp) checkpoint must be preserved"
+        );
     }
 
     #[test]
