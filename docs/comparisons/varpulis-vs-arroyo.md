@@ -350,30 +350,33 @@ stream Filtered = Tick
 
 | Engine | Throughput | Output | Input path |
 |---|---|---|---|
-| **Varpulis** | **174,751 events/sec** | 89,000 ✓ | File (JSONL via `simulate`) |
-| Arroyo | 86,398 events/sec | 89,000 ✓ | Kafka (Redpanda topic via Kafka source) |
+| **Varpulis** | **160,615 events/sec** | 89,000 ✓ | Kafka (same Redpanda topic) |
+| Arroyo | 99,016 events/sec | 89,000 ✓ | Kafka (same Redpanda topic) |
 
-Both engines deliver identical 89,000 output events, verifying correctness.
-Varpulis is roughly **2× faster** on its native input path than Arroyo on its
-native input path. The architectural reasons:
+*(July 2026, like-for-like Kafka: both engines consume the same pre-loaded
+Redpanda topic and produce to a Kafka sink. Timers start at each engine's
+readiness signal — Arroyo `state=Running`, Varpulis's run-loop marker — so
+neither engine's compile/startup is counted, and both pay their Kafka
+connect and consumer-group join inside the timed window.)*
 
-1. **Varpulis pays no broker round-trip.** File-mode reads JSONL directly from
-   the local filesystem, no network/Kafka deserialisation overhead. The
-   Arroyo path goes through Redpanda's Kafka protocol on every event.
-2. **Arroyo runs in Docker with its full cluster topology** (controller +
-   worker + Postgres) — non-trivial baseline overhead even at small
-   parallelism. Varpulis runs as a single process with a shared in-process
-   pipeline.
-3. **The Arroyo job has to compile and start before timing begins**, but
-   we exclude the compile time. The 1.16s wall time is purely the data
-   processing pass through the running pipeline.
+Both engines deliver identical output: 89,000 records, same content, same
+order. Varpulis is **1.62× faster on the identical input path**, while its
+output records additionally carry `event_type` and the event-time
+`timestamp` (more bytes per record than Arroyo emits). Where the margin
+comes from:
 
-A direct Varpulis-on-Kafka comparison (rebuilding `varpulis-cli` with
-`--features kafka` and using the same Redpanda topic) would close some of
-this gap because Varpulis would also pay the Kafka deserialisation cost.
-Architecturally we expect Varpulis-on-Kafka to land in the **130-160k
-events/sec** range based on its file-mode-vs-Kafka delta in the apama
-benchmark, leaving roughly a 1.5-2× margin over Arroyo.
+1. **Allocation-free steady-state decode.** Varpulis deserializes Kafka
+   JSON straight into its event representation with interned field names
+   and event types — no intermediate DOM, no per-record key allocations.
+2. **Run-grouped dispatch.** Consecutive same-type events flow through the
+   operator pipeline as one batch, so the Kafka sink receives whole
+   batches per enqueue pass rather than per-event async calls.
+3. **Single-process pipeline.** Arroyo runs its cluster topology
+   (controller + worker + Postgres) even at parallelism 1; Varpulis runs
+   one process with an in-process pipeline.
+
+For pure engine-core throughput without a broker, Varpulis file-mode
+(`varpulis simulate`) measures 174,751 events/sec on the same workload.
 
 ### What we did NOT yet measure
 
@@ -384,8 +387,6 @@ benchmark, leaving roughly a 1.5-2× margin over Arroyo.
   same generator drives both engines without schema changes. The infrastructure
   in `benchmarks/arroyo-comparison/` has the SQL written; only the data
   generator update is needed.
-- **Like-for-like Kafka comparison** (both engines on Kafka): requires
-  rebuilding Varpulis with `--features kafka`. Pending.
 - **Native pattern detection workloads** (sequence, Kleene closure,
   forecasting): Arroyo has no native implementation, so the only comparison
   would be Varpulis's NFA vs a hand-coded Rust UDAF — that's not engine-vs-
