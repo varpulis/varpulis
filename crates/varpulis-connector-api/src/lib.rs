@@ -15,6 +15,7 @@
 pub mod circuit_breaker;
 pub mod component;
 pub mod converter;
+pub mod decode;
 pub mod helpers;
 pub mod limits;
 pub mod managed;
@@ -23,6 +24,7 @@ pub mod types;
 
 // Re-export commonly used items at top level
 pub use component::{ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory};
+pub use decode::EventDecoder;
 pub use managed::{ConnectorHealthReport, ManagedConnector};
 pub use sink::{Sink, SinkConnectorAdapter, SinkError};
 pub use types::{

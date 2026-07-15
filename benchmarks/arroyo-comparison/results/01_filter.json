@@ -4,23 +4,25 @@
   "runs": 5,
   "engines": {
     "arroyo": {
-      "runs_ms": [1207.4, 1155.1, 1157.4, 1125.8, 1209.7],
-      "median_s": 1.1574,
-      "min_s": 1.1258,
-      "max_s": 1.2097,
-      "throughput_eps": 86398,
+      "runs_ms": [1128.7, 1140.3, 1009.9, 962.0, 998.3],
+      "median_s": 1.0099,
+      "throughput_eps": 99016,
       "output_count": 89000,
       "input_path": "kafka_redpanda",
-      "version": "v0.15.0"
+      "version": "v0.15.0",
+      "timing": "from pipeline state=Running to output high-watermark"
     },
     "varpulis": {
-      "median_s": 0.5723,
-      "throughput_eps": 174751,
+      "runs_ms": [604.0, 644.3, 598.1, 644.3, 622.6],
+      "median_s": 0.6226,
+      "throughput_eps": 160615,
       "output_count": 89000,
-      "input_path": "file_jsonl",
-      "version": "v0.10.x",
-      "note": "from proton-comparison/results/01_filter.json (file mode)"
+      "input_path": "kafka_redpanda",
+      "version": "v0.10.x (2026-07 hot-path optimizations)",
+      "timing": "from 'Listening for events' readiness marker to output high-watermark",
+      "spawn_to_ready_ms": 113,
+      "note": "Under the previous spawn-based timing this run measures ~136k eps (median 0.623s + 0.113s startup); the engine-side gain over the 2026-04 baseline (88.5k eps) is ~+54%, of which +37% is engine hot-path work and the rest timing-methodology alignment with how Arroyo is measured."
     }
   },
-  "methodology_note": "Each engine measured at its native fast path. Arroyo on Kafka source (production-recommended), Varpulis on file source. A like-for-like Kafka comparison requires rebuilding varpulis-cli with --features kafka."
+  "methodology_note": "Like-for-like Kafka comparison: both engines consume the same pre-loaded Redpanda topic and produce to a Kafka sink. Timers start when each engine reports readiness (Arroyo: pipeline state=Running, its SQL compilation/deployment excluded; Varpulis: 'Listening for events' marker, its VPL parse/process startup excluded). Both pay their Kafka client connect and consumer-group join inside the timed window."
 }

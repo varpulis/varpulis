@@ -927,14 +927,15 @@ impl Engine {
                     }
                 }
                 StreamOp::Select(items) => {
-                    let fields: Vec<(String, varpulis_core::ast::Expr)> = items
+                    let fields: Vec<(std::sync::Arc<str>, varpulis_core::ast::Expr)> = items
                         .iter()
                         .map(|item| match item {
-                            varpulis_core::ast::SelectItem::Field(name) => {
-                                (name.clone(), varpulis_core::ast::Expr::Ident(name.clone()))
-                            }
+                            varpulis_core::ast::SelectItem::Field(name) => (
+                                std::sync::Arc::from(name.as_str()),
+                                varpulis_core::ast::Expr::Ident(name.clone()),
+                            ),
                             varpulis_core::ast::SelectItem::Alias(name, expr) => {
-                                (name.clone(), expr.clone())
+                                (std::sync::Arc::from(name.as_str()), expr.clone())
                             }
                         })
                         .collect();
@@ -955,9 +956,9 @@ impl Engine {
 
                     if has_complex_expr {
                         // Use EmitExpr for complex expressions with function evaluation
-                        let fields: Vec<(String, varpulis_core::ast::Expr)> = args
+                        let fields: Vec<(std::sync::Arc<str>, varpulis_core::ast::Expr)> = args
                             .iter()
-                            .map(|arg| (arg.name.clone(), arg.value.clone()))
+                            .map(|arg| (std::sync::Arc::from(arg.name.as_str()), arg.value.clone()))
                             .collect();
                         runtime_ops.push(RuntimeOp::EmitExpr(EmitExprConfig {
                             fields,
@@ -965,7 +966,7 @@ impl Engine {
                         }));
                     } else {
                         // Use simple EmitConfig for string/ident only
-                        let fields: Vec<(String, String)> = args
+                        let fields: Vec<(std::sync::Arc<str>, String)> = args
                             .iter()
                             .filter_map(|arg| {
                                 let value = match &arg.value {
@@ -973,7 +974,7 @@ impl Engine {
                                     varpulis_core::ast::Expr::Ident(s) => s.clone(),
                                     _ => return None,
                                 };
-                                Some((arg.name.clone(), value))
+                                Some((std::sync::Arc::from(arg.name.as_str()), value))
                             })
                             .collect();
                         runtime_ops.push(RuntimeOp::Emit(EmitConfig {

@@ -1,0 +1,17 @@
+{
+  "scenario": "01_filter",
+  "events": 100000,
+  "runs": 5,
+  "engines": {
+    "arroyo": {
+      "median_s": 1.009937107010046,
+      "throughput_eps": 99016.06674900131,
+      "output_count": 89000
+    },
+    "varpulis": {
+      "median_s": 0.6226062329951674,
+      "throughput_eps": 160615.16043443818,
+      "output_count": 89000
+    }
+  }
+}

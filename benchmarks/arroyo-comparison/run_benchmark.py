@@ -26,6 +26,7 @@ import json
 import statistics
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -267,7 +268,14 @@ def run_varpulis(scenario, expected_out, run_idx) -> dict:
     applies to EMPTY groups), we use a unique `group_id` per run. The
     VPL file is loaded, patched to inject the unique group_id into the
     source connector's `.from(...)` extra-params, and streamed to the
-    CLI via `--code`."""
+    CLI via `--code`.
+
+    Timing starts at the "Listening for events" readiness marker — the
+    moment all sources are subscribed and the engine enters its event
+    loop. This mirrors the Arroyo measurement, whose timer starts only
+    once the pipeline reports state=Running (its SQL compilation and
+    deployment are likewise excluded). Both engines still pay their
+    Kafka client connect/join inside the timed window."""
     vpl_file = SCRIPT_DIR / "scenarios" / scenario / "varpulis.vpl"
     out_topic = {
         "01_filter": "scenario-01-filter-vpl-out",
@@ -290,7 +298,28 @@ def run_varpulis(scenario, expected_out, run_idx) -> dict:
     )
 
     cmd = [str(VARPULIS_BIN), "run", "--code", vpl, "--quiet"]
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+    )
+
+    # Wait for the readiness marker (equivalent of Arroyo state=Running),
+    # then keep draining stdout so the process never blocks on the pipe.
+    ready = threading.Event()
+
+    def _drain(stream):
+        for line in stream:
+            if "Listening for events" in line:
+                ready.set()
+
+    threading.Thread(target=_drain, args=(proc.stdout,), daemon=True).start()
+    ready_deadline = time.perf_counter() + 30
+    while not ready.wait(timeout=0.1):
+        if proc.poll() is not None:
+            raise RuntimeError(f"Varpulis exited before readiness (rc={proc.returncode})")
+        if time.perf_counter() > ready_deadline:
+            proc.kill()
+            proc.wait()
+            raise RuntimeError("Varpulis never reported readiness")
 
     start = time.perf_counter()
     deadline = time.perf_counter() + 180

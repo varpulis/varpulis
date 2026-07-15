@@ -102,12 +102,18 @@ pub async fn run_program(
     // Resolve imports
     varpulis_cli::resolve_imports(&mut program, base_path)?;
 
-    // Create output event channel — clone tx before giving it to the engine
-    let (output_tx, mut output_rx) = mpsc::channel::<Event>(10_000);
-    let output_tx_for_ctx = output_tx.clone();
-
-    // Create engine with credentials store if provided
-    let mut engine = Engine::builder().output(output_tx);
+    // Engine output wiring. In --quiet mode emitted events are dropped at
+    // the source (no per-event clone, no channel hop, no drain task) —
+    // sink deliveries via .to() are the only observable output. Otherwise
+    // use the zero-copy SharedEvent channel and print from it.
+    let mut engine_output_rx: Option<mpsc::Receiver<varpulis_runtime::event::SharedEvent>> = None;
+    let mut engine = if quiet {
+        Engine::builder().discard_output()
+    } else {
+        let (output_tx, output_rx) = mpsc::channel::<varpulis_runtime::event::SharedEvent>(10_000);
+        engine_output_rx = Some(output_rx);
+        Engine::builder().shared_output(output_tx)
+    };
     if let Some(store) = credentials_store {
         engine = engine.credentials(store);
     }
@@ -120,10 +126,26 @@ pub async fn run_program(
     println!("\nProgram loaded successfully!");
     println!("   Streams registered: {}", metrics.streams_count);
 
-    // Build context orchestrator if the program declares contexts
+    // Build context orchestrator if the program declares contexts.
+    // Contexts still use the legacy owned-event channel; it gets its own
+    // drain/print task since the engine channel no longer carries them.
     let has_contexts = engine.has_contexts();
     let mut orchestrator = if has_contexts {
-        match ContextOrchestrator::build(engine.context_map(), &program, output_tx_for_ctx, 1000) {
+        let (ctx_tx, mut ctx_rx) = mpsc::channel::<Event>(10_000);
+        let ctx_quiet = quiet;
+        tokio::spawn(async move {
+            if ctx_quiet {
+                while ctx_rx.recv().await.is_some() {}
+            } else {
+                while let Some(output_event) = ctx_rx.recv().await {
+                    println!(
+                        "OUTPUT EVENT: {} - {:?}",
+                        output_event.event_type, output_event.data
+                    );
+                }
+            }
+        });
+        match ContextOrchestrator::build(engine.context_map(), &program, ctx_tx, 1000) {
             Ok(orch) => {
                 println!(
                     "   Contexts: {} ({:?})",
@@ -296,22 +318,19 @@ pub async fn run_program(
         // Subsequent epochs are opened by commit_sinks(id) → begin_epoch(id+1).
         engine.begin_epoch_sinks(0).await;
 
-        // Spawn output event handler. In `--quiet` mode we drain the channel
-        // without formatting/printing — this avoids the global stdout lock and
-        // Debug-format cost on every event, which becomes the dominant cost
-        // for high-throughput Kafka pipelines (~300x slowdown).
-        tokio::spawn(async move {
-            if quiet {
-                while output_rx.recv().await.is_some() {}
-            } else {
+        // Spawn the output printer. In `--quiet` mode there is no channel at
+        // all — the engine discards output events at the source, avoiding
+        // the per-event clone + channel hop + stdout lock entirely.
+        if let Some(mut output_rx) = engine_output_rx.take() {
+            tokio::spawn(async move {
                 while let Some(output_event) = output_rx.recv().await {
                     println!(
                         "OUTPUT EVENT: {} - {:?}",
                         output_event.event_type, output_event.data
                     );
                 }
-            }
-        });
+            });
+        }
 
         println!("\nListening for events...");
         println!("   Press Ctrl+C to stop\n");
@@ -436,14 +455,16 @@ pub async fn run_program(
         println!("       .from(MyMqtt, topic: \"sensors/#\")");
 
         // Spawn output event handler anyway for demo mode
-        tokio::spawn(async move {
-            while let Some(output_event) = output_rx.recv().await {
-                println!("\nOUTPUT EVENT: {}", output_event.event_type);
-                for (key, value) in &output_event.data {
-                    println!("   {key}: {value}");
+        if let Some(mut output_rx) = engine_output_rx.take() {
+            tokio::spawn(async move {
+                while let Some(output_event) = output_rx.recv().await {
+                    println!("\nOUTPUT EVENT: {}", output_event.event_type);
+                    for (key, value) in &output_event.data {
+                        println!("   {key}: {value}");
+                    }
                 }
-            }
-        });
+            });
+        }
     }
 
     Ok(())

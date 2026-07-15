@@ -21,7 +21,6 @@ use rdkafka::{Message, Offset, TopicPartitionList};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use varpulis_connector_api::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
-use varpulis_connector_api::helpers::json_to_event;
 use varpulis_connector_api::{
     ConfigParamInfo, ConnectorComponentInfo, ConnectorConfig, ConnectorError, ConnectorFactory,
     EngineOffsetRegistry, ManagedConnector, Sink, SinkConnector, SinkConnectorAdapter,
@@ -427,6 +426,7 @@ impl SourceConnector for KafkaSource {
                 failure_threshold: 10,
                 reset_timeout: Duration::from_secs(30),
             });
+            let mut decoder = varpulis_connector_api::decode::EventDecoder::new();
 
             while running.load(Ordering::SeqCst) {
                 if !cb.allow_request() {
@@ -453,15 +453,8 @@ impl SourceConnector for KafkaSource {
                                     varpulis_connector_api::limits::MAX_EVENT_PAYLOAD_BYTES
                                 );
                             } else {
-                                match serde_json::from_slice::<serde_json::Value>(payload) {
-                                    Ok(json) => {
-                                        let event = json_to_event(
-                                            json.get("event_type")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("KafkaEvent"),
-                                            &json,
-                                        );
-
+                                match decoder.decode("KafkaEvent", payload) {
+                                    Ok(event) => {
                                         if tx.send(event).await.is_err() {
                                             warn!("Kafka source {}: channel closed", name);
                                             break;

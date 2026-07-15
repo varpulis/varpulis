@@ -96,6 +96,18 @@ impl EngineBuilder {
         self
     }
 
+    /// Drop output events instead of forwarding them anywhere.
+    ///
+    /// For long-running headless pipelines (`varpulis run --quiet`) where
+    /// sink deliveries via `.to()` are the only observable output. Unlike
+    /// omitting the channel (which collects outputs into an in-memory
+    /// buffer for `process_batch_sync_collect`), this is a true no-op per
+    /// event and stays O(1) in memory over unbounded runs.
+    pub fn discard_output(mut self) -> Self {
+        self.output_channel = Some(OutputChannel::Discard);
+        self
+    }
+
     /// Enable Prometheus metrics collection.
     pub fn metrics(mut self, metrics: Metrics) -> Self {
         self.metrics = Some(metrics);

@@ -7,31 +7,21 @@ come from this suite.
 ## Methodology
 
 - **100,000 events per scenario**, **5 runs each**, median throughput reported.
-- Both engines see the same input data with the same field values.
-- Arroyo runs in its production-recommended **Kafka source** path (events
-  pre-loaded into a Redpanda topic before timing starts).
-- Varpulis runs in its native **file-mode JSONL ingestion** path via
-  `varpulis simulate` (the numbers come from the parallel
-  [`proton-comparison`](../proton-comparison/) suite, which uses the
-  same VPL programs).
-- **End-to-end timing**: from "engine starts processing" to "output topic
-  high-watermark reaches expected count" (Arroyo) or "engine reports
-  Duration" (Varpulis).
-- Output count is verified for correctness across both engines.
-
-### Why different input paths?
-
-Each engine is measured at its native fast path:
-
-- Arroyo's primary input is Kafka. The filesystem source connector exists
-  but the v0.15.0 SQL parser does not accept the `compression_format` /
-  `regex_pattern` options the connector schema declares as required.
-- Varpulis's primary input for batch benchmarks is file-mode JSONL via
-  `simulate`, which bypasses any network/broker overhead.
-
-A like-for-like Kafka comparison requires rebuilding `varpulis-cli` with
-`--features kafka` (architectural prediction: Varpulis on Kafka would land
-130-160k events/sec for filter, vs Arroyo's measured 86k).
+- **Like-for-like Kafka path**: both engines consume the same pre-loaded
+  Redpanda topic (same events, same offsets) and produce to a Kafka sink
+  topic whose high-watermark is polled for completion.
+- **Timing starts at engine readiness**, symmetrically for both engines:
+  - Arroyo: pipeline reports `state=Running` (SQL compilation and job
+    deployment excluded).
+  - Varpulis: the run loop prints its `Listening for events` marker
+    (VPL parse and process startup — ~113 ms — excluded).
+  Both engines pay their Kafka client connect and consumer-group join
+  *inside* the timed window.
+- **Timing ends** when the output topic high-watermark reaches the
+  expected count.
+- Output count and record content are verified for correctness across
+  both engines (same records, same order).
+- Varpulis needs `cargo build --release -p varpulis-cli --features kafka`.
 
 ## Layout
 
@@ -73,13 +63,23 @@ python3 run_benchmark.py --scenario 01_filter --events 100000 --runs 5
 cd docker && docker compose down
 ```
 
-## Latest results (April 2026)
+## Latest results (July 2026, like-for-like Kafka)
 
 | Scenario | Varpulis | Arroyo | V/A ratio | Output |
 |---|---|---|---|---|
-| 01 Filter (price > 50) | 174,751 eps (file) | 86,398 eps (Kafka) | **2.02×** | 89,000 ✓ |
+| 01 Filter (price > 50) | 160,615 eps | 99,016 eps | **1.62×** | 89,000 ✓ |
 
-Both engines deliver identical output counts, verifying correctness.
+Both engines deliver identical output counts *and identical record
+content in identical order*, verifying correctness. Varpulis's output
+records additionally carry `event_type` and the event-time `timestamp`
+(more bytes per record than Arroyo's).
+
+History: the 2026-04 baseline measured Varpulis at 88.5k eps (0.91× vs
+Arroyo) on this path. The 2026-07 hot-path work (streaming JSON→Event
+decoder with key interning, run-grouped batch dispatch, batched Kafka
+sink enqueue, emit-key interning, discard-mode output channel, mimalloc)
+plus readiness-based timing brought it to 160.6k eps. See
+`results/01_filter.json` for the engine-gain vs methodology split.
 
 ## What's not yet measured
 
@@ -89,8 +89,6 @@ Both engines deliver identical output counts, verifying correctness.
   parallel `event_time` ISO string field. The Arroyo SQL is written
   (`scenarios/02_aggregation/arroyo.sql`); only the data generator update
   is needed.
-- **Like-for-like Kafka comparison**: rebuild `varpulis-cli` with
-  `--features kafka` and run both engines on the same Redpanda topic.
 - **Native pattern detection workloads** (sequence, Kleene closure,
   forecasting): Arroyo has no native implementation, so the only
   comparison would be Varpulis's NFA vs a hand-coded Rust UDAF — that's
