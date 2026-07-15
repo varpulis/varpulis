@@ -72,6 +72,11 @@ pub(super) enum OutputChannel {
     Owned(mpsc::Sender<Event>),
     /// Zero-copy channel using SharedEvent (Arc<Event>)
     Shared(mpsc::Sender<SharedEvent>),
+    /// Drop output events entirely (long-running headless/quiet pipelines).
+    ///
+    /// Distinct from `None`, which *collects* outputs into an internal
+    /// buffer for `process_batch_sync_collect` — unbounded over a long run.
+    Discard,
 }
 
 /// The main Varpulis engine
@@ -355,6 +360,7 @@ impl Engine {
         match &self.output_channel {
             Some(OutputChannel::Owned(tx)) => Some(OutputChannel::Owned(tx.clone())),
             Some(OutputChannel::Shared(tx)) => Some(OutputChannel::Shared(tx.clone())),
+            Some(OutputChannel::Discard) => Some(OutputChannel::Discard),
             None => None,
         }
     }
@@ -414,6 +420,7 @@ impl Engine {
                     }
                 }
             }
+            Some(OutputChannel::Discard) => {}
             None => {
                 // No channel: collect into buffer for sync_collect
                 self.collected_outputs.push((**event).clone());
@@ -466,6 +473,7 @@ impl Engine {
                     }
                 }
             }
+            Some(OutputChannel::Discard) => {}
             None => {
                 self.collected_outputs.push((**event).clone());
             }
@@ -521,6 +529,7 @@ impl Engine {
                     }
                 }
             }
+            Some(OutputChannel::Discard) => {}
             None => {
                 // No channel: collect into buffer for sync_collect
                 self.collected_outputs.push(event);

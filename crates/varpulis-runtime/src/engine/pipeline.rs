@@ -722,7 +722,7 @@ fn execute_op_common(
                             functions,
                             empty_vars(),
                         ) {
-                            new_event.data.insert(out_name.clone().into(), value);
+                            new_event.data.insert(Arc::clone(out_name), value);
                         }
                     }
                     Arc::new(new_event)
@@ -740,13 +740,11 @@ fn execute_op_common(
                 );
                 for (out_name, source) in &config.fields {
                     if let Some(value) = event.get(source) {
-                        new_event
-                            .data
-                            .insert(out_name.clone().into(), value.clone());
+                        new_event.data.insert(Arc::clone(out_name), value.clone());
                     } else {
                         new_event
                             .data
-                            .insert(out_name.clone().into(), Value::Str(source.clone().into()));
+                            .insert(Arc::clone(out_name), Value::Str(source.as_str().into()));
                     }
                 }
                 emitted.push(Arc::new(new_event));
@@ -779,9 +777,7 @@ fn execute_op_common(
                     for (out_name, expr) in &config.fields {
                         if let varpulis_core::ast::Expr::Ident(field_name) = expr {
                             if let Some(value) = event.get(field_name) {
-                                new_event
-                                    .data
-                                    .insert(Arc::from(out_name.as_str()), value.clone());
+                                new_event.data.insert(Arc::clone(out_name), value.clone());
                             }
                         }
                     }
@@ -802,7 +798,7 @@ fn execute_op_common(
                             functions,
                             empty_vars(),
                         ) {
-                            new_event.data.insert(out_name.clone().into(), value);
+                            new_event.data.insert(Arc::clone(out_name), value);
                         }
                     }
                     emitted.push(Arc::new(new_event));

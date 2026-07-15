@@ -13,7 +13,7 @@ use rdkafka::{Message, Offset, TopicPartitionList};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 use varpulis_connector_api::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
-use varpulis_connector_api::helpers::json_to_event;
+use varpulis_connector_api::decode::EventDecoder;
 use varpulis_connector_api::sink::{Sink, SinkError};
 use varpulis_connector_api::{ConnectorError, EngineOffsetRegistry, ManagedConnector};
 use varpulis_core::Event;
@@ -363,8 +363,19 @@ impl ManagedConnector for ManagedKafkaConnector {
             let mut flush_ticker = tokio::time::interval(Duration::from_millis(BATCH_FLUSH_MS));
             flush_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+            // Streaming JSON→Event decoder with per-task key/type interning:
+            // steady-state schemas decode without allocating field names.
+            let mut decoder = EventDecoder::new();
+
+            // Tracks whether the breaker has unresolved failures. In the
+            // steady state this stays false and the loop skips both
+            // `allow_request()` and `record_success()` — each takes a
+            // mutex — saving two locks per message. The breaker still
+            // gates consumption after errors exactly as before.
+            let mut cb_degraded = false;
+
             'consume: loop {
-                if !cb.allow_request() {
+                if cb_degraded && !cb.allow_request() {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     if !running.load(Ordering::SeqCst) {
                         break;
@@ -377,23 +388,38 @@ impl ManagedConnector for ManagedKafkaConnector {
                     msg = stream.next() => {
                         match msg {
                             Some(Ok(msg)) => {
-                                cb.record_success();
+                                if cb_degraded {
+                                    cb.record_success();
+                                    cb_degraded = false;
+                                }
 
                                 let partition = msg.partition();
                                 let msg_offset = msg.offset();
                                 let mut pushed = false;
 
                                 if let Some(payload) = msg.payload() {
-                                    if let Ok(json) =
-                                        serde_json::from_slice::<serde_json::Value>(payload)
+                                    if payload.len()
+                                        > varpulis_connector_api::limits::MAX_EVENT_PAYLOAD_BYTES
                                     {
-                                        let event_type = json
-                                            .get("event_type")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("KafkaEvent");
-                                        let event = json_to_event(event_type, &json);
-                                        batch.push(event);
-                                        pushed = true;
+                                        tracing::warn!(
+                                            "Managed Kafka {}: payload too large ({} bytes), skipped",
+                                            name,
+                                            payload.len()
+                                        );
+                                    } else {
+                                        match decoder.decode("KafkaEvent", payload) {
+                                            Ok(event) => {
+                                                batch.push(event);
+                                                pushed = true;
+                                            }
+                                            Err(e) => {
+                                                tracing::debug!(
+                                                    "Managed Kafka {}: JSON decode failed, skipped: {}",
+                                                    name,
+                                                    e
+                                                );
+                                            }
+                                        }
                                     }
                                 }
 
@@ -426,6 +452,7 @@ impl ManagedConnector for ManagedKafkaConnector {
                             }
                             Some(Err(e)) => {
                                 cb.record_failure();
+                                cb_degraded = true;
                                 let failures = cb.consecutive_failures();
                                 let backoff = Duration::from_millis(100 * 2u64.pow(failures.min(7)));
                                 error!(
@@ -573,6 +600,26 @@ struct KafkaSharedSink {
     txn_state: Option<Arc<SharedTxnState>>,
 }
 
+impl KafkaSharedSink {
+    /// Fire-and-forget enqueue of a whole batch. One serialization buffer is
+    /// reused across the batch (librdkafka copies the payload on enqueue),
+    /// avoiding a `Vec` allocation and an async round-trip per event.
+    fn enqueue_batch(&self, events: &[Arc<Event>], topic: &str) -> Result<(), SinkError> {
+        let mut payload = Vec::with_capacity(256);
+        for event in events {
+            payload.clear();
+            event.write_sink_payload(&mut payload);
+            let record = FutureRecord::to(topic)
+                .payload(&payload)
+                .key(&*event.event_type);
+            if let Err((e, _)) = self.producer.send_result(record) {
+                return Err(SinkError::other(format!("kafka enqueue: {e}")));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl Sink for KafkaSharedSink {
     fn name(&self) -> &str {
@@ -590,6 +637,18 @@ impl Sink for KafkaSharedSink {
             Ok(_delivery_future) => Ok(()),
             Err((e, _)) => Err(SinkError::other(format!("kafka enqueue: {e}"))),
         }
+    }
+
+    async fn send_batch(&self, events: &[std::sync::Arc<Event>]) -> Result<(), SinkError> {
+        self.enqueue_batch(events, &self.topic)
+    }
+
+    async fn send_batch_to_topic(
+        &self,
+        events: &[std::sync::Arc<Event>],
+        topic: &str,
+    ) -> Result<(), SinkError> {
+        self.enqueue_batch(events, topic)
     }
 
     async fn flush(&self) -> Result<(), SinkError> {

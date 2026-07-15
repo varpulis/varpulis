@@ -428,8 +428,8 @@ pub struct LimitState {
 
 /// Configuration for select/projection operation
 pub struct SelectConfig {
-    /// Fields to include: (output_name, expression)
-    pub fields: Vec<(String, varpulis_core::ast::Expr)>,
+    /// Fields to include: (output_name, expression) with pre-interned names.
+    pub fields: Vec<(std::sync::Arc<str>, varpulis_core::ast::Expr)>,
 }
 
 /// Result of processing a stream
@@ -906,14 +906,18 @@ pub enum WindowType {
 /// Configuration for simple emit operation
 #[allow(dead_code)]
 pub struct EmitConfig {
-    pub fields: Vec<(String, String)>, // (output_name, source_field or literal)
+    /// (output_name, source_field or literal). Output names are pre-interned
+    /// `Arc<str>` so the per-event emit loop clones a pointer instead of
+    /// re-allocating the key for every emitted event.
+    pub fields: Vec<(std::sync::Arc<str>, String)>,
     pub target_context: Option<String>,
 }
 
 /// Configuration for emit with expressions
 #[allow(dead_code)]
 pub struct EmitExprConfig {
-    pub fields: Vec<(String, varpulis_core::ast::Expr)>, // (output_name, expression)
+    /// (output_name, expression) with pre-interned output names.
+    pub fields: Vec<(std::sync::Arc<str>, varpulis_core::ast::Expr)>,
     pub target_context: Option<String>,
 }
 

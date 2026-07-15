@@ -147,10 +147,20 @@ impl Event {
 
     /// Serialize for sink output: event_type + timestamp + data fields.
     pub fn to_sink_payload(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(256);
+        self.write_sink_payload(&mut buf);
+        buf
+    }
+
+    /// Serialize the sink payload into a caller-provided buffer.
+    ///
+    /// Appends to `buf` without clearing it. Batch senders reuse one buffer
+    /// across a whole batch (clearing between events) to avoid a `Vec`
+    /// allocation per event.
+    pub fn write_sink_payload(&self, buf: &mut Vec<u8>) {
         use serde::ser::SerializeMap;
         use serde::Serializer;
-        let mut buf = Vec::with_capacity(256);
-        let mut ser = serde_json::Serializer::new(&mut buf);
+        let mut ser = serde_json::Serializer::new(buf);
         let mut map = ser
             .serialize_map(Some(2 + self.data.len()))
             .expect("serialize_map to Vec<u8> should not fail");
@@ -166,7 +176,6 @@ impl Event {
         }
         map.end()
             .expect("finalizing JSON map serialization should not fail");
-        buf
     }
 }
 

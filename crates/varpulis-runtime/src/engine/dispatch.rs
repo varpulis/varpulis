@@ -254,6 +254,14 @@ impl Engine {
     }
 
     /// Process a batch of events for improved throughput (async-runtime only).
+    ///
+    /// Consecutive events with the same type (at the same chain depth) are
+    /// grouped into a **run** and pushed through the pipeline in a single
+    /// `execute_pipeline` call when the target stream is
+    /// [batch-safe](Self::stream_is_batch_safe). This amortizes the
+    /// per-event dispatch cost and — critically — lets `.to()` hand whole
+    /// batches to sink connectors instead of one event at a time. Because
+    /// runs are consecutive, global FIFO order is preserved exactly.
     #[cfg(feature = "async-runtime")]
     #[tracing::instrument(level = "trace", skip(self))]
     pub async fn process_batch(
@@ -300,10 +308,25 @@ impl Engine {
                 continue;
             }
 
+            // Gather the run: consecutive pending events with the same type
+            // and depth. Stream-local ordering is untouched (each stream
+            // still sees its events in arrival order).
+            let mut run: Vec<SharedEvent> = vec![current_event];
+            while let Some((next, next_depth)) = pending_events.front() {
+                if *next_depth == depth && next.event_type == run[0].event_type {
+                    let (event, _) = pending_events
+                        .pop_front()
+                        .expect("front() just returned Some");
+                    run.push(event);
+                } else {
+                    break;
+                }
+            }
+
             // Get stream names (Arc clone is O(1))
             let stream_names: Arc<[String]> = self
                 .router
-                .get_routes(&current_event.event_type)
+                .get_routes(&run[0].event_type)
                 .cloned()
                 .unwrap_or_else(|| Arc::from([]));
 
@@ -313,59 +336,58 @@ impl Engine {
                     if self.trace_collector.is_enabled() {
                         self.trace_collector.record(TraceEntry::StreamMatched {
                             stream_name: stream_name.clone(),
-                            event_type: current_event.event_type.to_string(),
+                            event_type: run[0].event_type.to_string(),
                         });
                     }
 
                     let start = std::time::Instant::now();
-                    let result = Self::process_stream_with_functions(
-                        stream,
-                        Arc::clone(&current_event),
-                        &self.functions,
-                        self.sinks.cache(),
-                    )
-                    .await?;
 
-                    // Record trace: pipeline result
-                    if self.trace_collector.is_enabled() {
-                        Self::record_trace_for_result(
-                            &mut self.trace_collector,
-                            stream_name,
+                    if run.len() > 1 && Self::stream_is_batch_safe(stream) {
+                        // Stateless run: one pipeline pass over the whole run.
+                        let result = Self::process_stream_run(
                             stream,
-                            &result,
+                            run.clone(),
+                            &self.functions,
+                            self.sinks.cache(),
+                        )
+                        .await?;
+                        Self::fold_stream_result(
+                            stream,
+                            stream_name,
+                            result,
+                            &mut self.trace_collector,
+                            &mut self.output_events_emitted,
+                            &mut emitted_batch,
+                            &mut pending_events,
+                            depth,
                         );
+                    } else {
+                        // Stateful/order-sensitive stream: per-event, exactly
+                        // as before.
+                        for event in &run {
+                            let result = Self::process_stream_with_functions(
+                                stream,
+                                Arc::clone(event),
+                                &self.functions,
+                                self.sinks.cache(),
+                            )
+                            .await?;
+                            Self::fold_stream_result(
+                                stream,
+                                stream_name,
+                                result,
+                                &mut self.trace_collector,
+                                &mut self.output_events_emitted,
+                                &mut emitted_batch,
+                                &mut pending_events,
+                                depth,
+                            );
+                        }
                     }
 
                     // Record per-stream processing in Prometheus
                     if let Some(ref m) = self.metrics {
                         m.record_processing(stream_name, start.elapsed().as_secs_f64());
-                    }
-
-                    // Collect emitted events for batch sending
-                    self.output_events_emitted += result.emitted_events.len() as u64;
-                    let has_emitted = !result.emitted_events.is_empty();
-                    emitted_batch.extend(result.emitted_events);
-
-                    // If .process() or .to() was used but no .emit(), send output_events
-                    // to the output channel so they appear in the live event stream.
-                    let forward_outputs = !has_emitted
-                        && stream
-                            .operations
-                            .iter()
-                            .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
-                    if forward_outputs {
-                        self.output_events_emitted += result.output_events.len() as u64;
-                        emitted_batch.extend(result.output_events.iter().map(Arc::clone));
-                    }
-
-                    // Count sink events only when not already counted via forwarded outputs
-                    if !forward_outputs {
-                        self.output_events_emitted += result.sink_events_sent;
-                    }
-
-                    // Queue output events (push_back to maintain order)
-                    for output_event in result.output_events {
-                        pending_events.push_back((output_event, depth + 1));
                     }
                 }
             }
@@ -681,6 +703,141 @@ impl Engine {
         }
 
         Ok(())
+    }
+
+    /// Whether a whole same-type run of events can be pushed through this
+    /// stream's pipeline in one `execute_pipeline` call without changing
+    /// semantics.
+    ///
+    /// True only when every operator treats a batch exactly like a sequence
+    /// of single events: filters (`retain`), projections (per-event map),
+    /// sinks, logging, `distinct`, and `limit`. Stateful operators whose
+    /// output depends on call granularity (aggregations fire once per call,
+    /// `Pattern` matches over the current set, `Forecast` samples the first
+    /// event of the call, windows/sequences interleave with derived events)
+    /// keep the per-event path.
+    #[cfg(feature = "async-runtime")]
+    fn stream_is_batch_safe(stream: &StreamDefinition) -> bool {
+        if matches!(
+            stream.source,
+            RuntimeSource::Join(_) | RuntimeSource::Timer(_)
+        ) {
+            return false;
+        }
+        stream.operations.iter().all(|op| {
+            matches!(
+                op,
+                RuntimeOp::WhereExpr(_)
+                    | RuntimeOp::WhereClosure(_)
+                    | RuntimeOp::Emit(_)
+                    | RuntimeOp::EmitExpr(_)
+                    | RuntimeOp::Select(_)
+                    | RuntimeOp::To(_)
+                    | RuntimeOp::Print(_)
+                    | RuntimeOp::Log(_)
+                    | RuntimeOp::Alert(_)
+                    | RuntimeOp::Distinct(_)
+                    | RuntimeOp::Limit(_)
+            )
+        })
+    }
+
+    /// Run a whole same-type event run through a batch-safe stream.
+    ///
+    /// Mirrors [`Self::process_stream_with_functions`] minus the join
+    /// handling (join streams are never batch-safe).
+    #[cfg(feature = "async-runtime")]
+    async fn process_stream_run(
+        stream: &mut StreamDefinition,
+        mut events: Vec<SharedEvent>,
+        functions: &FxHashMap<String, UserFunction>,
+        sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
+    ) -> Result<StreamProcessResult, super::error::EngineError> {
+        if let RuntimeSource::Merge(ref sources) = stream.source {
+            events.retain(|event| {
+                sources.iter().any(|ms| {
+                    ms.event_type == *event.event_type
+                        && ms.filter.as_ref().is_none_or(|filter| {
+                            let ctx = SequenceContext::new();
+                            evaluator::eval_expr_with_functions(
+                                filter,
+                                event,
+                                &ctx,
+                                functions,
+                                &FxHashMap::default(),
+                            )
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                        })
+                })
+            });
+            if events.is_empty() {
+                return Ok(StreamProcessResult {
+                    emitted_events: vec![],
+                    output_events: vec![],
+                    sink_events_sent: 0,
+                });
+            }
+        }
+
+        pipeline::execute_pipeline(
+            stream,
+            events,
+            0,
+            pipeline::SkipFlags::none(),
+            functions,
+            sinks,
+        )
+        .await
+    }
+
+    /// Fold one pipeline result into the batch accumulator state: trace
+    /// entries, emitted/output counters, the emitted batch, and the pending
+    /// queue for downstream streams. Shared by the batched and per-event
+    /// dispatch paths so their bookkeeping cannot drift.
+    #[cfg(feature = "async-runtime")]
+    #[allow(clippy::too_many_arguments)]
+    fn fold_stream_result(
+        stream: &StreamDefinition,
+        stream_name: &str,
+        result: StreamProcessResult,
+        trace_collector: &mut super::trace::TraceCollector,
+        output_events_emitted: &mut u64,
+        emitted_batch: &mut Vec<SharedEvent>,
+        pending_events: &mut VecDeque<(SharedEvent, usize)>,
+        depth: usize,
+    ) {
+        // Record trace: pipeline result
+        if trace_collector.is_enabled() {
+            Self::record_trace_for_result(trace_collector, stream_name, stream, &result);
+        }
+
+        // Collect emitted events for batch sending
+        *output_events_emitted += result.emitted_events.len() as u64;
+        let has_emitted = !result.emitted_events.is_empty();
+        emitted_batch.extend(result.emitted_events);
+
+        // If .process() or .to() was used but no .emit(), send output_events
+        // to the output channel so they appear in the live event stream.
+        let forward_outputs = !has_emitted
+            && stream
+                .operations
+                .iter()
+                .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
+        if forward_outputs {
+            *output_events_emitted += result.output_events.len() as u64;
+            emitted_batch.extend(result.output_events.iter().map(Arc::clone));
+        }
+
+        // Count sink events only when not already counted via forwarded outputs
+        if !forward_outputs {
+            *output_events_emitted += result.sink_events_sent;
+        }
+
+        // Queue output events (push_back to maintain order)
+        for output_event in result.output_events {
+            pending_events.push_back((output_event, depth + 1));
+        }
     }
 
     #[cfg(feature = "async-runtime")]
