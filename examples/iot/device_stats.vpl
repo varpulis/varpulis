@@ -27,8 +27,7 @@ stream Stats5m = Telemetry
         avg_temperature: avg(values["temperature"]),
         max_temperature: max(values["temperature"]),
         min_temperature: min(values["temperature"]),
-        avg_humidity: avg(values["humidity"]),
-        ts: now()
+        avg_humidity: avg(values["humidity"])
     )
 
 # ─── 1-hour rolling stats ────────────────────────────────────
@@ -46,8 +45,7 @@ stream Stats1h = Telemetry
         avg_temperature: avg(values["temperature"]),
         max_temperature: max(values["temperature"]),
         min_temperature: min(values["temperature"]),
-        avg_humidity: avg(values["humidity"]),
-        ts: now()
+        avg_humidity: avg(values["humidity"])
     )
 
 # ─── 24-hour rolling stats ───────────────────────────────────
@@ -65,8 +63,7 @@ stream Stats24h = Telemetry
         avg_temperature: avg(values["temperature"]),
         max_temperature: max(values["temperature"]),
         min_temperature: min(values["temperature"]),
-        avg_humidity: avg(values["humidity"]),
-        ts: now()
+        avg_humidity: avg(values["humidity"])
     )
 
 # ─── Output ──────────────────────────────────────────────────
