@@ -183,7 +183,9 @@ jobs:
     name: Semver Checks
     needs: [gate]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Rustdoc-builds every workspace crate twice (baseline + head);
+    # observed ~60 min on a cold cache.
+    timeout-minutes: 90
     # Only run on PRs (needs a baseline to compare against)
     if: github.event_name == 'pull_request'
     steps:
@@ -194,6 +196,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: semver
+      # semver-checks rustdoc-builds crates with --all-features, which
+      # reaches rdkafka-sys (needs curl/zlib headers) and pulsar (needs
+      # protoc). Without these the job dies on build errors before ever
+      # evaluating an API — which is how it silently rotted: it only
+      # triggers on non-dependabot PRs, and those were rare.
+      - name: Install connector system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev protobuf-compiler zlib1g-dev
       - name: Install cargo-semver-checks
         run: cargo install cargo-semver-checks --locked
       - name: Check semver compliance
