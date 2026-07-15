@@ -309,21 +309,20 @@ mod binary_op_tests {
         assert_eq!(r, None);
     }
 
-    // ---- Ge with mismatched types ----
+    // ---- Ge/Le with mixed int/float (audit Phase 0 fix) ----
+    // These previously returned None (the filter then dropped the event);
+    // Ge/Le now coerce Int↔Float like Gt/Lt already did.
 
     #[test]
-    fn ge_int_float_returns_none() {
-        // Ge only supports Int/Int and Float/Float
+    fn ge_int_float_mixed() {
         let r = eval_binary_op(&BinOp::Ge, &Value::Int(5), &Value::Float(4.0));
-        assert_eq!(r, None);
+        assert_eq!(r, Some(Value::Bool(true)));
     }
 
-    // ---- Le with mismatched types ----
-
     #[test]
-    fn le_int_float_returns_none() {
+    fn le_int_float_mixed() {
         let r = eval_binary_op(&BinOp::Le, &Value::Int(3), &Value::Float(4.0));
-        assert_eq!(r, None);
+        assert_eq!(r, Some(Value::Bool(true)));
     }
 
     // ---- And/Or with non-bool (uses unwrap_or(false)) ----

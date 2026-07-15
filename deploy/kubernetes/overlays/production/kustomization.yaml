@@ -21,7 +21,8 @@ patches:
 
 images:
   - name: varpulis/varpulis
-    newTag: v0.1.0
+    newName: ghcr.io/varpulis/varpulis
+    newTag: "0.10.0"
 
 labels:
   - pairs:

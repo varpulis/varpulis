@@ -138,6 +138,11 @@ enum Commands {
         #[arg(long, env = "VARPULIS_API_KEY")]
         api_key: Option<String>,
 
+        /// Opt in to unauthenticated access when no --api-key is set. Required
+        /// to start on a non-loopback bind address without an API key.
+        #[arg(long, env = "VARPULIS_ALLOW_ANONYMOUS")]
+        allow_anonymous: bool,
+
         /// Path to TLS certificate file (PEM format). Enables WSS when provided with --tls-key
         #[arg(long, env = "VARPULIS_TLS_CERT")]
         tls_cert: Option<PathBuf>,
@@ -450,6 +455,11 @@ enum Commands {
         /// Path to API keys JSON file for multi-key RBAC (overrides --api-key)
         #[arg(long, env = "VARPULIS_API_KEYS")]
         api_keys: Option<PathBuf>,
+
+        /// Opt in to anonymous Admin access when no --api-key/--api-keys is set.
+        /// Required to start on a non-loopback bind address without a key.
+        #[arg(long, env = "VARPULIS_ALLOW_ANONYMOUS")]
+        allow_anonymous: bool,
 
         /// Heartbeat interval in seconds (workers send heartbeats this often)
         #[arg(long, default_value = "5", env = "VARPULIS_HEARTBEAT_INTERVAL")]
@@ -824,6 +834,7 @@ async fn main() -> Result<()> {
             bind,
             workdir,
             api_key,
+            allow_anonymous,
             tls_cert,
             tls_key,
             rate_limit,
@@ -846,10 +857,31 @@ async fn main() -> Result<()> {
             let workdir =
                 security::validate_workdir(workdir).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-            // Create auth config from CLI argument or environment variable
+            // Create auth config from CLI argument or environment variable.
+            // With no key, refuse to start on a non-loopback bind unless the
+            // operator explicitly opts in — otherwise the server would silently
+            // accept unauthenticated requests from the network.
             let auth_config = match api_key {
                 Some(key) => AuthConfig::with_api_key(key),
-                None => AuthConfig::disabled(),
+                None => {
+                    let bind_is_loopback = bind
+                        .parse::<std::net::IpAddr>()
+                        .map(|ip| ip.is_loopback())
+                        .unwrap_or(false);
+                    if !allow_anonymous && !bind_is_loopback {
+                        anyhow::bail!(
+                            "refusing to start on non-loopback address {bind} with no \
+                             --api-key: unauthenticated requests would be accepted. Set \
+                             --api-key (or VARPULIS_API_KEY), or pass --allow-anonymous \
+                             to opt in."
+                        );
+                    }
+                    eprintln!(
+                        "WARNING: authentication is disabled (no --api-key); accepting \
+                         unauthenticated requests on {bind}."
+                    );
+                    AuthConfig::disabled()
+                }
             };
 
             // Forward --admin-password to env var for server.rs DB bootstrap
@@ -1340,6 +1372,7 @@ async fn main() -> Result<()> {
             bind,
             api_key,
             api_keys,
+            allow_anonymous,
             heartbeat_interval,
             heartbeat_timeout,
             scaling_min_workers,
@@ -1378,13 +1411,31 @@ async fn main() -> Result<()> {
             } else {
                 None
             };
-            // Build RBAC config: --api-keys file takes priority over --api-key
+            // Build RBAC config: --api-keys file takes priority over --api-key.
+            // With no key, `RbacConfig::disabled()` grants every request Admin;
+            // refuse to start on a non-loopback bind unless explicitly opted in.
             let rbac_config = if let Some(ref keys_path) = api_keys {
                 varpulis_cluster::RbacConfig::from_file(keys_path)
                     .map_err(|e| anyhow::anyhow!("{e}"))?
             } else if let Some(ref key) = api_key {
                 varpulis_cluster::RbacConfig::single_key(key.clone())
             } else {
+                let bind_is_loopback = bind
+                    .parse::<std::net::IpAddr>()
+                    .map(|ip| ip.is_loopback())
+                    .unwrap_or(false);
+                if !allow_anonymous && !bind_is_loopback {
+                    anyhow::bail!(
+                        "refusing to start on non-loopback address {bind} with no \
+                         --api-key/--api-keys: the coordinator would grant every \
+                         unauthenticated request Admin. Set a key, or pass \
+                         --allow-anonymous to opt in."
+                    );
+                }
+                eprintln!(
+                    "WARNING: coordinator RBAC is disabled (no --api-key); every request \
+                     is treated as Admin on {bind}."
+                );
                 varpulis_cluster::RbacConfig::disabled()
             };
             // Allow coordinator to validate JWTs issued by the worker's auth system

@@ -57,7 +57,7 @@ stream AuthEvents = AuthEvent.from(ElasticSIEM, topic: "winlogbeat-*")
 
 ```bash
 # Run as a long-lived pipeline with Kafka input
-varpulis run -p rules/initial-access/T1078-brute-force-success.vpl
+varpulis run --file rules/initial-access/T1078-brute-force-success.vpl
 ```
 
 ## Architecture

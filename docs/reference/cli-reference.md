@@ -39,7 +39,7 @@ varpulis run --code 'stream Readings = SensorReading'
 | Option | Description |
 |--------|-------------|
 | `-f, --file <PATH>` | Path to the .vpl file to execute |
-| `-c, --code <STRING>` | Inline VPL code to execute |
+| `--code <STRING>` | Inline VPL code to execute (long-only; `-c` is `--config`) |
 
 **Notes:**
 - Either `--file` or `--code` must be provided

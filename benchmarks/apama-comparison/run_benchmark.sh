@@ -96,8 +96,7 @@ fi
 VARPULIS_START=$(date +%s.%N)
 "$PROJECT_ROOT/target/release/varpulis" simulate \
     --program "$SCRIPT_DIR/varpulis/benchmark.vpl" \
-    --events "$SCRIPT_DIR/data/events.evt" \
-    --immediate 2>&1 | tail -5
+    --events "$SCRIPT_DIR/data/events.evt" 2>&1 | tail -5
 VARPULIS_END=$(date +%s.%N)
 
 VARPULIS_ELAPSED=$(echo "$VARPULIS_END - $VARPULIS_START" | bc)

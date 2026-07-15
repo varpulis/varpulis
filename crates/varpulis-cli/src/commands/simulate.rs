@@ -33,9 +33,51 @@ pub async fn run_simulation(
     credentials_store: Option<Arc<CredentialsStore>>,
     trace: bool,
 ) -> Result<()> {
-    // Determine number of workers
+    // Load and parse the program up-front: the safe worker count depends on
+    // the pipeline's shape (probed below).
+    let program_source = std::fs::read_to_string(program_path)?;
+    let program = parse(&program_source).map_err(|e| anyhow::anyhow!("Parse error: {e}"))?;
+    let program = Arc::new(program);
+    info!(
+        "Loaded program with {} statements",
+        program.statements.len()
+    );
+
+    // Probe the pipeline's distribution requirements before choosing a worker
+    // count. A stateful pipeline with no resolvable partition key (neither an
+    // explicit --partition-by nor an auto-detected one) cannot be parallelized
+    // safely: events get hash-split by event_type, so cross-type sequences
+    // land on different workers and never match — this silently made kill-chain
+    // demos emit zero alerts. Such pipelines are forced to a single worker.
+    let (probe_stateless, probe_partition_key) = {
+        let mut probe = Engine::new_benchmark();
+        probe
+            .load(&program)
+            .map_err(|e| anyhow::anyhow!("Probe engine load error: {e}"))?;
+        (probe.is_stateless(), probe.partition_key())
+    };
+    let unpartitionable =
+        !probe_stateless && partition_by.is_none() && probe_partition_key.is_none();
+
+    // Determine number of workers.
     // Trace mode forces single-threaded for clear sequential output.
-    let num_workers = if trace {
+    let num_workers = if trace || unpartitionable {
+        // Warn only if the user would otherwise have gotten parallelism.
+        if unpartitionable && !trace {
+            let requested = workers.unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1)
+            });
+            if requested > 1 {
+                eprintln!(
+                    "WARNING: pipeline is stateful with no partition key; forcing \
+                     --workers 1. Parallel workers hash-split events by type, so \
+                     cross-type patterns would never match. Add .partition_by(...) \
+                     to parallelize safely."
+                );
+            }
+        }
         1
     } else {
         workers.unwrap_or_else(|| {
@@ -74,15 +116,6 @@ pub async fn run_simulation(
         println!("Partition: {key}");
     }
     println!();
-
-    // Load and parse program
-    let program_source = std::fs::read_to_string(program_path)?;
-    let program = parse(&program_source).map_err(|e| anyhow::anyhow!("Parse error: {e}"))?;
-    let program = Arc::new(program);
-    info!(
-        "Loaded program with {} statements",
-        program.statements.len()
-    );
 
     // Create output event channel (shared across all engines)
     // PERF: Use SharedEvent (Arc<Event>) channel for zero-copy event passing.
