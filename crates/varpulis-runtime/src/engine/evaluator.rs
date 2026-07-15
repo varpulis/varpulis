@@ -1271,7 +1271,9 @@ pub fn eval_expr_with_functions(
 
             match op {
                 BinOp::Add => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Int(a + b)),
+                    // Checked: overflow yields None (dropped) rather than
+                    // panicking the worker in overflow-checked builds.
+                    (Value::Int(a), Value::Int(b)) => a.checked_add(*b).map(Value::Int),
                     (Value::Float(a), Value::Float(b)) => Some(Value::Float(a + b)),
                     (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 + b)),
                     (Value::Float(a), Value::Int(b)) => Some(Value::Float(a + *b as f64)),
@@ -1286,21 +1288,22 @@ pub fn eval_expr_with_functions(
                     _ => None,
                 },
                 BinOp::Sub => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Int(a - b)),
+                    (Value::Int(a), Value::Int(b)) => a.checked_sub(*b).map(Value::Int),
                     (Value::Float(a), Value::Float(b)) => Some(Value::Float(a - b)),
                     (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 - b)),
                     (Value::Float(a), Value::Int(b)) => Some(Value::Float(a - *b as f64)),
                     _ => None,
                 },
                 BinOp::Mul => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Int(a * b)),
+                    (Value::Int(a), Value::Int(b)) => a.checked_mul(*b).map(Value::Int),
                     (Value::Float(a), Value::Float(b)) => Some(Value::Float(a * b)),
                     (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 * b)),
                     (Value::Float(a), Value::Int(b)) => Some(Value::Float(a * *b as f64)),
                     _ => None,
                 },
                 BinOp::Div => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) if *b != 0 => Some(Value::Int(a / b)),
+                    // checked_div covers both divide-by-zero and i64::MIN / -1.
+                    (Value::Int(a), Value::Int(b)) => a.checked_div(*b).map(Value::Int),
                     (Value::Float(a), Value::Float(b)) if *b != 0.0 => Some(Value::Float(a / b)),
                     (Value::Int(a), Value::Float(b)) if *b != 0.0 => {
                         Some(Value::Float(*a as f64 / b))
@@ -1349,7 +1352,8 @@ pub fn eval_expr_with_functions(
                     _ => None,
                 },
                 BinOp::Mod => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) if *b != 0 => Some(Value::Int(a % b)),
+                    // checked_rem covers both modulo-by-zero and i64::MIN % -1.
+                    (Value::Int(a), Value::Int(b)) => a.checked_rem(*b).map(Value::Int),
                     (Value::Float(a), Value::Float(b)) if *b != 0.0 => Some(Value::Float(a % b)),
                     (Value::Int(a), Value::Float(b)) if *b != 0.0 => {
                         Some(Value::Float(*a as f64 % b))
