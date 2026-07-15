@@ -78,6 +78,12 @@ impl std::fmt::Display for SchemaType {
 pub struct GeneratedEvent {
     pub event_type: String,
     pub timestamp: DateTime<Utc>,
+    /// Serialized as `data` so the emitted JSONL matches the Varpulis-native
+    /// ingestion format (`{"event_type": ..., "data": {...}}`) that
+    /// `event_file.rs` reads — without the rename, re-fed generated data lands
+    /// zero fields and every rule predicate fails. The event-time `timestamp`
+    /// key is not yet read back as `@timestamp` on ingest (tracked follow-up).
+    #[serde(rename = "data")]
     pub fields: HashMap<String, serde_json::Value>,
     /// Whether this event is part of an injected anomaly pattern.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -266,6 +272,36 @@ mod tests {
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(!json.contains("is_anomaly"));
+    }
+
+    /// Audit Phase 0 regression: generated JSONL must serialize its field map
+    /// under `data` (the Varpulis-native ingestion key), not `fields`.
+    /// Before the fix, re-feeding generated data via `simulate -e` landed zero
+    /// fields because `event_file.rs` reads `data`, so every rule predicate
+    /// failed.
+    #[test]
+    fn generated_event_serializes_fields_under_data_key() {
+        let mut fields = HashMap::new();
+        fields.insert("amount".to_string(), serde_json::json!(42.5));
+        let event = GeneratedEvent {
+            event_type: "Payment".into(),
+            timestamp: Utc::now(),
+            fields,
+            is_anomaly: false,
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&event).unwrap()).unwrap();
+        assert!(
+            v.get("data").and_then(|d| d.as_object()).is_some(),
+            "field map must serialize under `data`"
+        );
+        assert!(
+            v.get("fields").is_none(),
+            "must not emit legacy `fields` key"
+        );
+        assert_eq!(v["data"]["amount"], serde_json::json!(42.5));
+        // Re-ingestible shape: event_file.rs path 1 needs top-level event_type + data.
+        assert_eq!(v["event_type"], "Payment");
     }
 
     #[test]

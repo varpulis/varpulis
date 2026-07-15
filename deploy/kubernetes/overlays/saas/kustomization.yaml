@@ -19,6 +19,7 @@ patches:
 
 images:
   - name: varpulis/varpulis
+    newName: ghcr.io/varpulis/varpulis
     newTag: latest
 
 labels:

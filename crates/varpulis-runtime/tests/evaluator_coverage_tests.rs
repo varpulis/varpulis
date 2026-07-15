@@ -1826,3 +1826,52 @@ async fn method_call_nested_field_access() {
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("city"), Some(&Value::Str("NYC".into())));
 }
+
+// =============================================================================
+// Mixed int/float ordered comparison (audit Phase 0 regression).
+//
+// Before the fix, `<=`/`>=` only had (Int,Int)/(Float,Float) arms, so an
+// integer field compared against a float threshold returned None → the filter
+// treated it as false → the event was silently dropped. `<`/`>` had the mixed
+// arms, so the same threshold with `>` vs `>=` gave opposite results.
+// =============================================================================
+
+#[tokio::test]
+async fn where_ge_int_field_vs_float_threshold_keeps_event() {
+    let code = r"
+        stream S = Reading
+            .where(temperature >= 98.6)
+            .emit(t: temperature)
+    ";
+    // Integer temperature that satisfies the float threshold.
+    let evt = Event::new("Reading").with_field("temperature", 99i64);
+    let out = run(code, evt).await;
+    assert_eq!(out.len(), 1, "int >= float threshold must keep the event");
+    assert_eq!(out[0].data.get("t"), Some(&Value::Int(99)));
+}
+
+#[tokio::test]
+async fn where_le_int_field_vs_float_threshold_keeps_event() {
+    let code = r"
+        stream S = Reading
+            .where(temperature <= 50.5)
+            .emit(t: temperature)
+    ";
+    let evt = Event::new("Reading").with_field("temperature", 50i64);
+    let out = run(code, evt).await;
+    assert_eq!(out.len(), 1, "int <= float threshold must keep the event");
+}
+
+#[tokio::test]
+async fn where_ge_int_field_below_float_threshold_drops_event() {
+    // Correctness the other direction: a value that genuinely fails the
+    // comparison is still filtered out (the fix must not pass everything).
+    let code = r"
+        stream S = Reading
+            .where(temperature >= 98.6)
+            .emit(t: temperature)
+    ";
+    let evt = Event::new("Reading").with_field("temperature", 98i64);
+    let out = run(code, evt).await;
+    assert_eq!(out.len(), 0, "98 >= 98.6 is false; event must be dropped");
+}

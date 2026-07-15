@@ -83,7 +83,7 @@ stream SuspiciousLogin = Login as a -> Login as b
 
 - **14 production connectors** — MQTT, Kafka, NATS, Redis, PostgreSQL CDC, AWS Kinesis, S3, Pulsar, and more
 - **Helm chart for Kubernetes** — deploy coordinator/worker clusters with autoscaling
-- **RocksDB checkpointing** — durable state snapshots for exactly-once processing
+- **RocksDB checkpointing** — durable state snapshots for stateful recovery (end-to-end exactly-once has a known offset-commit gap under active work)
 - **Prometheus metrics** — built-in `/metrics` endpoint for monitoring and alerting
 - **ONNX model scoring** — embed ML models directly in streaming pipelines
 - **AES-256 encryption at rest** — secure credentials and sensitive configuration

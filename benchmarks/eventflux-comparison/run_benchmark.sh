@@ -108,7 +108,7 @@ run_varpulis_simulation() {
     cargo run --release -- simulate \
         --program "$vpl_file" \
         --events "$events_file" \
-        --immediate --preload --quiet \
+        --quiet \
         > /dev/null 2>&1 || true
 
     # Timed run (3 iterations)

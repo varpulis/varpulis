@@ -37,7 +37,7 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 
 ### Connectors
 - **MQTT**: Full I/O, QoS 0/1/2, managed lifecycle, exponential backoff
-- **Kafka**: Transactional producer (exactly-once), feature-gated
+- **Kafka**: Transactional producer (sink-side exactly-once); end-to-end EOS has a known gap — source-offset commit is not yet atomic with the sink transaction, under active repair — feature-gated
 - **HTTP**: Webhooks, REST API sink
 - **Database**: PostgreSQL/MySQL via sqlx, connection pooling
 - **Redis**: Stub, feature-gated
@@ -94,7 +94,7 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 
 ### Testing
 - 3,776 test functions across 62 integration test files
-- Real chaos testing (process spawning, Raft failover, state recovery)
+- Chaos test harness (process spawning, Raft failover, state recovery) — currently `#[ignore]`d (needs Kafka/NATS infra), not yet part of the CI gate
 - E2E browser tests (Playwright)
 - Docker-based Raft HA and scaling tests
 - PST convergence validation (mathematical correctness)

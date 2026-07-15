@@ -95,12 +95,27 @@ struct HealthReadyState {
 
 /// Combined application state for the server axum Router.
 #[derive(Clone)]
-#[allow(dead_code)]
 struct ServerAppState {
     ws: Arc<WsRouteState>,
     health: Arc<HealthReadyState>,
     auth_config: Arc<auth::AuthConfig>,
     rate_limiter: Arc<rate_limit::RateLimiter>,
+}
+
+/// Per-IP rate-limiting middleware for the standalone server. Mirrors the
+/// coordinator's wiring (`varpulis_cluster::api::rate_limit_middleware_fn`):
+/// pulls the client IP from `ConnectInfo` and delegates to the shared
+/// `rate_limit_middleware`.
+async fn server_rate_limit_mw(
+    axum::extract::State(state): axum::extract::State<ServerAppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let connect_info = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .copied();
+    rate_limit::rate_limit_middleware(connect_info, Some(state.rate_limiter), req, next).await
 }
 
 /// WebSocket upgrade handler for the server.
@@ -314,7 +329,9 @@ pub async fn run_server(
     // Create auth config Arc for sharing
     let auth_config = Arc::new(auth_config);
 
-    // Create rate limiter
+    // Create rate limiter. Capture whether limiting is enabled (0 = unlimited)
+    // before the config is moved into the limiter.
+    let rate_limit_enabled = rate_limit_config.requests_per_second > 0;
     let rate_limiter = Arc::new(rate_limit::RateLimiter::new(rate_limit_config));
 
     // WebSocket route state (shared across handlers via axum State)
@@ -698,6 +715,9 @@ pub async fn run_server(
         .route("/health", axum::routing::get(server_health_handler))
         .route("/ready", axum::routing::get(server_ready_handler));
 
+    // Clone for the rate-limit layer (attached after `with_state` consumes it).
+    let rate_limit_state = server_state.clone();
+
     let app: axum::Router = stateful_app
         .with_state(server_state)
         // Sub-module routes (already Router<()>)
@@ -713,6 +733,20 @@ pub async fn run_server(
     let app = app.merge(admin_r);
 
     let app = app.merge(api_routes);
+
+    // Attach per-IP rate limiting across all routes when configured. Without
+    // this the `--rate-limit` flag was silently a no-op: the limiter was built
+    // and stored in `ServerAppState` but never applied. `ConnectInfo` is
+    // available because the server serves with
+    // `into_make_service_with_connect_info::<SocketAddr>()`.
+    let app = if rate_limit_enabled {
+        app.layer(axum::middleware::from_fn_with_state(
+            rate_limit_state,
+            server_rate_limit_mw,
+        ))
+    } else {
+        app
+    };
 
     // Parse bind address - NO unwrap()!
     let bind_addr: std::net::IpAddr = bind
