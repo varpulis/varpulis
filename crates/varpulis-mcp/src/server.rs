@@ -29,7 +29,10 @@ impl VarpulisMcpServer {
     }
 }
 
-#[tool_handler]
+// rmcp ≥1.4 defaults the handler's router to `Self::tool_router()`, which
+// would rebuild the router on every request; route through the field built
+// once in `new()` instead (the pre-1.4 behavior).
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for VarpulisMcpServer {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::new(

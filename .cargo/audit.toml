@@ -63,4 +63,16 @@ ignore = [
     # during reseed. Preconditions (custom logger using rand::rng() with
     # trace/warn logging) don't apply to us — mirrored from deny.toml.
     "RUSTSEC-2026-0097",
+
+    # quick-xml 0.26 attribute-parsing DoS advisories. Transitive via
+    # inferno → pprof (dev-only profiling); inferno pins quick-xml 0.26,
+    # fix requires >=0.41. Never parses attacker-controlled XML here.
+    # Mirrored in deny.toml.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+
+    # RUSTSEC-2026-0173: proc-macro-error2 unmaintained. Dev-only
+    # transitive via iai-callgrind-macros (benchmarks) — same tree as
+    # the bincode ignore above. Mirrored in deny.toml.
+    "RUSTSEC-2026-0173",
 ]
