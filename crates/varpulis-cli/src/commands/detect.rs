@@ -310,7 +310,8 @@ pub async fn run_detect(
     println!();
 
     // Load events once (shared across all rule files)
-    let events_source = std::fs::read_to_string(events_path)?;
+    let events_source =
+        varpulis_cli::read_file_capped(events_path, varpulis_cli::MAX_INPUT_FILE_BYTES)?;
     let timed_events = EventFileParser::parse(&events_source)
         .map_err(|e| anyhow::anyhow!("Event file error: {e}"))?;
     let total_events = timed_events.len();
