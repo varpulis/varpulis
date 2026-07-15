@@ -9,22 +9,37 @@ connector NatsBus = mqtt (
     client_id: "cep-normalizer"
 )
 
+# ─── Event types ──────────────────────────────────────────────
+# Raw telemetry carries a protocol-specific `values` map (channel -> reading).
+
+event DeviceTelemetry:
+    tenant_id: str
+    device_id: str
+    device_name: str
+    protocol: str
+    connector_id: str
+    values: {str: float}
+    ts: timestamp
+
 # ─── Ingest raw telemetry ─────────────────────────────────────
 
 stream RawTelemetry = DeviceTelemetry
     .from(NatsBus, topic: "varpulis/+/device/telemetry/#")
 
-# ─── Flatten multi-value telemetry to individual measurements ─
+# ─── Normalize raw telemetry to a standard measurement shape ──
+# Raw payloads arrive as a protocol-specific `values` map. We project the known
+# channels into a flat, standard shape with explicit fields and units, renaming
+# device_id to the canonical source_id.
 
 stream NormalizedMeasurements = RawTelemetry
-    .flat_map(values)
     .emit(
         tenant_id: tenant_id,
         device_id: device_id,
         source_id: device_id,
-        name: key,
-        value: value,
-        unit: "",
+        temperature: values["temperature"],
+        humidity: values["humidity"],
+        unit_temperature: "celsius",
+        unit_humidity: "percent",
         ts: ts
     )
 

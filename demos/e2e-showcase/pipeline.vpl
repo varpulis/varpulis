@@ -1,6 +1,10 @@
 # Financial Markets CEP Pipeline
-# Connectors 'mqtt_market' and 'kafka_signals' are managed via the Connectors UI.
-# The coordinator injects their declarations at deploy time.
+# The 'mqtt_market' and 'kafka_signals' connectors are declared inline below so
+# this pipeline validates and runs standalone. In a managed deployment the
+# coordinator can override these declarations at deploy time.
+
+connector mqtt_market = mqtt (host: "localhost", port: 1883, client_id: "e2e-market")
+connector kafka_signals = kafka (brokers: ["localhost:9092"], group_id: "e2e-signals")
 
 event MarketTick:
     symbol: str

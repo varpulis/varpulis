@@ -51,6 +51,12 @@ fn compute_tile(x_off: int, y_off: int, size: int, max_iter: int):
                 row_data := to_string(iters)
         emit PixelRow(y: y_off + py, x_start: x_off, count: size, data: row_data)
 
+# 16 trigger event types — the browser injects one ComputeTile{row}{col} per tile.
+for row in 0..4:
+    for col in 0..4:
+        event ComputeTile{row}{col}:
+            tile_id: int
+
 # 16 streams: each tile computes a 250x250 region of the 1000x1000 image
 for row in 0..4:
     for col in 0..4:

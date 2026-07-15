@@ -10,6 +10,17 @@ context t01
 context t02
 context t03
 
+# Trigger events — the coordinator routes ComputeTile0* here (row 0).
+# One event type per tile; the tile region is fixed by the stream below.
+event ComputeTile00:
+    tile_id: int
+event ComputeTile01:
+    tile_id: int
+event ComputeTile02:
+    tile_id: int
+event ComputeTile03:
+    tile_id: int
+
 fn mandelbrot(cx: float, cy: float, max_iter: int) -> int:
     var zr = 0.0
     var zi = 0.0
