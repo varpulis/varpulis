@@ -9,6 +9,10 @@
 
 connector MqttOut = mqtt (host: "localhost", port: 1883, client_id: "mandelbrot")
 
+# Injected trigger event — carries the tile index to compute.
+event ComputeTile:
+    tile_id: int
+
 fn mandelbrot(cx: float, cy: float, max_iter: int) -> int:
     var zr = 0.0
     var zi = 0.0

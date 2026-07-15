@@ -29,7 +29,7 @@ event card_payment:
 # Login followed by transfer > $5000 within 5 minutes
 
 stream SuspiciousTransfer = login as l -> transfer as t .within(5m)
-    .where(l.user_id == t.user_id && t.amount > 5000)
+    .where(l.user_id == t.user_id and t.amount > 5000)
     .emit(
         alert_type: "suspicious_transfer",
         user: l.user_id,
@@ -48,7 +48,7 @@ stream RapidTransfers = transfer
         tx_count: count(),
         total: sum(amount)
     )
-    .where(tx_count >= 3 && total > 2000)
+    .where(tx_count >= 3 and total > 2000)
     .emit(
         alert_type: "rapid_transfers",
         user: user_id,

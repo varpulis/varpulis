@@ -7,6 +7,32 @@ connector NatsBus = mqtt (
     client_id: "cep-anomaly"
 )
 
+# ─── Event types ──────────────────────────────────────────────
+
+event DeviceTelemetry:
+    tenant_id: str
+    device_id: str
+    protocol: str
+    connector_id: str
+    values: {str: float}
+    ts: timestamp
+
+event DeviceEvent:
+    tenant_id: str
+    device_id: str
+    type: str
+    protocol: str
+    connector_id: str
+    ts: timestamp
+
+event DeviceAlarm:
+    tenant_id: str
+    device_id: str
+    type: str
+    protocol: str
+    connector_id: str
+    ts: timestamp
+
 # ─── Ingest streams ──────────────────────────────────────────
 
 stream Telemetry = DeviceTelemetry
@@ -22,8 +48,8 @@ stream Alarms = DeviceAlarm
 # Temperature rises by >20 degrees within 5 minutes.
 
 stream TempSpike = Telemetry as t1
-    -> Telemetry where device_id == t1.device_id
-                   and values["temperature"] - t1.values["temperature"] > 20.0 as t2
+    -> Telemetry as t2
+    .where(t2.device_id == t1.device_id and t2.values["temperature"] - t1.values["temperature"] > 20.0)
     .within(5m)
     .emit(
         tenant_id: t1.tenant_id,
@@ -41,13 +67,25 @@ stream TempSpike = Telemetry as t1
 # ─── Repeated alarm pattern ──────────────────────────────────
 # Same device raises 3+ alarms of the same type within 1 hour.
 
-stream RepeatedAlarms = Alarms
-    .partition_by(device_id, type)
+# partition_by takes a single key, so we synthesize a device+type composite
+# key to isolate one alarm stream per (device, alarm type) pair.
+stream AlarmsKeyed = Alarms
+    .emit(
+        alarm_key: device_id + "|" + type,
+        tenant_id: tenant_id,
+        device_id: device_id,
+        alarm_type: type,
+        protocol: protocol,
+        connector_id: connector_id
+    )
+
+stream RepeatedAlarms = AlarmsKeyed
+    .partition_by(alarm_key)
     .window(1h)
     .aggregate(
         tenant_id: last(tenant_id),
         device_id: last(device_id),
-        alarm_type: last(type),
+        alarm_type: last(alarm_type),
         alarm_count: count(),
         protocol: last(protocol),
         connector_id: last(connector_id)
