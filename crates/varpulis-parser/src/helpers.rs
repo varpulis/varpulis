@@ -87,7 +87,10 @@ pub fn parse_timestamp(s: &str) -> i64 {
     // Days
     days += (day - 1) as i64;
 
-    let mut seconds = days * 86400;
+    // Saturating throughout: an out-of-range year (the grammar allows up to
+    // 9999, whose nanosecond value exceeds i64) must not panic the parser on
+    // user input — it clamps instead.
+    let mut seconds = days.saturating_mul(86400);
 
     // Parse time if present
     if let Some(time_str) = time_part {
@@ -110,7 +113,12 @@ pub fn parse_timestamp(s: &str) -> i64 {
             } else {
                 0
             };
-            seconds += hours * 3600 + minutes * 60 + secs;
+            seconds = seconds.saturating_add(
+                hours
+                    .saturating_mul(3600)
+                    .saturating_add(minutes.saturating_mul(60))
+                    .saturating_add(secs),
+            );
         }
 
         // Handle timezone offset (simplified - just adjust hours)
@@ -118,19 +126,19 @@ pub fn parse_timestamp(s: &str) -> i64 {
             let tz = &time_str[tz_idx + 1..];
             if let Some(colon_idx) = tz.find(':') {
                 let tz_hours: i64 = tz[..colon_idx].parse().unwrap_or(0);
-                seconds -= tz_hours * 3600;
+                seconds = seconds.saturating_sub(tz_hours.saturating_mul(3600));
             }
         } else if let Some(tz_idx) = time_str[1..].find('-') {
             let tz = &time_str[tz_idx + 2..];
             if let Some(colon_idx) = tz.find(':') {
                 let tz_hours: i64 = tz[..colon_idx].parse().unwrap_or(0);
-                seconds += tz_hours * 3600;
+                seconds = seconds.saturating_add(tz_hours.saturating_mul(3600));
             }
         }
     }
 
     // Convert to nanoseconds
-    seconds * 1_000_000_000
+    seconds.saturating_mul(1_000_000_000)
 }
 
 const fn is_leap_year(year: i32) -> bool {
@@ -140,6 +148,17 @@ const fn is_leap_year(year: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_timestamp_extreme_year_does_not_panic() {
+        // The grammar allows 4-digit years; a year whose nanosecond value
+        // exceeds i64 (≥ ~2263) previously overflowed and panicked the parser
+        // on user input. It now saturates instead of panicking.
+        let ns = parse_timestamp("9999-12-31T23:59:59Z");
+        assert_eq!(ns, i64::MAX, "out-of-range timestamp saturates");
+        // A representable timestamp is unaffected.
+        assert!(parse_timestamp("2020-01-01T00:00:00Z") > 0);
+    }
 
     #[test]
     fn test_parse_duration_seconds() {

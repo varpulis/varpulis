@@ -318,10 +318,20 @@ impl Hash for Value {
             }
             Self::Map(map) => {
                 map.len().hash(state);
+                // Order-independent: `PartialEq` for maps is order-independent
+                // (indexmap compares by content), so the hash must be too, or
+                // equal maps built in different insertion orders would hash
+                // differently — violating the Hash/Eq contract. Combine each
+                // entry's hash with XOR (commutative) rather than feeding them
+                // to the hasher in iteration order.
+                let mut combined: u64 = 0;
                 for (k, v) in map.iter() {
-                    k.hash(state);
-                    v.hash(state);
+                    let mut entry_hasher = std::collections::hash_map::DefaultHasher::new();
+                    k.hash(&mut entry_hasher);
+                    v.hash(&mut entry_hasher);
+                    combined ^= entry_hasher.finish();
                 }
+                combined.hash(state);
             }
         }
     }
@@ -749,6 +759,38 @@ mod tests {
             hash_value(&Value::Float(f64::NAN)),
             hash_value(&Value::Float(f64::NAN))
         );
+    }
+
+    #[test]
+    fn test_hash_map_order_independent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        use indexmap::IndexMap;
+        use rustc_hash::FxBuildHasher;
+
+        fn hash_value(v: &Value) -> u64 {
+            let mut hasher = DefaultHasher::new();
+            v.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        let mut a: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> =
+            IndexMap::with_hasher(FxBuildHasher);
+        a.insert("x".into(), Value::Int(1));
+        a.insert("y".into(), Value::Int(2));
+
+        let mut b: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> =
+            IndexMap::with_hasher(FxBuildHasher);
+        b.insert("y".into(), Value::Int(2));
+        b.insert("x".into(), Value::Int(1));
+
+        let va = Value::map(a);
+        let vb = Value::map(b);
+        // Equal under PartialEq (order-independent)...
+        assert_eq!(va, vb);
+        // ...therefore must hash equal (Hash/Eq contract).
+        assert_eq!(hash_value(&va), hash_value(&vb));
     }
 
     #[test]

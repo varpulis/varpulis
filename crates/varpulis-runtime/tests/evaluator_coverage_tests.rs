@@ -1875,3 +1875,42 @@ async fn where_ge_int_field_below_float_threshold_drops_event() {
     let out = run(code, evt).await;
     assert_eq!(out.len(), 0, "98 >= 98.6 is false; event must be dropped");
 }
+
+// =============================================================================
+// Integer arithmetic overflow is checked, not panicking (audit Phase 1)
+// =============================================================================
+
+#[tokio::test]
+async fn int_add_overflow_does_not_panic() {
+    // `x + 1` with x == i64::MAX previously panicked in overflow-checked builds
+    // (a worker-crashing DoS reachable from event data). Now the overflow
+    // yields None, the filter treats it as false and drops the event, and no
+    // panic occurs.
+    let code = r"
+        stream S = E
+            .where(x + 1 > 0)
+            .emit(v: x)
+    ";
+    let evt = Event::new("E").with_field("x", Value::Int(i64::MAX));
+    let out = run(code, evt).await;
+    assert_eq!(
+        out.len(),
+        0,
+        "overflowing arithmetic must not emit — and must not panic"
+    );
+}
+
+#[tokio::test]
+async fn int_arithmetic_still_works_without_overflow() {
+    let code = r"
+        stream S = E
+            .emit(sum: x + y, prod: x * y)
+    ";
+    let evt = Event::new("E")
+        .with_field("x", Value::Int(6))
+        .with_field("y", Value::Int(7));
+    let out = run(code, evt).await;
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].data.get("sum"), Some(&Value::Int(13)));
+    assert_eq!(out[0].data.get("prod"), Some(&Value::Int(42)));
+}
