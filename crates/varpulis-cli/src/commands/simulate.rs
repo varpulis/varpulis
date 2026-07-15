@@ -135,14 +135,20 @@ pub async fn run_simulation(
     // Create initial engine to show metrics
     // In quiet mode, use benchmark engine to skip channel overhead entirely
     // PERF: Use new_shared() for zero-copy SharedEvent channel
+    // Declare checkpoint intent up front so the compiler keeps windowed
+    // aggregate state in checkpointable ops (skips columnar-aggregate fusion);
+    // enable_checkpointing() below runs after load, too late to gate fusion.
+    let plan_ckpt = checkpoint_dir.is_some();
     let mut engine = if quiet {
-        let mut b = Engine::builder();
+        let mut b = Engine::builder().plan_checkpointing(plan_ckpt);
         if let Some(ref store) = credentials_store {
             b = b.credentials(Arc::clone(store));
         }
         b.build()
     } else {
-        let mut b = Engine::builder().shared_output(output_tx.clone());
+        let mut b = Engine::builder()
+            .shared_output(output_tx.clone())
+            .plan_checkpointing(plan_ckpt);
         if let Some(ref store) = credentials_store {
             b = b.credentials(Arc::clone(store));
         }

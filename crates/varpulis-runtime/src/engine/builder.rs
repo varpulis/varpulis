@@ -62,6 +62,7 @@ pub struct EngineBuilder {
     dlq_config: DlqConfig,
     udf_registry: UdfRegistry,
     credentials_store: Option<Arc<connector::credentials::CredentialsStore>>,
+    checkpoint_planned: bool,
 }
 
 impl Default for EngineBuilder {
@@ -81,7 +82,21 @@ impl EngineBuilder {
             dlq_config: DlqConfig::default(),
             udf_registry: UdfRegistry::new(),
             credentials_store: None,
+            checkpoint_planned: false,
         }
+    }
+
+    /// Declare that checkpointing will be enabled on this engine.
+    ///
+    /// Must be called before `build()`/`load()`. It makes the compiler skip
+    /// columnar-aggregate fusion so windowed aggregate state stays in the
+    /// checkpointable classic `Window`+`Aggregate` ops. Fusion happens during
+    /// `load()`, whereas [`Engine::enable_checkpointing`] runs afterwards — so
+    /// the intent has to be known up front, or the fused ops' state is silently
+    /// dropped on restore (broken exactly-once on the default arrow build).
+    pub fn plan_checkpointing(mut self, planned: bool) -> Self {
+        self.checkpoint_planned = planned;
+        self
     }
 
     /// Set the output channel for emitted events (legacy owned channel).
@@ -164,6 +179,7 @@ impl EngineBuilder {
         engine.dlq_config = self.dlq_config;
         engine.udf_registry = self.udf_registry;
         engine.credentials_store = self.credentials_store;
+        engine.checkpoint_planned = self.checkpoint_planned;
         engine
     }
 }

@@ -117,6 +117,11 @@ pub async fn run_program(
     if let Some(store) = credentials_store {
         engine = engine.credentials(store);
     }
+    // Declare checkpoint intent BEFORE load so the compiler keeps windowed
+    // aggregate state in checkpointable ops (skips columnar-aggregate fusion).
+    // enable_checkpointing() below runs after load, which is too late to gate
+    // fusion.
+    engine = engine.plan_checkpointing(checkpoint_dir.is_some());
     let mut engine = engine.build();
     engine
         .load_with_source(source, &program)
