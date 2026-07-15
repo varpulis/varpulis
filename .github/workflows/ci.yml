@@ -3,11 +3,18 @@ name: CI
 on:
   push:
     branches: [main, develop]
+    tags: ['v*']
   pull_request:
     branches: [main]
+  # Nightly full run + manual "run now" button. The heavy suite (matrix,
+  # cross-platform, E2E, chaos, coverage) is gated to these events + release
+  # tags via each job's `if:` below, so ordinary PRs only pay the fast gate.
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
 
 # A push to a PR branch supersedes the in-flight run — cancel it instead of
-# finishing a ~50-job matrix for a commit nobody will merge. Runs on main
+# finishing the matrix for a commit nobody will merge. Runs on main
 # are never cancelled so every merged commit keeps a complete CI record.
 concurrency:
   group: ci-${{ github.ref }}
@@ -17,6 +24,17 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# Tiered CI:
+#   * Fast gate (fmt, clippy, check, test, deny, audit, machete, +semver on PRs)
+#     runs on every push/PR — this is what you watch before merging.
+#   * Heavy suite (msrv, cross-platform, feature-flags matrix, wasm, coverage,
+#     doc, chaos, CDC/NATS E2E) is gated by `HEAVY` below to: the nightly
+#     schedule, manual `workflow_dispatch`, and release tags (`refs/tags/*`).
+#     It does NOT run per-PR, so PR feedback is ~5 min instead of ~15.
+# Anchor for the heavy-job gate (kept as a comment so it stays in one place):
+#   github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+#     || startsWith(github.ref, 'refs/tags/')
 
 jobs:
   # Gate job: skip entire CI for Dependabot PRs to conserve Actions minutes.
@@ -32,6 +50,7 @@ jobs:
   msrv:
     name: MSRV (1.93)
     needs: [gate]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -75,6 +94,7 @@ jobs:
   cross-platform:
     name: ${{ matrix.os }}
     needs: [gate]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -184,7 +204,9 @@ jobs:
     needs: [gate]
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    # Only run on PRs (needs a baseline to compare against)
+    # PR-only: needs the PR base commit as its semver baseline. Stays on the
+    # fast path because it is the cheapest place to catch an accidental public
+    # API break, and it is scoped to the four externally-consumed crates.
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v6
@@ -220,6 +242,7 @@ jobs:
   feature-flags:
     name: Feature Flags (${{ matrix.features }})
     needs: [gate]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -267,6 +290,7 @@ jobs:
   wasm:
     name: WASM Build
     needs: [gate]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -282,9 +306,10 @@ jobs:
 
   chaos-tests:
     name: Chaos Tests
+    needs: [check, test]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [check, test]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -303,6 +328,7 @@ jobs:
   coverage:
     name: Coverage
     needs: [gate]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -325,6 +351,7 @@ jobs:
   doc:
     name: Documentation
     needs: [gate]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -341,9 +368,10 @@ jobs:
 
   cdc-e2e:
     name: CDC E2E
+    needs: [check]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [check]
     services:
       postgres:
         image: postgres:16-alpine
@@ -403,9 +431,10 @@ jobs:
 
   nats-e2e:
     name: NATS E2E
+    needs: [check]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [check]
     services:
       nats:
         image: nats:latest
