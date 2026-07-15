@@ -1441,3 +1441,50 @@ async fn sync_first_shorthand() {
     );
     assert_eq!(out[0].data.get("val"), Some(&Value::Int(1)));
 }
+
+// ---------------------------------------------------------------------------
+// Run-grouping must preserve cross-stream FIFO interleave (audit Phase 1)
+// ---------------------------------------------------------------------------
+
+/// Regression: PR #164's run-grouping in `process_batch` gathered a run of
+/// same-type events and processed the whole run per target stream, emitting
+/// `[S,S,T,T]` when an event type routes to two streams — whereas the per-event
+/// dispatch paths emit the interleaved `[S,T,S,T]`. A downstream merge/sequence
+/// consuming both S and T would see a different order depending on batch
+/// boundaries. The fix restricts run-grouping to single-target event types.
+#[tokio::test]
+async fn process_batch_preserves_cross_stream_interleave() {
+    let code = r#"
+        stream S = A .emit(tag: "S")
+        stream T = A .emit(tag: "T")
+    "#;
+    let program = parse(code).expect("parse");
+    let (tx, mut rx) = mpsc::channel(4096);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    let events: Vec<Event> = vec![
+        Event::new("A").with_field("n", Value::Int(1)),
+        Event::new("A").with_field("n", Value::Int(2)),
+    ];
+    engine.process_batch(events).await.unwrap();
+
+    let mut order = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        order.push(e.event_type.to_string());
+    }
+
+    // Two A events × two streams = 4 outputs. Each source event must produce
+    // one S and one T *interleaved* — i.e. the first two outputs are different
+    // streams (not the [S,S,...] grouping the bug produced), and so are the
+    // last two.
+    assert_eq!(order.len(), 4, "expected 4 emitted events, got {order:?}");
+    assert_ne!(
+        order[0], order[1],
+        "first source event's outputs must interleave the streams, not group [S,S,..]: {order:?}"
+    );
+    assert_ne!(
+        order[2], order[3],
+        "second source event's outputs must interleave the streams: {order:?}"
+    );
+}
