@@ -308,27 +308,35 @@ impl Engine {
                 continue;
             }
 
-            // Gather the run: consecutive pending events with the same type
-            // and depth. Stream-local ordering is untouched (each stream
-            // still sees its events in arrival order).
-            let mut run: Vec<SharedEvent> = vec![current_event];
-            while let Some((next, next_depth)) = pending_events.front() {
-                if *next_depth == depth && next.event_type == run[0].event_type {
-                    let (event, _) = pending_events
-                        .pop_front()
-                        .expect("front() just returned Some");
-                    run.push(event);
-                } else {
-                    break;
-                }
-            }
-
-            // Get stream names (Arc clone is O(1))
+            // Get stream names for this event type (Arc clone is O(1)).
             let stream_names: Arc<[String]> = self
                 .router
-                .get_routes(&run[0].event_type)
+                .get_routes(&current_event.event_type)
                 .cloned()
                 .unwrap_or_else(|| Arc::from([]));
+
+            // Gather a run of consecutive pending events of the same type and
+            // depth — but ONLY when the type routes to a single stream. With
+            // multiple target streams, batching a whole run and processing it
+            // per-stream would emit [S,S,T,T], whereas the per-event dispatch
+            // paths (process_inner / process_batch_shared) emit the interleaved
+            // [S,T,S,T]; a downstream merge/sequence consuming both S and T
+            // would then observe a different event order depending on batch
+            // boundaries. Single-target runs have no cross-stream interleave,
+            // so batching stays safe (and beneficial) there.
+            let mut run: Vec<SharedEvent> = vec![current_event];
+            if stream_names.len() == 1 {
+                while let Some((next, next_depth)) = pending_events.front() {
+                    if *next_depth == depth && next.event_type == run[0].event_type {
+                        let (event, _) = pending_events
+                            .pop_front()
+                            .expect("front() just returned Some");
+                        run.push(event);
+                    } else {
+                        break;
+                    }
+                }
+            }
 
             for stream_name in stream_names.iter() {
                 if let Some(stream) = self.streams.get_mut(stream_name) {
