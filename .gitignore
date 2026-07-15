@@ -80,3 +80,29 @@ docs/.vitepress/cache/
 docs/node_modules/
 .claude/worktrees/
 examples/security-demo/data/mordor/
+
+# ---------------------------------------------------------------------------
+# Additional generated/local artifacts (repo hygiene — 2026-07)
+# ---------------------------------------------------------------------------
+
+# Local agent/tool orchestration state
+.claude-flow/
+
+# node_modules and Playwright reports anywhere (supersedes the specific
+# entries above)
+**/node_modules/
+**/playwright-report/
+
+# perf(1) profiling output
+perf.data
+perf.data.old
+*.perf.data
+
+# Generated demo recordings (playground-demo captures its own media)
+demos/playground-demo/*.mp4
+demos/playground-demo/*.gif
+demos/playground-demo/*.png
+
+# tree-sitter standalone build lock — the crate is a workspace member and
+# uses the root Cargo.lock; a local standalone build regenerates this one.
+tree-sitter-varpulis/Cargo.lock
