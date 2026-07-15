@@ -1,28 +1,38 @@
-name: Performance Regression
+name: Performance Tracking
+
+# Criterion micro-benchmarks on shared GitHub runners are wall-clock
+# measurements on noisy, heterogeneous vCPUs — unsuitable as a PR gate.
+# This workflow previously ran on every PR/push with default Criterion
+# settings (3s warm-up + 5s measurement × 100+ cases + a fat-LTO bench
+# build) and hit its 30-minute timeout on every run for two months
+# (39/40 runs cancelled), providing zero signal.
+#
+# It now runs weekly (plus on demand) purely as a coarse trend tracker:
+# quick-mode Criterion keeps the run inside the timeout, results land on
+# the gh-pages dashboard (dev/bench), and a 150% alert threshold flags
+# only order-of-magnitude regressions — the level of signal shared
+# runners can actually support. Authoritative numbers come from the
+# local suites under benchmarks/ (arroyo/proton/apama comparisons) run
+# on dedicated hardware.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+  workflow_dispatch:
+  schedule:
+    # Mondays 04:00 UTC
+    - cron: "0 4 * * 1"
 
 permissions:
   contents: write
-  pull-requests: write
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   benchmark:
-    name: Benchmark Comparison
+    name: Benchmark Tracking
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
         with:
@@ -34,17 +44,21 @@ jobs:
         with:
           key: bench
 
-      - name: Run benchmarks
+      - name: Run benchmarks (quick mode)
         env:
           CARGO_TERM_COLOR: never
         run: |
-          # Single cargo invocation compiles once, runs all benches
+          # Single cargo invocation compiles once, runs all benches.
+          # Quick-mode Criterion flags (1s warm-up, 2s measurement, 20
+          # samples) trade precision for completion: full-precision
+          # numbers belong on dedicated hardware, not shared runners.
           cargo bench -p varpulis-runtime \
             --bench pattern_benchmark \
             --bench kleene_benchmark \
             --bench context_benchmark \
             --bench pst_forecast_benchmark \
             --bench hamlet_zdd_benchmark \
+            -- --warm-up-time 1 --measurement-time 2 --sample-size 20 \
             2>&1 | tee criterion-output.txt
 
       - name: Convert Criterion output to bencher format
@@ -80,7 +94,7 @@ jobs:
               # Convert to nanoseconds
               val, unit = median_str.strip().split()
               val = float(val.replace(',', ''))
-              mult = {'ps': 0.001, 'ns': 1, '\u00b5s': 1000, 'us': 1000, 'ms': 1_000_000, 's': 1_000_000_000}
+              mult = {'ps': 0.001, 'ns': 1, 'µs': 1000, 'us': 1000, 'ms': 1_000_000, 's': 1_000_000_000}
               ns = val * mult.get(unit, 1)
               print(f'test {name} ... bench: {int(ns)} ns/iter (+/- 0)')
               name = None
@@ -94,10 +108,13 @@ jobs:
           name: Varpulis Performance
           tool: cargo
           output-file-path: bench-results.txt
-          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          alert-threshold: "120%"
-          comment-on-alert: true
-          fail-on-alert: ${{ github.event_name == 'pull_request' }}
+          auto-push: true
+          # Shared-runner noise easily exceeds 20%; only flag gross
+          # regressions. The alert shows up in the run summary and on
+          # the gh-pages chart — nothing is gated on it.
+          alert-threshold: "150%"
+          comment-on-alert: false
+          fail-on-alert: false
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench
           github-token: ${{ secrets.GITHUB_TOKEN }}
