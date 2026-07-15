@@ -33,6 +33,32 @@ use anyhow::Result;
 use varpulis_core::ast::{Program, Stmt};
 use varpulis_parser::parse;
 
+/// Cap for files the file-based CLI commands read wholesale into memory.
+///
+/// Guards against a pathological multi-GB input — e.g. a raw Sysmon/EVTX export
+/// fed to `detect` — exhausting RAM before parsing even starts. 1 GiB is far
+/// above any real rule file or hand-authored event file.
+pub const MAX_INPUT_FILE_BYTES: u64 = 1 << 30;
+
+/// Read a whole file to a string, refusing inputs larger than `max_bytes` so an
+/// oversized file fails fast with a clear message instead of OOMing the process.
+pub fn read_file_capped(path: impl AsRef<std::path::Path>, max_bytes: u64) -> Result<String> {
+    let path = path.as_ref();
+    let meta = std::fs::metadata(path)
+        .map_err(|e| anyhow::anyhow!("cannot stat {}: {e}", path.display()))?;
+    if meta.len() > max_bytes {
+        anyhow::bail!(
+            "{} is {} bytes, over the {}-byte cap — stream or split it \
+             (raise MAX_INPUT_FILE_BYTES only if you have the RAM)",
+            path.display(),
+            meta.len(),
+            max_bytes
+        );
+    }
+    std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))
+}
+
 /// Parse and validate VPL source code
 pub fn check_syntax(source: &str) -> Result<()> {
     match parse(source) {
@@ -217,6 +243,24 @@ pub fn parse_duration_str(s: &str) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_file_capped_rejects_oversized() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.evt");
+        std::fs::write(&path, b"0123456789").unwrap(); // 10 bytes
+
+        // Under the cap → reads normally.
+        assert_eq!(read_file_capped(&path, 100).unwrap(), "0123456789");
+
+        // Over the cap → fails fast instead of reading (before this guard the
+        // whole file was slurped via read_to_string regardless of size).
+        let err = read_file_capped(&path, 5).unwrap_err().to_string();
+        assert!(
+            err.contains("over the") && err.contains("cap"),
+            "expected a size-cap error, got: {err}"
+        );
+    }
 
     #[test]
     fn test_check_syntax_valid() {

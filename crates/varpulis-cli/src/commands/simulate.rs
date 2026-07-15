@@ -231,7 +231,8 @@ pub async fn run_simulation(
 
     // Trace mode: process events one at a time and print trace entries after each
     if trace {
-        let events_source = std::fs::read_to_string(events_path)?;
+        let events_source =
+            varpulis_cli::read_file_capped(events_path, varpulis_cli::MAX_INPUT_FILE_BYTES)?;
         let events = EventFileParser::parse(&events_source)
             .map_err(|e| anyhow::anyhow!("Event file error: {e}"))?;
         let total_events = events.len();
@@ -256,7 +257,8 @@ pub async fn run_simulation(
         }
     } else if !timed && !streaming && num_workers > 1 {
         // Parallel preload mode (default with multiple workers)
-        let events_source = std::fs::read_to_string(events_path)?;
+        let events_source =
+            varpulis_cli::read_file_capped(events_path, varpulis_cli::MAX_INPUT_FILE_BYTES)?;
         let events = EventFileParser::parse(&events_source)
             .map_err(|e| anyhow::anyhow!("Event file error: {e}"))?;
         let total_events = events.len();
@@ -384,7 +386,8 @@ pub async fn run_simulation(
         }
     } else if !timed && !streaming {
         // Single-threaded preload mode (default)
-        let events_source = std::fs::read_to_string(events_path)?;
+        let events_source =
+            varpulis_cli::read_file_capped(events_path, varpulis_cli::MAX_INPUT_FILE_BYTES)?;
         let events = EventFileParser::parse(&events_source)
             .map_err(|e| anyhow::anyhow!("Event file error: {e}"))?;
         info!("Preloaded {} events from file", events.len());
@@ -684,7 +687,8 @@ pub async fn run_simulation(
         info!("Streamed {} events from file", event_reader.events_read());
     } else {
         // Timed mode (--timed) - replay events with real-time delays
-        let events_source = std::fs::read_to_string(events_path)?;
+        let events_source =
+            varpulis_cli::read_file_capped(events_path, varpulis_cli::MAX_INPUT_FILE_BYTES)?;
         let events = EventFileParser::parse(&events_source)
             .map_err(|e| anyhow::anyhow!("Event file error: {e}"))?;
         info!("Loaded {} events from file (timed mode)", events.len());
