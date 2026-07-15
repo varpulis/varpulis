@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# A push to a PR branch supersedes the in-flight run — cancel it instead of
+# finishing a ~50-job matrix for a commit nobody will merge. Runs on main
+# are never cancelled so every merged commit keeps a complete CI record.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -17,6 +24,7 @@ jobs:
   gate:
     name: CI Gate
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     if: github.actor != 'dependabot[bot]'
     steps:
       - run: echo "CI gate passed"
@@ -25,6 +33,7 @@ jobs:
     name: MSRV (1.93)
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.93
@@ -39,6 +48,7 @@ jobs:
     name: Check
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -51,6 +61,7 @@ jobs:
     name: Test
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -65,6 +76,7 @@ jobs:
     name: ${{ matrix.os }}
     needs: [gate]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -88,6 +100,7 @@ jobs:
     name: Format
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
@@ -104,6 +117,7 @@ jobs:
     name: Clippy
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -123,6 +137,7 @@ jobs:
     name: Deny (licenses & advisories)
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -139,6 +154,7 @@ jobs:
     name: Audit
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -155,6 +171,7 @@ jobs:
     name: Unused Dependencies
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -166,6 +183,7 @@ jobs:
     name: Semver Checks
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     # Only run on PRs (needs a baseline to compare against)
     if: github.event_name == 'pull_request'
     steps:
@@ -185,6 +203,7 @@ jobs:
     name: Feature Flags (${{ matrix.features }})
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -231,6 +250,7 @@ jobs:
     name: WASM Build
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -245,8 +265,8 @@ jobs:
   chaos-tests:
     name: Chaos Tests
     runs-on: ubuntu-latest
-    needs: [check, test]
     timeout-minutes: 30
+    needs: [check, test]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -266,6 +286,7 @@ jobs:
     name: Coverage
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -287,6 +308,7 @@ jobs:
     name: Documentation
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -302,6 +324,7 @@ jobs:
   cdc-e2e:
     name: CDC E2E
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [check]
     services:
       postgres:
@@ -363,6 +386,7 @@ jobs:
   nats-e2e:
     name: NATS E2E
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [check]
     services:
       nats:
