@@ -61,7 +61,7 @@ use crate::sase_persistence::SaseCheckpointExt;
 use crate::sequence::SequenceContext;
 use crate::udf::UdfRegistry;
 use crate::watermark::PerSourceWatermarkTracker;
-use crate::window::CountWindow;
+use crate::window::{CountWindow, SlidingCountWindow};
 
 /// Output channel type enumeration for zero-copy or owned event sending.
 /// Only available with async-runtime (requires tokio mpsc channels).
@@ -144,6 +144,14 @@ pub struct Engine {
         Vec<std::sync::Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     /// Auto-checkpointing manager (None = checkpointing disabled)
     pub(super) checkpoint_manager: Option<crate::persistence::CheckpointManager>,
+    /// When true, the compiler skips columnar-aggregate fusion so windowed
+    /// aggregate state stays in checkpointable ops (the classic
+    /// `Window`+`Aggregate` path). Set before `load()` — e.g. via
+    /// [`EngineBuilder::plan_checkpointing`] — because fusion happens during
+    /// `load()` while `enable_checkpointing` runs afterwards. Without this,
+    /// the fused columnar ops carry state that checkpoint/restore does not
+    /// capture, silently breaking exactly-once on the default (arrow) build.
+    pub(super) checkpoint_planned: bool,
     /// Async checkpoint manager for non-blocking persistence (Chandy-Lamport mode)
     #[cfg(feature = "async-runtime")]
     pub(super) async_checkpoint_manager: Option<crate::persistence::AsyncCheckpointManager>,
@@ -288,6 +296,7 @@ impl Engine {
             transactional_id_prefix: None,
             shared_hamlet_aggregators: Vec::new(),
             checkpoint_manager: None,
+            checkpoint_planned: false,
             #[cfg(feature = "async-runtime")]
             async_checkpoint_manager: None,
             credentials_store: None,
@@ -338,6 +347,7 @@ impl Engine {
                 transactional_id_prefix: None,
                 shared_hamlet_aggregators: Vec::new(),
                 checkpoint_manager: None,
+                checkpoint_planned: false,
                 dlq_path: None,
                 dlq_config: crate::dead_letter::DlqConfig::default(),
                 dlq: None,
@@ -1814,6 +1824,39 @@ impl Engine {
                             },
                         );
                     }
+                    RuntimeOp::PartitionedSlidingCountWindow(pw) => {
+                        // Per-partition sliding-count buffers hold live events;
+                        // snapshot each like PartitionedWindow. (The
+                        // `events_since_emit` slide counter is intentionally
+                        // reset to 0 on restore — a fidelity quirk shared with
+                        // the non-partitioned `SlidingCount` arm above.)
+                        let mut partitions = std::collections::HashMap::new();
+                        for (key, scw) in &pw.windows {
+                            let sub_cp = scw.checkpoint();
+                            partitions.insert(
+                                key.clone(),
+                                crate::persistence::PartitionedWindowCheckpoint {
+                                    events: sub_cp.events,
+                                    window_start_ms: sub_cp.window_start_ms,
+                                },
+                            );
+                        }
+                        window_states.insert(
+                            name.clone(),
+                            WindowCheckpoint {
+                                events: Vec::new(),
+                                window_start_ms: None,
+                                last_emit_ms: None,
+                                partitions,
+                            },
+                        );
+                    }
+                    // Aggregate/PartitionedAggregate hold only config plus a
+                    // rebuildable schema cache; their running state lives in the
+                    // upstream Window op (snapshotted above). Explicit no-op so
+                    // this stays a deliberate decision — not a silent catch-all
+                    // miss that drops fused-vs-classic state on restore (C1).
+                    RuntimeOp::Aggregate(_) | RuntimeOp::PartitionedAggregate(_) => {}
                     RuntimeOp::Distinct(state) => {
                         let keys: Vec<String> =
                             state.seen.iter().rev().map(|(k, ())| k.clone()).collect();
@@ -1924,6 +1967,20 @@ impl Engine {
                                 window.restore(&sub_wcp);
                             }
                         }
+                        RuntimeOp::PartitionedSlidingCountWindow(pw) => {
+                            for (key, pcp) in &wcp.partitions {
+                                let sub_wcp = crate::persistence::WindowCheckpoint {
+                                    events: pcp.events.clone(),
+                                    window_start_ms: pcp.window_start_ms,
+                                    last_emit_ms: None,
+                                    partitions: std::collections::HashMap::new(),
+                                };
+                                let window = pw.windows.entry(key.clone()).or_insert_with(|| {
+                                    SlidingCountWindow::new(pw.window_size, pw.slide_size)
+                                });
+                                window.restore(&sub_wcp);
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -1990,6 +2047,32 @@ impl Engine {
         store: std::sync::Arc<dyn crate::persistence::StateStore>,
         config: crate::persistence::CheckpointConfig,
     ) -> Result<(), crate::persistence::StoreError> {
+        // Fusion happens during load(); if the engine was loaded without
+        // declaring checkpoint intent (EngineBuilder::plan_checkpointing), any
+        // fused columnar-aggregate ops are already compiled and their per-bin
+        // window state is NOT captured by checkpoint/restore. Warn loudly
+        // rather than lose that state silently on recovery.
+        #[cfg(feature = "arrow")]
+        if !self.checkpoint_planned {
+            let has_fused = self.streams.values().any(|s| {
+                s.operations.iter().any(|op| {
+                    matches!(
+                        op,
+                        RuntimeOp::WindowedColumnarAggregate(_)
+                            | RuntimeOp::PartitionedWindowedColumnarAggregate(_)
+                    )
+                })
+            });
+            if has_fused {
+                warn!(
+                    "enable_checkpointing: pipeline contains fused columnar-aggregate \
+                     ops whose windowed state is NOT checkpointed — restore will lose it. \
+                     Build the engine with EngineBuilder::plan_checkpointing(true) before \
+                     load() so the checkpointable classic Window+Aggregate path is used."
+                );
+            }
+        }
+
         let manager = crate::persistence::CheckpointManager::new(store, config)?;
 
         if let Some(cp) = manager.recover()? {

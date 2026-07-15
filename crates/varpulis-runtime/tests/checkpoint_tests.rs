@@ -624,3 +624,152 @@ fn test_pre_versioning_checkpoint_deserialization() {
     assert_eq!(cp.events_processed, 42);
     assert_eq!(cp.output_events_emitted, 10);
 }
+
+// =============================================================================
+// Audit C1 — fused columnar-aggregate ops silently drop windowed state on
+// checkpoint/restore. Fix: EngineBuilder::plan_checkpointing(true) un-fuses so
+// the checkpointable classic Window+Aggregate path is compiled instead.
+// =============================================================================
+
+fn c1_ts(ms: i64) -> chrono::DateTime<chrono::Utc> {
+    use chrono::TimeZone;
+    chrono::Utc.timestamp_millis_opt(ms).unwrap()
+}
+
+/// C1 fix, end-to-end: a `partition_by + tumbling window + sum` pipeline built
+/// with `plan_checkpointing(true)` snapshots its in-flight window state, and
+/// after a kill/restart the restored engine closes the window with the pre-crash
+/// events included in the aggregate.
+#[tokio::test]
+async fn checkpoint_planned_partition_window_survives_restart() {
+    let code = r"
+        event Reading:
+            device_id: str
+            temperature: float
+
+        stream DeviceAgg = Reading
+            .partition_by(device_id)
+            .window(1s)
+            .aggregate(total: sum(temperature))
+            .emit(total: total)
+    ";
+    let program = parse(code).expect("parse");
+
+    // --- Phase 1: fill a partial window on engine1, then checkpoint ---------
+    let (tx1, _rx1) = mpsc::channel::<Event>(1000);
+    let mut engine1 = Engine::builder()
+        .output(tx1)
+        .plan_checkpointing(true)
+        .build();
+    engine1.load(&program).expect("load");
+
+    // Window opens at t=100ms → [100ms, 1100ms). Three events land inside it;
+    // none crosses the boundary, so nothing emits yet.
+    for (t, temp) in [(100_i64, 10.0_f64), (200, 20.0), (300, 30.0)] {
+        engine1
+            .process(
+                Event::new("Reading")
+                    .with_timestamp(c1_ts(t))
+                    .with_field("device_id", "d1")
+                    .with_field("temperature", temp),
+            )
+            .await
+            .expect("process");
+    }
+
+    let cp = engine1.create_checkpoint();
+    // The un-fused classic Window op is what makes this state visible to the
+    // checkpoint. A fused engine would have no `DeviceAgg` window entry at all
+    // (see fused_partition_window_state_not_checkpointed below).
+    let wcp = cp
+        .window_states
+        .get("DeviceAgg")
+        .expect("plan_checkpointing must snapshot the window op's state");
+    let part = wcp
+        .partitions
+        .get("d1")
+        .expect("partition d1 must be snapshotted");
+    assert_eq!(
+        part.events.len(),
+        3,
+        "all three in-flight events must be captured; got {}",
+        part.events.len()
+    );
+
+    // --- Phase 2: kill engine1, restore into a fresh engine2, finish window --
+    let (tx2, mut rx2) = mpsc::channel::<Event>(1000);
+    let mut engine2 = Engine::builder()
+        .output(tx2)
+        .plan_checkpointing(true)
+        .build();
+    engine2.load(&program).expect("load");
+    engine2.restore_checkpoint(&cp).expect("restore");
+
+    // t=1200ms ≥ window_end(1100ms) closes [100,1100), emitting sum over the
+    // three restored events (10+20+30 = 60).
+    engine2
+        .process(
+            Event::new("Reading")
+                .with_timestamp(c1_ts(1200))
+                .with_field("device_id", "d1")
+                .with_field("temperature", 99.0_f64),
+        )
+        .await
+        .expect("process");
+
+    let out = rx2
+        .try_recv()
+        .expect("restored window must close and emit after the boundary event");
+    assert_eq!(
+        out.data.get("total"),
+        Some(&varpulis_core::Value::Float(60.0)),
+        "aggregate must include the pre-checkpoint events (10+20+30); got {:?}",
+        out.data.get("total")
+    );
+}
+
+/// Documents the contained C1 bug that `plan_checkpointing` works around: on the
+/// default (arrow) build WITHOUT planning, the pipeline fuses into
+/// `PartitionedWindowedColumnarAggregate`, whose windowed state is invisible to
+/// `create_checkpoint` — so the in-flight events are silently lost on restore.
+#[cfg(feature = "arrow")]
+#[tokio::test]
+async fn fused_partition_window_state_not_checkpointed() {
+    let code = r"
+        event Reading:
+            device_id: str
+            temperature: float
+
+        stream DeviceAgg = Reading
+            .partition_by(device_id)
+            .window(1s)
+            .aggregate(total: sum(temperature))
+            .emit(total: total)
+    ";
+    let program = parse(code).expect("parse");
+
+    // Default builder → no plan_checkpointing → columnar fusion kicks in.
+    let (tx, _rx) = mpsc::channel::<Event>(1000);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("load");
+
+    for (t, temp) in [(100_i64, 10.0_f64), (200, 20.0), (300, 30.0)] {
+        engine
+            .process(
+                Event::new("Reading")
+                    .with_timestamp(c1_ts(t))
+                    .with_field("device_id", "d1")
+                    .with_field("temperature", temp),
+            )
+            .await
+            .expect("process");
+    }
+
+    let cp = engine.create_checkpoint();
+    assert!(
+        !cp.window_states.contains_key("DeviceAgg"),
+        "fused columnar op state is NOT captured — this is the C1 bug that \
+         plan_checkpointing(true) avoids; got {:?}",
+        cp.window_states.get("DeviceAgg")
+    );
+}

@@ -853,8 +853,12 @@ impl Engine {
                     // `docs/development/columnar-aggregation-plan.md`.
                     #[cfg(feature = "arrow")]
                     {
+                        // Skip fusion when checkpointing is planned: the fused
+                        // columnar op's per-bin state is not captured by
+                        // checkpoint/restore, so we keep the classic
+                        // Window+Aggregate path (which is) instead.
                         if let Some(ref key) = partition_key {
-                            if aggregator.supported_for_columnar() {
+                            if !self.checkpoint_planned && aggregator.supported_for_columnar() {
                                 if let Some(crate::engine::types::RuntimeOp::Window(
                                     crate::engine::types::WindowType::PartitionedTumbling(w),
                                 )) = runtime_ops.last()
@@ -889,7 +893,13 @@ impl Engine {
                     // `Window(Tumbling) + Aggregate`.
                     #[cfg(feature = "arrow")]
                     {
-                        if partition_key.is_none() && aggregator.supported_for_columnar() {
+                        // Skip fusion when checkpointing is planned (see the
+                        // partitioned case above) — keep the checkpointable
+                        // classic Window+Aggregate path.
+                        if !self.checkpoint_planned
+                            && partition_key.is_none()
+                            && aggregator.supported_for_columnar()
+                        {
                             if let Some(crate::engine::types::RuntimeOp::Window(
                                 crate::engine::types::WindowType::Tumbling(w),
                             )) = runtime_ops.last()
@@ -2425,6 +2435,96 @@ mod arrow_fusion_tests {
             !ops.iter()
                 .any(|n| *n == "Window" || *n == "PartitionedAggregate"),
             "fusion should remove Window and PartitionedAggregate; got {ops:?}"
+        );
+    }
+
+    /// Like [`compile`], but declares checkpointing up front via
+    /// `plan_checkpointing(true)`.
+    fn compile_planned(source: &str) -> Vec<&'static str> {
+        let mut engine = Engine::builder().plan_checkpointing(true).build();
+        let program =
+            varpulis_parser::parse(source).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+        engine
+            .load(&program)
+            .unwrap_or_else(|e| panic!("load failed: {e}"));
+        let stream_names = engine.stream_names();
+        let stream_name = stream_names.first().expect("at least one stream");
+        let stream = engine.streams.get(*stream_name).expect("stream registered");
+        stream
+            .operations
+            .iter()
+            .map(|op| op.summary_name())
+            .collect()
+    }
+
+    #[test]
+    fn checkpoint_planned_skips_partition_window_fusion() {
+        // Same Scenario-02 shape as the fusion test, but with checkpointing
+        // planned. Fusion would move the windowed aggregate state into the
+        // NOT-checkpointed columnar op (audit C1), silently losing it on
+        // restore. plan_checkpointing(true) must keep the classic
+        // Window+PartitionedAggregate ops, whose state IS checkpointed.
+        let source = r"
+            event Reading:
+                ts: int
+                device_id: str
+                temperature: float
+
+            stream DeviceAgg = Reading
+                .partition_by(device_id)
+                .window(1s)
+                .aggregate(
+                    s: sum(temperature),
+                    a: avg(temperature),
+                    mn: min(temperature),
+                    mx: max(temperature)
+                )
+                .emit(device_id: device_id, s: s, a: a, mn: mn, mx: mx)
+        ";
+        // Sanity: without planning, this pipeline DOES fuse (guards the test
+        // against the fusion path silently going away).
+        assert!(
+            compile(source).contains(&"PartitionedWindowedColumnarAggregate"),
+            "control: default build should still fuse"
+        );
+        let ops = compile_planned(source);
+        assert!(
+            !ops.contains(&"PartitionedWindowedColumnarAggregate"),
+            "checkpoint-planned build must NOT fuse; got {ops:?}"
+        );
+        assert!(
+            ops.contains(&"Window") && ops.contains(&"PartitionedAggregate"),
+            "checkpoint-planned build must keep the checkpointable \
+             Window+PartitionedAggregate ops; got {ops:?}"
+        );
+    }
+
+    #[test]
+    fn checkpoint_planned_skips_nonpartitioned_window_fusion() {
+        // Non-partitioned variant exercises the other fusion block
+        // (compile_ops_with_sequences, non-partitioned branch).
+        let source = r"
+            event Reading:
+                ts: int
+                temperature: float
+
+            stream Agg = Reading
+                .window(1s)
+                .aggregate(s: sum(temperature), a: avg(temperature))
+                .emit(s: s, a: a)
+        ";
+        assert!(
+            compile(source).contains(&"WindowedColumnarAggregate"),
+            "control: default build should still fuse the non-partitioned window"
+        );
+        let ops = compile_planned(source);
+        assert!(
+            !ops.contains(&"WindowedColumnarAggregate"),
+            "checkpoint-planned build must NOT fuse non-partitioned window; got {ops:?}"
+        );
+        assert!(
+            ops.contains(&"Window") && ops.contains(&"Aggregate"),
+            "checkpoint-planned build must keep Window+Aggregate; got {ops:?}"
         );
     }
 
