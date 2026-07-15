@@ -73,53 +73,11 @@ impl Engine {
             m.record_event(&event.event_type);
         }
 
-        // Check for late data against the watermark
-        if let Some(ref tracker) = self.watermark_tracker {
-            if let Some(effective_wm) = tracker.effective_watermark() {
-                if event.timestamp < effective_wm {
-                    // Event is behind the watermark — check allowed lateness per stream
-                    let mut allowed = false;
-                    if let Some(stream_names) = self.router.get_routes(&event.event_type) {
-                        for sn in stream_names.iter() {
-                            if let Some(cfg) = self.late_data_configs.get(sn) {
-                                if event.timestamp >= effective_wm - cfg.allowed_lateness {
-                                    allowed = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if !allowed && !self.late_data_configs.is_empty() {
-                        // Route to side-output if configured, otherwise drop
-                        let mut routed = false;
-                        if let Some(stream_names) = self.router.get_routes(&event.event_type) {
-                            for sn in stream_names.iter() {
-                                if let Some(cfg) = self.late_data_configs.get(sn) {
-                                    if let Some(ref side_stream) = cfg.side_output_stream {
-                                        debug!(
-                                            "Routing late event to side-output '{}' type={} ts={}",
-                                            side_stream, event.event_type, event.timestamp
-                                        );
-                                        // Create a late-data event with metadata
-                                        let mut late_event = (*event).clone();
-                                        late_event.event_type = side_stream.clone().into();
-                                        self.send_output(late_event);
-                                        routed = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if !routed {
-                            debug!(
-                                "Dropping late event type={} ts={} (watermark={})",
-                                event.event_type, event.timestamp, effective_wm
-                            );
-                        }
-                        return Ok(());
-                    }
-                }
-            }
+        // Watermark: late-data check + per-source observe, shared with the
+        // batch dispatch paths. Returns true when the event was consumed as
+        // late (dropped or routed to a side-output) and must not be dispatched.
+        if self.pre_dispatch_watermark(&event) {
+            return Ok(());
         }
 
         // Process events with depth limit to prevent infinite loops
@@ -127,19 +85,6 @@ impl Engine {
         let mut pending_events: VecDeque<(SharedEvent, usize)> =
             VecDeque::from([(event.clone(), 0)]);
         const MAX_CHAIN_DEPTH: usize = 10;
-
-        // Observe event in watermark tracker (after processing to not block)
-        if let Some(ref mut tracker) = self.watermark_tracker {
-            tracker.observe_event(&event.event_type, event.timestamp);
-
-            if let Some(new_wm) = tracker.effective_watermark() {
-                if self.last_applied_watermark.is_none_or(|last| new_wm > last) {
-                    self.last_applied_watermark = Some(new_wm);
-                    // Note: we don't call apply_watermark_to_windows here to avoid
-                    // double-mutable-borrow. The caller should periodically flush.
-                }
-            }
-        }
 
         // Process events iteratively, feeding output to dependent streams
         while let Some((current_event, depth)) = pending_events.pop_front() {
@@ -253,6 +198,84 @@ impl Engine {
         Ok(())
     }
 
+    /// Pre-dispatch watermark bookkeeping shared by every dispatch path.
+    ///
+    /// Returns `true` when the event is late and was consumed here — dropped, or
+    /// routed to a configured side-output — and therefore must NOT be dispatched
+    /// to streams. Fully synchronous so the sync `process_batch_sync` hot path
+    /// can call it too. Before this existed the late-data check + per-source
+    /// observe lived only in `process_inner`, so batch ingestion (the default
+    /// `run`/`simulate` paths) silently processed late events as on-time and
+    /// never advanced the watermark. In benchmark mode (no tracker) this is a
+    /// single `Option` branch per event.
+    fn pre_dispatch_watermark(&mut self, event: &SharedEvent) -> bool {
+        // 1. Late-data check against the CURRENT effective watermark.
+        if let Some(ref tracker) = self.watermark_tracker {
+            if let Some(effective_wm) = tracker.effective_watermark() {
+                if event.timestamp < effective_wm {
+                    // Event is behind the watermark — allowed only if some target
+                    // stream's configured lateness still covers it.
+                    let mut allowed = false;
+                    if let Some(stream_names) = self.router.get_routes(&event.event_type) {
+                        for sn in stream_names.iter() {
+                            if let Some(cfg) = self.late_data_configs.get(sn) {
+                                if event.timestamp >= effective_wm - cfg.allowed_lateness {
+                                    allowed = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if !allowed && !self.late_data_configs.is_empty() {
+                        // Route to side-output if configured, otherwise drop.
+                        let mut routed = false;
+                        if let Some(stream_names) = self.router.get_routes(&event.event_type) {
+                            for sn in stream_names.iter() {
+                                if let Some(cfg) = self.late_data_configs.get(sn) {
+                                    if let Some(ref side_stream) = cfg.side_output_stream {
+                                        debug!(
+                                            "Routing late event to side-output '{}' type={} ts={}",
+                                            side_stream, event.event_type, event.timestamp
+                                        );
+                                        let mut late_event = (**event).clone();
+                                        late_event.event_type = side_stream.clone().into();
+                                        self.send_output(late_event);
+                                        routed = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if !routed {
+                            debug!(
+                                "Dropping late event type={} ts={} (watermark={})",
+                                event.event_type, event.timestamp, effective_wm
+                            );
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+        // 2. Observe the event to advance per-source watermarks. The window
+        //    flush itself is a separate concern (event-time close is tracked in
+        //    a follow-up); here we only keep the watermark advancing correctly
+        //    across all ingestion paths.
+        if let Some(ref mut tracker) = self.watermark_tracker {
+            tracker.observe_event(&event.event_type, event.timestamp);
+        }
+        false
+    }
+
+    /// Effective event-time watermark across all sources, if watermark tracking
+    /// is enabled. Exposed for CLI/host loops and tests that need to observe
+    /// event-time progress.
+    pub fn effective_watermark(&self) -> Option<DateTime<Utc>> {
+        self.watermark_tracker
+            .as_ref()
+            .and_then(|t| t.effective_watermark())
+    }
+
     /// Process a batch of events for improved throughput (async-runtime only).
     ///
     /// Consecutive events with the same type (at the same chain depth) are
@@ -288,9 +311,15 @@ impl Engine {
         let mut pending_events: VecDeque<(SharedEvent, usize)> =
             VecDeque::with_capacity(batch_size + batch_size / 4);
 
-        // Convert all events to SharedEvents upfront
+        // Convert to SharedEvents; drop / side-output late events via the shared
+        // watermark pre-pass (previously only process_inner ran this, so batch
+        // ingestion ignored allowed_lateness / side-outputs entirely).
         for event in events {
-            pending_events.push_back((Arc::new(event), 0));
+            let shared = Arc::new(event);
+            if self.pre_dispatch_watermark(&shared) {
+                continue;
+            }
+            pending_events.push_back((shared, 0));
         }
 
         const MAX_CHAIN_DEPTH: usize = 10;
@@ -438,9 +467,15 @@ impl Engine {
         let mut pending_events: VecDeque<(SharedEvent, usize)> =
             VecDeque::with_capacity(batch_size + batch_size / 4);
 
-        // Convert all events to SharedEvents upfront
+        // Convert to SharedEvents; drop / side-output late events via the shared
+        // watermark pre-pass (previously only process_inner ran this, so batch
+        // ingestion ignored allowed_lateness / side-outputs entirely).
         for event in events {
-            pending_events.push_back((Arc::new(event), 0));
+            let shared = Arc::new(event);
+            if self.pre_dispatch_watermark(&shared) {
+                continue;
+            }
+            pending_events.push_back((shared, 0));
         }
 
         const MAX_CHAIN_DEPTH: usize = 10;
@@ -631,6 +666,9 @@ impl Engine {
             VecDeque::with_capacity(batch_size + batch_size / 4);
 
         for event in events {
+            if self.pre_dispatch_watermark(&event) {
+                continue;
+            }
             pending_events.push_back((event, 0));
         }
 

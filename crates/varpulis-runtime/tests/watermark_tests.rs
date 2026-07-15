@@ -6,7 +6,7 @@
 //! - Per-source watermark tracking integration with the engine
 //! - Watermark-triggered window closure
 
-use chrono::{Duration, Utc};
+use chrono::{Duration, TimeZone, Utc};
 use tokio::sync::mpsc;
 use varpulis_parser::parse;
 use varpulis_runtime::{Engine, Event};
@@ -127,4 +127,103 @@ async fn test_per_source_watermark_with_engine() {
             .with_timestamp(base_time + Duration::seconds(i));
         engine.process(event).await.expect("Failed to process");
     }
+}
+
+// =============================================================================
+// Audit C2a — watermark observation + late-data handling were wired ONLY into
+// the single-event `process_inner` path. The batch paths (process_batch /
+// process_batch_sync — the default `run`/`simulate` ingestion) silently skipped
+// them: late events were folded into windows as if on-time, and the watermark
+// never advanced under batch ingestion. Fix: a shared `pre_dispatch_watermark`
+// pre-pass runs on every dispatch path.
+// =============================================================================
+
+/// Fixed event-time clock (deterministic, no `Utc::now()`).
+fn c2_ts(secs: i64) -> chrono::DateTime<Utc> {
+    Utc.timestamp_opt(1_700_000_000 + secs, 0).unwrap()
+}
+
+#[test]
+fn late_event_via_process_batch_sync_is_dropped() {
+    // out_of_order:0 + allowed_lateness:0 → any event behind the watermark is
+    // dropped. Feeding a late event through the SYNC batch path must exclude it
+    // from the window aggregate. Before C2a the sync path never checked
+    // lateness, so the count came out 4 instead of 3.
+    let code = r"
+        stream Windowed = SensorEvent
+            .watermark(out_of_order: 0s)
+            .allowed_lateness(0s)
+            .window(10s)
+            .aggregate(n: count())
+            .emit(count: n)
+    ";
+    let program = parse(code).expect("parse");
+    let (tx, mut rx) = mpsc::channel::<Event>(1000);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("load");
+
+    let ev = |secs: i64, v: i64| {
+        Event::new("SensorEvent")
+            .with_field("value", v)
+            .with_timestamp(c2_ts(secs))
+    };
+    engine
+        .process_batch_sync(vec![
+            ev(1, 1),
+            ev(2, 2),
+            ev(3, 3),  // effective watermark now at t=3s
+            ev(1, 99), // LATE: t=1s < watermark, lateness 0 → must be dropped
+            ev(11, 4), // crosses the 10s boundary → closes window [1s, 11s)
+        ])
+        .expect("process");
+
+    let out = rx.try_recv().expect("window should close and emit");
+    assert_eq!(
+        out.data.get("count"),
+        Some(&varpulis_core::Value::Int(3)),
+        "late event must be excluded (would be 4 without the drop); got {:?}",
+        out.data.get("count")
+    );
+}
+
+#[test]
+fn effective_watermark_advances_via_batch_ingestion() {
+    // The batch paths now observe events into the watermark tracker, so the
+    // effective watermark advances under batch ingestion. Before C2a only the
+    // single-event process() path observed, so this accessor stayed None.
+    let code = r"
+        stream W = SensorEvent
+            .watermark(out_of_order: 0s)
+            .window(1m)
+            .aggregate(n: count())
+            .emit(count: n)
+    ";
+    let program = parse(code).expect("parse");
+    let (tx, _rx) = mpsc::channel::<Event>(1000);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("load");
+
+    assert!(
+        engine.effective_watermark().is_none(),
+        "no events observed yet → no watermark"
+    );
+
+    let ev = |secs: i64| {
+        Event::new("SensorEvent")
+            .with_field("value", 1_i64)
+            .with_timestamp(c2_ts(secs))
+    };
+    engine
+        .process_batch_sync(vec![ev(1), ev(2), ev(3)])
+        .expect("process");
+
+    assert!(
+        engine.effective_watermark().is_some(),
+        "batch ingestion must advance the effective watermark (was None before C2a)"
+    );
+    assert_eq!(
+        engine.effective_watermark(),
+        Some(c2_ts(3)),
+        "watermark should equal max observed ts (out_of_order 0)"
+    );
 }
