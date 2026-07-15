@@ -257,8 +257,8 @@ impl Engine {
     ///
     /// Consecutive events with the same type (at the same chain depth) are
     /// grouped into a **run** and pushed through the pipeline in a single
-    /// `execute_pipeline` call when the target stream is
-    /// [batch-safe](Self::stream_is_batch_safe). This amortizes the
+    /// `execute_pipeline` call when the target stream is batch-safe (see
+    /// `stream_is_batch_safe`). This amortizes the
     /// per-event dispatch cost and — critically — lets `.to()` hand whole
     /// batches to sink connectors instead of one event at a time. Because
     /// runs are consecutive, global FIFO order is preserved exactly.
