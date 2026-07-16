@@ -131,7 +131,7 @@ fn default_version() -> u32 {
 }
 
 /// A single credential profile that can be merged into a [`ConnectorConfig`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ConnectorProfile {
     /// Optional connector type constraint. When set, the profile can only be
     /// merged into configs of the same type.
@@ -140,6 +140,30 @@ pub struct ConnectorProfile {
     /// Key-value properties to merge into the connector config.
     #[serde(default)]
     pub properties: IndexMap<String, String>,
+}
+
+/// Hand-written so plaintext credentials in `properties` never reach logs /
+/// errors / panic output via `{:?}`. Sensitive fields (see [`is_sensitive_field`])
+/// are masked unless already stored as an `ENC[…]` envelope (ciphertext is safe
+/// to show). The derived Debug printed plaintext secrets verbatim.
+impl std::fmt::Debug for ConnectorProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted: IndexMap<&String, &str> = self
+            .properties
+            .iter()
+            .map(|(k, v)| {
+                if is_sensitive_field(k) && !is_encrypted(v) {
+                    (k, "***REDACTED***")
+                } else {
+                    (k, v.as_str())
+                }
+            })
+            .collect();
+        f.debug_struct("ConnectorProfile")
+            .field("connector_type", &self.connector_type)
+            .field("properties", &redacted)
+            .finish()
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -535,6 +559,40 @@ impl CredentialsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connector_profile_debug_redacts_plaintext_secrets() {
+        let mut properties = IndexMap::new();
+        properties.insert("username".to_string(), "svc-account".to_string());
+        properties.insert("password".to_string(), "plaintext-pw".to_string());
+        properties.insert(
+            "sasl_password".to_string(),
+            "ENC[AES256-GCM,abc123]".to_string(),
+        );
+        let profile = ConnectorProfile {
+            connector_type: Some("kafka".to_string()),
+            properties,
+        };
+
+        let rendered = format!("{profile:?}");
+        assert!(
+            !rendered.contains("plaintext-pw"),
+            "plaintext secret leaked in Debug: {rendered}"
+        );
+        assert!(
+            rendered.contains("***REDACTED***"),
+            "plaintext secret must be masked"
+        );
+        assert!(
+            rendered.contains("svc-account"),
+            "non-secret should stay: {rendered}"
+        );
+        // Already-encrypted values are ciphertext — safe to show as-is.
+        assert!(
+            rendered.contains("ENC[AES256-GCM,abc123]"),
+            "encrypted value should be shown verbatim: {rendered}"
+        );
+    }
 
     const PLAINTEXT_YAML: &str = r"
 version: 1
