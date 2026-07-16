@@ -199,15 +199,24 @@ pub trait SinkConnector: Send + Sync {
     async fn send(&self, event: &Event) -> Result<(), ConnectorError>;
 
     /// Send a batch of events to a specific topic (for dynamic routing).
+    ///
+    /// The default **rejects** dynamic-topic routing rather than silently
+    /// delivering to the connector's fixed destination. Silently ignoring the
+    /// caller's `.to(topic)` intent ships data to the wrong place with no
+    /// signal — a connector that cannot honor a per-event topic must say so.
+    /// Connectors that *can* route by topic (Kafka topic, MQTT topic, NATS
+    /// subject, …) override this; the rest surface an explicit error the engine
+    /// logs (and can dead-letter) instead of dropping the routing intent.
     async fn send_to_topic(
         &self,
-        events: &[std::sync::Arc<Event>],
-        _topic: &str,
+        _events: &[std::sync::Arc<Event>],
+        topic: &str,
     ) -> Result<(), ConnectorError> {
-        for event in events {
-            self.send(event).await?;
-        }
-        Ok(())
+        Err(ConnectorError::SendFailed(format!(
+            "connector '{}' does not support dynamic topic routing \
+             (.to(\"{topic}\")); it delivers to its configured destination only",
+            self.name()
+        )))
     }
 
     /// Flush any internally buffered events.
@@ -315,6 +324,50 @@ pub enum ConnectorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A connector with a single fixed destination that does NOT override
+    /// `send_to_topic` — exercises the trait default.
+    struct FixedDestinationSink;
+
+    #[async_trait]
+    impl SinkConnector for FixedDestinationSink {
+        fn name(&self) -> &str {
+            "fixed-dest"
+        }
+        async fn send(&self, _event: &Event) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn flush(&self) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn close(&self) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn send_to_topic_default_rejects_instead_of_silently_dropping() {
+        let sink = FixedDestinationSink;
+        let events = vec![std::sync::Arc::new(Event::new("E"))];
+        // A connector that cannot route by topic must fail loud, NOT silently
+        // deliver to its fixed destination — that would drop the caller's
+        // `.to(topic)` routing intent and send data to the wrong place.
+        let err = sink
+            .send_to_topic(&events, "dynamic-topic")
+            .await
+            .expect_err("default send_to_topic must reject dynamic routing");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("dynamic topic routing"),
+            "error should explain the rejection: {msg}"
+        );
+        assert!(
+            msg.contains("dynamic-topic"),
+            "error should name the requested topic: {msg}"
+        );
+        // The normal fixed-destination send path stays unaffected.
+        assert!(sink.send(&Event::new("E")).await.is_ok());
+    }
 
     #[test]
     fn connector_config_debug_redacts_url_and_property_secrets() {
