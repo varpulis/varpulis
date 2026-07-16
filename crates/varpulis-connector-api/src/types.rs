@@ -18,7 +18,7 @@ use varpulis_core::Event;
 /// - `url`: Connection URL or address
 /// - `topic`: Optional topic, channel, or path for the connection
 /// - `properties`: Additional key-value properties specific to the connector type
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ConnectorConfig {
     /// Connector type identifier (e.g., "mqtt", "kafka", "http", "file")
     pub connector_type: String,
@@ -28,6 +28,69 @@ pub struct ConnectorConfig {
     pub topic: Option<String>,
     /// Additional connector-specific properties
     pub properties: IndexMap<String, String>,
+}
+
+/// Mask the password in a `scheme://user:password@host…` URL.
+///
+/// Returns the URL unchanged when there is no userinfo password. Connection URLs
+/// (Redis, AMQP, Postgres, Mongo…) routinely embed the password this way.
+fn redact_url_password(url: &str) -> String {
+    let Some(scheme_end) = url.find("://") else {
+        return url.to_string();
+    };
+    let rest = &url[scheme_end + 3..];
+    // Userinfo is everything before the first '@' within the authority (up to
+    // the first '/').
+    let authority_end = rest.find('/').unwrap_or(rest.len());
+    let Some(at) = rest[..authority_end].find('@') else {
+        return url.to_string();
+    };
+    let userinfo = &rest[..at];
+    let Some(colon) = userinfo.find(':') else {
+        return url.to_string();
+    };
+    format!(
+        "{}://{}:***REDACTED***@{}",
+        &url[..scheme_end],
+        &userinfo[..colon],
+        &rest[at + 1..]
+    )
+}
+
+/// True when a property key names a secret that must not be logged.
+fn is_secret_key(key: &str) -> bool {
+    let k = key.to_ascii_lowercase();
+    k.contains("password")
+        || k.contains("secret")
+        || k.contains("token")
+        || k.contains("apikey")
+        || k.contains("api_key")
+}
+
+/// Hand-written so credentials never reach logs / errors / panic output via
+/// `{:?}`. The derived Debug printed the raw `properties` map (which carries
+/// password/token/sasl_password before they become typed SecretStrings) and the
+/// `url` (which can embed `user:password@`).
+impl std::fmt::Debug for ConnectorConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted_props: IndexMap<&String, &str> = self
+            .properties
+            .iter()
+            .map(|(k, v)| {
+                if is_secret_key(k) {
+                    (k, "***REDACTED***")
+                } else {
+                    (k, v.as_str())
+                }
+            })
+            .collect();
+        f.debug_struct("ConnectorConfig")
+            .field("connector_type", &self.connector_type)
+            .field("url", &redact_url_password(&self.url))
+            .field("topic", &self.topic)
+            .field("properties", &redacted_props)
+            .finish()
+    }
 }
 
 impl ConnectorConfig {
@@ -247,4 +310,55 @@ pub enum ConnectorError {
     /// Requested connector type is not available.
     #[error("Connector not available: {0}")]
     NotAvailable(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connector_config_debug_redacts_url_and_property_secrets() {
+        let config = ConnectorConfig::new("redis", "redis://user:s3cr3t-pw@host:6379")
+            .with_property("password", "prop-secret")
+            .with_property("auth_token", "tok-xyz")
+            .with_property("sasl_username", "svc-account");
+        let rendered = format!("{config:?}");
+        // URL password masked.
+        assert!(
+            !rendered.contains("s3cr3t-pw"),
+            "url password leaked: {rendered}"
+        );
+        // Secret-keyed properties masked.
+        assert!(
+            !rendered.contains("prop-secret"),
+            "property password leaked: {rendered}"
+        );
+        assert!(
+            !rendered.contains("tok-xyz"),
+            "property token leaked: {rendered}"
+        );
+        assert!(rendered.contains("***REDACTED***"));
+        // Non-secret property + the URL user stay visible.
+        assert!(
+            rendered.contains("svc-account"),
+            "non-secret should stay: {rendered}"
+        );
+        assert!(
+            rendered.contains("user:***REDACTED***@host"),
+            "url user kept, pw masked: {rendered}"
+        );
+    }
+
+    #[test]
+    fn redact_url_password_leaves_plain_urls_and_masks_userinfo() {
+        assert_eq!(
+            redact_url_password("redis://host:6379"),
+            "redis://host:6379"
+        );
+        assert_eq!(redact_url_password("http://host/path"), "http://host/path");
+        assert_eq!(
+            redact_url_password("amqp://:pw@host"),
+            "amqp://:***REDACTED***@host"
+        );
+    }
 }
