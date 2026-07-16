@@ -26,6 +26,12 @@ impl Default for DlqConfig {
     }
 }
 
+/// Raw source payloads are truncated to this many bytes before being written
+/// to the DLQ, bounding the on-disk line size for pathological (e.g. oversized)
+/// records. The full original length is always recorded separately in
+/// [`DlqRawEntry::payload_len`].
+const MAX_RAW_PAYLOAD_BYTES: usize = 65_536;
+
 /// A dead letter queue entry with error metadata.
 #[derive(serde::Serialize)]
 struct DlqEntry<'a> {
@@ -37,6 +43,32 @@ struct DlqEntry<'a> {
     error: &'a str,
     /// The event that failed to deliver.
     event: &'a Event,
+}
+
+/// A dead letter entry for a **raw** payload that could not be decoded into an
+/// [`Event`] — e.g. a malformed-JSON or oversized record rejected at a *source*
+/// before it ever became an `Event`. There is no `Event` to attach, so the
+/// original bytes (best-effort UTF-8, truncated) are preserved alongside the
+/// source coordinates so the record stays inspectable and replayable instead of
+/// being silently dropped with its offset advanced past it.
+#[derive(serde::Serialize)]
+struct DlqRawEntry<'a> {
+    /// ISO-8601 timestamp when the payload was dead-lettered.
+    timestamp: String,
+    /// Source connector name.
+    connector: &'a str,
+    /// Why the payload was rejected (decode error text or size-limit message).
+    error: &'a str,
+    /// Source coordinates, e.g. `"topic=t partition=0 offset=42"`.
+    source: &'a str,
+    /// Original payload rendered as best-effort UTF-8 and truncated to
+    /// [`MAX_RAW_PAYLOAD_BYTES`]. Malformed-JSON text round-trips exactly;
+    /// non-UTF-8 bytes are replaced with U+FFFD.
+    payload: String,
+    /// True byte length of the original payload, before truncation.
+    payload_len: usize,
+    /// Whether `payload` was truncated (`payload_len > MAX_RAW_PAYLOAD_BYTES`).
+    truncated: bool,
 }
 
 /// Owned version of a DLQ entry for reading entries back.
@@ -108,6 +140,39 @@ impl DeadLetterQueue {
             connector,
             error,
             event,
+        };
+
+        if let Ok(line) = serde_json::to_string(&entry) {
+            let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
+            // Best-effort: log but don't propagate DLQ write errors.
+            if writeln!(file, "{line}").is_ok() {
+                self.events_total.fetch_add(1, Ordering::Relaxed);
+                self.current_lines.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        self.maybe_rotate();
+    }
+
+    /// Write a **raw**, undecodable source payload to the DLQ.
+    ///
+    /// Unlike [`write`](Self::write), this accepts bytes that never became an
+    /// [`Event`] — a source-side decode failure or an oversized record. The
+    /// bytes are preserved (best-effort UTF-8, truncated to a bounded size)
+    /// together with the source coordinates so the record can be inspected or
+    /// replayed. This is the Varpulis "never silently dropped" guarantee applied
+    /// to the ingest path: a poison record is captured here instead of vanishing
+    /// as the consumer offset advances past it.
+    pub fn write_raw(&self, connector: &str, error: &str, source: &str, payload: &[u8]) {
+        let capped = &payload[..payload.len().min(MAX_RAW_PAYLOAD_BYTES)];
+        let entry = DlqRawEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            connector,
+            error,
+            source,
+            payload: String::from_utf8_lossy(capped).into_owned(),
+            payload_len: payload.len(),
+            truncated: payload.len() > MAX_RAW_PAYLOAD_BYTES,
         };
 
         if let Ok(line) = serde_json::to_string(&entry) {
@@ -286,6 +351,68 @@ mod tests {
         assert_eq!(entry["error"], "connection refused");
         assert!(entry["timestamp"].is_string());
         assert!(entry["event"].is_object());
+
+        let _ = std::fs::remove_file(&dir);
+    }
+
+    #[test]
+    fn test_dlq_write_raw_preserves_bytes_and_metadata() {
+        let dir = std::env::temp_dir().join("varpulis_dlq_raw_test");
+        let _ = std::fs::remove_file(&dir);
+
+        let dlq = DeadLetterQueue::open(&dir).unwrap();
+        assert_eq!(dlq.count(), 0);
+
+        let malformed = b"{ this is not json";
+        dlq.write_raw(
+            "kafka-source",
+            "decode failed: expected value",
+            "topic=events partition=0 offset=42",
+            malformed,
+        );
+        assert_eq!(dlq.count(), 1);
+
+        // The raw entry is a valid JSON line carrying the original bytes and
+        // source coordinates — so the poison record is recoverable, not lost.
+        let content = std::fs::read_to_string(&dir).unwrap();
+        let entry: serde_json::Value =
+            serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert_eq!(entry["connector"], "kafka-source");
+        assert_eq!(entry["source"], "topic=events partition=0 offset=42");
+        assert_eq!(entry["payload"], "{ this is not json");
+        assert_eq!(entry["payload_len"], malformed.len());
+        assert_eq!(entry["truncated"], false);
+        assert!(entry["timestamp"].is_string());
+
+        let _ = std::fs::remove_file(&dir);
+    }
+
+    #[test]
+    fn test_dlq_write_raw_truncates_oversized_payload() {
+        let dir = std::env::temp_dir().join("varpulis_dlq_raw_trunc_test");
+        let _ = std::fs::remove_file(&dir);
+
+        let dlq = DeadLetterQueue::open(&dir).unwrap();
+
+        let huge = vec![b'x'; MAX_RAW_PAYLOAD_BYTES + 4_096];
+        dlq.write_raw(
+            "kafka-source",
+            "payload too large",
+            "topic=t offset=1",
+            &huge,
+        );
+
+        let content = std::fs::read_to_string(&dir).unwrap();
+        let entry: serde_json::Value =
+            serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        // Full length is recorded even though the stored bytes are capped.
+        assert_eq!(entry["payload_len"], huge.len());
+        assert_eq!(entry["truncated"], true);
+        assert_eq!(
+            entry["payload"].as_str().unwrap().len(),
+            MAX_RAW_PAYLOAD_BYTES,
+            "stored payload must be capped at MAX_RAW_PAYLOAD_BYTES"
+        );
 
         let _ = std::fs::remove_file(&dir);
     }

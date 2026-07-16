@@ -15,8 +15,11 @@ use tracing::{error, info};
 use varpulis_connector_api::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use varpulis_connector_api::decode::EventDecoder;
 use varpulis_connector_api::sink::{Sink, SinkError};
-use varpulis_connector_api::{ConnectorError, EngineOffsetRegistry, ManagedConnector};
+use varpulis_connector_api::{
+    ConnectorError, ConnectorHealthReport, EngineOffsetRegistry, ManagedConnector,
+};
 use varpulis_core::Event;
+use varpulis_dead_letter::DeadLetterQueue;
 
 use crate::KafkaConfig;
 
@@ -145,6 +148,19 @@ pub struct ManagedKafkaConnector {
     /// so the checkpoint barrier can drain in-flight events and snapshot a
     /// coherent offset set. `None` until the driver wires it at startup.
     source_paused: Option<Arc<AtomicBool>>,
+    /// Count of source records that could not be turned into an `Event` — a
+    /// malformed payload that failed to decode, or an oversized record rejected
+    /// before decode. Shared with the spawned consume task, which increments it,
+    /// and read back via [`decode_failures`](Self::decode_failures) and the
+    /// connector health report. Audit HIGH: these used to be dropped silently
+    /// (a bare `debug!`) while the offset advanced past them; the counter makes
+    /// every drop observable.
+    decode_failures: Arc<AtomicU64>,
+    /// Optional dead-letter sink for raw, undecodable source payloads. When set
+    /// (via [`with_dead_letter_queue`](Self::with_dead_letter_queue)) the
+    /// original bytes of every dropped record are preserved here for inspection
+    /// or replay instead of being lost. `None` = count + warn only.
+    dead_letter: Option<Arc<DeadLetterQueue>>,
 }
 
 impl std::fmt::Debug for ManagedKafkaConnector {
@@ -168,7 +184,26 @@ impl ManagedKafkaConnector {
             engine_offsets: None,
             txn_state: None,
             source_paused: None,
+            decode_failures: Arc::new(AtomicU64::new(0)),
+            dead_letter: None,
         }
+    }
+
+    /// Attach a dead-letter queue for raw source payloads that fail to decode
+    /// (malformed) or exceed the size limit. Without one, such records are still
+    /// counted and logged; with one, their original bytes are additionally
+    /// preserved for inspection or replay so nothing is silently dropped.
+    pub fn with_dead_letter_queue(mut self, dlq: Arc<DeadLetterQueue>) -> Self {
+        self.dead_letter = Some(dlq);
+        self
+    }
+
+    /// Number of source records dropped because they could not be decoded into
+    /// an `Event` or exceeded the payload size limit. A non-zero value means
+    /// poison records were observed (and dead-lettered, if a DLQ is attached),
+    /// never silently discarded.
+    pub fn decode_failures(&self) -> u64 {
+        self.decode_failures.load(Ordering::Relaxed)
     }
 
     fn ensure_producer(&mut self) -> Result<FutureProducer, ConnectorError> {
@@ -238,6 +273,13 @@ impl ManagedConnector for ManagedKafkaConnector {
 
     fn connector_type(&self) -> &str {
         "kafka"
+    }
+
+    fn health(&self) -> ConnectorHealthReport {
+        ConnectorHealthReport {
+            decode_failures: self.decode_failures.load(Ordering::Relaxed),
+            ..Default::default()
+        }
     }
 
     #[tracing::instrument(level = "debug", skip(self, tx, params))]
@@ -326,6 +368,8 @@ impl ManagedConnector for ManagedKafkaConnector {
         let topic_owned = topic.to_string();
         let engine_offsets = self.engine_offsets.clone();
         let source_paused = self.source_paused.clone();
+        let decode_failures = self.decode_failures.clone();
+        let dead_letter = self.dead_letter.clone();
 
         tokio::spawn(async move {
             use futures_util::StreamExt;
@@ -442,11 +486,30 @@ impl ManagedConnector for ManagedKafkaConnector {
                                     if payload.len()
                                         > varpulis_connector_api::limits::MAX_EVENT_PAYLOAD_BYTES
                                     {
+                                        // Oversized record: reject before decode, but do NOT
+                                        // drop it silently. Count it, warn with its
+                                        // coordinates, and dead-letter the raw bytes when a
+                                        // DLQ is attached so it stays recoverable.
+                                        decode_failures.fetch_add(1, Ordering::Relaxed);
                                         tracing::warn!(
-                                            "Managed Kafka {}: payload too large ({} bytes), skipped",
+                                            topic = %topic_owned,
+                                            partition,
+                                            offset = msg_offset,
+                                            payload_len = payload.len(),
+                                            limit = varpulis_connector_api::limits::MAX_EVENT_PAYLOAD_BYTES,
+                                            "Managed Kafka {}: payload too large, dead-lettered and skipped",
                                             name,
-                                            payload.len()
                                         );
+                                        if let Some(ref dlq) = dead_letter {
+                                            dlq.write_raw(
+                                                &name,
+                                                "kafka source: payload exceeds size limit",
+                                                &format!(
+                                                    "topic={topic_owned} partition={partition} offset={msg_offset}"
+                                                ),
+                                                payload,
+                                            );
+                                        }
                                     } else {
                                         match decoder.decode("KafkaEvent", payload) {
                                             Ok(event) => {
@@ -454,11 +517,35 @@ impl ManagedConnector for ManagedKafkaConnector {
                                                 pushed = true;
                                             }
                                             Err(e) => {
-                                                tracing::debug!(
-                                                    "Managed Kafka {}: JSON decode failed, skipped: {}",
+                                                // Audit HIGH: a decode failure used to be a
+                                                // bare `debug!` while the offset advanced past
+                                                // the record (via later records' high-water
+                                                // mark) — a silent, unrecoverable gap that
+                                                // breaks the "never silently dropped" promise.
+                                                // Now: count it, `warn!` with the exact
+                                                // topic/partition/offset, and dead-letter the
+                                                // raw bytes when a DLQ is attached.
+                                                decode_failures.fetch_add(1, Ordering::Relaxed);
+                                                tracing::warn!(
+                                                    topic = %topic_owned,
+                                                    partition,
+                                                    offset = msg_offset,
+                                                    error = %e,
+                                                    "Managed Kafka {}: decode failed, dead-lettered and skipped",
                                                     name,
-                                                    e
                                                 );
+                                                if let Some(ref dlq) = dead_letter {
+                                                    dlq.write_raw(
+                                                        &name,
+                                                        &format!(
+                                                            "kafka source: decode failed: {e}"
+                                                        ),
+                                                        &format!(
+                                                            "topic={topic_owned} partition={partition} offset={msg_offset}"
+                                                        ),
+                                                        payload,
+                                                    );
+                                                }
                                             }
                                         }
                                     }
