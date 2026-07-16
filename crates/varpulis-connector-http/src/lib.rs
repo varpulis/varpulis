@@ -116,10 +116,18 @@ impl SinkConnector for HttpSink {
 
         match req.send().await {
             Ok(resp) => {
-                if !resp.status().is_success() {
-                    warn!("HTTP sink {} got status {}", self.name, resp.status());
+                let status = resp.status();
+                if status.is_success() {
+                    Ok(())
+                } else {
+                    // A non-2xx means the target REJECTED the event. Returning
+                    // Ok here silently lost it — the engine considered the send
+                    // done, so no retry / dead-letter. Surface it as an error.
+                    warn!("HTTP sink {} got status {}", self.name, status);
+                    Err(ConnectorError::SendFailed(format!(
+                        "HTTP sink target returned non-success status {status}"
+                    )))
                 }
-                Ok(())
             }
             Err(e) => {
                 error!("HTTP sink {} error: {}", self.name, e);
@@ -571,6 +579,38 @@ fn json_to_event_from_json(json: &serde_json::Value) -> Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Spawn a throwaway HTTP server that answers POST `/` with `status`.
+    async fn spawn_status_server(status: axum::http::StatusCode) -> String {
+        let app =
+            axum::Router::new().route("/", axum::routing::post(move || async move { status }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}/")
+    }
+
+    #[tokio::test]
+    async fn http_sink_returns_err_on_non_2xx() {
+        // The target rejects with 500. Before the fix HttpSink swallowed this and
+        // returned Ok — silently losing the event (no retry / dead-letter).
+        let url = spawn_status_server(axum::http::StatusCode::INTERNAL_SERVER_ERROR).await;
+        let sink = HttpSink::new("test", &url);
+        let result = sink.send(&Event::new("Evt")).await;
+        assert!(
+            result.is_err(),
+            "a non-2xx target must surface an error, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_sink_ok_on_2xx() {
+        let url = spawn_status_server(axum::http::StatusCode::OK).await;
+        let sink = HttpSink::new("test", &url);
+        assert!(sink.send(&Event::new("Evt")).await.is_ok());
+    }
 
     #[test]
     fn http_config_debug_redacts_api_key() {

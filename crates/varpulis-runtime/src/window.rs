@@ -456,6 +456,22 @@ pub struct SessionWindow {
     pub(crate) columnar: ColumnarBuffer,
     /// Last event time (pub(crate) for checkpoint access)
     pub(crate) last_event_time: Option<DateTime<Utc>>,
+    /// C2b event-time mode: sessions live in `open_sessions`, merge on
+    /// out-of-order arrivals, and close only when the watermark passes
+    /// `session_end + gap` (see [`Self::drain_watermark`]). `add_shared`
+    /// never self-fires in this mode.
+    watermark_driven: bool,
+    /// Open sessions, disjoint and sorted by start; consecutive sessions are
+    /// separated by more than `gap` (otherwise they merge).
+    open_sessions: Vec<OpenSession>,
+}
+
+/// One open event-time session (C2b watermark mode).
+#[derive(Debug)]
+struct OpenSession {
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    events: Vec<SharedEvent>,
 }
 
 impl SessionWindow {
@@ -464,12 +480,35 @@ impl SessionWindow {
             gap,
             columnar: ColumnarBuffer::new(),
             last_event_time: None,
+            watermark_driven: false,
+            open_sessions: Vec::new(),
         }
+    }
+
+    /// Create a session window in watermark-driven (event-time) mode.
+    ///
+    /// Out-of-order events extend or merge the correct session by their own
+    /// timestamp; a session closes only when the watermark passes
+    /// `session_end + gap`, never on arrival of a later event.
+    pub fn new_watermark_driven(gap: Duration) -> Self {
+        let mut w = Self::new(gap);
+        w.watermark_driven = true;
+        w
+    }
+
+    /// Whether this session window closes on watermark advance instead of
+    /// on arrival / wall clock.
+    pub const fn is_watermark_driven(&self) -> bool {
+        self.watermark_driven
     }
 
     /// Add a shared event to the session window.
     /// Returns the completed session if the gap was exceeded.
     pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
+        if self.watermark_driven {
+            self.insert_event_time(event);
+            return None;
+        }
         let event_time = event.timestamp;
         if let Some(last_time) = self.last_event_time {
             if event_time - last_time > self.gap {
@@ -486,6 +525,74 @@ impl SessionWindow {
         None
     }
 
+    /// File an event into the open session set by its own timestamp,
+    /// merging sessions the event bridges (C2b event-time mode).
+    fn insert_event_time(&mut self, event: SharedEvent) {
+        let ts = event.timestamp;
+        // First session whose extended interval [start − gap, end + gap]
+        // can still reach `ts` from the left.
+        let idx = self
+            .open_sessions
+            .partition_point(|s| s.end + self.gap < ts);
+        if let Some(session) = self.open_sessions.get_mut(idx) {
+            if ts >= session.start - self.gap {
+                // Joins this session; extending the end may bridge into the
+                // following session(s).
+                if ts < session.start {
+                    session.start = ts;
+                }
+                if ts > session.end {
+                    session.end = ts;
+                }
+                session.events.push(event);
+                while idx + 1 < self.open_sessions.len()
+                    && self.open_sessions[idx + 1].start - self.open_sessions[idx].end <= self.gap
+                {
+                    let next = self.open_sessions.remove(idx + 1);
+                    let session = &mut self.open_sessions[idx];
+                    if next.end > session.end {
+                        session.end = next.end;
+                    }
+                    session.events.extend(next.events);
+                }
+                return;
+            }
+        }
+        // Standalone session between idx-1 and idx.
+        self.open_sessions.insert(
+            idx,
+            OpenSession {
+                start: ts,
+                end: ts,
+                events: vec![event],
+            },
+        );
+    }
+
+    /// Close every open session the watermark has passed (C2b event-time
+    /// mode): a session graduates when `wm ≥ session_end + gap`. Returns one
+    /// `(session_start_ms, events)` entry per closed session, in ascending
+    /// session-start order.
+    pub fn drain_watermark(&mut self, wm: DateTime<Utc>) -> Vec<(i64, Vec<SharedEvent>)> {
+        let mut out = Vec::new();
+        let gap = self.gap;
+        let mut i = 0;
+        while i < self.open_sessions.len() {
+            if wm >= self.open_sessions[i].end + gap {
+                let s = self.open_sessions.remove(i);
+                out.push((s.start.timestamp_millis(), s.events));
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// Whether any event-time sessions are still open (C2b watermark mode).
+    pub fn has_open_sessions(&self) -> bool {
+        !self.open_sessions.is_empty()
+    }
+
     /// Add an event (wraps in Arc).
     pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
         self.add_shared(Arc::new(event))
@@ -494,7 +601,14 @@ impl SessionWindow {
 
     /// Check if this session has expired (last event time + gap < now).
     /// Returns accumulated events if expired, None otherwise.
+    ///
+    /// Watermark-driven sessions close on event time, never on the wall
+    /// clock, so this sweep is a no-op for them (they graduate via
+    /// [`Self::drain_watermark`]).
     pub fn check_expired(&mut self, now: DateTime<Utc>) -> Option<Vec<SharedEvent>> {
+        if self.watermark_driven {
+            return None;
+        }
         if let Some(last) = self.last_event_time {
             if now - last > self.gap {
                 return Some(self.flush_shared());
@@ -511,6 +625,13 @@ impl SessionWindow {
     /// Flush all events as SharedEvent references.
     pub fn flush_shared(&mut self) -> Vec<SharedEvent> {
         self.last_event_time = None;
+        if self.watermark_driven {
+            let mut all: Vec<SharedEvent> = Vec::new();
+            for s in self.open_sessions.drain(..) {
+                all.extend(s.events);
+            }
+            return all;
+        }
         self.columnar.take_all()
     }
 
@@ -528,15 +649,28 @@ impl SessionWindow {
             .collect()
     }
 
+    /// Serialize the buffered events for a checkpoint — the open event-time
+    /// sessions in watermark mode, the single columnar buffer otherwise.
+    pub(crate) fn checkpoint_events(&self) -> Vec<SerializableEvent> {
+        if self.watermark_driven {
+            return self
+                .open_sessions
+                .iter()
+                .flat_map(|s| s.events.iter())
+                .map(|e| SerializableEvent::from(e.as_ref()))
+                .collect();
+        }
+        self.columnar
+            .events()
+            .iter()
+            .map(|e| SerializableEvent::from(e.as_ref()))
+            .collect()
+    }
+
     /// Create a checkpoint of the current session state.
     pub fn checkpoint(&self) -> WindowCheckpoint {
         WindowCheckpoint {
-            events: self
-                .columnar
-                .events()
-                .iter()
-                .map(|e| SerializableEvent::from(e.as_ref()))
-                .collect(),
+            events: self.checkpoint_events(),
             window_start_ms: self.last_event_time.map(|t| t.timestamp_millis()),
             last_emit_ms: None,
             partitions: std::collections::HashMap::new(),
@@ -545,6 +679,15 @@ impl SessionWindow {
 
     /// Restore session state from a checkpoint.
     pub fn restore(&mut self, cp: &WindowCheckpoint) {
+        if self.watermark_driven {
+            // Re-file each event through the event-time path; session
+            // intervals and merges are rebuilt from the timestamps.
+            self.open_sessions.clear();
+            for se in &cp.events {
+                self.insert_event_time(Arc::new(Event::from(se.clone())));
+            }
+            return;
+        }
         let events: Vec<SharedEvent> = cp
             .events
             .iter()
@@ -581,6 +724,9 @@ pub struct PartitionedSessionWindow {
     partition_key: String,
     gap: Duration,
     windows: FxHashMap<String, SessionWindow>,
+    /// C2b event-time mode: per-key sessions are created watermark-driven
+    /// and close only via [`Self::drain_watermark`].
+    watermark_driven: bool,
 }
 
 impl PartitionedSessionWindow {
@@ -589,7 +735,22 @@ impl PartitionedSessionWindow {
             partition_key,
             gap,
             windows: FxHashMap::default(),
+            watermark_driven: false,
         }
+    }
+
+    /// Create a partitioned session window in watermark-driven (event-time)
+    /// mode. See [`SessionWindow::new_watermark_driven`].
+    pub fn new_watermark_driven(partition_key: String, gap: Duration) -> Self {
+        let mut w = Self::new(partition_key, gap);
+        w.watermark_driven = true;
+        w
+    }
+
+    /// Whether per-key sessions close on watermark advance instead of on
+    /// arrival / wall clock.
+    pub const fn is_watermark_driven(&self) -> bool {
+        self.watermark_driven
     }
 
     /// Add a shared event to the appropriate partition session.
@@ -599,10 +760,15 @@ impl PartitionedSessionWindow {
             |v| v.to_partition_key().into_owned(),
         );
 
-        let window = self
-            .windows
-            .entry(key)
-            .or_insert_with(|| SessionWindow::new(self.gap));
+        let watermark_driven = self.watermark_driven;
+        let gap = self.gap;
+        let window = self.windows.entry(key).or_insert_with(|| {
+            if watermark_driven {
+                SessionWindow::new_watermark_driven(gap)
+            } else {
+                SessionWindow::new(gap)
+            }
+        });
 
         window.add_shared(event)
     }
@@ -616,7 +782,13 @@ impl PartitionedSessionWindow {
     /// Check all partitions for expired sessions.
     /// Returns a list of (partition_key, events) for each expired session,
     /// and removes those partitions from the map.
+    ///
+    /// Watermark-driven sessions close on event time, never on the wall
+    /// clock — this sweep is a no-op for them.
     pub fn check_expired(&mut self, now: DateTime<Utc>) -> Vec<(String, Vec<SharedEvent>)> {
+        if self.watermark_driven {
+            return Vec::new();
+        }
         let mut expired = Vec::with_capacity(self.windows.len());
         let mut to_remove = Vec::new();
         for (key, window) in &mut self.windows {
@@ -664,12 +836,7 @@ impl PartitionedSessionWindow {
                 (
                     key.clone(),
                     PartitionedWindowCheckpoint {
-                        events: window
-                            .columnar
-                            .events()
-                            .iter()
-                            .map(|e| SerializableEvent::from(e.as_ref()))
-                            .collect(),
+                        events: window.checkpoint_events(),
                         window_start_ms: window.last_event_time.map(|t| t.timestamp_millis()),
                     },
                 )
@@ -688,6 +855,14 @@ impl PartitionedSessionWindow {
     pub fn restore(&mut self, cp: &WindowCheckpoint) {
         self.windows.clear();
         for (key, pcp) in &cp.partitions {
+            if self.watermark_driven {
+                let mut window = SessionWindow::new_watermark_driven(self.gap);
+                for se in &pcp.events {
+                    window.insert_event_time(Arc::new(Event::from(se.clone())));
+                }
+                self.windows.insert(key.clone(), window);
+                continue;
+            }
             let mut window = SessionWindow::new(self.gap);
             let events: Vec<SharedEvent> = pcp
                 .events
@@ -718,6 +893,23 @@ impl PartitionedSessionWindow {
             self.windows.remove(&key);
         }
         expired
+    }
+
+    /// Close graduated event-time sessions across all partitions (C2b
+    /// watermark mode). Returns one `(session_start_ms, partition_key,
+    /// events)` entry per closed session, ordered by session start then key;
+    /// partitions with no remaining open sessions are removed.
+    pub fn drain_watermark(&mut self, wm: DateTime<Utc>) -> Vec<(i64, String, Vec<SharedEvent>)> {
+        let mut out = Vec::new();
+        for (key, window) in &mut self.windows {
+            for (start, events) in window.drain_watermark(wm) {
+                out.push((start, key.clone(), events));
+            }
+        }
+        self.windows
+            .retain(|_, w| w.has_open_sessions() || !w.is_watermark_driven());
+        out.sort_by(|a, b| (a.0, a.1.as_str()).cmp(&(b.0, b.1.as_str())));
+        out
     }
 }
 
@@ -1450,7 +1642,8 @@ pub struct BinnedSlidingWindow {
     bins: BTreeMap<i64, WindowBin>,
     /// Number of bins that fit in one window.
     bins_per_window: usize,
-    /// Last emitted bin boundary (milliseconds).
+    /// Last emitted bin boundary (milliseconds). In watermark-driven mode
+    /// this is the start of the last *finalized* grid window instead.
     last_emit_bin: Option<i64>,
     /// Fields to track for pre-aggregation.
     tracked_fields: Vec<String>,
@@ -1458,6 +1651,13 @@ pub struct BinnedSlidingWindow {
     slide_ms: i64,
     /// Window size in milliseconds (cached for hot path).
     window_ms: i64,
+    /// C2b event-time mode: when true, `add_shared` only buffers (never
+    /// self-fires) and emission/eviction happen exclusively in
+    /// [`Self::drain_watermark`] when the watermark passes a window end.
+    watermark_driven: bool,
+    /// C2b: how long bins stay resident past the watermark so
+    /// within-lateness events can still be admitted (milliseconds).
+    allowed_lateness_ms: i64,
 }
 
 impl BinnedSlidingWindow {
@@ -1483,7 +1683,32 @@ impl BinnedSlidingWindow {
             tracked_fields,
             slide_ms,
             window_ms,
+            watermark_driven: false,
+            allowed_lateness_ms: 0,
         }
+    }
+
+    /// Create a binned window in watermark-driven (event-time) mode.
+    ///
+    /// Events are filed into slide-grid bins by their own timestamp; grid
+    /// windows `[w, w + window)` emit only when the watermark passes
+    /// `w + window` (see [`Self::drain_watermark`]). A tumbling event-time
+    /// window is expressed as `slide_interval == window_size`.
+    pub fn new_watermark_driven(
+        window_size: Duration,
+        slide_interval: Duration,
+        tracked_fields: Vec<String>,
+        allowed_lateness: Duration,
+    ) -> Self {
+        let mut w = Self::new(window_size, slide_interval, tracked_fields);
+        w.watermark_driven = true;
+        w.allowed_lateness_ms = allowed_lateness.num_milliseconds().max(0);
+        w
+    }
+
+    /// Whether this window emits on watermark advance instead of on arrival.
+    pub const fn is_watermark_driven(&self) -> bool {
+        self.watermark_driven
     }
 
     /// Compute the bin key (start time in ms) for a given event timestamp.
@@ -1503,6 +1728,13 @@ impl BinnedSlidingWindow {
         // Insert into bin
         let bin = self.bins.entry(bin_key).or_insert_with(WindowBin::new);
         bin.add_event(&event, &self.tracked_fields);
+
+        // C2b watermark mode: buffer only. Firing here (on arrival) would
+        // mis-place out-of-order events; emission and eviction are driven
+        // exclusively by `drain_watermark`.
+        if self.watermark_driven {
+            return None;
+        }
 
         // Expire old bins
         let cutoff = bin_key - self.window_ms;
@@ -1637,6 +1869,83 @@ impl BinnedSlidingWindow {
             self.collect_events()
         })
     }
+
+    /// Drain every grid window whose end the watermark has passed (C2b
+    /// event-time mode).
+    ///
+    /// Windows are the slide-grid intervals `[w, w + window)` for `w` a
+    /// multiple of the slide. A window graduates when `w + window ≤ wm`;
+    /// graduated windows are returned in ascending window-start order, each
+    /// as its own `(window_start_ms, events)` entry so a downstream
+    /// aggregation runs once per window instead of merging simultaneous
+    /// graduations. Windows at or below the horizon are final even when
+    /// empty: a later within-lateness event may still be admitted into a
+    /// resident bin, but an already-graduated window is never re-emitted
+    /// (v1 semantics: accumulate and emit once; no retraction).
+    ///
+    /// Bins are evicted only once `bin_start + window < wm − allowed_lateness`,
+    /// keeping them resident through the lateness horizon.
+    pub fn drain_watermark(&mut self, wm_ms: i64) -> Vec<(i64, Vec<SharedEvent>)> {
+        let mut emissions = Vec::new();
+        let (w_ms, s_ms) = (self.window_ms, self.slide_ms);
+        let Some(emit_horizon) = wm_ms.checked_sub(w_ms) else {
+            return emissions;
+        };
+        // Largest final window start: every grid window at or below this has
+        // been passed by the watermark.
+        let grid_horizon = emit_horizon.div_euclid(s_ms) * s_ms;
+
+        if let Some(&min_bin) = self.bins.keys().next() {
+            // First candidate: the window after the last finalized one, or
+            // the earliest grid window overlapping the oldest bin.
+            let mut w = match self.last_emit_bin {
+                Some(last) => last + s_ms,
+                None => ((min_bin - w_ms).div_euclid(s_ms) + 1) * s_ms,
+            };
+            while w <= grid_horizon {
+                match self.bins.range(w..).next() {
+                    None => break,
+                    Some((&next_bin, _)) if next_bin >= w + w_ms => {
+                        // Empty stretch: jump to the first grid window that
+                        // overlaps the next occupied bin.
+                        let jump = ((next_bin - w_ms).div_euclid(s_ms) + 1) * s_ms;
+                        w = jump.max(w + s_ms);
+                    }
+                    Some(_) => {
+                        let end = w + w_ms;
+                        let mut events: Vec<SharedEvent> = Vec::new();
+                        for bin in self.bins.range(w..end).map(|(_, b)| b) {
+                            // The trailing bin may straddle the window end
+                            // when the window is not a multiple of the slide.
+                            events.extend(
+                                bin.events
+                                    .iter()
+                                    .filter(|e| e.timestamp.timestamp_millis() < end)
+                                    .map(Arc::clone),
+                            );
+                        }
+                        if !events.is_empty() {
+                            emissions.push((w, events));
+                        }
+                        w += s_ms;
+                    }
+                }
+            }
+        }
+
+        if self.last_emit_bin.is_none_or(|last| grid_horizon > last) {
+            self.last_emit_bin = Some(grid_horizon);
+        }
+
+        // Evict bins past the lateness horizon: bin_end < wm − lateness.
+        let evict_cutoff = wm_ms
+            .saturating_sub(self.allowed_lateness_ms)
+            .saturating_sub(w_ms);
+        let keep = self.bins.split_off(&evict_cutoff);
+        self.bins = keep;
+
+        emissions
+    }
 }
 
 /// A partitioned binned sliding window that maintains separate binned windows per partition key.
@@ -1647,6 +1956,11 @@ pub struct PartitionedBinnedSlidingWindow {
     slide_interval: Duration,
     tracked_fields: Vec<String>,
     windows: FxHashMap<String, BinnedSlidingWindow>,
+    /// C2b event-time mode: per-key windows are created watermark-driven and
+    /// emit only via [`Self::drain_watermark`].
+    watermark_driven: bool,
+    /// C2b: lateness slack forwarded to per-key windows.
+    allowed_lateness: Duration,
 }
 
 impl PartitionedBinnedSlidingWindow {
@@ -1662,6 +1976,47 @@ impl PartitionedBinnedSlidingWindow {
             slide_interval,
             tracked_fields,
             windows: FxHashMap::default(),
+            watermark_driven: false,
+            allowed_lateness: Duration::zero(),
+        }
+    }
+
+    /// Create a partitioned binned window in watermark-driven (event-time)
+    /// mode. See [`BinnedSlidingWindow::new_watermark_driven`].
+    pub fn new_watermark_driven(
+        partition_key: String,
+        window_size: Duration,
+        slide_interval: Duration,
+        tracked_fields: Vec<String>,
+        allowed_lateness: Duration,
+    ) -> Self {
+        let mut w = Self::new(partition_key, window_size, slide_interval, tracked_fields);
+        w.watermark_driven = true;
+        w.allowed_lateness = allowed_lateness;
+        w
+    }
+
+    /// Whether per-key windows emit on watermark advance instead of on arrival.
+    pub const fn is_watermark_driven(&self) -> bool {
+        self.watermark_driven
+    }
+
+    /// Construct a per-key inner window in the mode this partitioned window
+    /// was compiled in.
+    fn new_inner_window(&self) -> BinnedSlidingWindow {
+        if self.watermark_driven {
+            BinnedSlidingWindow::new_watermark_driven(
+                self.window_size,
+                self.slide_interval,
+                self.tracked_fields.clone(),
+                self.allowed_lateness,
+            )
+        } else {
+            BinnedSlidingWindow::new(
+                self.window_size,
+                self.slide_interval,
+                self.tracked_fields.clone(),
+            )
         }
     }
 
@@ -1672,15 +2027,13 @@ impl PartitionedBinnedSlidingWindow {
             |v| v.to_partition_key().into_owned(),
         );
 
-        let window = self.windows.entry(key).or_insert_with(|| {
-            BinnedSlidingWindow::new(
-                self.window_size,
-                self.slide_interval,
-                self.tracked_fields.clone(),
-            )
-        });
-
-        window.add_shared(event)
+        if let Some(window) = self.windows.get_mut(&key) {
+            return window.add_shared(event);
+        }
+        let mut window = self.new_inner_window();
+        let result = window.add_shared(event);
+        self.windows.insert(key, window);
+        result
     }
 
     /// Get all current events from all partitions.
@@ -1727,11 +2080,7 @@ impl PartitionedBinnedSlidingWindow {
     pub fn restore(&mut self, cp: &WindowCheckpoint) {
         self.windows.clear();
         for (key, pcp) in &cp.partitions {
-            let mut window = BinnedSlidingWindow::new(
-                self.window_size,
-                self.slide_interval,
-                self.tracked_fields.clone(),
-            );
+            let mut window = self.new_inner_window();
             window.last_emit_bin = pcp.window_start_ms;
 
             for se in &pcp.events {
@@ -1756,6 +2105,21 @@ impl PartitionedBinnedSlidingWindow {
             }
         }
         results
+    }
+
+    /// Drain graduated grid windows across all partitions (C2b event-time
+    /// mode). Returns one `(window_start_ms, partition_key, events)` entry
+    /// per graduated per-key window, ordered by window start then key so
+    /// output is deterministic.
+    pub fn drain_watermark(&mut self, wm_ms: i64) -> Vec<(i64, String, Vec<SharedEvent>)> {
+        let mut out = Vec::new();
+        for (key, window) in &mut self.windows {
+            for (start, events) in window.drain_watermark(wm_ms) {
+                out.push((start, key.clone(), events));
+            }
+        }
+        out.sort_by(|a, b| (a.0, a.1.as_str()).cmp(&(b.0, b.1.as_str())));
+        out
     }
 }
 
@@ -3026,5 +3390,262 @@ mod tests {
         restored.restore(&cp);
 
         assert_eq!(restored.current_all_shared().len(), 2);
+    }
+
+    // =========================================================================
+    // C2b — watermark-driven (event-time) window modes
+    // =========================================================================
+
+    /// Fixed epoch-aligned event-time base (multiple of every window size
+    /// used below, so grid windows land on round offsets).
+    const C2B_BASE_MS: i64 = 1_700_000_000_000;
+
+    fn c2b_event(offset_ms: i64) -> SharedEvent {
+        Arc::new(
+            Event::new("T")
+                .with_timestamp(DateTime::from_timestamp_millis(C2B_BASE_MS + offset_ms).unwrap())
+                .with_field("v", offset_ms),
+        )
+    }
+
+    /// Window starts relative to the base, extracted for compact asserts.
+    fn rel_starts(emissions: &[(i64, Vec<SharedEvent>)]) -> Vec<(i64, Vec<i64>)> {
+        emissions
+            .iter()
+            .map(|(start, events)| {
+                (
+                    start - C2B_BASE_MS,
+                    events
+                        .iter()
+                        .map(|e| e.timestamp.timestamp_millis() - C2B_BASE_MS)
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn binned_wm_never_self_fires_and_files_out_of_order_by_timestamp() {
+        // Tumbling event-time window: slide == window == 1s.
+        let mut w = BinnedSlidingWindow::new_watermark_driven(
+            Duration::seconds(1),
+            Duration::seconds(1),
+            Vec::new(),
+            Duration::zero(),
+        );
+        // Arrival order 0, 1, 3, 2 — ts=2 arrives after ts=3 crossed its
+        // window boundary. In arrival-driven mode the window would already
+        // have fired; here nothing fires on add.
+        for off in [0, 1_000, 3_000, 2_000] {
+            assert!(
+                w.add_shared(c2b_event(off)).is_none(),
+                "must never self-fire"
+            );
+        }
+        // Watermark reaches 3s: windows [0,1), [1,2), [2,3) graduate; the
+        // out-of-order ts=2 event sits in ITS window [2,3), not a later one.
+        let drained = rel_starts(&w.drain_watermark(C2B_BASE_MS + 3_000));
+        assert_eq!(
+            drained,
+            vec![(0, vec![0]), (1_000, vec![1_000]), (2_000, vec![2_000]),]
+        );
+        // Final drain: the last window graduates too.
+        let drained = rel_starts(&w.drain_watermark(i64::MAX));
+        assert_eq!(drained, vec![(3_000, vec![3_000])]);
+    }
+
+    #[test]
+    fn binned_wm_sliding_emits_overlapping_grid_windows() {
+        // 2s window sliding by 1s (ratio < 10 — the shape that used to
+        // compile to the arrival-driven SlidingWindow).
+        let mut w = BinnedSlidingWindow::new_watermark_driven(
+            Duration::seconds(2),
+            Duration::seconds(1),
+            Vec::new(),
+            Duration::zero(),
+        );
+        for off in [500, 1_500, 3_500] {
+            assert!(w.add_shared(c2b_event(off)).is_none());
+        }
+        // wm = 3.5s → windows ending ≤ 3.5s: [-1,1), [0,2), [1,3).
+        let drained = rel_starts(&w.drain_watermark(C2B_BASE_MS + 3_500));
+        assert_eq!(
+            drained,
+            vec![
+                (-1_000, vec![500]),
+                (0, vec![500, 1_500]),
+                (1_000, vec![1_500]),
+            ]
+        );
+        // Everything else graduates on the final drain.
+        let drained = rel_starts(&w.drain_watermark(i64::MAX));
+        assert_eq!(drained, vec![(2_000, vec![3_500]), (3_000, vec![3_500])]);
+    }
+
+    #[test]
+    fn binned_wm_lateness_admits_into_resident_bin_but_never_reemits() {
+        let mut w = BinnedSlidingWindow::new_watermark_driven(
+            Duration::seconds(1),
+            Duration::seconds(1),
+            Vec::new(),
+            Duration::seconds(2),
+        );
+        w.add_shared(c2b_event(0));
+        w.add_shared(c2b_event(2_500));
+        // wm = 3s: [0,1) and [2,3) emit. Bin 0 stays resident (lateness 2s:
+        // evict only when bin_end 1s < wm − 2s).
+        let drained = rel_starts(&w.drain_watermark(C2B_BASE_MS + 3_000));
+        assert_eq!(drained, vec![(0, vec![0]), (2_000, vec![2_500])]);
+        assert_eq!(w.bin_count(), 2, "bins stay resident through lateness");
+        // A within-lateness event (ts=0.5 ≥ wm − 2s) is admitted into the
+        // resident bin — and its already-graduated window must NOT re-emit.
+        w.add_shared(c2b_event(500));
+        assert!(w.drain_watermark(C2B_BASE_MS + 3_000).is_empty());
+        assert!(
+            rel_starts(&w.drain_watermark(i64::MAX)).is_empty(),
+            "graduated windows never re-emit (v1: accumulate, emit once)"
+        );
+        // Advancing the watermark past the lateness horizon evicts the bins.
+        assert_eq!(w.bin_count(), 0, "final drain evicts everything");
+    }
+
+    #[test]
+    fn binned_wm_checkpoint_restore_roundtrip_preserves_drain() {
+        let make = || {
+            BinnedSlidingWindow::new_watermark_driven(
+                Duration::seconds(1),
+                Duration::seconds(1),
+                Vec::new(),
+                Duration::zero(),
+            )
+        };
+        let mut a = make();
+        for off in [0, 1_000, 3_000, 2_000] {
+            a.add_shared(c2b_event(off));
+        }
+        let mut b = make();
+        b.restore(&a.checkpoint());
+        assert_eq!(
+            rel_starts(&a.drain_watermark(i64::MAX)),
+            rel_starts(&b.drain_watermark(i64::MAX)),
+            "restored window must drain identically"
+        );
+    }
+
+    #[test]
+    fn partitioned_binned_wm_drains_ordered_by_window_then_key() {
+        let mut w = PartitionedBinnedSlidingWindow::new_watermark_driven(
+            "dev".to_string(),
+            Duration::seconds(1),
+            Duration::seconds(1),
+            Vec::new(),
+            Duration::zero(),
+        );
+        for (off, dev) in [(0, "b"), (0, "a"), (1_200, "a")] {
+            let e = Event::new("T")
+                .with_timestamp(DateTime::from_timestamp_millis(C2B_BASE_MS + off).unwrap())
+                .with_field("dev", varpulis_core::Value::Str(dev.into()));
+            assert!(w.add_shared(Arc::new(e)).is_none());
+        }
+        let drained: Vec<(i64, String, usize)> = w
+            .drain_watermark(i64::MAX)
+            .into_iter()
+            .map(|(start, key, events)| (start - C2B_BASE_MS, key, events.len()))
+            .collect();
+        assert_eq!(
+            drained,
+            vec![
+                (0, "a".to_string(), 1),
+                (0, "b".to_string(), 1),
+                (1_000, "a".to_string(), 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn session_wm_out_of_order_arrival_builds_correct_sessions() {
+        // gap 1.5s; arrival order 0, 5, 1, 3 (event-time seconds). The
+        // arrival-driven session would close {0} on seeing 5 and then absorb
+        // 1 into the {5} session. Event-time sessions must come out as
+        // {0,1}, {3}, {5}.
+        let mut w = SessionWindow::new_watermark_driven(Duration::milliseconds(1_500));
+        for off in [0, 5_000, 1_000, 3_000] {
+            assert!(
+                w.add_shared(c2b_event(off)).is_none(),
+                "must never self-fire"
+            );
+        }
+        let drained = rel_starts(&w.drain_watermark(DateTime::<Utc>::MAX_UTC));
+        assert_eq!(
+            drained,
+            vec![
+                (0, vec![0, 1_000]),
+                (3_000, vec![3_000]),
+                (5_000, vec![5_000]),
+            ]
+        );
+    }
+
+    #[test]
+    fn session_wm_event_bridges_and_merges_two_sessions() {
+        let mut w = SessionWindow::new_watermark_driven(Duration::milliseconds(1_500));
+        w.add_shared(c2b_event(0));
+        w.add_shared(c2b_event(3_000));
+        // ts=1.5s reaches {0} (1.5 − 0 ≤ gap) and bridges to {3} (3 − 1.5 ≤ gap).
+        w.add_shared(c2b_event(1_500));
+        let drained = rel_starts(&w.drain_watermark(DateTime::<Utc>::MAX_UTC));
+        assert_eq!(drained.len(), 1, "bridged sessions must merge");
+        let mut members = drained[0].1.clone();
+        members.sort_unstable();
+        assert_eq!((drained[0].0, members), (0, vec![0, 1_500, 3_000]));
+    }
+
+    #[test]
+    fn session_wm_closes_only_when_watermark_passes_end_plus_gap() {
+        let mut w = SessionWindow::new_watermark_driven(Duration::seconds(2));
+        w.add_shared(c2b_event(0));
+        w.add_shared(c2b_event(10_000));
+        // Wall-clock sweep must not touch event-time sessions.
+        assert!(w.check_expired(DateTime::<Utc>::MAX_UTC).is_none());
+        // wm = 5s closes {0} (0 + 2s ≤ 5s) but not {10}.
+        let drained = rel_starts(
+            &w.drain_watermark(DateTime::from_timestamp_millis(C2B_BASE_MS + 5_000).unwrap()),
+        );
+        assert_eq!(drained, vec![(0, vec![0])]);
+        // wm = 12s closes {10}.
+        let drained = rel_starts(
+            &w.drain_watermark(DateTime::from_timestamp_millis(C2B_BASE_MS + 12_000).unwrap()),
+        );
+        assert_eq!(drained, vec![(10_000, vec![10_000])]);
+    }
+
+    #[test]
+    fn session_wm_checkpoint_restore_rebuilds_sessions() {
+        let mut a = SessionWindow::new_watermark_driven(Duration::milliseconds(1_500));
+        for off in [0, 5_000, 1_000, 3_000] {
+            a.add_shared(c2b_event(off));
+        }
+        let mut b = SessionWindow::new_watermark_driven(Duration::milliseconds(1_500));
+        b.restore(&a.checkpoint());
+        let wm = DateTime::<Utc>::MAX_UTC;
+        assert_eq!(
+            rel_starts(&a.drain_watermark(wm)),
+            rel_starts(&b.drain_watermark(wm)),
+            "restored session window must drain identically"
+        );
+    }
+
+    #[test]
+    fn partitioned_session_wm_wall_clock_sweep_is_noop() {
+        let mut w =
+            PartitionedSessionWindow::new_watermark_driven("dev".to_string(), Duration::seconds(1));
+        let e = Event::new("T")
+            .with_timestamp(DateTime::from_timestamp_millis(C2B_BASE_MS).unwrap())
+            .with_field("dev", varpulis_core::Value::Str("a".into()));
+        assert!(w.add_shared(Arc::new(e)).is_none());
+        assert!(w.check_expired(DateTime::<Utc>::MAX_UTC).is_empty());
+        let drained = w.drain_watermark(DateTime::<Utc>::MAX_UTC);
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].1, "a");
     }
 }

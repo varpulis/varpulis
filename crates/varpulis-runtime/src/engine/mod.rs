@@ -2225,6 +2225,71 @@ impl Engine {
         Ok(())
     }
 
+    /// Graduate any windows the current event-derived watermark has passed
+    /// (C2b). Called at the tail of every async dispatch path; shares the
+    /// monotonic `last_applied_watermark` gate with
+    /// [`Self::advance_external_watermark`] so the two drivers compose
+    /// without double-firing. No-op when watermark tracking is off.
+    #[cfg(feature = "async-runtime")]
+    pub async fn flush_watermark(&mut self) -> Result<(), error::EngineError> {
+        let Some(wm) = self.effective_watermark() else {
+            return Ok(());
+        };
+        if self.last_applied_watermark.is_none_or(|last| wm > last) {
+            self.apply_watermark_to_windows(wm).await?;
+            self.last_applied_watermark = Some(wm);
+        }
+        Ok(())
+    }
+
+    /// Sync sibling of [`Self::flush_watermark`] for the sync dispatch path.
+    pub fn flush_watermark_sync(&mut self) -> Result<(), error::EngineError> {
+        let Some(wm) = self.effective_watermark() else {
+            return Ok(());
+        };
+        if self.last_applied_watermark.is_none_or(|last| wm > last) {
+            self.apply_watermark_to_windows_sync_inner(wm, false)?;
+            self.last_applied_watermark = Some(wm);
+        }
+        Ok(())
+    }
+
+    /// Final end-of-input drain (C2b): graduate ALL remaining watermark-driven
+    /// windows as if the watermark had advanced past every buffered event.
+    ///
+    /// Only C2b event-time windows are drained — arrival-driven windows keep
+    /// today's EOF behavior (partial buffers dropped). Neither the tracker
+    /// nor `last_applied_watermark` is advanced; this is issued exactly once
+    /// at end-of-input / shutdown, never mid-stream. No-op when watermark
+    /// tracking is off.
+    #[cfg(feature = "async-runtime")]
+    pub async fn flush_final_watermark(&mut self) -> Result<(), error::EngineError> {
+        if self.watermark_tracker.is_none() {
+            return Ok(());
+        }
+        self.apply_watermark_to_windows_inner(DateTime::<Utc>::MAX_UTC, true)
+            .await
+    }
+
+    /// Sync sibling of [`Self::flush_final_watermark`] for sync hosts.
+    pub fn flush_final_watermark_sync(&mut self) -> Result<(), error::EngineError> {
+        if self.watermark_tracker.is_none() {
+            return Ok(());
+        }
+        self.apply_watermark_to_windows_sync_inner(chrono::DateTime::<chrono::Utc>::MAX_UTC, true)
+    }
+
+    /// Set the side-output stream for a stream's late-data config.
+    ///
+    /// Beyond-lateness events routed there instead of being dropped. VPL
+    /// cannot populate this yet (a `.side_output()` clause is a tracked
+    /// follow-up); exposed so embedding hosts and tests can configure it.
+    pub fn set_late_data_side_output(&mut self, stream: &str, side_output: &str) {
+        if let Some(cfg) = self.late_data_configs.get_mut(stream) {
+            cfg.side_output_stream = Some(side_output.to_string());
+        }
+    }
+
     /// Check if two runtime sources are compatible for state preservation (used by reload).
     #[cfg(feature = "async-runtime")]
     fn sources_compatible(a: &RuntimeSource, b: &RuntimeSource) -> bool {

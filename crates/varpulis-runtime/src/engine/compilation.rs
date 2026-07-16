@@ -428,6 +428,31 @@ impl Engine {
         let mut sequence_event_types: Vec<String> = Vec::new();
         let mut partition_key: Option<String> = None;
 
+        // C2b: a stream that declares `.watermark(...)` compiles its time
+        // windows in watermark-driven (event-time) mode — events are filed
+        // into bins by their own timestamp and a window emits only when the
+        // watermark passes its end, instead of firing on arrival. Tumbling
+        // and low-ratio sliding windows redirect to the binned implementation
+        // (tumbling = slide == window) so the arrival-driven window types are
+        // never touched on the default path. `VARPULIS_WATERMARK_WINDOWS=0`
+        // is a kill-switch that reverts windows to arrival-driven firing
+        // (the watermark itself is still observed).
+        let kill_switch = matches!(
+            std::env::var("VARPULIS_WATERMARK_WINDOWS").as_deref(),
+            Ok("0")
+        );
+        let watermark_driven =
+            !kill_switch && ops.iter().any(|op| matches!(op, StreamOp::Watermark(_)));
+        let allowed_lateness = ops
+            .iter()
+            .find_map(|op| match op {
+                StreamOp::AllowedLateness(Expr::Duration(ns)) => {
+                    Some(Duration::nanoseconds(*ns as i64))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(Duration::zero);
+
         // For SASE+ pattern compilation
         let mut followed_by_clauses: Vec<varpulis_core::ast::FollowedByClause> = Vec::new();
         let mut negation_clauses: Vec<varpulis_core::ast::FollowedByClause> = Vec::new();
@@ -686,13 +711,19 @@ impl Engine {
                         };
                         let gap = Duration::nanoseconds(gap_ns as i64);
                         if let Some(ref key) = partition_key {
-                            runtime_ops.push(RuntimeOp::Window(WindowType::PartitionedSession(
-                                PartitionedSessionWindow::new(key.clone(), gap),
-                            )));
+                            let w = if watermark_driven {
+                                PartitionedSessionWindow::new_watermark_driven(key.clone(), gap)
+                            } else {
+                                PartitionedSessionWindow::new(key.clone(), gap)
+                            };
+                            runtime_ops.push(RuntimeOp::Window(WindowType::PartitionedSession(w)));
                         } else {
-                            runtime_ops.push(RuntimeOp::Window(WindowType::Session(
-                                SessionWindow::new(gap),
-                            )));
+                            let w = if watermark_driven {
+                                SessionWindow::new_watermark_driven(gap)
+                            } else {
+                                SessionWindow::new(gap)
+                            };
+                            runtime_ops.push(RuntimeOp::Window(WindowType::Session(w)));
                         }
                     } else {
                         // Check if this is a count-based or time-based window
@@ -737,7 +768,40 @@ impl Engine {
                             varpulis_core::ast::Expr::Duration(ns) => {
                                 // Time-based window
                                 let duration = Duration::nanoseconds(*ns as i64);
-                                if let Some(ref key) = partition_key {
+                                if watermark_driven {
+                                    // C2b: every time window on a watermark
+                                    // stream uses the binned event-time
+                                    // implementation (tumbling = slide ==
+                                    // window), regardless of the ratio gate.
+                                    let slide =
+                                        args.sliding.as_ref().map_or(duration, |s| match s {
+                                            varpulis_core::ast::Expr::Duration(ns) => {
+                                                Duration::nanoseconds(*ns as i64)
+                                            }
+                                            _ => Duration::nanoseconds(60_000_000_000),
+                                        });
+                                    let wt = if let Some(ref key) = partition_key {
+                                        WindowType::PartitionedBinnedSliding(
+                                            PartitionedBinnedSlidingWindow::new_watermark_driven(
+                                                key.clone(),
+                                                duration,
+                                                slide,
+                                                Vec::new(),
+                                                allowed_lateness,
+                                            ),
+                                        )
+                                    } else {
+                                        WindowType::BinnedSliding(
+                                            BinnedSlidingWindow::new_watermark_driven(
+                                                duration,
+                                                slide,
+                                                Vec::new(),
+                                                allowed_lateness,
+                                            ),
+                                        )
+                                    };
+                                    runtime_ops.push(RuntimeOp::Window(wt));
+                                } else if let Some(ref key) = partition_key {
                                     // Partitioned time-based window
                                     if let Some(sliding) = &args.sliding {
                                         let slide_ns = match sliding {
@@ -813,7 +877,29 @@ impl Engine {
                             _ => {
                                 // Default to 5 minute tumbling window
                                 let duration = Duration::nanoseconds(300_000_000_000);
-                                if let Some(ref key) = partition_key {
+                                if watermark_driven {
+                                    let wt = if let Some(ref key) = partition_key {
+                                        WindowType::PartitionedBinnedSliding(
+                                            PartitionedBinnedSlidingWindow::new_watermark_driven(
+                                                key.clone(),
+                                                duration,
+                                                duration,
+                                                Vec::new(),
+                                                allowed_lateness,
+                                            ),
+                                        )
+                                    } else {
+                                        WindowType::BinnedSliding(
+                                            BinnedSlidingWindow::new_watermark_driven(
+                                                duration,
+                                                duration,
+                                                Vec::new(),
+                                                allowed_lateness,
+                                            ),
+                                        )
+                                    };
+                                    runtime_ops.push(RuntimeOp::Window(wt));
+                                } else if let Some(ref key) = partition_key {
                                     runtime_ops.push(RuntimeOp::Window(
                                         WindowType::PartitionedTumbling(
                                             PartitionedTumblingWindow::new(key.clone(), duration),
@@ -856,9 +942,15 @@ impl Engine {
                         // Skip fusion when checkpointing is planned: the fused
                         // columnar op's per-bin state is not captured by
                         // checkpoint/restore, so we keep the classic
-                        // Window+Aggregate path (which is) instead.
+                        // Window+Aggregate path (which is) instead. Also skip
+                        // it on watermark streams (C2b): the fused op closes
+                        // bins on max-seen event time and would ignore
+                        // out_of_order/allowed_lateness entirely.
                         if let Some(ref key) = partition_key {
-                            if !self.checkpoint_planned && aggregator.supported_for_columnar() {
+                            if !self.checkpoint_planned
+                                && !watermark_driven
+                                && aggregator.supported_for_columnar()
+                            {
                                 if let Some(crate::engine::types::RuntimeOp::Window(
                                     crate::engine::types::WindowType::PartitionedTumbling(w),
                                 )) = runtime_ops.last()
@@ -895,8 +987,11 @@ impl Engine {
                     {
                         // Skip fusion when checkpointing is planned (see the
                         // partitioned case above) — keep the checkpointable
-                        // classic Window+Aggregate path.
+                        // classic Window+Aggregate path. Watermark streams
+                        // (C2b) never fuse either: the fused op is event-
+                        // arrival driven.
                         if !self.checkpoint_planned
+                            && !watermark_driven
                             && partition_key.is_none()
                             && aggregator.supported_for_columnar()
                         {
@@ -2771,5 +2866,218 @@ mod arrow_fusion_tests {
         let bin2 = &by_bin[&2000];
         assert_eq!(bin2["s"], Value::Float(999.0));
         assert_eq!(bin2["c"], Value::Int(1));
+    }
+}
+
+#[cfg(test)]
+mod c2b_watermark_compile_tests {
+    //! C2b — `.watermark()` streams must compile their time windows in
+    //! watermark-driven (event-time) mode, redirected onto the binned
+    //! implementation, while no-watermark streams keep the exact
+    //! arrival-driven window types they compile to today.
+
+    use std::sync::Mutex;
+
+    use super::super::types::{RuntimeOp, WindowType};
+    use crate::engine::Engine;
+
+    /// Serializes tests that read or write `VARPULIS_WATERMARK_WINDOWS`
+    /// (compilation reads it; the kill-switch test sets it).
+    static ENV_GUARD: Mutex<()> = Mutex::new(());
+
+    /// Compile `source` and return the first stream's first Window op type
+    /// as `(summary, is_binned_watermark_driven)`.
+    fn first_window(source: &str) -> Option<(String, bool)> {
+        let mut engine = Engine::builder().build();
+        let program =
+            varpulis_parser::parse(source).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+        engine
+            .load(&program)
+            .unwrap_or_else(|e| panic!("load failed: {e}"));
+        let stream_names = engine.stream_names();
+        let stream_name = stream_names.first().expect("at least one stream");
+        let stream = engine.streams.get(*stream_name).expect("stream registered");
+        stream.operations.iter().find_map(|op| {
+            if let RuntimeOp::Window(wt) = op {
+                let (name, wm) = match wt {
+                    WindowType::Tumbling(_) => ("Tumbling", false),
+                    WindowType::Sliding(_) => ("Sliding", false),
+                    WindowType::Count(_) => ("Count", false),
+                    WindowType::SlidingCount(_) => ("SlidingCount", false),
+                    WindowType::PartitionedTumbling(_) => ("PartitionedTumbling", false),
+                    WindowType::PartitionedSliding(_) => ("PartitionedSliding", false),
+                    WindowType::Session(w) => ("Session", w.is_watermark_driven()),
+                    WindowType::PartitionedSession(w) => {
+                        ("PartitionedSession", w.is_watermark_driven())
+                    }
+                    WindowType::BinnedSliding(w) => ("BinnedSliding", w.is_watermark_driven()),
+                    WindowType::PartitionedBinnedSliding(w) => {
+                        ("PartitionedBinnedSliding", w.is_watermark_driven())
+                    }
+                };
+                Some((name.to_string(), wm))
+            } else {
+                None
+            }
+        })
+    }
+
+    #[test]
+    fn watermark_tumbling_compiles_to_binned_event_time_window() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let with_wm = r"
+            stream W = SensorEvent
+                .watermark(out_of_order: 2s)
+                .window(1s)
+                .aggregate(n: count())
+                .emit(n: n)
+        ";
+        assert_eq!(
+            first_window(with_wm),
+            Some(("BinnedSliding".to_string(), true)),
+            "watermark stream must compile the tumbling window in binned event-time mode"
+        );
+
+        // Control uses window→emit (no aggregate) so the arrow feature's
+        // Window+Aggregate fusion doesn't consume the Window op we inspect.
+        let without_wm = r"
+            stream W = SensorEvent
+                .window(1s)
+                .emit(v: value)
+        ";
+        assert_eq!(
+            first_window(without_wm),
+            Some(("Tumbling".to_string(), false)),
+            "no-watermark stream must keep the arrival-driven Tumbling window"
+        );
+    }
+
+    #[test]
+    fn watermark_low_ratio_sliding_compiles_to_binned_event_time_window() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // ratio 2 < 10: compiles to the arrival-driven SlidingWindow today.
+        let with_wm = r"
+            stream W = SensorEvent
+                .watermark(out_of_order: 1s)
+                .window(2s, sliding: 1s)
+                .aggregate(n: count())
+                .emit(n: n)
+        ";
+        assert_eq!(
+            first_window(with_wm),
+            Some(("BinnedSliding".to_string(), true))
+        );
+
+        let without_wm = r"
+            stream W = SensorEvent
+                .window(2s, sliding: 1s)
+                .aggregate(n: count())
+                .emit(n: n)
+        ";
+        assert_eq!(
+            first_window(without_wm),
+            Some(("Sliding".to_string(), false)),
+            "no-watermark low-ratio sliding must keep the arrival-driven SlidingWindow"
+        );
+    }
+
+    #[test]
+    fn watermark_partitioned_and_session_windows_compile_event_time() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let partitioned = r"
+            stream W = SensorEvent
+                .watermark(out_of_order: 1s)
+                .partition_by(device)
+                .window(1s)
+                .aggregate(n: count())
+                .emit(n: n)
+        ";
+        assert_eq!(
+            first_window(partitioned),
+            Some(("PartitionedBinnedSliding".to_string(), true))
+        );
+
+        let session = r"
+            stream W = SensorEvent
+                .watermark(out_of_order: 1s)
+                .window(session: 2s)
+                .aggregate(n: count())
+                .emit(n: n)
+        ";
+        assert_eq!(first_window(session), Some(("Session".to_string(), true)));
+
+        let session_no_wm = r"
+            stream W = SensorEvent
+                .window(session: 2s)
+                .aggregate(n: count())
+                .emit(n: n)
+        ";
+        assert_eq!(
+            first_window(session_no_wm),
+            Some(("Session".to_string(), false))
+        );
+    }
+
+    #[test]
+    fn kill_switch_env_reverts_to_arrival_driven_windows() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("VARPULIS_WATERMARK_WINDOWS", "0");
+        // window→emit (no aggregate) so arrow fusion can't consume the
+        // reverted Tumbling op before we inspect it.
+        let source = r"
+            stream W = SensorEvent
+                .watermark(out_of_order: 2s)
+                .window(1s)
+                .emit(v: value)
+        ";
+        let result = first_window(source);
+        std::env::remove_var("VARPULIS_WATERMARK_WINDOWS");
+        assert_eq!(
+            result,
+            Some(("Tumbling".to_string(), false)),
+            "kill switch must revert watermark streams to arrival-driven windows"
+        );
+    }
+
+    #[cfg(feature = "arrow")]
+    #[test]
+    fn watermark_stream_never_compiles_the_fused_columnar_op() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // Scenario-02 shape (which fuses today) plus `.watermark()` — the
+        // fused op is event-arrival driven and must not be used (C2b §8).
+        let source = r"
+            event Reading:
+                ts: int
+                device_id: str
+                temperature: float
+
+            stream DeviceAgg = Reading
+                .watermark(out_of_order: 2s)
+                .partition_by(device_id)
+                .window(1s)
+                .aggregate(s: sum(temperature))
+                .emit(device_id: device_id, s: s)
+        ";
+        let mut engine = Engine::builder().build();
+        let program = varpulis_parser::parse(source).expect("parse");
+        engine.load(&program).expect("load");
+        let stream_names = engine.stream_names();
+        let stream = engine
+            .streams
+            .get(*stream_names.first().expect("stream"))
+            .expect("stream registered");
+        let ops: Vec<&'static str> = stream
+            .operations
+            .iter()
+            .map(|op| op.summary_name())
+            .collect();
+        assert!(
+            !ops.iter().any(|n| n.contains("ColumnarAggregate")),
+            "watermark stream must not fuse into the watermark-blind columnar op; got {ops:?}"
+        );
+        assert!(
+            ops.contains(&"Window"),
+            "watermark stream keeps the classic Window+Aggregate path; got {ops:?}"
+        );
     }
 }

@@ -422,6 +422,12 @@ pub async fn run_program(
                     // Without this, events processed since the last barrier
                     // would be lost (uncommitted transaction).
                     if orchestrator.is_none() {
+                        // Shutdown drain (C2b): graduate still-open
+                        // event-time windows so their results reach the
+                        // sinks before the final barrier commits.
+                        if let Err(e) = engine.flush_final_watermark().await {
+                            tracing::warn!("Watermark drain error: {}", e);
+                        }
                         checkpoint_id += 1;
                         barrier_commit_2pc(&mut engine, &registry, &bindings, checkpoint_id).await;
                     }
