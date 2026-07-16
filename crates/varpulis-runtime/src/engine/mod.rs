@@ -1283,39 +1283,58 @@ impl Engine {
     }
 
     /// Call `prepare_commit` on all exactly-once sinks for the given checkpoint epoch.
+    ///
+    /// Returns `false` if any sink's `prepare_commit` failed, so the barrier can
+    /// abort the epoch instead of committing on top of a half-prepared state.
     #[cfg(feature = "async-runtime")]
-    pub async fn prepare_commit_sinks(&self, checkpoint_id: u64) {
+    pub async fn prepare_commit_sinks(&self, checkpoint_id: u64) -> bool {
+        let mut all_ok = true;
         for (key, sink) in self.sinks.cache() {
             if sink.supports_exactly_once() {
                 if let Err(e) = sink.prepare_commit(checkpoint_id).await {
                     tracing::error!("Sink '{key}' prepare_commit failed: {e}");
+                    all_ok = false;
                 }
             }
         }
+        all_ok
     }
 
-    /// Call `commit` on all exactly-once sinks, then `begin_epoch` for the next epoch.
+    /// Call `commit` on all exactly-once sinks, then — only if every commit
+    /// succeeded — advance [`last_committed_epoch`](Self::last_committed_epoch)
+    /// and open the next epoch via `begin_epoch(id + 1)`.
     ///
-    /// Bumps [`last_committed_epoch`](Self::last_committed_epoch) to
-    /// `checkpoint_id` after the commit pass so recovery code (Task 3.2)
-    /// can detect whether a re-commit is still owed. The bump is monotonic:
-    /// out-of-order calls with a smaller `checkpoint_id` leave the marker
-    /// unchanged.
+    /// Returns `false` if any commit failed. On failure the committed frontier is
+    /// NOT advanced and the next epoch is NOT opened, so the caller can abort and
+    /// retry rather than silently committing past a failed sink. The bump is
+    /// monotonic: out-of-order calls with a smaller `checkpoint_id` leave the
+    /// marker unchanged.
     #[cfg(feature = "async-runtime")]
-    pub async fn commit_sinks(&self, checkpoint_id: u64) {
+    pub async fn commit_sinks(&self, checkpoint_id: u64) -> bool {
+        let mut all_ok = true;
         for (key, sink) in self.sinks.cache() {
             if sink.supports_exactly_once() {
                 if let Err(e) = sink.commit(checkpoint_id).await {
                     tracing::error!("Sink '{key}' commit failed: {e}");
+                    all_ok = false;
                 }
-                // Begin the next epoch immediately after commit
+            }
+        }
+        if !all_ok {
+            // A commit failed: do NOT advance the committed frontier or open the
+            // next epoch. The caller aborts and retries this epoch.
+            return false;
+        }
+        self.last_committed_epoch
+            .fetch_max(checkpoint_id, std::sync::atomic::Ordering::AcqRel);
+        for (key, sink) in self.sinks.cache() {
+            if sink.supports_exactly_once() {
                 if let Err(e) = sink.begin_epoch(checkpoint_id + 1).await {
                     tracing::error!("Sink '{key}' begin_epoch failed: {e}");
                 }
             }
         }
-        self.last_committed_epoch
-            .fetch_max(checkpoint_id, std::sync::atomic::Ordering::AcqRel);
+        true
     }
 
     /// Call `abort` on all exactly-once sinks (recovery path).

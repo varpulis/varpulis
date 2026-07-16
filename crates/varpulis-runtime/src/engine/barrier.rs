@@ -146,9 +146,15 @@ impl Engine {
         // Phase 1b — persist checkpoint to disk (if checkpointing is enabled).
         // This must happen BEFORE the sink commit so that on crash-recovery the
         // restored engine state is consistent with the last committed offset.
+        //
+        // FATAL on failure: committing sinks/offsets on top of a state snapshot
+        // that never reached disk is the C3 loss in another dress. Abort the
+        // prepared sinks and return, leaving the committed frontier untouched.
         if self.has_checkpointing() {
             if let Err(e) = self.force_checkpoint() {
-                tracing::warn!("Checkpoint persist failed (epoch {checkpoint_id}): {e}");
+                tracing::error!("Checkpoint persist failed (epoch {checkpoint_id}): {e}");
+                self.abort_sinks(checkpoint_id).await;
+                return Err(BarrierError::Checkpoint(e.to_string()));
             }
         }
 
@@ -163,7 +169,14 @@ impl Engine {
             .any(|s| s.supports_exactly_once());
 
         // Phase 2 — prepare commit on transactional sinks (flush producer queues).
-        self.prepare_commit_sinks(checkpoint_id).await;
+        // On failure, abort the prepared sinks and return without committing —
+        // the committed frontier and source offsets stay untouched.
+        if !self.prepare_commit_sinks(checkpoint_id).await {
+            self.abort_sinks(checkpoint_id).await;
+            return Err(BarrierError::Sink(format!(
+                "prepare_commit failed for epoch {checkpoint_id}"
+            )));
+        }
 
         // C4 — exactly-once: stage the snapshot's source offsets so the sink
         // commit sends them inside its transaction. Output visibility and offset
@@ -186,7 +199,16 @@ impl Engine {
         // once the Kafka `commit_transaction` succeeds, downstream consumers can
         // see the emitted events. For exactly-once sinks this also commits the
         // staged source offsets atomically (they rode the same transaction).
-        self.commit_sinks(checkpoint_id).await;
+        //
+        // On failure, `commit_sinks` has NOT advanced the committed frontier or
+        // opened the next epoch; abort and return so a restart re-commits this
+        // epoch rather than skipping past it.
+        if !self.commit_sinks(checkpoint_id).await {
+            self.abort_sinks(checkpoint_id).await;
+            return Err(BarrierError::Sink(format!(
+                "commit failed for epoch {checkpoint_id}"
+            )));
+        }
 
         // Phase 4 — at-least-once path only: commit source offsets out-of-band
         // after the sink commit. For exactly-once the offsets already rode the
@@ -216,10 +238,21 @@ mod tests {
     use crate::sink::{Sink, SinkError};
 
     /// An exactly-once sink that records its 2PC lifecycle so a test can assert
-    /// the barrier drove the phases (and their order).
+    /// the barrier drove the phases (and their order). `fail_at` optionally
+    /// injects an error at a chosen phase ("prepare" or "commit").
     #[derive(Debug, Default)]
     struct TxnCaptureSink {
         lifecycle: Mutex<Vec<String>>,
+        fail_at: Option<&'static str>,
+    }
+
+    impl TxnCaptureSink {
+        fn failing_at(phase: &'static str) -> Self {
+            Self {
+                fail_at: Some(phase),
+                ..Default::default()
+            }
+        }
     }
 
     #[async_trait]
@@ -245,10 +278,16 @@ mod tests {
         }
         async fn prepare_commit(&self, id: u64) -> Result<(), SinkError> {
             self.lifecycle.lock().unwrap().push(format!("prepare:{id}"));
+            if self.fail_at == Some("prepare") {
+                return Err(SinkError::other("injected prepare failure"));
+            }
             Ok(())
         }
         async fn commit(&self, id: u64) -> Result<(), SinkError> {
             self.lifecycle.lock().unwrap().push(format!("commit:{id}"));
+            if self.fail_at == Some("commit") {
+                return Err(SinkError::other("injected commit failure"));
+            }
             Ok(())
         }
         async fn abort(&self, id: u64) -> Result<(), SinkError> {
@@ -582,6 +621,62 @@ mod tests {
             *out.lock().unwrap(),
             vec![0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5],
             "split commit double-emits on crash — the bug C4 fixes"
+        );
+    }
+
+    /// Step 3 hardening — a failed sink commit must NOT advance the committed
+    /// epoch (the recovery marker that decides whether a re-commit is owed), the
+    /// barrier must surface the failure, and it must abort the prepared sinks.
+    ///
+    /// Fail-before: with the unguarded `commit_sinks` the epoch advances to the
+    /// failed checkpoint (5) even though the commit errored; without the barrier
+    /// check the barrier returns `Ok` and never aborts.
+    #[tokio::test]
+    async fn failed_commit_does_not_advance_epoch_and_aborts() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<Event>(16);
+        let mut engine = Engine::new(tx);
+
+        let sink = Arc::new(TxnCaptureSink::failing_at("commit"));
+        engine.inject_sink("out", sink.clone());
+        engine.begin_epoch_sinks(1).await;
+
+        engine.source_bindings.push(SourceBinding {
+            connector_name: "src".to_string(),
+            event_type: "E".to_string(),
+            topic_override: None,
+            extra_params: HashMap::new(),
+        });
+        engine
+            .source_offsets_handle()
+            .lock()
+            .unwrap()
+            .insert("src".to_string(), HashMap::from([(0, 7)]));
+
+        let epoch_before = engine.last_committed_epoch();
+        let coordinator = CaptureCoordinator::default();
+        let (_evt_tx, mut evt_rx) = tokio::sync::mpsc::channel::<Vec<Event>>(16);
+        let result = engine
+            .barrier_commit_2pc(5, &mut evt_rx, &coordinator)
+            .await;
+
+        assert!(result.is_err(), "barrier must surface the commit failure");
+        assert_eq!(
+            engine.last_committed_epoch(),
+            epoch_before,
+            "committed epoch must not advance when the commit failed"
+        );
+        assert_ne!(
+            engine.last_committed_epoch(),
+            5,
+            "the failed epoch must not be marked committed"
+        );
+        assert!(
+            sink.lifecycle
+                .lock()
+                .unwrap()
+                .contains(&"abort:5".to_string()),
+            "the barrier must abort the prepared sinks on commit failure: {:?}",
+            sink.lifecycle.lock().unwrap()
         );
     }
 }
