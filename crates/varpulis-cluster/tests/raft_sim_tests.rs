@@ -942,3 +942,92 @@ async fn concurrent_writes_during_partition_heal() {
     let state = cluster.shared_states[&1].read().unwrap();
     assert_eq!(state.workers.len(), 8);
 }
+
+// =========================================================================
+// Test 9: C5 regression — replicated liveness detects a dead worker
+// =========================================================================
+
+/// Regression test for audit critical **C5** (Raft dead-worker detection).
+///
+/// A worker that Raft still lists as `ready` but has stopped heartbeating must
+/// eventually be marked `Unhealthy` by the local health sweep. Before the fix,
+/// `sync_from_raft` unconditionally reset `last_heartbeat` to `Instant::now()`
+/// for every `Ready` worker on every tick, so `last_heartbeat.elapsed()` was
+/// always ≈0 and `health_sweep` could never time a dead worker out. The fix
+/// replicates a monotonic `heartbeat_seq` through Raft and refreshes
+/// `last_heartbeat` only when that signal advances.
+///
+/// Wholly in-memory: a single-node Raft built with the `SimRouter` harness and
+/// wrapped in a real `Coordinator`. No NATS, no sockets, no mocking.
+///
+/// Fail-before / pass-after gate: reverting only the `sync_from_raft` conditional
+/// (restoring the unconditional stamp) makes the `w-dead` assertion fail because
+/// the worker stays `Ready` forever.
+#[tokio::test]
+async fn c5_dead_worker_times_out_live_worker_stays_ready() {
+    use varpulis_cluster::worker::{WorkerId, WorkerStatus};
+    use varpulis_cluster::Coordinator;
+
+    // 1-node in-memory Raft; wait until it has elected itself leader so writes
+    // commit and apply locally.
+    let cluster = SimCluster::new(1, get_seed()).await;
+    cluster.wait_for_leader(Duration::from_secs(5)).await;
+
+    let raft = cluster.rafts[&1].clone();
+    let shared_state = cluster.shared_states[&1].clone();
+
+    // Wrap the same Raft node + shared state in a real Coordinator.
+    let mut coord = Coordinator::with_raft(raft.clone(), shared_state, BTreeMap::new(), None);
+    // Short timeout so the test is fast. `health_sweep` uses std::time::Instant,
+    // so the loop below sleeps on real wall-clock time.
+    coord.heartbeat_timeout = Duration::from_millis(100);
+
+    // Register two workers through Raft. Both start with heartbeat_seq = 0.
+    raft.client_write(make_register("w-dead", 4))
+        .await
+        .expect("register w-dead");
+    raft.client_write(make_register("w-alive", 4))
+        .await
+        .expect("register w-alive");
+
+    let dead = WorkerId("w-dead".to_string());
+    let alive = WorkerId("w-alive".to_string());
+
+    // Drive several sweep cycles with a real sleep (> timeout) between them.
+    // Every iteration `w-alive` gets a fresh, advancing replicated heartbeat_seq
+    // (it is alive); `w-dead` never does (it is dead), so its seq stays frozen.
+    for seq in 1..=4u64 {
+        raft.client_write(ClusterCommand::WorkerMetricsUpdated {
+            id: "w-alive".to_string(),
+            events_processed: 0,
+            pipelines_running: 0,
+            pipeline_metrics: vec![],
+            heartbeat_seq: seq,
+        })
+        .await
+        .expect("heartbeat for w-alive");
+
+        coord.sync_from_raft();
+        coord.health_sweep();
+
+        // Real wall-clock sleep so Instant::elapsed() actually crosses the
+        // heartbeat_timeout (the default tokio test runtime is not time-paused).
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+
+    // `w-dead`: replicated seq never advanced past its initial value, so
+    // `last_heartbeat` went stale and the sweep timed it out.
+    assert_eq!(
+        coord.workers[&dead].status,
+        WorkerStatus::Unhealthy,
+        "C5: a worker whose replicated heartbeat_seq stopped advancing must be marked Unhealthy"
+    );
+
+    // Positive control: `w-alive` kept advancing its seq, so every sweep saw a
+    // fresh last_heartbeat and left it Ready.
+    assert_eq!(
+        coord.workers[&alive].status,
+        WorkerStatus::Ready,
+        "positive control: a worker whose heartbeat_seq keeps advancing must stay Ready"
+    );
+}

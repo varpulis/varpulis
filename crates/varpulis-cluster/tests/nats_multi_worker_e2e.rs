@@ -179,6 +179,8 @@ async fn test_deploy_pipeline_group_across_workers() {
             last_heartbeat: std::time::Instant::now(),
             assigned_pipelines: Vec::new(),
             events_processed: 0,
+            heartbeat_seq: 0,
+            last_seen_hb_seq: 0,
         };
         coord.register_worker(node0);
 
@@ -191,6 +193,8 @@ async fn test_deploy_pipeline_group_across_workers() {
             last_heartbeat: std::time::Instant::now(),
             assigned_pipelines: Vec::new(),
             events_processed: 0,
+            heartbeat_seq: 0,
+            last_seen_hb_seq: 0,
         };
         coord.register_worker(node1);
     }
@@ -333,6 +337,8 @@ async fn test_inject_events_to_both_workers() {
                 last_heartbeat: std::time::Instant::now(),
                 assigned_pipelines: Vec::new(),
                 events_processed: 0,
+                heartbeat_seq: 0,
+                last_seen_hb_seq: 0,
             };
             coord.register_worker(node);
         }
@@ -532,6 +538,8 @@ async fn test_worker_drain_state_transitions() {
                 last_heartbeat: std::time::Instant::now(),
                 assigned_pipelines: Vec::new(),
                 events_processed: 0,
+                heartbeat_seq: 0,
+                last_seen_hb_seq: 0,
             };
             coord.register_worker(node);
         }

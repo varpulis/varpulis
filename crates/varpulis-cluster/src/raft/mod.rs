@@ -90,6 +90,12 @@ pub enum ClusterCommand {
         pipelines_running: usize,
         #[serde(default)]
         pipeline_metrics: Vec<crate::worker::PipelineMetrics>,
+        /// Monotonic per-worker heartbeat counter (liveness signal). Advances
+        /// once per received heartbeat; `sync_from_raft` refreshes a worker's
+        /// `last_heartbeat` only when this value moves forward. `#[serde(default)]`
+        /// keeps older replicated/persisted commands deserializable.
+        #[serde(default)]
+        heartbeat_seq: u64,
     },
 
     // -- Pipeline groups --

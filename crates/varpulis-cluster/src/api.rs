@@ -624,6 +624,8 @@ async fn handle_register_worker(
                                 last_heartbeat: std::time::Instant::now(),
                                 assigned_pipelines: Vec::new(),
                                 events_processed: 0,
+                                heartbeat_seq: 0,
+                                last_seen_hb_seq: 0,
                             };
                             let id = coord.register_worker(node);
                             let reg_resp = RegisterWorkerResponse {
@@ -683,6 +685,8 @@ async fn handle_register_worker(
         last_heartbeat: std::time::Instant::now(),
         assigned_pipelines: Vec::new(),
         events_processed: 0,
+        heartbeat_seq: 0,
+        last_seen_hb_seq: 0,
     };
     let id = coord.register_worker(node);
     let resp = RegisterWorkerResponse {
@@ -708,11 +712,20 @@ async fn handle_heartbeat(
             // up-to-date events_processed and pipelines_running.
             #[cfg(feature = "raft")]
             {
+                // Read back the monotonic heartbeat counter that `heartbeat()`
+                // just advanced for this worker; replicating it is what lets
+                // other coordinators detect liveness (see `sync_from_raft`).
+                let heartbeat_seq = coord
+                    .workers
+                    .get(&WorkerId(worker_id.clone()))
+                    .map(|w| w.heartbeat_seq)
+                    .unwrap_or(0);
                 let cmd = crate::raft::ClusterCommand::WorkerMetricsUpdated {
                     id: worker_id,
                     events_processed: body.events_processed,
                     pipelines_running: body.pipelines_running,
                     pipeline_metrics: body.pipeline_metrics.clone(),
+                    heartbeat_seq,
                 };
                 if coord.is_raft_leader() {
                     // Leader: write directly to Raft log
