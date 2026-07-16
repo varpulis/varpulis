@@ -981,3 +981,61 @@ fn count_window_single_event_window() {
     assert!(r.is_some());
     assert_eq!(r.unwrap().len(), 1);
 }
+
+// ============================================================================
+// Idle-partition eviction (unbounded-growth guard)
+// ============================================================================
+
+/// A high-cardinality `partition_by` (user id / IP / session) must not grow the
+/// per-partition window map without bound: once a partition's window has fired
+/// past the watermark and is empty, the entry is evicted. Fail-before: without
+/// the `retain` in `advance_watermark`, `partition_count()` stays at 100.
+#[test]
+fn partitioned_tumbling_evicts_empty_partitions_on_watermark() {
+    let base = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let mut w = PartitionedTumblingWindow::new("key".to_string(), Duration::seconds(5));
+
+    for i in 0..100 {
+        w.add_shared(shared(make_event("E", 0, vec![("key", Value::Int(i))])));
+    }
+    assert_eq!(
+        w.partition_count(),
+        100,
+        "100 distinct keys → 100 live partitions"
+    );
+
+    // Advance far past every 5s window — they all fire and empty.
+    w.advance_watermark(base + Duration::seconds(100));
+
+    assert_eq!(
+        w.partition_count(),
+        0,
+        "empty (fired) partition windows must be evicted on watermark advance"
+    );
+}
+
+/// Same guard for the partitioned sliding window: once every event has slid out
+/// of a partition's window it must be evicted, not retained forever.
+#[test]
+fn partitioned_sliding_evicts_empty_partitions_on_watermark() {
+    let base = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let mut w = PartitionedSlidingWindow::new(
+        "key".to_string(),
+        Duration::seconds(5),
+        Duration::seconds(1),
+    );
+
+    for i in 0..100 {
+        w.add_shared(shared(make_event("E", 0, vec![("key", Value::Int(i))])));
+    }
+    assert_eq!(w.partition_count(), 100);
+
+    // Advance far past window_size after the last event so every window empties.
+    w.advance_watermark(base + Duration::seconds(100));
+
+    assert_eq!(
+        w.partition_count(),
+        0,
+        "fully-slid-out partition windows must be evicted on watermark advance"
+    );
+}

@@ -167,6 +167,12 @@ pub struct SlidingWindow {
 }
 
 impl SlidingWindow {
+    /// Whether this window currently holds no events — used to evict idle
+    /// partition entries in [`PartitionedSlidingWindow`].
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
+
     pub const fn new(window_size: Duration, slide_interval: Duration) -> Self {
         Self {
             window_size,
@@ -922,6 +928,12 @@ pub struct PartitionedTumblingWindow {
 }
 
 impl PartitionedTumblingWindow {
+    /// Number of live partition keys currently held. Bounded by eviction of
+    /// empty windows on watermark advance (see `advance_watermark`).
+    pub fn partition_count(&self) -> usize {
+        self.windows.len()
+    }
+
     pub fn new(partition_key: String, duration: Duration) -> Self {
         Self {
             partition_key,
@@ -1029,6 +1041,12 @@ impl PartitionedTumblingWindow {
                 results.push((key.clone(), events));
             }
         }
+        // Evict partition keys whose window is now empty (fired past the
+        // watermark, or never filled) so a high-cardinality `partition_by`
+        // cannot grow this map without bound. A later event for the key simply
+        // re-creates its window — no data is lost. Mirrors the eviction the
+        // partitioned session window already performs.
+        self.windows.retain(|_, window| !window.is_empty());
         results
     }
 }
@@ -1043,6 +1061,12 @@ pub struct PartitionedSlidingWindow {
 }
 
 impl PartitionedSlidingWindow {
+    /// Number of live partition keys currently held. Bounded by eviction of
+    /// empty windows on watermark advance (see `advance_watermark`).
+    pub fn partition_count(&self) -> usize {
+        self.windows.len()
+    }
+
     pub fn new(partition_key: String, window_size: Duration, slide_interval: Duration) -> Self {
         Self {
             partition_key,
@@ -1144,6 +1168,12 @@ impl PartitionedSlidingWindow {
                 results.push((key.clone(), events));
             }
         }
+        // Evict partition keys whose window is now empty (fired past the
+        // watermark, or never filled) so a high-cardinality `partition_by`
+        // cannot grow this map without bound. A later event for the key simply
+        // re-creates its window — no data is lost. Mirrors the eviction the
+        // partitioned session window already performs.
+        self.windows.retain(|_, window| !window.is_empty());
         results
     }
 }
@@ -1661,6 +1691,12 @@ pub struct BinnedSlidingWindow {
 }
 
 impl BinnedSlidingWindow {
+    /// Whether this window currently holds no bins (hence no events) — used to
+    /// evict idle partition entries on watermark advance.
+    pub fn is_empty(&self) -> bool {
+        self.bins.is_empty()
+    }
+
     /// Create a new binned sliding window.
     ///
     /// `tracked_fields` lists field names for which per-bin aggregates are
@@ -2104,6 +2140,12 @@ impl PartitionedBinnedSlidingWindow {
                 results.push((key.clone(), events));
             }
         }
+        // Evict partition keys whose window is now empty (fired past the
+        // watermark, or never filled) so a high-cardinality `partition_by`
+        // cannot grow this map without bound. A later event for the key simply
+        // re-creates its window — no data is lost. Mirrors the eviction the
+        // partitioned session window already performs.
+        self.windows.retain(|_, window| !window.is_empty());
         results
     }
 
