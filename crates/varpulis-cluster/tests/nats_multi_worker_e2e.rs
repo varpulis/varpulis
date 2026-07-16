@@ -628,3 +628,160 @@ async fn test_worker_drain_state_transitions() {
         );
     }
 }
+
+// ============================================================================
+// Test 6: Deploy handler dispatch routes over NATS (C6a wiring regression)
+// ============================================================================
+//
+// Proves `Coordinator::execute_deploy_plan_dispatch` takes the NATS branch
+// when a client is configured. Workers are registered with `nats://...`
+// addresses, which reqwest CANNOT reach — so a Running placement can only
+// mean the command travelled over NATS. This is the handler-level routing
+// gap the raw `execute_deploy_plan_nats` test (`test_deploy_pipeline_group_
+// across_workers`) does not cover.
+//
+// Fail-before/pass-after gate: temporarily make the dispatch fn ignore its
+// `nats` argument and always call `execute_deploy_plan` (HTTP). Against the
+// `nats://w0` address the reqwest POST errors, the outcome is `Err`, the
+// placement is NOT `Running`, and this test FAILS — proving the NATS routing
+// is load-bearing. Restore the dispatch and it passes.
+//
+// Broker-skip: matches on `connect_nats` and early-returns with a `[skip]`
+// note (like `tests/chaos/network_partition.rs`) so CI without a broker stays
+// green.
+#[tokio::test]
+async fn test_deploy_dispatch_routes_over_nats() {
+    let client = match connect_nats(NATS_URL).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!(
+                "[skip] test_deploy_dispatch_routes_over_nats: NATS not reachable at {NATS_URL}: {e}"
+            );
+            return;
+        }
+    };
+
+    let coordinator = new_coordinator();
+
+    let w0_id = format!("disp-w0-{}", Uuid::new_v4());
+    let w1_id = format!("disp-w1-{}", Uuid::new_v4());
+    let w0_key = format!("key-{}", Uuid::new_v4());
+    let w1_key = format!("key-{}", Uuid::new_v4());
+
+    // Register workers with NATS addresses. `nats://...` is NOT a valid HTTP
+    // URL, so any HTTP fallback would fail — success proves NATS was used.
+    {
+        let mut coord = coordinator.write().await;
+        for (wid, key, addr) in [
+            (&w0_id, &w0_key, "nats://w0"),
+            (&w1_id, &w1_key, "nats://w1"),
+        ] {
+            let node = WorkerNode {
+                id: WorkerId(wid.clone()),
+                address: addr.to_string(),
+                api_key: SecretString::new(key.clone()),
+                status: WorkerStatus::Ready,
+                capacity: WorkerCapacity::default(),
+                last_heartbeat: std::time::Instant::now(),
+                assigned_pipelines: Vec::new(),
+                events_processed: 0,
+                heartbeat_seq: 0,
+                last_seen_hb_seq: 0,
+            };
+            coord.register_worker(node);
+        }
+    }
+
+    // TenantManagers + worker NATS handlers so the deploy commands land.
+    let tm0 = new_tenant_manager(&w0_key).await;
+    let tm1 = new_tenant_manager(&w1_key).await;
+
+    let h0 = {
+        let c = client.clone();
+        let wid = w0_id.clone();
+        let key = w0_key.clone();
+        let tm = tm0.clone();
+        tokio::spawn(async move {
+            run_worker_nats_handler(c, &wid, &key, tm).await;
+        })
+    };
+    let h1 = {
+        let c = client.clone();
+        let wid = w1_id.clone();
+        let key = w1_key.clone();
+        let tm = tm1.clone();
+        tokio::spawn(async move {
+            run_worker_nats_handler(c, &wid, &key, tm).await;
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let spec = PipelineGroupSpec {
+        name: "dispatch-deploy-test".to_string(),
+        pipelines: vec![
+            PipelinePlacement {
+                name: "pipe-a".to_string(),
+                source: "stream A = SensorReading .where(temperature > 100)".to_string(),
+                worker_affinity: Some(w0_id.clone()),
+                replicas: 1,
+                partition_key: None,
+            },
+            PipelinePlacement {
+                name: "pipe-b".to_string(),
+                source: "stream B = SensorReading .where(temperature > 50)".to_string(),
+                worker_affinity: Some(w1_id.clone()),
+                replicas: 1,
+                partition_key: None,
+            },
+        ],
+        routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
+    };
+
+    // Phase 1: Plan.
+    let plan = {
+        let coord = coordinator.read().await;
+        coord.plan_deploy_group(&spec).unwrap()
+    };
+    assert_eq!(plan.tasks.len(), 2);
+
+    // Phase 2: dispatch WITH a NATS client. The `http` arg is a real client
+    // that would genuinely fail on the `nats://` addresses, so a Running
+    // result can only come from the NATS branch being taken.
+    let http = reqwest::Client::new();
+    let results = Coordinator::execute_deploy_plan_dispatch(Some(&client), &http, &plan).await;
+    assert_eq!(results.len(), 2);
+    for r in &results {
+        assert!(
+            r.outcome.is_ok(),
+            "deploy dispatch over NATS failed for {} (address {}): {:?}",
+            r.replica_name,
+            r.worker_address,
+            r.outcome
+        );
+    }
+
+    // Phase 3: Commit and assert EVERY placement is Running — the NATS branch
+    // worked end-to-end.
+    let group_id = {
+        let mut coord = coordinator.write().await;
+        coord.commit_deploy_group(plan, results).unwrap()
+    };
+    {
+        let coord = coordinator.read().await;
+        let group = coord.pipeline_groups.get(&group_id).expect("group missing");
+        assert_eq!(group.status, GroupStatus::Running);
+        assert_eq!(group.placements.len(), 2);
+        for (name, placement) in &group.placements {
+            assert_eq!(
+                placement.status,
+                PipelineDeploymentStatus::Running,
+                "placement '{name}' should be Running after NATS dispatch"
+            );
+        }
+    }
+
+    h0.abort();
+    h1.abort();
+}

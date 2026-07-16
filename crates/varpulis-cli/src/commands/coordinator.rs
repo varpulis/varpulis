@@ -240,22 +240,29 @@ pub async fn run_coordinator(
 
     let coordinator = varpulis_cluster::shared_coordinator();
 
-    // Spawn NATS coordinator handler if NATS URL is configured
+    // Connect NATS and spawn the inbound coordinator handler if a NATS URL is
+    // configured. Keep a clone of the client so it can be stored on the
+    // coordinator below for the OUTBOUND command path (deploy/teardown/inject);
+    // the handler task gets its own clone.
     #[cfg(feature = "nats-transport")]
-    if let Some(ref nurl) = nats_url {
+    let coordinator_nats_client = if let Some(ref nurl) = nats_url {
         let nats_client = varpulis_cluster::nats_transport::connect_nats(nurl)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to connect to NATS: {}", e))?;
         info!("Coordinator connected to NATS at {}", nurl);
         let coord_for_nats = coordinator.clone();
+        let handler_client = nats_client.clone();
         tokio::spawn(async move {
             varpulis_cluster::nats_coordinator::run_coordinator_nats_handler(
-                nats_client,
+                handler_client,
                 coord_for_nats,
             )
             .await;
         });
-    }
+        Some(nats_client)
+    } else {
+        None
+    };
     #[cfg(not(feature = "nats-transport"))]
     let _ = &nats_url;
 
@@ -291,6 +298,13 @@ pub async fn run_coordinator(
                 peer_addrs: raft_peer_addrs_map.clone(),
                 admin_key: rbac.any_admin_key(),
             });
+        }
+
+        // Store the outbound NATS client so the deploy/teardown/inject REST
+        // handlers route commands over NATS (not HTTP) in a NATS deployment.
+        #[cfg(feature = "nats-transport")]
+        {
+            coord.nats_client = coordinator_nats_client;
         }
     }
 
