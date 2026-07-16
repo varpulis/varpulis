@@ -8,79 +8,32 @@ use varpulis_cli::output;
 use varpulis_connectors::credentials::CredentialsStore;
 use varpulis_connectors::ManagedConnectorRegistry;
 use varpulis_parser::parse;
-use varpulis_runtime::engine::Engine;
+use varpulis_runtime::engine::{BarrierError, Engine, SourceCommitCoordinator};
 use varpulis_runtime::event::Event;
-use varpulis_runtime::SourceBinding;
 
-/// Run a full 2PC checkpoint barrier sequence.
+/// Commits source consumer-group offsets through the managed connector
+/// registry — the CLI's implementation of the engine's barrier commit seam.
 ///
-/// This is the end-to-end exactly-once commit path:
-/// 1. Snapshot engine state (windows, SASE runs, join buffers, source offsets).
-/// 2. `prepare_commit` on transactional sinks — flushes in-flight records
-///    into the open Kafka transaction but keeps them invisible to consumers.
-/// 3. `commit` on transactional sinks — makes the pre-committed data visible
-///    AND begins the next epoch so subsequent events land in a fresh transaction.
-/// 4. Commit per-source consumer-group offsets via the registry, closing the
-///    loop: the next restart will re-read from exactly where the engine's
-///    committed sink output left off.
-///
-/// If `prepare_commit` fails we abort the current epoch and return early —
-/// source offsets are deliberately NOT committed so the next run re-consumes
-/// the corresponding records and replays their effects into a fresh sink
-/// transaction.
-async fn barrier_commit_2pc(
-    engine: &mut Engine,
-    registry: &ManagedConnectorRegistry,
-    bindings: &[SourceBinding],
-    checkpoint_id: u64,
-) {
-    // Phase 1 — state snapshot (fast, in-memory).
-    let snapshot = engine.create_checkpoint();
+/// The end-to-end 2PC sequence itself now lives in
+/// [`Engine::barrier_commit_2pc`]; this wrapper just performs the out-of-band
+/// offset commit the engine asks for, mapping the connector error into the
+/// engine's [`BarrierError`].
+struct RegistryCommitCoordinator<'a> {
+    registry: &'a ManagedConnectorRegistry,
+}
 
-    // Phase 1b — persist checkpoint to disk (if checkpointing is enabled).
-    // This must happen BEFORE the sink commit so that on crash-recovery the
-    // restored engine state is consistent with the last committed offset.
-    if engine.has_checkpointing() {
-        if let Err(e) = engine.force_checkpoint() {
-            tracing::warn!("Checkpoint persist failed (epoch {checkpoint_id}): {e}");
-        }
-    }
-
-    // Phase 2 — prepare commit on transactional sinks (flush producer queues).
-    engine.prepare_commit_sinks(checkpoint_id).await;
-
-    // Phase 3 — commit transactional sinks. This is the point of no return:
-    // once the Kafka `commit_transaction` succeeds, downstream consumers can
-    // see the emitted events, and we MUST commit the corresponding source
-    // offsets or a restart would double-emit.
-    engine.commit_sinks(checkpoint_id).await;
-
-    // Phase 4 — commit source consumer-group offsets.
-    for binding in bindings {
-        let Some(offsets) = snapshot.source_offsets.get(&binding.connector_name) else {
-            continue;
-        };
-        if offsets.is_empty() {
-            continue;
-        }
-        let Some(config) = engine.get_connector(&binding.connector_name) else {
-            continue;
-        };
-        let topic = binding
-            .topic_override
-            .as_deref()
-            .or(config.topic.as_deref())
-            .unwrap_or("varpulis/events/#");
-
-        if let Err(e) = registry
-            .commit_source_offsets(&binding.connector_name, topic, offsets)
+#[async_trait::async_trait]
+impl SourceCommitCoordinator for RegistryCommitCoordinator<'_> {
+    async fn commit_offsets(
+        &self,
+        connector: &str,
+        topic: &str,
+        offsets: &std::collections::HashMap<i32, i64>,
+    ) -> Result<(), BarrierError> {
+        self.registry
+            .commit_source_offsets(connector, topic, offsets)
             .await
-        {
-            tracing::warn!(
-                "Source offset commit failed (checkpoint {checkpoint_id}, connector {}): {e}",
-                binding.connector_name
-            );
-        }
+            .map_err(|e| BarrierError::OffsetCommit(e.to_string()))
     }
 }
 
@@ -409,7 +362,14 @@ pub async fn run_program(
                             // commits transactional sinks AND source offsets
                             // as a single checkpoint epoch.
                             checkpoint_id += 1;
-                            barrier_commit_2pc(&mut engine, &registry, &bindings, checkpoint_id).await;
+                            let coordinator = RegistryCommitCoordinator { registry: &registry };
+                            if let Err(e) =
+                                engine.barrier_commit_2pc(checkpoint_id, &coordinator).await
+                            {
+                                tracing::warn!(
+                                    "Checkpoint barrier failed (epoch {checkpoint_id}): {e}"
+                                );
+                            }
                         }
                     }
                 }
@@ -429,7 +389,10 @@ pub async fn run_program(
                             tracing::warn!("Watermark drain error: {}", e);
                         }
                         checkpoint_id += 1;
-                        barrier_commit_2pc(&mut engine, &registry, &bindings, checkpoint_id).await;
+                        let coordinator = RegistryCommitCoordinator { registry: &registry };
+                        if let Err(e) = engine.barrier_commit_2pc(checkpoint_id, &coordinator).await {
+                            tracing::warn!("Checkpoint barrier failed (epoch {checkpoint_id}): {e}");
+                        }
                     }
 
                     registry.shutdown().await;
