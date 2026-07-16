@@ -185,6 +185,33 @@ impl PostgresCdcSource {
     }
 }
 
+/// Validate a PostgreSQL logical replication slot name.
+///
+/// The slot name is interpolated directly into the replication SQL
+/// (`pg_create_logical_replication_slot`, `pg_logical_slot_get_changes`,
+/// `START_REPLICATION`) via `simple_query`, which does NO parameter binding — so
+/// an unvalidated name is a SQL-injection vector. PostgreSQL itself restricts
+/// slot names to lowercase letters, digits, and underscores, ≤63 bytes;
+/// enforcing exactly that rule rejects any injection attempt (quotes, spaces,
+/// semicolons, etc.) while accepting every legitimate slot name.
+fn validate_slot_name(name: &str) -> Result<(), ConnectorError> {
+    if name.is_empty() || name.len() > 63 {
+        return Err(ConnectorError::ConfigError(format!(
+            "invalid replication slot name {name:?}: must be 1-63 characters"
+        )));
+    }
+    if !name
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    {
+        return Err(ConnectorError::ConfigError(format!(
+            "invalid replication slot name {name:?}: only lowercase letters, \
+             digits, and underscores are allowed"
+        )));
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl SourceConnector for PostgresCdcSource {
     fn name(&self) -> &str {
@@ -193,6 +220,10 @@ impl SourceConnector for PostgresCdcSource {
 
     async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
         use std::sync::atomic::Ordering;
+
+        // Reject an unsafe replication slot name BEFORE opening any connection —
+        // it is interpolated into replication SQL with no parameter binding.
+        validate_slot_name(&self.config.slot_name)?;
 
         use tokio_postgres::NoTls;
         use tracing::{error, info, warn};
@@ -785,5 +816,56 @@ mod tests {
         assert!(parse_change_text("BEGIN").is_none());
         assert!(parse_change_text("COMMIT").is_none());
         assert!(parse_change_text("").is_none());
+    }
+
+    // --- Replication slot-name validation (SQL-injection guard) ---
+
+    #[test]
+    fn validate_slot_name_accepts_legitimate_names() {
+        assert!(validate_slot_name("varpulis_slot").is_ok());
+        assert!(validate_slot_name("my_slot").is_ok());
+        assert!(validate_slot_name("slot123").is_ok());
+        assert!(validate_slot_name("a").is_ok());
+        assert!(
+            validate_slot_name(&"x".repeat(63)).is_ok(),
+            "63 chars is the max"
+        );
+    }
+
+    #[test]
+    fn validate_slot_name_rejects_injection_and_invalid() {
+        assert!(validate_slot_name("").is_err(), "empty");
+        assert!(validate_slot_name(&"x".repeat(64)).is_err(), "too long");
+        for bad in [
+            "Upper",
+            "has space",
+            "slot'; DROP TABLE users; --",
+            "a', 'test_decoding'); DROP TABLE t--",
+            "slot-name",
+            "slot.name",
+        ] {
+            assert!(validate_slot_name(bad).is_err(), "should reject {bad:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn start_rejects_injection_slot_name_before_connecting() {
+        // A malicious slot name must be rejected by validation BEFORE any
+        // connection is attempted — so `start` returns a ConfigError (not a
+        // ConnectionFailed) and never touches Postgres. Fail-before: without the
+        // guard, `start` proceeds to connect and the error is a connection
+        // failure, so the message check below fails.
+        let config =
+            PostgresCdcConfig::new("localhost", "db").with_slot("evil'; DROP TABLE audit_log; --");
+        let mut source = PostgresCdcSource::new("cdc-test", config);
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let err = source
+            .start(tx)
+            .await
+            .expect_err("injection slot name must be rejected");
+        assert!(
+            err.to_string().contains("invalid replication slot name"),
+            "must be rejected by slot validation, not a connection attempt: {err}"
+        );
     }
 }
