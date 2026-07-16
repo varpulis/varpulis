@@ -84,6 +84,8 @@ pub fn build_mtls_client_config(
 struct WsRouteState {
     server_state: Arc<RwLock<ServerState>>,
     broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>,
+    /// Caps concurrent WebSocket connections (resource-exhaustion guard).
+    ws_limiter: websocket::WsConnectionLimiter,
 }
 
 /// Shared state for server health/ready endpoints.
@@ -138,12 +140,26 @@ async fn ws_upgrade_handler(
         return rejection.into_response();
     }
 
+    // Reject the upgrade once the concurrent-connection cap is hit, so a flood
+    // of upgrades can't exhaust sockets/tasks/broadcast subscribers. The guard
+    // is moved into the connection task and frees the slot on disconnect.
+    let Some(conn_guard) = app.ws.ws_limiter.try_acquire() else {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "too many WebSocket connections",
+        )
+            .into_response();
+    };
+
     let state = app.ws.server_state.clone();
     let broadcast_tx = app.ws.broadcast_tx.clone();
     let response = ws
         .max_frame_size(1024 * 1024)
         .max_message_size(1024 * 1024)
-        .on_upgrade(move |socket| websocket::handle_connection(socket, state, broadcast_tx));
+        .on_upgrade(move |socket| async move {
+            let _conn_guard = conn_guard;
+            websocket::handle_connection(socket, state, broadcast_tx).await;
+        });
     // Echo the varpulis-v1 subprotocol so the browser accepts the upgrade
     // when auth was provided via Sec-WebSocket-Protocol header.
     (
@@ -338,6 +354,7 @@ pub async fn run_server(
     let ws_state = Arc::new(WsRouteState {
         server_state: state.clone(),
         broadcast_tx: broadcast_tx.clone(),
+        ws_limiter: websocket::WsConnectionLimiter::new(websocket::MAX_WS_CONNECTIONS),
     });
 
     // Health/ready check state (shared via axum State)

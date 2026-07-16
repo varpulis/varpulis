@@ -3,7 +3,7 @@
 //! Provides WebSocket server functionality for the VS Code extension and other clients.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket};
@@ -17,6 +17,62 @@ use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;
 
 use crate::security;
+
+/// Default ceiling on concurrent WebSocket connections per server process.
+pub const MAX_WS_CONNECTIONS: usize = 1024;
+
+/// Caps concurrent WebSocket connections to protect the process from floods.
+///
+/// A flood of upgrades would otherwise exhaust sockets, tasks, and broadcast
+/// subscribers. Cheap atomic counter; [`try_acquire`](Self::try_acquire) hands
+/// back a guard that frees the slot on drop, so the count always tracks live
+/// connections even on abnormal exit.
+#[derive(Clone, Debug)]
+pub struct WsConnectionLimiter {
+    count: Arc<AtomicUsize>,
+    max: usize,
+}
+
+impl WsConnectionLimiter {
+    pub fn new(max: usize) -> Self {
+        Self {
+            count: Arc::new(AtomicUsize::new(0)),
+            max,
+        }
+    }
+
+    /// Reserve a connection slot, or return `None` when the cap is already
+    /// reached (the caller should reject the upgrade). The returned guard
+    /// releases the slot when dropped.
+    pub fn try_acquire(&self) -> Option<WsConnectionGuard> {
+        let prev = self.count.fetch_add(1, Ordering::AcqRel);
+        if prev >= self.max {
+            self.count.fetch_sub(1, Ordering::AcqRel);
+            None
+        } else {
+            Some(WsConnectionGuard {
+                count: self.count.clone(),
+            })
+        }
+    }
+
+    /// Current number of live connections.
+    pub fn active(&self) -> usize {
+        self.count.load(Ordering::Acquire)
+    }
+}
+
+/// Frees a WebSocket connection slot when dropped.
+#[derive(Debug)]
+pub struct WsConnectionGuard {
+    count: Arc<AtomicUsize>,
+}
+
+impl Drop for WsConnectionGuard {
+    fn drop(&mut self) {
+        self.count.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 // =============================================================================
 // Relay Metrics
@@ -733,6 +789,27 @@ pub fn value_to_json(value: &varpulis_core::Value) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ws_connection_limiter_caps_and_releases() {
+        let lim = WsConnectionLimiter::new(2);
+        let g1 = lim.try_acquire().expect("1st under cap");
+        let _g2 = lim.try_acquire().expect("2nd at cap");
+        assert_eq!(lim.active(), 2);
+        // 3rd over the cap → rejected, and the count is not left inflated.
+        assert!(
+            lim.try_acquire().is_none(),
+            "over-cap acquire must be rejected"
+        );
+        assert_eq!(lim.active(), 2);
+        // Dropping a guard (a disconnect) frees exactly one slot.
+        drop(g1);
+        assert_eq!(lim.active(), 1);
+        assert!(
+            lim.try_acquire().is_some(),
+            "slot must free up after a disconnect"
+        );
+    }
 
     // -------------------------------------------------------------------------
     // WsMessage serialization tests
