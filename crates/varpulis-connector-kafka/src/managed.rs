@@ -802,19 +802,30 @@ impl Sink for KafkaSharedSink {
                         .map_err(|_| SinkError::other("pending_offsets lock poisoned"))?;
                     std::mem::take(&mut *guard)
                 };
-                for (consumer, tpl) in &staged {
-                    let cgm = consumer
-                        .group_metadata()
-                        .ok_or_else(|| SinkError::other("consumer group_metadata unavailable"))?;
-                    self.producer
-                        .send_offsets_to_transaction(tpl, &cgm, Duration::from_secs(30))
-                        .map_err(|e| {
-                            SinkError::other(format!("send_offsets_to_transaction: {e}"))
+                // Send offsets + commit; on any failure restore the phase to 2
+                // (prepared) so the barrier's abort() actually aborts the still
+                // open transaction instead of no-op'ing on phase 0 (§7 hardening).
+                // These librdkafka calls are synchronous, so a plain closure with
+                // `?` captures the first error without crossing an await.
+                let outcome = (|| {
+                    for (consumer, tpl) in &staged {
+                        let cgm = consumer.group_metadata().ok_or_else(|| {
+                            SinkError::other("consumer group_metadata unavailable")
                         })?;
+                        self.producer
+                            .send_offsets_to_transaction(tpl, &cgm, Duration::from_secs(30))
+                            .map_err(|e| {
+                                SinkError::other(format!("send_offsets_to_transaction: {e}"))
+                            })?;
+                    }
+                    self.producer
+                        .commit_transaction(Duration::from_secs(30))
+                        .map_err(|e| SinkError::other(format!("commit_transaction: {e}")))
+                })();
+                if outcome.is_err() {
+                    state.phase.store(2, Ordering::SeqCst);
                 }
-                self.producer
-                    .commit_transaction(Duration::from_secs(30))
-                    .map_err(|e| SinkError::other(format!("commit_transaction: {e}")))?;
+                return outcome;
             }
         }
         Ok(())
@@ -822,6 +833,11 @@ impl Sink for KafkaSharedSink {
 
     async fn abort(&self, _checkpoint_id: u64) -> Result<(), SinkError> {
         if let Some(ref state) = self.txn_state {
+            // Discard any offsets staged for the aborted transaction so they
+            // don't leak into the next epoch.
+            if let Ok(mut guard) = state.pending_offsets.lock() {
+                guard.clear();
+            }
             if state.phase.swap(0, Ordering::SeqCst) > 0 {
                 self.producer
                     .abort_transaction(Duration::from_secs(10))
