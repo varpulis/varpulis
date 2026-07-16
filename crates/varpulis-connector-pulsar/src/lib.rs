@@ -63,7 +63,7 @@ inventory::submit! { &PulsarFactory as &dyn ConnectorFactory }
 // =============================================================================
 
 /// Pulsar configuration
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct PulsarConfig {
     /// Pulsar service URL (e.g., `"pulsar://localhost:6650"`).
     pub service_url: String,
@@ -77,6 +77,22 @@ pub struct PulsarConfig {
     pub batch_size: usize,
     /// Authentication token (optional).
     pub token: Option<String>,
+}
+
+/// Hand-written so the auth `token` never reaches logs / errors / panic output
+/// via `{:?}`. The derived Debug printed it in full; Some/None is preserved so
+/// it's still visible whether a token is configured.
+impl std::fmt::Debug for PulsarConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PulsarConfig")
+            .field("service_url", &self.service_url)
+            .field("topic", &self.topic)
+            .field("subscription", &self.subscription)
+            .field("consumer_name", &self.consumer_name)
+            .field("batch_size", &self.batch_size)
+            .field("token", &self.token.as_ref().map(|_| "***REDACTED***"))
+            .finish()
+    }
 }
 
 impl PulsarConfig {
@@ -368,6 +384,27 @@ impl SinkConnector for PulsarSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pulsar_config_debug_redacts_token() {
+        let config = PulsarConfig::new("pulsar://localhost:6650", "topic")
+            .with_token("super-secret-jwt-token");
+        let rendered = format!("{config:?}");
+        assert!(
+            !rendered.contains("super-secret-jwt-token"),
+            "auth token leaked in Debug: {rendered}"
+        );
+        assert!(
+            rendered.contains("***REDACTED***"),
+            "configured token should be masked"
+        );
+        // No token → None (not REDACTED).
+        let no_token = format!(
+            "{:?}",
+            PulsarConfig::new("pulsar://localhost:6650", "topic")
+        );
+        assert!(no_token.contains("token: None"), "got: {no_token}");
+    }
 
     #[test]
     fn test_pulsar_config_new() {
