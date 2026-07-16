@@ -2506,7 +2506,7 @@ async fn handle_cluster_summary(State(state): State<AppState>, _auth: RbacViewer
 // Raft cluster status handler
 // =============================================================================
 
-async fn handle_raft_status(State(state): State<AppState>) -> Response {
+async fn handle_raft_status(State(state): State<AppState>, _auth: RbacViewer) -> Response {
     let coordinator = state.coordinator.clone();
     let _coord = coordinator.read().await;
 
@@ -3031,6 +3031,22 @@ mod tests {
 
         // Should reject
         assert_ne!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_raft_status_requires_auth() {
+        // /api/v1/cluster/raft leaks cluster topology (node ids, current leader,
+        // peer addresses). Every sibling read route requires RbacViewer; this one
+        // was missing the extractor, so it answered unauthenticated callers.
+        let (_coord, router) = setup_routes();
+
+        // No key → 401 (before the fix this returned 200 with the topology).
+        let resp = send_request(&router, get_req_no_key("/api/v1/cluster/raft")).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // Valid key → auth passes (not a 401).
+        let resp = send_request(&router, get_req("/api/v1/cluster/raft", "admin-key")).await;
+        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
