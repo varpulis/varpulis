@@ -868,19 +868,40 @@ async fn handle_deploy_group(
         return resp;
     }
 
-    // Phase 1: Plan (read lock — released before HTTP I/O)
-    let (plan, http_client) = {
-        let coord = coordinator.read().await;
-
-        match coord.plan_deploy_group(&body) {
-            Ok(plan) => (plan, coord.http_client.clone()),
-            Err(e) => return cluster_error_response(e),
-        }
+    // Phase 1 (plan, read lock) + Phase 2 (execute, no lock).
+    // Transport is NATS when a client is configured, else HTTP (default).
+    #[cfg(feature = "nats-transport")]
+    let (plan, results) = {
+        let (plan, http_client, nats_client) = {
+            let coord = coordinator.read().await;
+            match coord.plan_deploy_group(&body) {
+                Ok(plan) => (plan, coord.http_client.clone(), coord.nats_client.clone()),
+                Err(e) => return cluster_error_response(e),
+            }
+        };
+        // Read lock released here
+        let results = crate::coordinator::Coordinator::execute_deploy_plan_dispatch(
+            nats_client.as_ref(),
+            &http_client,
+            &plan,
+        )
+        .await;
+        (plan, results)
     };
-    // Read lock released here
-
-    // Phase 2: Execute HTTP deploys (no lock held)
-    let results = crate::coordinator::Coordinator::execute_deploy_plan(&http_client, &plan).await;
+    #[cfg(not(feature = "nats-transport"))]
+    let (plan, results) = {
+        let (plan, http_client) = {
+            let coord = coordinator.read().await;
+            match coord.plan_deploy_group(&body) {
+                Ok(plan) => (plan, coord.http_client.clone()),
+                Err(e) => return cluster_error_response(e),
+            }
+        };
+        // Read lock released here
+        let results =
+            crate::coordinator::Coordinator::execute_deploy_plan(&http_client, &plan).await;
+        (plan, results)
+    };
 
     // Phase 3: Commit results (write lock)
     let mut coord = coordinator.write().await;
@@ -992,19 +1013,39 @@ async fn handle_delete_group(
         return resp;
     }
 
-    // Phase 1: Plan teardown under read lock
-    let (plan, http_client) = {
-        let coord = coordinator.read().await;
-
-        match coord.plan_teardown_group(&group_id) {
-            Ok(plan) => (plan, coord.http_client.clone()),
-            Err(e) => return cluster_error_response(e),
-        }
+    // Phase 1 (plan teardown, read lock) + Phase 2 (execute, no lock).
+    // Transport is NATS when a client is configured, else HTTP (default).
+    #[cfg(feature = "nats-transport")]
+    let plan = {
+        let (plan, http_client, nats_client) = {
+            let coord = coordinator.read().await;
+            match coord.plan_teardown_group(&group_id) {
+                Ok(plan) => (plan, coord.http_client.clone(), coord.nats_client.clone()),
+                Err(e) => return cluster_error_response(e),
+            }
+        };
+        // Read lock released here
+        crate::coordinator::Coordinator::execute_teardown_plan_dispatch(
+            nats_client.as_ref(),
+            &http_client,
+            &plan,
+        )
+        .await;
+        plan
     };
-    // Read lock released here
-
-    // Phase 2: Execute HTTP teardown without lock
-    crate::coordinator::Coordinator::execute_teardown_plan(&http_client, &plan).await;
+    #[cfg(not(feature = "nats-transport"))]
+    let plan = {
+        let (plan, http_client) = {
+            let coord = coordinator.read().await;
+            match coord.plan_teardown_group(&group_id) {
+                Ok(plan) => (plan, coord.http_client.clone()),
+                Err(e) => return cluster_error_response(e),
+            }
+        };
+        // Read lock released here
+        crate::coordinator::Coordinator::execute_teardown_plan(&http_client, &plan).await;
+        plan
+    };
 
     // Phase 3: Commit state changes under write lock
     let mut coord = coordinator.write().await;
@@ -1052,19 +1093,40 @@ async fn handle_inject_event(
     {
         return resp;
     }
-    // Phase 1: Resolve target under read lock
-    let (target, http_client) = {
-        let coord = coordinator.read().await;
-        match coord.resolve_inject_target(&group_id, &body) {
-            Ok(target) => (target, coord.http_client.clone()),
-            Err(e) => return cluster_error_response(e),
-        }
+    // Phase 1 (resolve target, read lock) + Phase 2 (execute, no lock).
+    // Transport is NATS when a client is configured, else HTTP (default).
+    #[cfg(feature = "nats-transport")]
+    let inject_result = {
+        let (target, http_client, nats_client) = {
+            let coord = coordinator.read().await;
+            match coord.resolve_inject_target(&group_id, &body) {
+                Ok(target) => (target, coord.http_client.clone(), coord.nats_client.clone()),
+                Err(e) => return cluster_error_response(e),
+            }
+        };
+        // Read lock released here
+        crate::coordinator::Coordinator::execute_inject_event_dispatch(
+            nats_client.as_ref(),
+            &http_client,
+            &target,
+            &body,
+        )
+        .await
     };
-    // Read lock released here
+    #[cfg(not(feature = "nats-transport"))]
+    let inject_result = {
+        let (target, http_client) = {
+            let coord = coordinator.read().await;
+            match coord.resolve_inject_target(&group_id, &body) {
+                Ok(target) => (target, coord.http_client.clone()),
+                Err(e) => return cluster_error_response(e),
+            }
+        };
+        // Read lock released here
+        crate::coordinator::Coordinator::execute_inject_event(&http_client, &target, &body).await
+    };
 
-    // Phase 2: Execute HTTP without lock
-    match crate::coordinator::Coordinator::execute_inject_event(&http_client, &target, &body).await
-    {
+    match inject_result {
         Ok(resp) => reply_json_status(&resp, StatusCode::OK),
         Err(e) => cluster_error_response(e),
     }
@@ -2165,38 +2227,82 @@ async fn handle_manual_migrate(
         return resp;
     }
 
-    // Phase 1: Plan (read lock — released before HTTP I/O)
-    let (plan, http_client, source_alive, connectors) = {
-        let coord = coordinator.read().await;
+    // Phase 1 (plan, read lock) + Phase 2 (execute, no lock).
+    // Transport is NATS when a client is configured, else HTTP (default).
+    #[cfg(feature = "nats-transport")]
+    let (plan, result) = {
+        let (plan, http_client, source_alive, connectors, nats_client) = {
+            let coord = coordinator.read().await;
 
-        match coord.plan_migrate_pipeline(
-            &pipeline_name,
-            &group_id,
-            &WorkerId(body.target_worker_id),
-            MigrationReason::Manual,
-        ) {
-            Ok(plan) => {
-                let source_alive = coord
-                    .workers
-                    .get(&plan.source_worker_id)
-                    .map(|w| w.status != crate::worker::WorkerStatus::Unhealthy)
-                    .unwrap_or(false);
-                let connectors = coord.connectors.clone();
-                (plan, coord.http_client.clone(), source_alive, connectors)
+            match coord.plan_migrate_pipeline(
+                &pipeline_name,
+                &group_id,
+                &WorkerId(body.target_worker_id),
+                MigrationReason::Manual,
+            ) {
+                Ok(plan) => {
+                    let source_alive = coord
+                        .workers
+                        .get(&plan.source_worker_id)
+                        .map(|w| w.status != crate::worker::WorkerStatus::Unhealthy)
+                        .unwrap_or(false);
+                    let connectors = coord.connectors.clone();
+                    (
+                        plan,
+                        coord.http_client.clone(),
+                        source_alive,
+                        connectors,
+                        coord.nats_client.clone(),
+                    )
+                }
+                Err(e) => return cluster_error_response(e),
             }
-            Err(e) => return cluster_error_response(e),
-        }
+        };
+        // Read lock released here
+        let result = crate::coordinator::Coordinator::execute_migrate_plan_dispatch(
+            nats_client.as_ref(),
+            &http_client,
+            &plan,
+            source_alive,
+            &connectors,
+            None,
+        )
+        .await;
+        (plan, result)
     };
-    // Read lock released here
+    #[cfg(not(feature = "nats-transport"))]
+    let (plan, result) = {
+        let (plan, http_client, source_alive, connectors) = {
+            let coord = coordinator.read().await;
 
-    // Phase 2: Execute HTTP steps (no lock held)
-    let result = crate::coordinator::Coordinator::execute_migrate_plan(
-        &http_client,
-        &plan,
-        source_alive,
-        &connectors,
-    )
-    .await;
+            match coord.plan_migrate_pipeline(
+                &pipeline_name,
+                &group_id,
+                &WorkerId(body.target_worker_id),
+                MigrationReason::Manual,
+            ) {
+                Ok(plan) => {
+                    let source_alive = coord
+                        .workers
+                        .get(&plan.source_worker_id)
+                        .map(|w| w.status != crate::worker::WorkerStatus::Unhealthy)
+                        .unwrap_or(false);
+                    let connectors = coord.connectors.clone();
+                    (plan, coord.http_client.clone(), source_alive, connectors)
+                }
+                Err(e) => return cluster_error_response(e),
+            }
+        };
+        // Read lock released here
+        let result = crate::coordinator::Coordinator::execute_migrate_plan(
+            &http_client,
+            &plan,
+            source_alive,
+            &connectors,
+        )
+        .await;
+        (plan, result)
+    };
 
     // Phase 3: Commit results (write lock)
     let mut coord = coordinator.write().await;

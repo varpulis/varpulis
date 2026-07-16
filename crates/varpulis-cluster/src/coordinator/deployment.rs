@@ -251,6 +251,24 @@ impl Coordinator {
         results
     }
 
+    /// Execute a deployment plan over the best available transport.
+    ///
+    /// Routes over NATS request/reply when a NATS client is configured
+    /// (a NATS deployment, where worker addresses are `nats://...`), otherwise
+    /// falls back to HTTP. This is the single entry point the REST deploy
+    /// handler calls, so transport selection lives in exactly one place.
+    #[cfg(feature = "nats-transport")]
+    pub async fn execute_deploy_plan_dispatch(
+        nats: Option<&async_nats::Client>,
+        http: &reqwest::Client,
+        plan: &DeployGroupPlan,
+    ) -> Vec<DeployTaskResult> {
+        match nats {
+            Some(n) => Self::execute_deploy_plan_nats(n, plan).await,
+            None => Self::execute_deploy_plan(http, plan).await,
+        }
+    }
+
     /// Phase 3: Commit deployment results to coordinator state.
     #[tracing::instrument(skip(self, plan, results), fields(group_id = %plan.group_id, group = %plan.spec.name))]
     pub fn commit_deploy_group(
@@ -726,6 +744,21 @@ impl Coordinator {
         }
     }
 
+    /// Execute a teardown plan over the best available transport.
+    ///
+    /// NATS when a client is configured, otherwise HTTP (unchanged default).
+    #[cfg(feature = "nats-transport")]
+    pub async fn execute_teardown_plan_dispatch(
+        nats: Option<&async_nats::Client>,
+        http: &reqwest::Client,
+        plan: &TeardownPlan,
+    ) {
+        match nats {
+            Some(n) => Self::execute_teardown_plan_nats(n, plan).await,
+            None => Self::execute_teardown_plan(http, plan).await,
+        }
+    }
+
     /// Execute inject event via NATS request/reply.
     #[cfg(feature = "nats-transport")]
     pub async fn execute_inject_event_nats(
@@ -753,6 +786,22 @@ impl Coordinator {
             worker_id: target.worker_id.clone(),
             worker_response,
         })
+    }
+
+    /// Execute an inject event over the best available transport.
+    ///
+    /// NATS when a client is configured, otherwise HTTP (unchanged default).
+    #[cfg(feature = "nats-transport")]
+    pub async fn execute_inject_event_dispatch(
+        nats: Option<&async_nats::Client>,
+        http: &reqwest::Client,
+        target: &InjectTarget,
+        event: &InjectEventRequest,
+    ) -> Result<InjectResponse, ClusterError> {
+        match nats {
+            Some(n) => Self::execute_inject_event_nats(n, target, event).await,
+            None => Self::execute_inject_event(http, target, event).await,
+        }
     }
 
     /// Convenience wrapper: resolve + execute inject event in one call.
