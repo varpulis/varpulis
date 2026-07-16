@@ -59,8 +59,25 @@ inventory::submit! { &RedisFactory as &dyn ConnectorFactory }
 // Redis Configuration
 // =============================================================================
 
+/// Mask any `user:password` userinfo embedded in a `redis://…@host` connection
+/// URL so a password in the connection string never reaches logs, error
+/// messages, or panic output via `{:?}`. URLs without credentials pass through
+/// unchanged.
+fn redact_redis_url(url: &str) -> String {
+    if let Some(scheme_end) = url.find("://") {
+        let after = scheme_end + 3;
+        if let Some(at_rel) = url[after..].find('@') {
+            let at = after + at_rel;
+            if at > after {
+                return format!("{}://***REDACTED***{}", &url[..scheme_end], &url[at..]);
+            }
+        }
+    }
+    url.to_string()
+}
+
 /// Redis configuration
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct RedisConfig {
     /// Redis server URL (e.g., `"redis://localhost:6379"`).
     pub url: String,
@@ -68,6 +85,18 @@ pub struct RedisConfig {
     pub channel: String,
     /// Optional key prefix for key-value operations.
     pub key_prefix: Option<String>,
+}
+
+/// Hand-written so a password embedded in `url` (`redis://:pw@host`) never
+/// leaks via `{:?}`. The derived `Debug` printed `url` verbatim.
+impl std::fmt::Debug for RedisConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisConfig")
+            .field("url", &redact_redis_url(&self.url))
+            .field("channel", &self.channel)
+            .field("key_prefix", &self.key_prefix)
+            .finish()
+    }
 }
 
 impl RedisConfig {
@@ -292,7 +321,7 @@ impl SinkConnector for RedisSink {
 // ============================================================================
 
 /// Configuration for Redis Streams (XADD/XREADGROUP)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct RedisStreamConfig {
     /// Redis server URL.
     pub url: String,
@@ -308,6 +337,21 @@ pub struct RedisStreamConfig {
     pub block_ms: usize,
     /// Maximum stream length for XADD MAXLEN trimming (optional).
     pub max_len: Option<usize>,
+}
+
+/// Hand-written so a password embedded in `url` never leaks via `{:?}`.
+impl std::fmt::Debug for RedisStreamConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisStreamConfig")
+            .field("url", &redact_redis_url(&self.url))
+            .field("stream_key", &self.stream_key)
+            .field("group_name", &self.group_name)
+            .field("consumer_name", &self.consumer_name)
+            .field("batch_size", &self.batch_size)
+            .field("block_ms", &self.block_ms)
+            .field("max_len", &self.max_len)
+            .finish()
+    }
 }
 
 impl RedisStreamConfig {
@@ -698,6 +742,54 @@ impl SinkConnector for RedisStreamSinkStub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redis_config_debug_redacts_url_password() {
+        // A password embedded in the connection URL must never appear in `{:?}`
+        // output (logs, error chains, panic messages).
+        let config = RedisConfig::new("redis://alice:s3cr3t-pw@redis.internal:6379", "events");
+        let rendered = format!("{config:?}");
+        assert!(
+            !rendered.contains("s3cr3t-pw"),
+            "RedisConfig Debug leaked the URL password: {rendered}"
+        );
+        assert!(
+            rendered.contains("***REDACTED***"),
+            "expected a redaction marker in place of credentials: {rendered}"
+        );
+        // Non-secret fields stay visible for diagnostics.
+        assert!(
+            rendered.contains("events"),
+            "channel should still be shown: {rendered}"
+        );
+    }
+
+    #[test]
+    fn redis_stream_config_debug_redacts_url_password() {
+        let config = RedisStreamConfig::new("redis://:top-secret@host:6379", "mystream");
+        let rendered = format!("{config:?}");
+        assert!(
+            !rendered.contains("top-secret"),
+            "RedisStreamConfig Debug leaked the URL password: {rendered}"
+        );
+        assert!(
+            rendered.contains("***REDACTED***"),
+            "expected redaction: {rendered}"
+        );
+        assert!(
+            rendered.contains("mystream"),
+            "stream_key should still be shown: {rendered}"
+        );
+    }
+
+    #[test]
+    fn redact_leaves_credential_free_url_intact() {
+        // No userinfo → nothing to hide, URL passes through verbatim.
+        assert_eq!(
+            redact_redis_url("redis://localhost:6379"),
+            "redis://localhost:6379"
+        );
+    }
 
     #[test]
     fn test_redis_config_new() {
