@@ -116,4 +116,17 @@ pub trait ManagedConnector: Send + Sync {
     ) -> Result<(), ConnectorError> {
         Ok(())
     }
+
+    /// Stage per-partition consumer offsets to be committed *inside* the sink's
+    /// transaction (audit C4 — so offset advance and output visibility commit
+    /// atomically). Called by the barrier between prepare and commit for
+    /// exactly-once sinks. Default no-op for connectors without transactional
+    /// offset support.
+    async fn stage_txn_offsets(
+        &self,
+        _topic: &str,
+        _offsets: &HashMap<i32, i64>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
 }

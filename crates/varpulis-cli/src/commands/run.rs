@@ -24,6 +24,18 @@ struct RegistryCommitCoordinator<'a> {
 
 #[async_trait::async_trait]
 impl SourceCommitCoordinator for RegistryCommitCoordinator<'_> {
+    async fn stage_txn_offsets(
+        &self,
+        connector: &str,
+        topic: &str,
+        offsets: &std::collections::HashMap<i32, i64>,
+    ) -> Result<(), BarrierError> {
+        self.registry
+            .stage_txn_offsets(connector, topic, offsets)
+            .await
+            .map_err(|e| BarrierError::OffsetCommit(e.to_string()))
+    }
+
     async fn commit_offsets(
         &self,
         connector: &str,

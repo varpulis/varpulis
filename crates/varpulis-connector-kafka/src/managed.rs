@@ -102,6 +102,10 @@ fn commit_pending_offsets(
 struct SharedTxnState {
     epoch: AtomicU64,
     phase: AtomicU8,
+    /// Consumer offsets staged via `stage_txn_offsets`, to be folded into the
+    /// current transaction on `commit` (C4 — committed atomically with the
+    /// buffered output). Drained by the sink that wins the commit CAS.
+    pending_offsets: Mutex<Vec<(Arc<StreamConsumer>, TopicPartitionList)>>,
 }
 
 impl SharedTxnState {
@@ -109,6 +113,7 @@ impl SharedTxnState {
         Self {
             epoch: AtomicU64::new(0),
             phase: AtomicU8::new(0),
+            pending_offsets: Mutex::new(Vec::new()),
         }
     }
 }
@@ -624,6 +629,49 @@ impl ManagedConnector for ManagedKafkaConnector {
             .commit(&tpl, CommitMode::Sync)
             .map_err(|e| ConnectorError::SendFailed(format!("commit offsets: {e}")))
     }
+
+    async fn stage_txn_offsets(
+        &self,
+        topic: &str,
+        offsets: &HashMap<i32, i64>,
+    ) -> Result<(), ConnectorError> {
+        if offsets.is_empty() {
+            return Ok(());
+        }
+        // Only transactional connectors stage offsets into a producer txn; a
+        // non-transactional connector has no txn to fold them into.
+        let Some(ref txn_state) = self.txn_state else {
+            return Ok(());
+        };
+        let consumer = {
+            let guard = self
+                .sources
+                .read()
+                .map_err(|_| ConnectorError::SendFailed("sources lock poisoned".into()))?;
+            match guard.get(topic) {
+                Some(state) => state.consumer.clone(),
+                None => {
+                    return Err(ConnectorError::SendFailed(format!(
+                        "stage_txn_offsets called before start_source for topic {topic}"
+                    )));
+                }
+            }
+        };
+
+        let mut tpl = TopicPartitionList::new();
+        for (&partition, &offset) in offsets {
+            // Commit offset = next offset to read (highest accepted + 1).
+            tpl.add_partition_offset(topic, partition, Offset::Offset(offset + 1))
+                .map_err(|e| ConnectorError::SendFailed(format!("build TPL for stage: {e}")))?;
+        }
+
+        txn_state
+            .pending_offsets
+            .lock()
+            .map_err(|_| ConnectorError::SendFailed("pending_offsets lock poisoned".into()))?
+            .push((consumer, tpl));
+        Ok(())
+    }
 }
 
 /// Lightweight sink handle that publishes via a shared `FutureProducer`.
@@ -743,6 +791,27 @@ impl Sink for KafkaSharedSink {
                 .compare_exchange(2, 0, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
+                // C4 — fold any staged consumer offsets into THIS transaction so
+                // they commit atomically with the buffered output. On crash the
+                // transaction coordinator aborts both together; there is no
+                // window where output is visible but the offset has not advanced.
+                let staged = {
+                    let mut guard = state
+                        .pending_offsets
+                        .lock()
+                        .map_err(|_| SinkError::other("pending_offsets lock poisoned"))?;
+                    std::mem::take(&mut *guard)
+                };
+                for (consumer, tpl) in &staged {
+                    let cgm = consumer
+                        .group_metadata()
+                        .ok_or_else(|| SinkError::other("consumer group_metadata unavailable"))?;
+                    self.producer
+                        .send_offsets_to_transaction(tpl, &cgm, Duration::from_secs(30))
+                        .map_err(|e| {
+                            SinkError::other(format!("send_offsets_to_transaction: {e}"))
+                        })?;
+                }
                 self.producer
                     .commit_transaction(Duration::from_secs(30))
                     .map_err(|e| SinkError::other(format!("commit_transaction: {e}")))?;
