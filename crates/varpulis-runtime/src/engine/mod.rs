@@ -1621,8 +1621,6 @@ impl Engine {
             self.streams.remove(name);
         }
 
-        self.router.clear();
-
         for name in &report.streams_added {
             if let Some(stream) = new_engine.streams.remove(name) {
                 self.streams.insert(name.clone(), stream);
@@ -1635,35 +1633,17 @@ impl Engine {
             }
         }
 
-        let registrations: Vec<(String, String)> = self
-            .streams
-            .iter()
-            .flat_map(|(name, stream)| {
-                let mut pairs = Vec::new();
-                match &stream.source {
-                    RuntimeSource::EventType(et) => {
-                        pairs.push((et.clone(), name.clone()));
-                    }
-                    RuntimeSource::Stream(s) => {
-                        pairs.push((s.clone(), name.clone()));
-                    }
-                    RuntimeSource::Merge(sources) => {
-                        for ms in sources {
-                            pairs.push((ms.event_type.clone(), name.clone()));
-                        }
-                    }
-                    RuntimeSource::Join(_) => {}
-                    RuntimeSource::Timer(config) => {
-                        pairs.push((config.timer_event_type.clone(), name.clone()));
-                    }
-                }
-                pairs
-            })
-            .collect();
-
-        for (event_type, stream_name) in registrations {
-            self.router.add_route(&event_type, &stream_name);
-        }
+        // Adopt the freshly-compiled router wholesale instead of rebuilding it
+        // from each stream's `RuntimeSource`. That rebuild was lossy: the match
+        // below registered only ONE event type for a multi-event Sequence (its
+        // `RuntimeSource::EventType` first type) and NONE for a `Join`
+        // (`Join(_) => {}`), so after any hot reload — interactive edit, tenant
+        // update — Sequence and Join streams silently stopped receiving their
+        // other inputs and never matched again. `new_engine` fully compiled
+        // `program` (via `load`), so its router already holds the correct
+        // (every event type → stream) routes for exactly the reloaded set,
+        // built by the same pattern/join analysis as the initial compile.
+        self.router = std::mem::take(&mut new_engine.router);
 
         self.functions = new_engine.functions;
         self.patterns = new_engine.patterns;
