@@ -1626,6 +1626,7 @@ impl Engine {
                 field_aggregates,
                 type_index_to_name,
                 accumulated: Vec::new(),
+                window_ms,
             }),
         );
 

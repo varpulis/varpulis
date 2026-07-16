@@ -320,6 +320,10 @@ pub struct TrendAggregateConfig {
     pub type_index_to_name: Vec<String>,
     /// Accumulated events across invocations (persists between execute_op calls)
     pub accumulated: Vec<SharedEvent>,
+    /// Trend window in milliseconds (the WITHIN duration). `accumulated` is
+    /// bounded to this event-time window so it cannot grow without limit.
+    /// 0 means "no WITHIN clause": a defensive count cap applies instead.
+    pub window_ms: u64,
 }
 
 /// Info for computing field-based aggregates at runtime.
