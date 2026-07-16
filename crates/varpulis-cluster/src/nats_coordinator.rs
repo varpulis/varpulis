@@ -136,16 +136,20 @@ async fn handle_heartbeat_message(subject: &str, payload: &[u8], coordinator: &S
     let mut coord = coordinator.write().await;
     if let Err(e) = coord.heartbeat(&wid, &hb) {
         warn!("Heartbeat error for {}: {}", worker_id, e);
+        // A bad heartbeat has nothing to replicate; under `raft` we must skip the
+        // replication below (this early return is compiled out when `raft` is off,
+        // where there is no trailing code and the return would be redundant).
+        #[cfg(feature = "raft")]
+        return;
     }
-    // NOTE (C5 / C6 follow-up): unlike the HTTP heartbeat handler
-    // (`api.rs` `handle_heartbeat`), this NATS path advances the worker's
-    // local `heartbeat_seq` via `heartbeat()` but does NOT replicate a
-    // `WorkerMetricsUpdated` through Raft — the NATS handler doesn't replicate
-    // metrics at all today. That is fine for a single coordinator (its own
-    // `heartbeat()` keeps `last_heartbeat` fresh) but means that in a
-    // multi-coordinator NATS deployment a worker homed on a *non-leader* would
-    // not have its liveness seen by the leader's `sync_from_raft`. Wiring
-    // leader-write-or-forward replication here belongs with the NATS outbound
-    // work (audit C6); until then, prefer HTTP heartbeats for multi-coordinator
-    // liveness.
+    // Replicate the heartbeat metrics + monotonic `heartbeat_seq` through Raft,
+    // exactly like the HTTP heartbeat handler (`api::handle_heartbeat`), via the
+    // shared leader-write-or-forward helper. Without this, the NATS path would
+    // advance only the *local* `heartbeat_seq` (via `heartbeat()` above) and
+    // never replicate it — so in a multi-coordinator NATS deployment a worker
+    // homed on a *non-leader* would have its liveness invisible to the leader's
+    // `sync_from_raft`, which could then false-mark it `Unhealthy` (audit C5).
+    // No-op when `raft` is off (single-coordinator liveness needs no replication).
+    #[cfg(feature = "raft")]
+    crate::api::replicate_heartbeat_to_raft(coord, worker_id, &hb).await;
 }

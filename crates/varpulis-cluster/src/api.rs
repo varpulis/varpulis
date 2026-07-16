@@ -697,6 +697,65 @@ async fn handle_register_worker(
     reply_json_status(&resp, StatusCode::CREATED)
 }
 
+/// Replicate a worker's latest heartbeat metrics — including the monotonic
+/// `heartbeat_seq` liveness counter that [`Coordinator::heartbeat`] just
+/// advanced — through Raft, so that every coordinator (not only the one that
+/// received the heartbeat) can tell a live worker from a dead one via
+/// `Coordinator::sync_from_raft`.
+///
+/// Mirrors the leader-write-or-forward pattern used across this module: the
+/// leader writes straight to its Raft log; a follower forwards the command to
+/// the leader's `/raft/write` endpoint. Shared verbatim by both heartbeat
+/// ingress paths — the HTTP handler ([`handle_heartbeat`]) and the NATS handler
+/// (`nats_coordinator::handle_heartbeat_message`) — so worker liveness reaches
+/// Raft identically regardless of transport (audit C5). Consumes the write
+/// guard so the follower branch can release the coordinator lock before its
+/// HTTP round-trip. Replication failures are logged, not fatal.
+#[cfg(feature = "raft")]
+pub(crate) async fn replicate_heartbeat_to_raft(
+    coord: tokio::sync::RwLockWriteGuard<'_, Coordinator>,
+    worker_id: &str,
+    body: &HeartbeatRequest,
+) {
+    // Read back the monotonic heartbeat counter that `heartbeat()` just
+    // advanced for this worker; replicating it is what lets other coordinators
+    // detect liveness (see `sync_from_raft`).
+    let heartbeat_seq = coord
+        .workers
+        .get(&WorkerId(worker_id.to_string()))
+        .map(|w| w.heartbeat_seq)
+        .unwrap_or(0);
+    let cmd = crate::raft::ClusterCommand::WorkerMetricsUpdated {
+        id: worker_id.to_string(),
+        events_processed: body.events_processed,
+        pipelines_running: body.pipelines_running,
+        pipeline_metrics: body.pipeline_metrics.clone(),
+        heartbeat_seq,
+    };
+    if coord.is_raft_leader() {
+        // Leader: write directly to the Raft log.
+        if let Some(ref handle) = coord.raft_handle {
+            if let Err(e) = handle.raft.client_write(cmd).await {
+                tracing::debug!("Failed to replicate heartbeat metrics to Raft: {e}");
+            }
+        }
+    } else if let Some(leader_addr) = coord.raft_leader_addr() {
+        // Follower: forward to the leader's /raft/write endpoint.
+        let client = coord.http_client.clone();
+        let admin_key = coord.raft_handle.as_ref().and_then(|h| h.admin_key.clone());
+        // Don't hold the lock during HTTP I/O.
+        drop(coord);
+        let url = format!("{}/raft/write", leader_addr);
+        let mut req = client.post(&url).json(&cmd);
+        if let Some(key) = admin_key {
+            req = req.header("x-api-key", key);
+        }
+        if let Err(e) = req.send().await {
+            tracing::debug!("Failed to forward heartbeat metrics to Raft leader: {e}");
+        }
+    }
+}
+
 async fn handle_heartbeat(
     State(state): State<AppState>,
     Path(worker_id): Path<String>,
@@ -705,58 +764,19 @@ async fn handle_heartbeat(
 ) -> Response {
     let coordinator = state.coordinator.clone();
     let mut coord = coordinator.write().await;
-    match coord.heartbeat(&WorkerId(worker_id.clone()), &body) {
-        Ok(()) => {
-            // Replicate heartbeat metrics through Raft so all coordinators
-            // (including the leader that serves /api/v1/cluster/workers) see
-            // up-to-date events_processed and pipelines_running.
-            #[cfg(feature = "raft")]
-            {
-                // Read back the monotonic heartbeat counter that `heartbeat()`
-                // just advanced for this worker; replicating it is what lets
-                // other coordinators detect liveness (see `sync_from_raft`).
-                let heartbeat_seq = coord
-                    .workers
-                    .get(&WorkerId(worker_id.clone()))
-                    .map(|w| w.heartbeat_seq)
-                    .unwrap_or(0);
-                let cmd = crate::raft::ClusterCommand::WorkerMetricsUpdated {
-                    id: worker_id,
-                    events_processed: body.events_processed,
-                    pipelines_running: body.pipelines_running,
-                    pipeline_metrics: body.pipeline_metrics.clone(),
-                    heartbeat_seq,
-                };
-                if coord.is_raft_leader() {
-                    // Leader: write directly to Raft log
-                    if let Some(ref handle) = coord.raft_handle {
-                        if let Err(e) = handle.raft.client_write(cmd).await {
-                            tracing::debug!("Failed to replicate heartbeat metrics to Raft: {e}");
-                        }
-                    }
-                } else if let Some(leader_addr) = coord.raft_leader_addr() {
-                    // Follower: forward to leader's /raft/write endpoint
-                    let client = coord.http_client.clone();
-                    let admin_key = coord.raft_handle.as_ref().and_then(|h| h.admin_key.clone());
-                    // Don't hold the lock during HTTP I/O
-                    drop(coord);
-                    let url = format!("{}/raft/write", leader_addr);
-                    let mut req = client.post(&url).json(&cmd);
-                    if let Some(key) = admin_key {
-                        req = req.header("x-api-key", key);
-                    }
-                    if let Err(e) = req.send().await {
-                        tracing::debug!("Failed to forward heartbeat metrics to Raft leader: {e}");
-                    }
-                }
-            }
-            reply_with_status(
-                Json(&HeartbeatResponse { acknowledged: true }),
-                StatusCode::OK,
-            )
-        }
-        Err(e) => error_response(StatusCode::NOT_FOUND, &e.to_string()),
+    if let Err(e) = coord.heartbeat(&WorkerId(worker_id.clone()), &body) {
+        return error_response(StatusCode::NOT_FOUND, &e.to_string());
     }
+    // Replicate the heartbeat metrics + monotonic liveness counter through Raft
+    // so all coordinators (including the leader that serves
+    // /api/v1/cluster/workers) see up-to-date events_processed,
+    // pipelines_running, and heartbeat_seq. No-op when `raft` is off.
+    #[cfg(feature = "raft")]
+    replicate_heartbeat_to_raft(coord, &worker_id, &body).await;
+    reply_with_status(
+        Json(&HeartbeatResponse { acknowledged: true }),
+        StatusCode::OK,
+    )
 }
 
 async fn handle_list_workers(
