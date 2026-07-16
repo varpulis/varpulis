@@ -1023,3 +1023,226 @@ async fn test_migrate_dispatch_routes_over_nats() {
     h0.abort();
     h1.abort();
 }
+
+// ============================================================================
+// Test 8: Auto-failover migrate routes over NATS (audit C6 follow-up, C5→C6)
+// ============================================================================
+//
+// The gap C6 left open: `Coordinator::migrate_pipeline` — the INTERNAL caller
+// behind `handle_worker_failure` / `drain_worker` / `rebalance` — POSTed over
+// HTTP even in a NATS deployment. A C5-triggered auto-failover would then try
+// to reach a `nats://` worker address with reqwest and fail. This test drives
+// the REAL failover entry point, `Coordinator::handle_worker_failure`, with a
+// NATS client configured on the coordinator and both workers addressed as
+// `nats://...` (unreachable by reqwest). A pipeline that ends up Running on the
+// target can only mean the failover migration travelled over NATS.
+//
+// Unlike Test 7 — which calls `execute_migrate_plan_dispatch` directly with an
+// explicit `Some(&client)` — this exercises the internal path end to end: the
+// coordinator must pick the transport up from its own `nats_client` field.
+//
+// Fail-before / pass-after gate: in `migrate_pipeline`, flip
+// `self.nats_client.as_ref()` to `None` in the `execute_migrate_plan_dispatch`
+// call. The failover then routes over HTTP, the deploy POST to `nats://w1`
+// errors, `execute_migrate_plan_inner` returns `Err`, the migration fails, the
+// placement stays on w0, and the "failed over to w1" assertions below FAIL.
+// Restore `self.nats_client.as_ref()` and it passes. `handle_worker_failure`
+// swallows per-pipeline errors into its returned Vec, so the load-bearing
+// assertions are on placement STATE, not on the return value.
+//
+// Broker-skip: matches on `connect_nats` and early-returns with a `[skip]`
+// note (like `tests/chaos/network_partition.rs`) so CI without a broker stays
+// green.
+#[tokio::test]
+async fn test_auto_failover_migrate_routes_over_nats() {
+    let client = match connect_nats(NATS_URL).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!(
+                "[skip] test_auto_failover_migrate_routes_over_nats: NATS not reachable at {NATS_URL}: {e}"
+            );
+            return;
+        }
+    };
+
+    let coordinator = new_coordinator();
+
+    let w0_id = format!("fo-w0-{}", Uuid::new_v4());
+    let w1_id = format!("fo-w1-{}", Uuid::new_v4());
+    let w0_key = format!("key-{}", Uuid::new_v4());
+    let w1_key = format!("key-{}", Uuid::new_v4());
+
+    // Register both workers with NATS addresses AND set the coordinator's NATS
+    // client. `migrate_pipeline` reads `self.nats_client`, so configuring it is
+    // exactly what makes the internal failover path route over NATS. `nats://`
+    // is not a valid HTTP URL, so any HTTP fallback would fail — success proves
+    // the NATS transport was used.
+    {
+        let mut coord = coordinator.write().await;
+        coord.nats_client = Some(client.clone());
+        for (wid, key, addr) in [
+            (&w0_id, &w0_key, "nats://w0"),
+            (&w1_id, &w1_key, "nats://w1"),
+        ] {
+            let node = WorkerNode {
+                id: WorkerId(wid.clone()),
+                address: addr.to_string(),
+                api_key: SecretString::new(key.clone()),
+                status: WorkerStatus::Ready,
+                capacity: WorkerCapacity::default(),
+                last_heartbeat: std::time::Instant::now(),
+                assigned_pipelines: Vec::new(),
+                events_processed: 0,
+                heartbeat_seq: 0,
+                last_seen_hb_seq: 0,
+            };
+            coord.register_worker(node);
+        }
+    }
+
+    // TenantManagers + worker NATS handlers so the failover commands land.
+    let tm0 = new_tenant_manager(&w0_key).await;
+    let tm1 = new_tenant_manager(&w1_key).await;
+
+    let h0 = {
+        let c = client.clone();
+        let wid = w0_id.clone();
+        let key = w0_key.clone();
+        let tm = tm0.clone();
+        tokio::spawn(async move {
+            run_worker_nats_handler(c, &wid, &key, tm).await;
+        })
+    };
+    let h1 = {
+        let c = client.clone();
+        let wid = w1_id.clone();
+        let key = w1_key.clone();
+        let tm = tm1.clone();
+        tokio::spawn(async move {
+            run_worker_nats_handler(c, &wid, &key, tm).await;
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // A real HTTP client as the dispatch fallback — it would genuinely fail on
+    // the `nats://` worker addresses, so any success is NATS-only.
+    let http = reqwest::Client::new();
+
+    // --- Deploy pipe-a onto w0 (via the NATS deploy dispatch) -------------
+    let spec = PipelineGroupSpec {
+        name: "failover-src-group".to_string(),
+        pipelines: vec![PipelinePlacement {
+            name: "pipe-a".to_string(),
+            source: "stream A = SensorReading .where(temperature > 100)".to_string(),
+            worker_affinity: Some(w0_id.clone()),
+            replicas: 1,
+            partition_key: None,
+        }],
+        routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
+    };
+
+    let deploy_plan = {
+        let coord = coordinator.read().await;
+        coord.plan_deploy_group(&spec).unwrap()
+    };
+    let deploy_results =
+        Coordinator::execute_deploy_plan_dispatch(Some(&client), &http, &deploy_plan).await;
+    for r in &deploy_results {
+        assert!(
+            r.outcome.is_ok(),
+            "initial deploy over NATS failed for {}: {:?}",
+            r.replica_name,
+            r.outcome
+        );
+    }
+    let group_id = {
+        let mut coord = coordinator.write().await;
+        coord
+            .commit_deploy_group(deploy_plan, deploy_results)
+            .unwrap()
+    };
+
+    // Sanity: pipe-a is placed on w0 and Running on w0's TenantManager.
+    {
+        let coord = coordinator.read().await;
+        let placement = coord.pipeline_groups[&group_id]
+            .placements
+            .get("pipe-a")
+            .expect("pipe-a placement");
+        assert_eq!(
+            placement.worker_id,
+            WorkerId(w0_id.clone()),
+            "pipe-a should start on w0"
+        );
+    }
+    {
+        let mgr0 = tm0.read().await;
+        assert!(
+            mgr0.list_tenants()
+                .iter()
+                .any(|t| t.pipelines.values().any(|p| p.name == "pipe-a")),
+            "pipe-a should be deployed on w0 before failover"
+        );
+    }
+
+    // --- Trigger the REAL failover entry point ----------------------------
+    // `handle_worker_failure` finds pipe-a on w0 and migrates it to the only
+    // other available worker (w1). It calls `migrate_pipeline` internally,
+    // which must route over NATS because `coord.nats_client` is set.
+    let failover_results = {
+        let mut coord = coordinator.write().await;
+        coord.handle_worker_failure(&WorkerId(w0_id.clone())).await
+    };
+    assert_eq!(
+        failover_results.len(),
+        1,
+        "exactly one pipeline (pipe-a) should have been handled by the failover"
+    );
+
+    // Assert on STATE (not just the return): the placement now points at w1 and
+    // is Running. Over `nats://` addresses this is only reachable via NATS.
+    {
+        let coord = coordinator.read().await;
+        let group = coord.pipeline_groups.get(&group_id).expect("group missing");
+        let placement = group.placements.get("pipe-a").expect("pipe-a placement");
+        assert_eq!(
+            placement.worker_id,
+            WorkerId(w1_id.clone()),
+            "pipe-a should have failed over to w1 — the internal migrate must route \
+             over NATS (an HTTP POST to a nats:// address cannot succeed). \
+             failover_results={failover_results:?}"
+        );
+        assert_eq!(
+            placement.status,
+            PipelineDeploymentStatus::Running,
+            "pipe-a placement should be Running on w1 after failover"
+        );
+    }
+
+    // The pipeline is Running on w1's TenantManager (deployed over NATS)...
+    {
+        let mgr1 = tm1.read().await;
+        assert!(
+            mgr1.list_tenants()
+                .iter()
+                .any(|t| t.pipelines.values().any(|p| p.name == "pipe-a")),
+            "pipe-a should be Running on w1's TenantManager after failover"
+        );
+    }
+    // ...and torn down on w0's TenantManager (undeployed over NATS).
+    {
+        let mgr0 = tm0.read().await;
+        assert!(
+            !mgr0
+                .list_tenants()
+                .iter()
+                .any(|t| t.pipelines.values().any(|p| p.name == "pipe-a")),
+            "pipe-a should be torn down on w0 after failover"
+        );
+    }
+
+    h0.abort();
+    h1.abort();
+}

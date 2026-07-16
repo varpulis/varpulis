@@ -695,7 +695,14 @@ impl Coordinator {
 
     /// Migrate a pipeline from its current worker to a target worker.
     ///
-    /// Steps: checkpoint (if source alive) -> deploy -> restore -> switch -> cleanup.
+    /// Plan (lookups, no I/O) -> execute over the best available transport ->
+    /// commit. The execute step routes over NATS when a NATS client is
+    /// configured (worker addresses are `nats://...`), otherwise HTTP — the
+    /// same `execute_migrate_plan_dispatch` the manual REST migrate handler
+    /// uses. This is the audit-C6 follow-up: a C5-triggered auto-failover (and
+    /// drain / rebalance, which also funnel through here) must migrate over
+    /// NATS in a NATS deployment instead of POSTing to an unreachable
+    /// `nats://` worker address.
     #[tracing::instrument(skip(self), fields(pipeline = %pipeline_name, group = %group_id, target = %target_worker_id))]
     pub async fn migrate_pipeline(
         &mut self,
@@ -704,314 +711,63 @@ impl Coordinator {
         target_worker_id: &WorkerId,
         reason: MigrationReason,
     ) -> Result<String, ClusterError> {
-        let migrate_start = Instant::now();
-        let group = self
-            .pipeline_groups
-            .get(group_id)
-            .ok_or_else(|| ClusterError::GroupNotFound(group_id.to_string()))?;
+        // Phase 1: Build the migration plan (lookups only, no I/O). Errors here
+        // (missing group / pipeline / target worker / VPL source) surface before
+        // any state mutation, exactly as the old inline path did.
+        let plan = self.plan_migrate_pipeline(pipeline_name, group_id, target_worker_id, reason)?;
+        let source_worker_id = plan.source_worker_id.clone();
 
-        let deployment = group
-            .placements
-            .get(pipeline_name)
-            .ok_or_else(|| {
-                ClusterError::MigrationFailed(format!(
-                    "Pipeline '{}' not found in group '{}'",
-                    pipeline_name, group_id
-                ))
-            })?
-            .clone();
-
-        let source_worker_id = deployment.worker_id.clone();
-
-        let target_worker = self
-            .workers
-            .get(target_worker_id)
-            .ok_or_else(|| ClusterError::WorkerNotFound(target_worker_id.0.clone()))?;
-        let target_address = target_worker.address.clone();
-        let target_api_key = target_worker.api_key.expose().to_string();
-
-        let migration_id = uuid::Uuid::new_v4().to_string();
-
-        let mut task = MigrationTask {
-            id: migration_id.clone(),
-            pipeline_name: pipeline_name.to_string(),
-            group_id: group_id.to_string(),
-            source_worker: source_worker_id.clone(),
-            target_worker: target_worker_id.clone(),
-            status: MigrationStatus::Checkpointing,
-            started_at: Instant::now(),
-            checkpoint: None,
-            reason,
-        };
-
-        self.active_migrations
-            .insert(migration_id.clone(), task.clone());
-
-        // Step 1: Checkpoint (best-effort -- skip if source is dead)
-        let checkpoint = if self
-            .workers
-            .get(&source_worker_id)
-            .map(|w| w.status != WorkerStatus::Unhealthy)
-            .unwrap_or(false)
-        {
-            let checkpoint_url = format!(
-                "{}/api/v1/pipelines/{}/checkpoint",
-                deployment.worker_address, deployment.pipeline_id
-            );
-            match self
-                .http_client
-                .post(&checkpoint_url)
-                .header("x-api-key", &deployment.worker_api_key)
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    match resp.json::<CheckpointResponsePayload>().await {
-                        Ok(cp_resp) => {
-                            info!(
-                                "Checkpoint captured for pipeline '{}' (id={}, {} events)",
-                                pipeline_name, cp_resp.pipeline_id, cp_resp.events_processed
-                            );
-                            Some(cp_resp.checkpoint)
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to deserialize checkpoint for '{}': {}",
-                                pipeline_name, e
-                            );
-                            None
-                        }
-                    }
-                }
-                Ok(resp) => {
-                    warn!(
-                        "Checkpoint HTTP error for '{}': {}",
-                        pipeline_name,
-                        resp.status()
-                    );
-                    None
-                }
-                Err(e) => {
-                    warn!("Checkpoint request failed for '{}': {}", pipeline_name, e);
-                    None
-                }
-            }
-        } else {
-            info!(
-                "Source worker {} is dead, proceeding without checkpoint for '{}'",
-                source_worker_id, pipeline_name
-            );
-            None
-        };
-
-        task.checkpoint = checkpoint.clone();
-
-        // Step 2: Deploy to target worker
-        task.status = MigrationStatus::Deploying;
-        self.active_migrations
-            .insert(migration_id.clone(), task.clone());
-
-        // Find the pipeline's VPL source from the group spec.
-        // For replicas like "p1#0", extract logical name "p1" for the lookup.
-        let logical_name = pipeline_name
-            .rsplit_once('#')
-            .map(|(base, _)| base)
-            .unwrap_or(pipeline_name);
-
-        let vpl_source = group
-            .spec
-            .pipelines
-            .iter()
-            .find(|p| p.name == logical_name)
-            .map(|p| p.source.clone())
-            .ok_or_else(|| {
-                ClusterError::MigrationFailed(format!(
-                    "VPL source not found for '{}'",
-                    pipeline_name
-                ))
-            })?;
-
-        let (enriched_source, _) =
-            crate::connector_config::inject_connectors(&vpl_source, &self.connectors);
-
-        let deploy_url = format!("{}/api/v1/pipelines", target_address);
-        let deploy_body = serde_json::json!({
-            "name": pipeline_name,
-            "source": enriched_source,
-        });
-
-        let new_pipeline_id = match self
-            .http_client
-            .post(&deploy_url)
-            .header("x-api-key", &target_api_key)
-            .json(&deploy_body)
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => {
-                let resp_body: DeployResponse = resp
-                    .json()
-                    .await
-                    .map_err(|e| ClusterError::MigrationFailed(e.to_string()))?;
-                info!(
-                    "Migration deploy: '{}' on target {} (id={}, status={})",
-                    resp_body.name, target_worker_id, resp_body.id, resp_body.status
-                );
-                resp_body.id
-            }
-            Ok(resp) => {
-                let body = resp.text().await.unwrap_or_default();
-                task.status = MigrationStatus::Failed(format!("Deploy failed: {}", body));
-                self.active_migrations.insert(migration_id.clone(), task);
-                self.cluster_metrics
-                    .record_migration(false, migrate_start.elapsed().as_secs_f64());
-                return Err(ClusterError::MigrationFailed(format!(
-                    "Deploy to target failed: {}",
-                    body
-                )));
-            }
-            Err(e) => {
-                task.status = MigrationStatus::Failed(format!("Deploy request failed: {}", e));
-                self.active_migrations.insert(migration_id.clone(), task);
-                self.cluster_metrics
-                    .record_migration(false, migrate_start.elapsed().as_secs_f64());
-                return Err(ClusterError::MigrationFailed(e.to_string()));
-            }
-        };
-
-        // Step 3: Restore checkpoint on target
-        if let Some(ref cp) = checkpoint {
-            task.status = MigrationStatus::Restoring;
-            self.active_migrations
-                .insert(migration_id.clone(), task.clone());
-
-            let restore_url = format!(
-                "{}/api/v1/pipelines/{}/restore",
-                target_address, new_pipeline_id
-            );
-            let restore_body = serde_json::json!({ "checkpoint": cp });
-
-            match self
-                .http_client
-                .post(&restore_url)
-                .header("x-api-key", &target_api_key)
-                .json(&restore_body)
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    info!(
-                        "Checkpoint restored for pipeline '{}' on worker {}",
-                        pipeline_name, target_worker_id
-                    );
-                }
-                Ok(resp) => {
-                    let body = resp.text().await.unwrap_or_default();
-                    warn!(
-                        "Restore failed for '{}' (continuing without state): {}",
-                        pipeline_name, body
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        "Restore request failed for '{}' (continuing without state): {}",
-                        pipeline_name, e
-                    );
-                }
-            }
-        }
-
-        // Step 4: Switch -- update placements to point to target
-        task.status = MigrationStatus::Switching;
-        self.active_migrations
-            .insert(migration_id.clone(), task.clone());
-
-        if let Some(group) = self.pipeline_groups.get_mut(group_id) {
-            let new_epoch = group
-                .placements
-                .get(pipeline_name)
-                .map(|d| d.epoch + 1)
-                .unwrap_or(1);
-            group.placements.insert(
-                pipeline_name.to_string(),
-                PipelineDeployment {
-                    worker_id: target_worker_id.clone(),
-                    worker_address: target_address,
-                    worker_api_key: target_api_key,
-                    pipeline_id: new_pipeline_id,
-                    status: PipelineDeploymentStatus::Running,
-                    epoch: new_epoch,
-                },
-            );
-            group.update_status();
-        }
-
-        // Update worker bookkeeping
-        if let Some(w) = self.workers.get_mut(target_worker_id) {
-            w.assigned_pipelines.push(pipeline_name.to_string());
-            w.capacity.pipelines_running += 1;
-        }
-
-        // Step 5: Cleanup -- remove pipeline from source (skip if dead)
-        task.status = MigrationStatus::CleaningUp;
-        self.active_migrations
-            .insert(migration_id.clone(), task.clone());
-
+        // A source worker that is still registered and not explicitly Unhealthy
+        // is treated as reachable for the best-effort checkpoint step; when it
+        // is dead we skip straight to a stateless redeploy. Same predicate the
+        // manual REST migrate handler uses.
         let source_alive = self
             .workers
             .get(&source_worker_id)
             .map(|w| w.status != WorkerStatus::Unhealthy)
             .unwrap_or(false);
 
-        if source_alive && !deployment.pipeline_id.is_empty() {
-            let delete_url = format!(
-                "{}/api/v1/pipelines/{}",
-                deployment.worker_address, deployment.pipeline_id
-            );
-            match self
-                .http_client
-                .delete(&delete_url)
-                .header("x-api-key", &deployment.worker_api_key)
-                .send()
-                .await
-            {
-                Ok(_) => {
-                    info!(
-                        "Removed old pipeline '{}' from worker {}",
-                        pipeline_name, source_worker_id
-                    );
+        // Phase 2: Execute over the best available transport — NATS when a
+        // client is configured, otherwise HTTP. `distributed_checkpoint` is
+        // threaded through as `None` here (the internal failover / drain /
+        // rebalance path has no preloaded durable snapshot to hand off); the
+        // dead-source short-circuit is driven by `source_alive`, so a dead
+        // source still migrates statelessly rather than blocking on an
+        // unreachable worker.
+        #[cfg(feature = "nats-transport")]
+        let result = Self::execute_migrate_plan_dispatch(
+            self.nats_client.as_ref(),
+            &self.http_client,
+            &plan,
+            source_alive,
+            &self.connectors,
+            None,
+        )
+        .await;
+        #[cfg(not(feature = "nats-transport"))]
+        let result =
+            Self::execute_migrate_plan(&self.http_client, &plan, source_alive, &self.connectors)
+                .await;
+
+        // Phase 3: Commit results to coordinator state.
+        match result {
+            Ok(new_pipeline_id) => {
+                let migration_id =
+                    self.commit_migrate_pipeline(&plan, &new_pipeline_id, true, None);
+                // Clear stale metrics for the migrated pipeline on the source
+                // worker. `commit_migrate_pipeline` handles placement + worker
+                // bookkeeping; this source-metric purge is unique to the
+                // internal path and is preserved from the old inline flow.
+                if let Some(wm) = self.worker_metrics.get_mut(&source_worker_id) {
+                    wm.retain(|m| m.pipeline_name != *pipeline_name);
                 }
-                Err(e) => {
-                    warn!(
-                        "Failed to remove old pipeline '{}' from {}: {}",
-                        pipeline_name, source_worker_id, e
-                    );
-                }
+                Ok(migration_id)
+            }
+            Err(reason) => {
+                self.commit_migrate_pipeline(&plan, "", false, Some(reason.clone()));
+                Err(ClusterError::MigrationFailed(reason))
             }
         }
-
-        if let Some(w) = self.workers.get_mut(&source_worker_id) {
-            w.assigned_pipelines.retain(|p| p != pipeline_name);
-            w.capacity.pipelines_running = w.capacity.pipelines_running.saturating_sub(1);
-        }
-        // Clear stale metrics for the migrated pipeline on the source worker.
-        if let Some(wm) = self.worker_metrics.get_mut(&source_worker_id) {
-            wm.retain(|m| m.pipeline_name != *pipeline_name);
-        }
-
-        task.status = MigrationStatus::Completed;
-        self.active_migrations.insert(migration_id.clone(), task);
-
-        self.cluster_metrics
-            .record_migration(true, migrate_start.elapsed().as_secs_f64());
-        self.update_metrics_counts();
-
-        info!(
-            "Migration complete: pipeline '{}' moved from {} to {}",
-            pipeline_name, source_worker_id, target_worker_id
-        );
-
-        Ok(migration_id)
     }
 
     /// Handle a worker failure: migrate all its pipelines to healthy workers.
