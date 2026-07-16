@@ -4,6 +4,8 @@
 //! stream definitions written in VPL.
 
 #[cfg(feature = "async-runtime")]
+mod barrier;
+#[cfg(feature = "async-runtime")]
 mod builder;
 mod compilation;
 pub mod compiler;
@@ -26,6 +28,8 @@ mod types;
 // Re-export public types
 use std::sync::Arc;
 
+#[cfg(feature = "async-runtime")]
+pub use barrier::{BarrierError, SourceCommitCoordinator};
 #[cfg(feature = "async-runtime")]
 pub use builder::EngineBuilder;
 use chrono::{DateTime, Duration, Utc};
