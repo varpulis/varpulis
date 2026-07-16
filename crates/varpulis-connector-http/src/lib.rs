@@ -142,7 +142,7 @@ impl SinkConnector for HttpSink {
 // =============================================================================
 
 /// HTTP webhook configuration
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct HttpWebhookConfig {
     /// Port to listen on
     pub port: u16,
@@ -158,6 +158,23 @@ pub struct HttpWebhookConfig {
     pub event_path: String,
     /// Path for batch event endpoint
     pub batch_path: String,
+}
+
+/// Hand-written so the `api_key` never reaches logs / errors / panic output via
+/// `{:?}`. The derived Debug printed it in full. The Some/None distinction is
+/// preserved so it's still visible *whether* a key is configured.
+impl std::fmt::Debug for HttpWebhookConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpWebhookConfig")
+            .field("port", &self.port)
+            .field("bind_address", &self.bind_address)
+            .field("api_key", &self.api_key.as_ref().map(|_| "***REDACTED***"))
+            .field("rate_limit", &self.rate_limit)
+            .field("max_batch_size", &self.max_batch_size)
+            .field("event_path", &self.event_path)
+            .field("batch_path", &self.batch_path)
+            .finish()
+    }
 }
 
 impl Default for HttpWebhookConfig {
@@ -554,6 +571,23 @@ fn json_to_event_from_json(json: &serde_json::Value) -> Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_config_debug_redacts_api_key() {
+        let config = HttpWebhookConfig::default().with_api_key("secret-key-123");
+        let rendered = format!("{config:?}");
+        assert!(
+            !rendered.contains("secret-key-123"),
+            "api_key leaked in Debug: {rendered}"
+        );
+        assert!(
+            rendered.contains("***REDACTED***"),
+            "configured key should be masked"
+        );
+        // With no key, Debug shows None (not REDACTED) so it's clear none is set.
+        let no_key = format!("{:?}", HttpWebhookConfig::default());
+        assert!(no_key.contains("api_key: None"), "got: {no_key}");
+    }
 
     #[test]
     fn test_http_webhook_config_default() {
