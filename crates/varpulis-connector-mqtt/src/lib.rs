@@ -480,7 +480,7 @@ impl SourceConnector for MqttSource {
             .await
             .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 
-        self.client = Some(client);
+        self.client = Some(client.clone());
         self.running.store(true, Ordering::SeqCst);
 
         info!(
@@ -491,6 +491,9 @@ impl SourceConnector for MqttSource {
 
         let running = self.running.clone();
         let name = self.name.clone();
+        // Captured so the event loop can re-issue SUBSCRIBE on every reconnect.
+        let resub_topic = self.config.topic.clone();
+        let resub_qos = qos_from_u8(self.config.qos);
 
         tokio::spawn(async move {
             let cb = CircuitBreaker::new(CircuitBreakerConfig {
@@ -506,6 +509,26 @@ impl SourceConnector for MqttSource {
                 }
 
                 match eventloop.poll().await {
+                    Ok(MqttEvent::Incoming(Packet::ConnAck(_))) => {
+                        cb.record_success();
+                        // rumqttc transparently reconnects after a dropped
+                        // connection, but with a clean session the broker forgets
+                        // our subscriptions. ConnAck fires on the first connect
+                        // and on every reconnect, so re-issue SUBSCRIBE here --
+                        // otherwise the source goes silently deaf after any broker
+                        // restart or network blip while health() still reports
+                        // connected (silent data loss).
+                        match client.subscribe(&resub_topic, resub_qos).await {
+                            Ok(()) => info!(
+                                "MQTT source {} (re)subscribed to {} on connect",
+                                name, resub_topic
+                            ),
+                            Err(e) => warn!(
+                                "MQTT source {} failed to re-subscribe to {}: {}",
+                                name, resub_topic, e
+                            ),
+                        }
+                    }
                     Ok(MqttEvent::Incoming(Packet::Publish(publish))) => {
                         cb.record_success();
                         // Enforce payload size limit
@@ -815,5 +838,163 @@ mod tests {
         let result = sink.connect().await;
         drop(result);
         let _ = sink.close().await;
+    }
+
+    // =========================================================================
+    // Real-broker reconnect gate
+    //
+    // Requires a mosquitto broker on 127.0.0.1:1883 (anonymous) plus a docker
+    // container named `varpulis-mosq` to restart. If the broker is unreachable
+    // the test skips gracefully (mirrors the cluster chaos tests) so CI without
+    // a broker stays green. Deterministic: it polls for delivery against bounded
+    // deadlines rather than sleeping-then-asserting.
+    // =========================================================================
+
+    const BROKER_ADDR: &str = "127.0.0.1:1883";
+
+    /// True if a TCP connection to the broker succeeds within 500ms.
+    fn broker_reachable() -> bool {
+        use std::net::{TcpStream, ToSocketAddrs};
+        BROKER_ADDR
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut addrs| addrs.next())
+            .and_then(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(500)).ok())
+            .is_some()
+    }
+
+    /// Spawn an independent publisher whose event loop is driven in the
+    /// background, so it reconnects on its own after the broker restarts.
+    fn spawn_publisher(client_id: &str) -> AsyncClient {
+        let mut opts = MqttOptions::new(client_id, "127.0.0.1", 1883);
+        opts.set_keep_alive(5);
+        let (client, mut eventloop) = AsyncClient::new(opts, 100);
+        tokio::spawn(async move {
+            loop {
+                if eventloop.poll().await.is_err() {
+                    // Broker down (e.g. during docker restart) -- back off and
+                    // let rumqttc reconnect on the next poll.
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+            }
+        });
+        client
+    }
+
+    /// Publish `marker`-tagged messages until the source delivers one carrying
+    /// that marker, or the bounded `deadline` elapses. Returns whether a
+    /// matching message was received. Ignores stale messages from other phases.
+    async fn publish_until_marker(
+        publisher: &AsyncClient,
+        topic: &str,
+        rx: &mut tokio::sync::mpsc::Receiver<Event>,
+        marker: &str,
+        deadline: Duration,
+    ) -> bool {
+        let start = std::time::Instant::now();
+        let mut seq = 0u64;
+        while start.elapsed() < deadline {
+            seq += 1;
+            let payload = format!(r#"{{"type":"Reading","marker":"{marker}","seq":{seq}}}"#);
+            let _ = publisher
+                .publish(topic, QoS::AtLeastOnce, false, payload.into_bytes())
+                .await;
+            match tokio::time::timeout(Duration::from_millis(400), rx.recv()).await {
+                Ok(Some(ev)) if ev.get_str("marker") == Some(marker) => return true,
+                Ok(Some(_)) => {}         // stale message from an earlier phase
+                Ok(None) => return false, // channel closed
+                Err(_) => {}              // timed out; publish again
+            }
+        }
+        false
+    }
+
+    /// A broker restart drops the connection; rumqttc reconnects but a
+    /// clean-session broker forgets the subscription. The source must re-issue
+    /// SUBSCRIBE on ConnAck, otherwise it goes silently deaf while `health()`
+    /// still reports connected. Fail-before/pass-after gate against a real
+    /// mosquitto broker.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mqtt_source_resubscribes_after_broker_restart() {
+        if !broker_reachable() {
+            eprintln!("[skip] mosquitto not reachable on {BROKER_ADDR}");
+            return;
+        }
+
+        let topic = "varpulis/test/resub";
+
+        // Source under test (subscribes at QoS 0 per config default).
+        let config = MqttConfig::new("127.0.0.1", topic)
+            .with_port(1883)
+            .with_client_id("varpulis-resub-src");
+        let mut source = MqttSource::new("resub-test", config);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Event>(256);
+        source.start(tx).await.expect("source start");
+
+        let publisher = spawn_publisher("varpulis-resub-pub");
+
+        // (1) Baseline: prove the pipeline works before any reconnect. This
+        //     passes via the initial subscribe regardless of the ConnAck fix,
+        //     isolating the reconnect path as the thing under test.
+        let baseline = publish_until_marker(
+            &publisher,
+            topic,
+            &mut rx,
+            "phase-1",
+            Duration::from_secs(15),
+        )
+        .await;
+        assert!(
+            baseline,
+            "baseline: source never received a message before any reconnect -- \
+             pipeline broken independent of the fix"
+        );
+
+        // (2) Force a real reconnect by restarting the broker container.
+        let restart = tokio::task::spawn_blocking(|| {
+            std::process::Command::new("docker")
+                .args(["restart", "varpulis-mosq"])
+                .output()
+        })
+        .await
+        .expect("join docker restart task");
+        match restart {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => {
+                eprintln!(
+                    "[skip] could not restart broker container varpulis-mosq: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                let _ = source.stop().await;
+                return;
+            }
+            Err(e) => {
+                eprintln!("[skip] docker unavailable to restart broker: {e}");
+                let _ = source.stop().await;
+                return;
+            }
+        }
+
+        // Drain anything buffered through the restart so a post-restart receipt
+        // is unambiguous (the marker check already guards this too).
+        while rx.try_recv().is_ok() {}
+
+        // (3) After reconnect, the source must receive again. With the ConnAck
+        //     re-subscribe it does; without it this times out (silent deafness).
+        let after = publish_until_marker(
+            &publisher,
+            topic,
+            &mut rx,
+            "phase-2",
+            Duration::from_secs(30),
+        )
+        .await;
+        assert!(
+            after,
+            "source received no message within 30s AFTER broker restart -- it failed \
+             to re-subscribe on reconnect (silent data loss)"
+        );
+
+        let _ = source.stop().await;
     }
 }

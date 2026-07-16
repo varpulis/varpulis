@@ -40,6 +40,12 @@ pub struct ManagedMqttConnector {
     sink_client: Option<AsyncClient>,
     running: Arc<AtomicBool>,
     subscribed_topics: FxHashSet<String>,
+    /// Topic+QoS pairs subscribed on the shared source connection, replayed on
+    /// every (re)connect. rumqttc reconnects transparently but a clean-session
+    /// broker forgets subscriptions across reconnects, so the source loop
+    /// re-issues these on each ConnAck -- without it the source reports healthy
+    /// yet silently receives nothing after a broker restart or network blip.
+    source_subscriptions: Arc<Mutex<Vec<(String, QoS)>>>,
     /// Dedicated clients created via `client_id` param (kept alive for cleanup)
     dedicated_clients: Vec<AsyncClient>,
     /// Health tracking: total messages received across all source loops
@@ -67,6 +73,7 @@ impl ManagedMqttConnector {
             sink_client: None,
             running: Arc::new(AtomicBool::new(false)),
             subscribed_topics: FxHashSet::default(),
+            source_subscriptions: Arc::new(Mutex::new(Vec::new())),
             dedicated_clients: Vec::new(),
             messages_received: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
@@ -109,6 +116,9 @@ impl ManagedMqttConnector {
         let msg_counter = self.messages_received.clone();
         let last_err = self.last_error.clone();
         let last_msg_time = self.last_message_time.clone();
+        // Client + subscription registry for re-subscribing on every reconnect.
+        let resub_client = client.clone();
+        let resub_subs = self.source_subscriptions.clone();
 
         // Spawn the source event loop task
         tokio::spawn(async move {
@@ -124,6 +134,26 @@ impl ManagedMqttConnector {
                 }
 
                 match eventloop.poll().await {
+                    Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
+                        cb.record_success();
+                        // Re-subscribe every configured topic on (re)connect. A
+                        // clean-session broker drops subscriptions when the link
+                        // is re-established, so without this the source reports
+                        // healthy but receives nothing after a reconnect.
+                        let subs = resub_subs.lock().await.clone();
+                        for (topic, qos) in subs {
+                            match resub_client.subscribe(&topic, qos).await {
+                                Ok(()) => info!(
+                                    "Managed MQTT {} (re)subscribed to {} on connect",
+                                    name, topic
+                                ),
+                                Err(e) => warn!(
+                                    "Managed MQTT {} failed to re-subscribe to {}: {}",
+                                    name, topic, e
+                                ),
+                            }
+                        }
+                    }
                     Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) => {
                         cb.record_success();
                         msg_counter.fetch_add(1, Ordering::Relaxed);
@@ -173,6 +203,8 @@ impl ManagedMqttConnector {
     fn create_dedicated_source(
         &mut self,
         client_id: &str,
+        topic: &str,
+        qos: QoS,
         tx: mpsc::Sender<Vec<Event>>,
     ) -> Result<AsyncClient, ConnectorError> {
         let mut mqtt_opts = MqttOptions::new(client_id, &self.config.broker, self.config.port);
@@ -190,10 +222,26 @@ impl ManagedMqttConnector {
 
         let running = self.running.clone();
         let name = format!("{}/{}", self.connector_name, client_id);
+        // Client + topic for re-subscribing on every reconnect.
+        let resub_client = client.clone();
+        let resub_topic = topic.to_string();
 
         tokio::spawn(async move {
             while running.load(Ordering::SeqCst) {
                 match eventloop.poll().await {
+                    Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
+                        // Re-subscribe on every (re)connect; a clean-session
+                        // broker forgets the subscription across reconnects.
+                        match resub_client.subscribe(&resub_topic, qos).await {
+                            Ok(()) => {
+                                info!("Dedicated MQTT {} (re)subscribed to {}", name, resub_topic);
+                            }
+                            Err(e) => warn!(
+                                "Dedicated MQTT {} failed to re-subscribe to {}: {}",
+                                name, resub_topic, e
+                            ),
+                        }
+                    }
                     Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) => {
                         if let Ok(payload) = std::str::from_utf8(&publish.payload) {
                             let topic = std::str::from_utf8(&publish.topic).unwrap_or("");
@@ -364,7 +412,7 @@ impl ManagedConnector for ManagedMqttConnector {
 
         // If client_id is specified, create a dedicated connection
         if let Some(dedicated_id) = params.get("client_id") {
-            let client = self.create_dedicated_source(dedicated_id, tx)?;
+            let client = self.create_dedicated_source(dedicated_id, topic, qos, tx)?;
             client
                 .subscribe(topic, qos)
                 .await
@@ -379,6 +427,12 @@ impl ManagedConnector for ManagedMqttConnector {
         let client = self.ensure_source_connected(tx)?;
 
         if self.subscribed_topics.insert(topic.to_string()) {
+            // Register before subscribing so a reconnect racing with this call
+            // still replays the topic via the ConnAck handler.
+            self.source_subscriptions
+                .lock()
+                .await
+                .push((topic.to_string(), qos));
             client
                 .subscribe(topic, qos)
                 .await
