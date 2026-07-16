@@ -710,6 +710,23 @@ pub struct S3StateStore {
     rt: tokio::runtime::Handle,
 }
 
+/// Block on an S3 future from a synchronous `StateStore` method.
+///
+/// These methods run both outside any runtime and — during a checkpoint — from
+/// *within* the engine's multi-threaded runtime, where `Handle::block_on` panics
+/// ("Cannot start a runtime from within a runtime..."). When a runtime is active
+/// we use `block_in_place` to hand the worker thread back to the scheduler while
+/// we block; with no ambient runtime we block on the handle directly. (The
+/// engine runs on a multi-thread runtime; `block_in_place` requires one.)
+#[cfg(feature = "s3-state")]
+fn s3_block_on<F: std::future::Future>(rt: &tokio::runtime::Handle, fut: F) -> F::Output {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(|| rt.block_on(fut))
+    } else {
+        rt.block_on(fut)
+    }
+}
+
 #[cfg(feature = "s3-state")]
 impl std::fmt::Debug for S3StateStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -918,7 +935,7 @@ impl StateStore for S3StateStore {
         let data = self.maybe_compress(&data);
         let id = checkpoint.id;
 
-        self.rt.block_on(async {
+        s3_block_on(&self.rt, async {
             // Upload checkpoint data
             self.put_object(&format!("checkpoint/{id}"), data).await?;
 
@@ -934,7 +951,7 @@ impl StateStore for S3StateStore {
     }
 
     fn load_latest_checkpoint(&self) -> Result<Option<Checkpoint>, StoreError> {
-        self.rt.block_on(async {
+        s3_block_on(&self.rt, async {
             // Read the "latest" pointer
             let Some(id_bytes) = self.get_object("checkpoint/latest").await? else {
                 return Ok(None);
@@ -958,7 +975,7 @@ impl StateStore for S3StateStore {
     }
 
     fn load_checkpoint(&self, id: u64) -> Result<Option<Checkpoint>, StoreError> {
-        self.rt.block_on(async {
+        s3_block_on(&self.rt, async {
             let Some(data) = self.get_object(&format!("checkpoint/{id}")).await? else {
                 return Ok(None);
             };
@@ -969,7 +986,7 @@ impl StateStore for S3StateStore {
     }
 
     fn list_checkpoints(&self) -> Result<Vec<u64>, StoreError> {
-        self.rt.block_on(async {
+        s3_block_on(&self.rt, async {
             let keys = self.list_objects("checkpoint/").await?;
             let mut ids: Vec<u64> = keys
                 .iter()
@@ -985,7 +1002,7 @@ impl StateStore for S3StateStore {
         let to_delete = checkpoints.len().saturating_sub(keep);
 
         if to_delete > 0 {
-            self.rt.block_on(async {
+            s3_block_on(&self.rt, async {
                 for id in checkpoints.iter().take(to_delete) {
                     self.delete_object(&format!("checkpoint/{id}")).await?;
                 }
@@ -999,17 +1016,17 @@ impl StateStore for S3StateStore {
 
     fn put(&self, key: &str, value: &[u8]) -> Result<(), StoreError> {
         let s3_key = format!("kv/{key}");
-        self.rt.block_on(self.put_object(&s3_key, value.to_vec()))
+        s3_block_on(&self.rt, self.put_object(&s3_key, value.to_vec()))
     }
 
     fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
         let s3_key = format!("kv/{key}");
-        self.rt.block_on(self.get_object(&s3_key))
+        s3_block_on(&self.rt, self.get_object(&s3_key))
     }
 
     fn delete(&self, key: &str) -> Result<(), StoreError> {
         let s3_key = format!("kv/{key}");
-        self.rt.block_on(self.delete_object(&s3_key))
+        s3_block_on(&self.rt, self.delete_object(&s3_key))
     }
 
     fn flush(&self) -> Result<(), StoreError> {
@@ -1563,6 +1580,18 @@ impl<S: StateStore> StateStore for EncryptedStateStore<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "s3-state")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn s3_block_on_does_not_panic_inside_runtime() {
+        // The S3 StateStore methods are sync but run from *within* the engine's
+        // multi-threaded runtime during a checkpoint — exactly where
+        // `Handle::block_on` panics. `s3_block_on` must complete instead of
+        // crashing. (Uses a trivial future so the test needs no S3/network.)
+        let handle = tokio::runtime::Handle::current();
+        let result = s3_block_on(&handle, async { 40 + 2 });
+        assert_eq!(result, 42);
+    }
 
     #[test]
     fn test_memory_store_checkpoint() {
