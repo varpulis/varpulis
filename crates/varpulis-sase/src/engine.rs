@@ -120,6 +120,23 @@ impl std::fmt::Debug for SaseEngine {
     }
 }
 
+/// Retain the runs matching `keep` within each partition, then drop partitions
+/// that went empty.
+///
+/// Without the empty-partition removal, high-cardinality or short-lived
+/// ("poison") partition keys leave empty `Vec`s behind in `partitioned_runs`
+/// forever — an unbounded memory leak for streams partitioned on something like
+/// a session id or request id.
+fn retain_and_evict_empty_partitions<F: Fn(&Run) -> bool>(
+    partitioned_runs: &mut FxHashMap<String, Vec<Run>>,
+    keep: F,
+) {
+    partitioned_runs.retain(|_key, runs| {
+        runs.retain(&keep);
+        !runs.is_empty()
+    });
+}
+
 impl SaseEngine {
     /// Create a new engine that matches the given pattern.
     pub fn new(pattern: SasePattern) -> Self {
@@ -1249,9 +1266,9 @@ impl SaseEngine {
                 self.confirm_negations_processing_time();
                 // Use wall-clock time for timeout check
                 self.runs.retain(|r| !r.is_timed_out() && !r.invalidated);
-                for runs in self.partitioned_runs.values_mut() {
-                    runs.retain(|r| !r.is_timed_out() && !r.invalidated);
-                }
+                retain_and_evict_empty_partitions(&mut self.partitioned_runs, |r| {
+                    !r.is_timed_out() && !r.invalidated
+                });
             }
             TimeSemantics::EventTime => {
                 // Use watermark for timeout check
@@ -1303,9 +1320,9 @@ impl SaseEngine {
 
             self.runs
                 .retain(|r| !r.is_timed_out_event_time(watermark) && !r.invalidated);
-            for runs in self.partitioned_runs.values_mut() {
-                runs.retain(|r| !r.is_timed_out_event_time(watermark) && !r.invalidated);
-            }
+            retain_and_evict_empty_partitions(&mut self.partitioned_runs, |r| {
+                !r.is_timed_out_event_time(watermark) && !r.invalidated
+            });
         }
     }
 
@@ -1435,5 +1452,41 @@ impl SaseEngine {
             total_runs_completed: self.total_runs_completed,
             utilization,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retain_and_evict_removes_emptied_partitions() {
+        // A "poison" partition whose runs all die must be dropped from the map,
+        // not left behind as an empty Vec (the unbounded-growth leak).
+        let mut parts: FxHashMap<String, Vec<Run>> = FxHashMap::default();
+        let dead = || {
+            let mut r = Run::new(0);
+            r.invalidated = true;
+            r
+        };
+        parts.insert("keep".to_string(), vec![Run::new(0), dead()]); // one survives
+        parts.insert("poison".to_string(), vec![dead(), dead()]); // all die
+
+        retain_and_evict_empty_partitions(&mut parts, |r| !r.invalidated);
+
+        assert!(
+            parts.contains_key("keep"),
+            "a partition with a live run must remain"
+        );
+        assert_eq!(
+            parts["keep"].len(),
+            1,
+            "dead run pruned within the partition"
+        );
+        assert!(
+            !parts.contains_key("poison"),
+            "an emptied partition must be evicted, not kept as an empty Vec"
+        );
+        assert_eq!(parts.len(), 1);
     }
 }
