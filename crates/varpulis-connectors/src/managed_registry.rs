@@ -117,6 +117,21 @@ impl ManagedConnectorRegistry {
         connector.commit_source_offsets(topic, offsets).await
     }
 
+    /// Stage per-partition source offsets to be folded into the connector's sink
+    /// transaction (audit C4 — atomic offset+output commit). Called by the
+    /// barrier between prepare and commit for exactly-once sinks.
+    pub async fn stage_txn_offsets(
+        &self,
+        connector_name: &str,
+        topic: &str,
+        offsets: &HashMap<i32, i64>,
+    ) -> Result<(), ConnectorError> {
+        let connector = self.connectors.get(connector_name).ok_or_else(|| {
+            ConnectorError::ConfigError(format!("Unknown connector: {connector_name}"))
+        })?;
+        connector.stage_txn_offsets(topic, offsets).await
+    }
+
     /// Collect health reports from all managed connectors.
     pub fn health_reports(&self) -> Vec<(&str, &str, ConnectorHealthReport)> {
         self.connectors
