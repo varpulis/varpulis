@@ -2227,38 +2227,82 @@ async fn handle_manual_migrate(
         return resp;
     }
 
-    // Phase 1: Plan (read lock — released before HTTP I/O)
-    let (plan, http_client, source_alive, connectors) = {
-        let coord = coordinator.read().await;
+    // Phase 1 (plan, read lock) + Phase 2 (execute, no lock).
+    // Transport is NATS when a client is configured, else HTTP (default).
+    #[cfg(feature = "nats-transport")]
+    let (plan, result) = {
+        let (plan, http_client, source_alive, connectors, nats_client) = {
+            let coord = coordinator.read().await;
 
-        match coord.plan_migrate_pipeline(
-            &pipeline_name,
-            &group_id,
-            &WorkerId(body.target_worker_id),
-            MigrationReason::Manual,
-        ) {
-            Ok(plan) => {
-                let source_alive = coord
-                    .workers
-                    .get(&plan.source_worker_id)
-                    .map(|w| w.status != crate::worker::WorkerStatus::Unhealthy)
-                    .unwrap_or(false);
-                let connectors = coord.connectors.clone();
-                (plan, coord.http_client.clone(), source_alive, connectors)
+            match coord.plan_migrate_pipeline(
+                &pipeline_name,
+                &group_id,
+                &WorkerId(body.target_worker_id),
+                MigrationReason::Manual,
+            ) {
+                Ok(plan) => {
+                    let source_alive = coord
+                        .workers
+                        .get(&plan.source_worker_id)
+                        .map(|w| w.status != crate::worker::WorkerStatus::Unhealthy)
+                        .unwrap_or(false);
+                    let connectors = coord.connectors.clone();
+                    (
+                        plan,
+                        coord.http_client.clone(),
+                        source_alive,
+                        connectors,
+                        coord.nats_client.clone(),
+                    )
+                }
+                Err(e) => return cluster_error_response(e),
             }
-            Err(e) => return cluster_error_response(e),
-        }
+        };
+        // Read lock released here
+        let result = crate::coordinator::Coordinator::execute_migrate_plan_dispatch(
+            nats_client.as_ref(),
+            &http_client,
+            &plan,
+            source_alive,
+            &connectors,
+            None,
+        )
+        .await;
+        (plan, result)
     };
-    // Read lock released here
+    #[cfg(not(feature = "nats-transport"))]
+    let (plan, result) = {
+        let (plan, http_client, source_alive, connectors) = {
+            let coord = coordinator.read().await;
 
-    // Phase 2: Execute HTTP steps (no lock held)
-    let result = crate::coordinator::Coordinator::execute_migrate_plan(
-        &http_client,
-        &plan,
-        source_alive,
-        &connectors,
-    )
-    .await;
+            match coord.plan_migrate_pipeline(
+                &pipeline_name,
+                &group_id,
+                &WorkerId(body.target_worker_id),
+                MigrationReason::Manual,
+            ) {
+                Ok(plan) => {
+                    let source_alive = coord
+                        .workers
+                        .get(&plan.source_worker_id)
+                        .map(|w| w.status != crate::worker::WorkerStatus::Unhealthy)
+                        .unwrap_or(false);
+                    let connectors = coord.connectors.clone();
+                    (plan, coord.http_client.clone(), source_alive, connectors)
+                }
+                Err(e) => return cluster_error_response(e),
+            }
+        };
+        // Read lock released here
+        let result = crate::coordinator::Coordinator::execute_migrate_plan(
+            &http_client,
+            &plan,
+            source_alive,
+            &connectors,
+        )
+        .await;
+        (plan, result)
+    };
 
     // Phase 3: Commit results (write lock)
     let mut coord = coordinator.write().await;

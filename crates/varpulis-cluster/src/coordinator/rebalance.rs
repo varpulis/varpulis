@@ -328,6 +328,203 @@ impl Coordinator {
         Self::execute_migrate_plan_inner(http_client, plan, source_alive, connectors, None).await
     }
 
+    /// NATS analogue of [`execute_migrate_plan_inner`] (audit C6b).
+    ///
+    /// There is no single worker `"migrate"` command — a migration is
+    /// *composed* of the primitive per-command NATS subjects the worker
+    /// already handles: `checkpoint` → `deploy` → `restore` → `undeploy`
+    /// (see `nats_worker.rs`). This mirrors the HTTP inner path's steps,
+    /// best-effort semantics (checkpoint + restore failures are non-fatal),
+    /// and return contract (`Ok(new_pipeline_id)` / `Err(reason)`), but
+    /// addresses each worker over NATS request/reply instead of HTTP. It is
+    /// the path that works in a NATS deployment, where worker addresses are
+    /// `nats://...` and reqwest cannot reach them.
+    ///
+    /// The distributed-checkpoint preference is preserved: a preloaded
+    /// `distributed_checkpoint` short-circuits the source checkpoint, which
+    /// is what makes failover work when the source worker is dead.
+    ///
+    /// Note the checkpoint envelope difference vs HTTP: the worker's
+    /// `checkpoint` handler replies with a *bare* `EngineCheckpoint` (the
+    /// HTTP route wraps it in a `CheckpointResponsePayload`), so
+    /// [`fetch_source_checkpoint_nats`] deserializes the reply directly.
+    #[cfg(feature = "nats-transport")]
+    pub async fn execute_migrate_plan_nats(
+        nats_client: &async_nats::Client,
+        plan: &MigratePipelinePlan,
+        source_alive: bool,
+        connectors: &HashMap<String, ClusterConnector>,
+        distributed_checkpoint: Option<EngineCheckpoint>,
+    ) -> Result<String, String> {
+        use crate::nats_transport;
+
+        let timeout = Duration::from_secs(10);
+
+        // Step 1: Acquire a checkpoint to restore on the target.
+        //
+        // Preference order mirrors `execute_migrate_plan_inner`:
+        //   1. A pre-loaded distributed checkpoint (durable state) — works
+        //      even when the source worker is dead.
+        //   2. Best-effort NATS checkpoint from the source worker.
+        //   3. Nothing — proceed with a stateless redeploy.
+        let checkpoint = if let Some(cp) = distributed_checkpoint {
+            info!(
+                "Using distributed checkpoint for pipeline '{}' migration to {} ({} events)",
+                plan.pipeline_name, plan.target_worker_id, cp.events_processed
+            );
+            Some(cp)
+        } else {
+            fetch_source_checkpoint_nats(nats_client, plan, source_alive, timeout).await
+        };
+
+        // Step 2: Deploy to target worker.
+        let (enriched_source, _) =
+            crate::connector_config::inject_connectors(&plan.vpl_source, connectors);
+
+        let deploy_subject = nats_transport::subject_cmd(&plan.target_worker_id.0, "deploy");
+        let deploy_body = serde_json::json!({
+            "name": plan.pipeline_name,
+            "source": enriched_source,
+        });
+
+        let new_pipeline_id = match nats_transport::nats_request::<_, DeployResponse>(
+            nats_client,
+            &deploy_subject,
+            &deploy_body,
+            timeout,
+        )
+        .await
+        {
+            Ok(resp_body) => {
+                info!(
+                    "Migration deploy over NATS: '{}' on target {} (id={}, status={})",
+                    resp_body.name, plan.target_worker_id, resp_body.id, resp_body.status
+                );
+                resp_body.id
+            }
+            Err(e) => {
+                return Err(format!("Deploy to target failed over NATS: {e}"));
+            }
+        };
+
+        // Step 3: Restore checkpoint on target (best-effort).
+        //
+        // The worker's `restore` handler reads the pipeline id from the
+        // request body (the HTTP route takes it in the URL), so we include
+        // it alongside the checkpoint.
+        if let Some(ref cp) = checkpoint {
+            let restore_subject = nats_transport::subject_cmd(&plan.target_worker_id.0, "restore");
+            let restore_body = serde_json::json!({
+                "pipeline_id": new_pipeline_id,
+                "checkpoint": cp,
+            });
+
+            match nats_transport::nats_request::<_, serde_json::Value>(
+                nats_client,
+                &restore_subject,
+                &restore_body,
+                timeout,
+            )
+            .await
+            {
+                Ok(resp) if resp.get("error").is_none() => {
+                    info!(
+                        "Checkpoint restored over NATS for pipeline '{}' on worker {}",
+                        plan.pipeline_name, plan.target_worker_id
+                    );
+                }
+                Ok(resp) => {
+                    warn!(
+                        "Restore failed over NATS for '{}' (continuing without state): {}",
+                        plan.pipeline_name, resp
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Restore request failed over NATS for '{}' (continuing without state): {}",
+                        plan.pipeline_name, e
+                    );
+                }
+            }
+        }
+
+        // Step 4: Cleanup — remove pipeline from source (skip if dead).
+        // Reuses the exact `undeploy` request shape from
+        // `execute_teardown_plan_nats` (`{ "pipeline_id": ... }`).
+        if source_alive && !plan.deployment.pipeline_id.is_empty() {
+            let undeploy_subject =
+                nats_transport::subject_cmd(&plan.source_worker_id.0, "undeploy");
+            let undeploy_body = serde_json::json!({
+                "pipeline_id": plan.deployment.pipeline_id,
+            });
+
+            match nats_transport::nats_request::<_, serde_json::Value>(
+                nats_client,
+                &undeploy_subject,
+                &undeploy_body,
+                timeout,
+            )
+            .await
+            {
+                Ok(_) => {
+                    info!(
+                        "Removed old pipeline '{}' from worker {} over NATS",
+                        plan.pipeline_name, plan.source_worker_id
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to remove old pipeline '{}' from {} over NATS: {}",
+                        plan.pipeline_name, plan.source_worker_id, e
+                    );
+                }
+            }
+        }
+
+        Ok(new_pipeline_id)
+    }
+
+    /// Execute a migration plan over the best available transport (audit C6b).
+    ///
+    /// Routes over NATS request/reply when a NATS client is configured (a
+    /// NATS deployment, where worker addresses are `nats://...`), otherwise
+    /// falls back to the HTTP inner path. Mirrors the deploy/teardown/inject
+    /// `*_dispatch` helpers so transport selection for migration lives in
+    /// exactly one place. `distributed_checkpoint` is threaded through so a
+    /// failover caller can supply durable state when the source is dead.
+    #[cfg(feature = "nats-transport")]
+    pub async fn execute_migrate_plan_dispatch(
+        nats: Option<&async_nats::Client>,
+        http: &reqwest::Client,
+        plan: &MigratePipelinePlan,
+        source_alive: bool,
+        connectors: &HashMap<String, ClusterConnector>,
+        distributed_checkpoint: Option<EngineCheckpoint>,
+    ) -> Result<String, String> {
+        match nats {
+            Some(n) => {
+                Self::execute_migrate_plan_nats(
+                    n,
+                    plan,
+                    source_alive,
+                    connectors,
+                    distributed_checkpoint,
+                )
+                .await
+            }
+            None => {
+                Self::execute_migrate_plan_inner(
+                    http,
+                    plan,
+                    source_alive,
+                    connectors,
+                    distributed_checkpoint,
+                )
+                .await
+            }
+        }
+    }
+
     /// Variant of [`execute_migrate_plan`] that accepts a pre-loaded engine
     /// checkpoint sourced from the distributed checkpoint store.
     ///
@@ -1415,6 +1612,61 @@ async fn fetch_source_checkpoint(
         Err(e) => {
             warn!(
                 "Checkpoint request failed for '{}': {}",
+                plan.pipeline_name, e
+            );
+            None
+        }
+    }
+}
+
+/// NATS analogue of [`fetch_source_checkpoint`] (audit C6b): best-effort
+/// checkpoint of the source worker over NATS request/reply.
+///
+/// The worker's `checkpoint` handler replies with a *bare*
+/// `EngineCheckpoint` JSON — unlike the HTTP route, which wraps it in a
+/// `CheckpointResponsePayload` — so we deserialize the reply directly into
+/// an `EngineCheckpoint`. Any failure (source dead, request timeout, or an
+/// `{"error": ...}` reply that doesn't parse as a checkpoint) yields `None`
+/// so the caller proceeds with a stateless redeploy, matching the HTTP
+/// path's best-effort semantics.
+#[cfg(feature = "nats-transport")]
+async fn fetch_source_checkpoint_nats(
+    nats_client: &async_nats::Client,
+    plan: &MigratePipelinePlan,
+    source_alive: bool,
+    timeout: Duration,
+) -> Option<EngineCheckpoint> {
+    if !source_alive {
+        info!(
+            "Source worker {} is dead, proceeding without source checkpoint for '{}'",
+            plan.source_worker_id, plan.pipeline_name
+        );
+        return None;
+    }
+
+    let subject = crate::nats_transport::subject_cmd(&plan.source_worker_id.0, "checkpoint");
+    let body = serde_json::json!({
+        "pipeline_id": plan.deployment.pipeline_id,
+    });
+
+    match crate::nats_transport::nats_request::<_, EngineCheckpoint>(
+        nats_client,
+        &subject,
+        &body,
+        timeout,
+    )
+    .await
+    {
+        Ok(cp) => {
+            info!(
+                "Checkpoint captured over NATS for pipeline '{}' ({} events)",
+                plan.pipeline_name, cp.events_processed
+            );
+            Some(cp)
+        }
+        Err(e) => {
+            warn!(
+                "Checkpoint over NATS failed for '{}' (continuing without state): {}",
                 plan.pipeline_name, e
             );
             None
