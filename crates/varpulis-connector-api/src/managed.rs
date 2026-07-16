@@ -31,6 +31,11 @@ pub struct ConnectorHealthReport {
     pub circuit_breaker_failures: u64,
     /// Total number of requests rejected by the circuit breaker.
     pub circuit_breaker_rejections: u64,
+    /// Total number of inbound records dropped because they could not be
+    /// decoded into an `Event` (malformed payload) or exceeded the payload
+    /// size limit. A non-zero value means poison records were observed (and
+    /// dead-lettered, when a DLQ is attached) rather than silently skipped.
+    pub decode_failures: u64,
 }
 
 impl Default for ConnectorHealthReport {
@@ -43,6 +48,7 @@ impl Default for ConnectorHealthReport {
             circuit_breaker_state: "closed".to_string(),
             circuit_breaker_failures: 0,
             circuit_breaker_rejections: 0,
+            decode_failures: 0,
         }
     }
 }

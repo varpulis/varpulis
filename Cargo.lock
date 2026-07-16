@@ -8739,6 +8739,7 @@ dependencies = [
  "tracing",
  "varpulis-connector-api",
  "varpulis-core",
+ "varpulis-dead-letter",
 ]
 
 [[package]]
