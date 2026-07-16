@@ -96,6 +96,8 @@ async fn handle_registration(payload: &[u8], coordinator: &SharedCoordinator) ->
         last_heartbeat: std::time::Instant::now(),
         assigned_pipelines: Vec::new(),
         events_processed: 0,
+        heartbeat_seq: 0,
+        last_seen_hb_seq: 0,
     };
 
     let mut coord = coordinator.write().await;
@@ -135,4 +137,15 @@ async fn handle_heartbeat_message(subject: &str, payload: &[u8], coordinator: &S
     if let Err(e) = coord.heartbeat(&wid, &hb) {
         warn!("Heartbeat error for {}: {}", worker_id, e);
     }
+    // NOTE (C5 / C6 follow-up): unlike the HTTP heartbeat handler
+    // (`api.rs` `handle_heartbeat`), this NATS path advances the worker's
+    // local `heartbeat_seq` via `heartbeat()` but does NOT replicate a
+    // `WorkerMetricsUpdated` through Raft — the NATS handler doesn't replicate
+    // metrics at all today. That is fine for a single coordinator (its own
+    // `heartbeat()` keeps `last_heartbeat` fresh) but means that in a
+    // multi-coordinator NATS deployment a worker homed on a *non-leader* would
+    // not have its liveness seen by the leader's `sync_from_raft`. Wiring
+    // leader-write-or-forward replication here belongs with the NATS outbound
+    // work (audit C6); until then, prefer HTTP heartbeats for multi-coordinator
+    // liveness.
 }

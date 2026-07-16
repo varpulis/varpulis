@@ -380,13 +380,19 @@ impl Coordinator {
                 }
                 local.capacity.pipelines_running = entry.pipelines_running;
                 // Trust Raft status for cross-coordinator transitions (e.g., unhealthy).
-                // If Raft says a worker is ready, refresh last_heartbeat -- this acts
-                // as a heartbeat proxy for workers connected to other coordinators.
+                // If Raft says a worker is ready, only refresh last_heartbeat when the
+                // replicated liveness signal (heartbeat_seq) has actually ADVANCED since
+                // we last synced. This acts as a heartbeat proxy for workers connected to
+                // other coordinators WITHOUT masking a dead worker: if no new heartbeat is
+                // replicated, the seq stays put, last_heartbeat goes stale, and the local
+                // health_sweep can time the worker out. (Unconditionally stamping here was
+                // the C5 bug: it reset the clock every tick so dead workers stayed Ready.)
                 match raft_status {
                     WorkerStatus::Unhealthy | WorkerStatus::Draining => {
                         local.status = raft_status;
                     }
-                    WorkerStatus::Ready => {
+                    WorkerStatus::Ready if entry.heartbeat_seq > local.last_seen_hb_seq => {
+                        local.last_seen_hb_seq = entry.heartbeat_seq;
                         local.last_heartbeat = Instant::now();
                     }
                     _ => {}
@@ -406,6 +412,12 @@ impl Coordinator {
                     last_heartbeat: Instant::now(),
                     assigned_pipelines: entry.assigned_pipelines.clone(),
                     events_processed: entry.events_processed,
+                    // Not this coordinator's local worker, so its own send-side
+                    // counter starts at 0; seed last_seen from the replicated value
+                    // and stamp once (a just-learned worker is presumed alive until
+                    // its timeout elapses with no further seq advance).
+                    heartbeat_seq: 0,
+                    last_seen_hb_seq: entry.heartbeat_seq,
                 };
                 self.workers.insert(wid, worker);
             }
@@ -519,6 +531,11 @@ impl Coordinator {
         worker.last_heartbeat = std::time::Instant::now();
         worker.capacity.pipelines_running = hb.pipelines_running;
         worker.events_processed = hb.events_processed;
+        // Advance the monotonic liveness counter. This is the single source of
+        // truth for both the HTTP and NATS heartbeat paths; the receiving
+        // coordinator replicates this value through Raft (WorkerMetricsUpdated)
+        // so other coordinators can tell a live worker from a dead one.
+        worker.heartbeat_seq = worker.heartbeat_seq.wrapping_add(1);
 
         // If worker was unhealthy and heartbeat arrives, mark it ready again
         if worker.status == WorkerStatus::Unhealthy {

@@ -73,6 +73,14 @@ pub struct WorkerNode {
     pub assigned_pipelines: Vec<String>,
     /// Total events processed by this worker (from heartbeats).
     pub events_processed: u64,
+    /// Monotonic heartbeat counter maintained by this coordinator for the
+    /// worker. Incremented once per heartbeat received in [`Coordinator::heartbeat`]
+    /// and replicated through Raft so other coordinators can detect liveness.
+    pub heartbeat_seq: u64,
+    /// Highest replicated `heartbeat_seq` this coordinator has already observed
+    /// for the worker via `sync_from_raft`. Used to refresh `last_heartbeat`
+    /// only when the replicated liveness signal actually advances.
+    pub last_seen_hb_seq: u64,
 }
 
 impl WorkerNode {
@@ -86,6 +94,8 @@ impl WorkerNode {
             last_heartbeat: Instant::now(),
             assigned_pipelines: Vec::new(),
             events_processed: 0,
+            heartbeat_seq: 0,
+            last_seen_hb_seq: 0,
         }
     }
 

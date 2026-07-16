@@ -39,6 +39,7 @@ fn make_metrics(id: &str, events: u64, pipelines: usize) -> ClusterCommand {
         events_processed: events,
         pipelines_running: pipelines,
         pipeline_metrics: vec![],
+        heartbeat_seq: events,
     }
 }
 

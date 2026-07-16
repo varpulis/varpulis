@@ -65,6 +65,16 @@ pub struct WorkerEntry {
     pub max_pipelines: usize,
     pub assigned_pipelines: Vec<String>,
     pub events_processed: u64,
+    /// Monotonic per-worker heartbeat counter.
+    ///
+    /// Incremented by whichever coordinator receives a worker's heartbeat and
+    /// replicated through Raft (via [`ClusterCommand::WorkerMetricsUpdated`]).
+    /// `sync_from_raft` treats a worker as freshly-alive only when this value
+    /// advances, so a dead worker (no new heartbeats ⇒ seq frozen) is eventually
+    /// timed out by the health sweep instead of being kept `Ready` forever.
+    /// `#[serde(default)]` keeps pre-existing snapshots deserializable.
+    #[serde(default)]
+    pub heartbeat_seq: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +102,7 @@ pub fn apply_command(state: &mut CoordinatorState, cmd: ClusterCommand) -> Clust
                     max_pipelines: capacity.max_pipelines,
                     assigned_pipelines: Vec::new(),
                     events_processed: 0,
+                    heartbeat_seq: 0,
                 },
             );
             ClusterResponse::Ok
@@ -124,10 +135,12 @@ pub fn apply_command(state: &mut CoordinatorState, cmd: ClusterCommand) -> Clust
             events_processed,
             pipelines_running,
             pipeline_metrics,
+            heartbeat_seq,
         } => {
             if let Some(w) = state.workers.get_mut(&id) {
                 w.events_processed = events_processed;
                 w.pipelines_running = pipelines_running;
+                w.heartbeat_seq = heartbeat_seq;
             }
             if !pipeline_metrics.is_empty() {
                 state.worker_pipeline_metrics.insert(id, pipeline_metrics);
@@ -264,6 +277,7 @@ mod tests {
                 max_pipelines: 100,
                 assigned_pipelines: vec![],
                 events_processed: 0,
+                heartbeat_seq: 0,
             },
         );
         let cmd = ClusterCommand::DeregisterWorker { id: "w1".into() };
@@ -286,6 +300,7 @@ mod tests {
                 max_pipelines: 100,
                 assigned_pipelines: vec![],
                 events_processed: 0,
+                heartbeat_seq: 0,
             },
         );
         let cmd = ClusterCommand::WorkerStatusChanged {
@@ -376,10 +391,12 @@ mod tests {
                 events_out: 100,
                 connector_health: vec![],
             }],
+            heartbeat_seq: 7,
         };
         apply_command(&mut state, cmd);
         assert_eq!(state.workers["w1"].events_processed, 5000);
         assert_eq!(state.workers["w1"].pipelines_running, 3);
+        assert_eq!(state.workers["w1"].heartbeat_seq, 7);
         assert_eq!(state.worker_pipeline_metrics["w1"].len(), 1);
         assert_eq!(state.worker_pipeline_metrics["w1"][0].events_in, 5000);
 
@@ -389,10 +406,12 @@ mod tests {
             events_processed: 12000,
             pipelines_running: 2,
             pipeline_metrics: vec![],
+            heartbeat_seq: 9,
         };
         apply_command(&mut state, cmd);
         assert_eq!(state.workers["w1"].events_processed, 12000);
         assert_eq!(state.workers["w1"].pipelines_running, 2);
+        assert_eq!(state.workers["w1"].heartbeat_seq, 9);
         // Empty pipeline_metrics should not overwrite existing data
         assert_eq!(state.worker_pipeline_metrics["w1"].len(), 1);
     }
@@ -406,6 +425,7 @@ mod tests {
             events_processed: 100,
             pipelines_running: 1,
             pipeline_metrics: vec![],
+            heartbeat_seq: 1,
         };
         let resp = apply_command(&mut state, cmd);
         assert!(matches!(resp, ClusterResponse::Ok));
