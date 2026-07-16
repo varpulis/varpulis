@@ -208,7 +208,7 @@ inventory::submit! { &KafkaFactory as &dyn ConnectorFactory }
 // =============================================================================
 
 /// Kafka configuration
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct KafkaConfig {
     /// Kafka broker addresses (comma-separated).
     pub brokers: String,
@@ -221,6 +221,33 @@ pub struct KafkaConfig {
     /// When set, enables Kafka exactly-once semantics via transactional producer.
     /// The value must be unique per application instance.
     pub transactional_id: Option<String>,
+}
+
+/// Hand-written so secret-valued `properties` (SASL/SSL passwords) never reach
+/// logs, error messages, or panic output via `{:?}`. The derived `Debug` printed
+/// the whole `properties` map verbatim, leaking credentials.
+impl std::fmt::Debug for KafkaConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted: indexmap::IndexMap<&String, &str> = self
+            .properties
+            .iter()
+            .map(|(k, v)| {
+                let kl = k.to_ascii_lowercase();
+                if kl.contains("password") || kl.contains("secret") {
+                    (k, "***REDACTED***")
+                } else {
+                    (k, v.as_str())
+                }
+            })
+            .collect();
+        f.debug_struct("KafkaConfig")
+            .field("brokers", &self.brokers)
+            .field("topic", &self.topic)
+            .field("group_id", &self.group_id)
+            .field("properties", &redacted)
+            .field("transactional_id", &self.transactional_id)
+            .finish()
+    }
 }
 
 impl KafkaConfig {
@@ -871,6 +898,35 @@ pub type KafkaSourceFull = KafkaSource;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kafka_config_debug_redacts_secrets() {
+        let mut props = indexmap::IndexMap::new();
+        props.insert("sasl_username".to_string(), "svc-account".to_string());
+        props.insert("sasl_password".to_string(), "sup3r-secret-pw".to_string());
+        props.insert("ssl_key_password".to_string(), "keypass123".to_string());
+        let config = KafkaConfig::new("broker:9092", "topic").with_properties(props);
+
+        let rendered = format!("{config:?}");
+        assert!(
+            !rendered.contains("sup3r-secret-pw"),
+            "sasl_password leaked in Debug: {rendered}"
+        );
+        assert!(
+            !rendered.contains("keypass123"),
+            "ssl_key_password leaked in Debug: {rendered}"
+        );
+        assert!(
+            rendered.contains("***REDACTED***"),
+            "secrets should be masked"
+        );
+        // Non-secret fields stay visible for debuggability.
+        assert!(
+            rendered.contains("svc-account"),
+            "username should remain visible"
+        );
+        assert!(rendered.contains("broker:9092"));
+    }
 
     #[test]
     fn test_kafka_config_new() {
