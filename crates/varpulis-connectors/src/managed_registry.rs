@@ -89,6 +89,18 @@ impl ManagedConnectorRegistry {
         }
     }
 
+    /// Fan the engine's cooperative source-pause flag out to every managed
+    /// connector, so replayable sources stop pulling during a checkpoint
+    /// barrier's drain. Mirrors [`set_engine_offsets_registry`].
+    pub fn set_source_pause_handle(
+        &mut self,
+        handle: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        for connector in self.connectors.values_mut() {
+            connector.set_source_pause_handle(handle.clone());
+        }
+    }
+
     /// Commit per-partition source offsets for a given (connector, topic)
     /// pair. Called by the driver after a checkpoint has been durably
     /// persisted and all 2PC sinks have committed, closing the loop for

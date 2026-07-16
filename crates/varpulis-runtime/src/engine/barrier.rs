@@ -4,16 +4,33 @@
 //! in-process — by tests and embedders — without a broker or the CLI connector
 //! registry. See `audit/EXACTLY_ONCE_DESIGN.md`.
 //!
-//! This first extract is deliberately behaviour-preserving: every failure is
-//! still logged and swallowed exactly as the pre-extract CLI barrier did. The
-//! `Result` return type and the [`SourceCommitCoordinator`] seam are the
-//! surfaces the later audit-C3/C4 hardening steps build on.
+//! Sink and offset failures are still logged and swallowed (the hardening step
+//! makes them fatal); the `Result` return type and the [`SourceCommitCoordinator`]
+//! seam are the surfaces those steps build on. The barrier pauses the sources
+//! and drains everything in flight before snapshotting, so committed offsets
+//! never outrun applied state (audit C3).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use super::Engine;
+use crate::event::Event;
+
+/// Resumes source ingestion on every barrier exit — success, error, or early
+/// return — so a checkpoint failure can never strand the sources paused.
+///
+/// Holds a clone of the engine's pause flag (an `Arc`), so it is independent of
+/// the `&mut self` borrow the barrier needs for the drain and snapshot.
+struct ResumeGuard(Arc<AtomicBool>);
+
+impl Drop for ResumeGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 
 /// Error surfaced by [`Engine::barrier_commit_2pc`].
 ///
@@ -68,17 +85,36 @@ impl Engine {
     /// it, commit transactional sinks, then commit source offsets — as a single
     /// checkpoint epoch.
     ///
-    /// Extracted from the CLI `run` loop (behaviour-preserving). All failures are
-    /// logged and swallowed exactly as before; the `Result` return is the seam
-    /// the later audit-C3/C4 steps use to make failing paths fatal. See the
-    /// module docs.
+    /// Extracted from the CLI `run` loop. Sink/offset failures are still logged
+    /// and swallowed (the hardening step makes them fatal); the `Result` return
+    /// is that seam. See the module docs.
+    ///
+    /// **C3 — drain before snapshot.** Sources mirror their offsets at channel
+    /// ingress, so a naive snapshot can record an offset for an event that has
+    /// not yet been applied to engine state. Committing that offset and then
+    /// crashing would skip the event on restart (data loss). To prevent it, the
+    /// barrier first pauses the sources and drains everything already in flight
+    /// (`event_rx`) into engine state, so the snapshot's offsets reflect
+    /// *applied* state. Sources are resumed on every exit via [`ResumeGuard`].
     #[cfg(feature = "async-runtime")]
     pub async fn barrier_commit_2pc(
         &mut self,
         checkpoint_id: u64,
+        event_rx: &mut tokio::sync::mpsc::Receiver<Vec<Event>>,
         coordinator: &dyn SourceCommitCoordinator,
     ) -> Result<(), BarrierError> {
-        // Phase 1 — state snapshot (fast, in-memory).
+        // C3 — pause sources and drain all in-flight events before snapshotting.
+        // The guard resumes ingestion no matter how this method returns.
+        let _resume = ResumeGuard(self.source_pause_handle());
+        self.pause_sources();
+
+        while let Ok(batch) = event_rx.try_recv() {
+            if let Err(e) = self.process_batch(batch).await {
+                tracing::warn!("Barrier drain apply failed (epoch {checkpoint_id}): {e}");
+            }
+        }
+
+        // Phase 1 — state snapshot (offsets now reflect applied state, post-drain).
         let snapshot = self.create_checkpoint();
 
         // Resolve the offset-commit targets up front (while we still hold the
@@ -241,8 +277,9 @@ mod tests {
             .insert("src".to_string(), HashMap::from([(0, 42)]));
 
         let coordinator = CaptureCoordinator::default();
+        let (_evt_tx, mut evt_rx) = tokio::sync::mpsc::channel::<Vec<Event>>(16);
         engine
-            .barrier_commit_2pc(1, &coordinator)
+            .barrier_commit_2pc(1, &mut evt_rx, &coordinator)
             .await
             .expect("barrier should succeed");
 
@@ -272,5 +309,106 @@ mod tests {
         assert_eq!(connector, "src");
         assert_eq!(topic, "varpulis/events/#");
         assert_eq!(offsets.get(&0), Some(&42));
+    }
+
+    /// C3 — the barrier drains in-flight events before snapshotting, so a crash
+    /// right after the offset commit cannot skip an event whose offset was
+    /// mirrored at ingress but never applied.
+    ///
+    /// Fail-before: delete the drain loop in `barrier_commit_2pc` and the
+    /// recovered engine shows `events_processed == 3` — the event at offset 3
+    /// was counted in the committed offset but lost from state.
+    #[tokio::test]
+    async fn drain_before_snapshot_prevents_inflight_event_loss_across_restart() {
+        use crate::persistence::{CheckpointConfig, MemoryStore};
+
+        let vpl = "stream PassThrough = TestEvent\n    .emit(value: value)\n";
+        let program = varpulis_parser::parse(vpl).expect("parse passthrough VPL");
+
+        // The durable store survives the "crash".
+        let store = Arc::new(MemoryStore::new());
+
+        // --- Run 1: apply offsets 0,1,2; leave offset 3 in flight; barrier; crash. ---
+        let (tx1, _rx1) = tokio::sync::mpsc::channel::<Event>(64);
+        let mut engine1 = Engine::new(tx1);
+        engine1.load(&program).expect("load");
+        engine1
+            .enable_checkpointing(store.clone(), CheckpointConfig::default())
+            .expect("enable checkpointing");
+
+        // A source binding so the barrier commits this source's offsets.
+        engine1.source_bindings.push(SourceBinding {
+            connector_name: "src".to_string(),
+            event_type: "TestEvent".to_string(),
+            topic_override: None,
+            extra_params: HashMap::new(),
+        });
+
+        // Events at offsets 0,1,2 are mirrored AND applied.
+        for id in 0..3 {
+            engine1
+                .process(Event::new("TestEvent").with_field("value", id))
+                .await
+                .expect("process");
+        }
+        // The source has also read + mirrored offset 3 (event in flight), but it
+        // is not yet applied — it sits unread in the event channel.
+        engine1
+            .source_offsets_handle()
+            .lock()
+            .unwrap()
+            .insert("src".to_string(), HashMap::from([(0, 3)]));
+        let (evt_tx, mut evt_rx) = tokio::sync::mpsc::channel::<Vec<Event>>(16);
+        evt_tx
+            .send(vec![Event::new("TestEvent").with_field("value", 3)])
+            .await
+            .expect("queue in-flight event");
+        drop(evt_tx);
+
+        assert_eq!(
+            engine1.metrics().events_processed,
+            3,
+            "only offsets 0,1,2 applied before the barrier"
+        );
+
+        let coordinator = CaptureCoordinator::default();
+        engine1
+            .barrier_commit_2pc(1, &mut evt_rx, &coordinator)
+            .await
+            .expect("barrier");
+
+        // The barrier drained + applied the in-flight event before snapshotting.
+        assert_eq!(
+            engine1.metrics().events_processed,
+            4,
+            "drain must apply the in-flight event before the snapshot"
+        );
+        // The committed source offset is 3, as mirrored at ingress.
+        let committed = coordinator.committed.lock().unwrap().clone();
+        assert_eq!(
+            committed.len(),
+            1,
+            "expected one offset commit: {committed:?}"
+        );
+        assert_eq!(committed[0].2.get(&0), Some(&3));
+
+        drop(engine1); // "crash": engine + in-flight channel are gone.
+
+        // --- Restart: a fresh engine recovers from the same store. ---
+        let (tx2, _rx2) = tokio::sync::mpsc::channel::<Event>(64);
+        let mut engine2 = Engine::new(tx2);
+        engine2.load(&program).expect("load");
+        engine2
+            .enable_checkpointing(store.clone(), CheckpointConfig::default())
+            .expect("recover");
+
+        // Committed offset is 3, so the source replays nothing past it. Every
+        // event through offset 3 must therefore be reflected in recovered state.
+        assert_eq!(
+            engine2.metrics().events_processed,
+            4,
+            "all four events must survive the crash; a short count means the \
+             in-flight event was lost (committed offset outran applied state)"
+        );
     }
 }
