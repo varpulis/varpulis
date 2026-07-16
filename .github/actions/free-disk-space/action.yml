@@ -1,0 +1,32 @@
+name: Free disk space
+description: >
+  Reclaim disk on GitHub-hosted ubuntu-latest runners before a heavy build.
+  The runner ships with only ~14 GB free on /, which the full-workspace
+  all-targets build plus nextest/coverage test binaries can exhaust
+  ("No space left on device"). This deletes preinstalled language toolchains
+  that a Rust build never uses (~20-25 GB). Self-contained — no third-party
+  action, so nothing new enters the supply chain.
+runs:
+  using: composite
+  steps:
+    - name: Free disk space
+      shell: bash
+      run: |
+        echo "Disk before cleanup:"
+        df -h /
+        # Toolchains that are definitively unused by this Rust workspace.
+        # `|| true` so a missing path on a future runner image is not fatal.
+        sudo rm -rf \
+          /usr/share/dotnet \
+          /usr/local/lib/android \
+          /opt/ghc \
+          /usr/local/.ghcup \
+          /opt/hostedtoolcache/CodeQL \
+          /usr/local/share/boost \
+          /usr/local/graalvm \
+          /usr/local/share/powershell \
+          /usr/share/swift \
+          /usr/local/share/chromium \
+          /usr/local/lib/node_modules || true
+        echo "Disk after cleanup:"
+        df -h /
