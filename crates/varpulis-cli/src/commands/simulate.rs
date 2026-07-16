@@ -372,6 +372,11 @@ pub async fn run_simulation(
                         return;
                     }
 
+                    // End-of-input drain for event-time windows (C2b).
+                    if let Err(e) = worker_engine.flush_final_watermark_sync() {
+                        eprintln!("Worker {worker_id}: Watermark drain error: {e}");
+                    }
+
                     let worker_metrics = worker_engine.metrics();
                     total_counter.fetch_add(worker_metrics.events_processed, Ordering::Relaxed);
                     output_counter
@@ -603,7 +608,11 @@ pub async fn run_simulation(
 
         // Collect final metrics from all worker engines
         for (i, engine_mutex) in worker_engines.iter().enumerate() {
-            let w_engine = engine_mutex.lock().unwrap_or_else(|e| e.into_inner());
+            let mut w_engine = engine_mutex.lock().unwrap_or_else(|e| e.into_inner());
+            // End-of-input drain for event-time windows (C2b).
+            if let Err(e) = w_engine.flush_final_watermark_sync() {
+                eprintln!("Worker {i}: Watermark drain error: {e}");
+            }
             let worker_metrics = w_engine.metrics();
             total_events_processed.fetch_add(worker_metrics.events_processed, Ordering::Relaxed);
             output_emitted_count.fetch_add(worker_metrics.output_events_emitted, Ordering::Relaxed);
@@ -721,6 +730,14 @@ pub async fn run_simulation(
             .await?
             .map_err(|e| anyhow::anyhow!("Player error: {e}"))?;
     }
+
+    // End-of-input drain (C2b): graduate any still-open event-time windows.
+    // Watermark-driven only — arrival-driven windows keep today's EOF
+    // behavior. No-op when the program declares no `.watermark()`.
+    engine
+        .flush_final_watermark()
+        .await
+        .map_err(|e| anyhow::anyhow!("Watermark drain error: {e}"))?;
 
     // Flush any remaining session windows after all events are processed
     if engine.has_session_windows() {

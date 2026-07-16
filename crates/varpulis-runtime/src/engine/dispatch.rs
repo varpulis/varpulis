@@ -13,9 +13,9 @@ use rustc_hash::FxHashMap;
 use tracing::debug;
 
 use super::trace::TraceEntry;
-#[cfg(feature = "async-runtime")]
-use super::types::WindowType;
-use super::types::{RuntimeOp, RuntimeSource, StreamDefinition, StreamProcessResult, UserFunction};
+use super::types::{
+    RuntimeOp, RuntimeSource, StreamDefinition, StreamProcessResult, UserFunction, WindowType,
+};
 use super::{evaluator, pipeline, Engine};
 use crate::event::{Event, SharedEvent};
 use crate::sequence::SequenceContext;
@@ -190,6 +190,10 @@ impl Engine {
             }
         }
 
+        // C2b: graduate any event-time windows the watermark passed while
+        // observing this event. No-op unless watermark tracking is enabled.
+        self.flush_watermark().await?;
+
         // Update active streams gauge
         if let Some(ref m) = self.metrics {
             m.set_stream_count(self.streams.len());
@@ -269,8 +273,9 @@ impl Engine {
 
     /// Effective event-time watermark across all sources, if watermark tracking
     /// is enabled. Exposed for CLI/host loops and tests that need to observe
-    /// event-time progress.
-    pub fn effective_watermark(&self) -> Option<DateTime<Utc>> {
+    /// event-time progress. (Fully-qualified return type: this method is also
+    /// part of the sync path, available without `async-runtime`.)
+    pub fn effective_watermark(&self) -> Option<chrono::DateTime<chrono::Utc>> {
         self.watermark_tracker
             .as_ref()
             .and_then(|t| t.effective_watermark())
@@ -444,6 +449,11 @@ impl Engine {
             m.set_stream_count(self.streams.len());
         }
 
+        // C2b: graduate any event-time windows the watermark passed during
+        // this batch. Once per batch — the watermark only advances from the
+        // observe calls made above. No-op unless watermark tracking is on.
+        self.flush_watermark().await?;
+
         Ok(())
     }
 
@@ -572,6 +582,10 @@ impl Engine {
         for emitted in &emitted_batch {
             self.send_output_shared(emitted);
         }
+
+        // C2b: graduate any event-time windows the watermark passed during
+        // this batch (sync sibling of the async batch-tail flush).
+        self.flush_watermark_sync()?;
 
         Ok(())
     }
@@ -747,6 +761,10 @@ impl Engine {
             }
             m.set_stream_count(self.streams.len());
         }
+
+        // C2b: graduate any event-time windows the watermark passed during
+        // this batch.
+        self.flush_watermark().await?;
 
         Ok(())
     }
@@ -1120,6 +1138,115 @@ impl Engine {
         .await
     }
 
+    /// Collect graduated-window emissions for the first `Window` op of a
+    /// stream at watermark `wm`.
+    ///
+    /// Each inner `Vec` is ONE window emission and runs through the
+    /// post-window pipeline separately, so a multi-window graduation (e.g.
+    /// the end-of-input drain) produces one aggregate per window instead of
+    /// merging them. Arrival-driven windows keep the pre-C2b single-shot
+    /// `advance_watermark` behavior verbatim (0 or 1 emission, partitioned
+    /// variants flattened into one).
+    ///
+    /// `only_watermark_driven` restricts the pass to C2b watermark-driven
+    /// windows — used by the final end-of-input drain, which must not close
+    /// arrival-driven windows (their partial buffers are dropped at EOF
+    /// today, and the drain must not change no-watermark behavior).
+    fn collect_watermark_emissions(
+        stream: &mut StreamDefinition,
+        wm: chrono::DateTime<chrono::Utc>,
+        only_watermark_driven: bool,
+    ) -> Option<(usize, Vec<Vec<SharedEvent>>)> {
+        let wm_ms = wm.timestamp_millis();
+        for (idx, op) in stream.operations.iter_mut().enumerate() {
+            if let RuntimeOp::Window(window) = op {
+                let emissions: Vec<Vec<SharedEvent>> = match window {
+                    // C2b event-time windows: drain every graduated window,
+                    // one emission per (window, partition).
+                    WindowType::BinnedSliding(w) if w.is_watermark_driven() => w
+                        .drain_watermark(wm_ms)
+                        .into_iter()
+                        .map(|(_, events)| events)
+                        .collect(),
+                    WindowType::PartitionedBinnedSliding(w) if w.is_watermark_driven() => w
+                        .drain_watermark(wm_ms)
+                        .into_iter()
+                        .map(|(_, _, events)| events)
+                        .collect(),
+                    WindowType::Session(w) if w.is_watermark_driven() => w
+                        .drain_watermark(wm)
+                        .into_iter()
+                        .map(|(_, events)| events)
+                        .collect(),
+                    WindowType::PartitionedSession(w) if w.is_watermark_driven() => w
+                        .drain_watermark(wm)
+                        .into_iter()
+                        .map(|(_, _, events)| events)
+                        .collect(),
+                    _ if only_watermark_driven => Vec::new(),
+                    // Arrival-driven windows: pre-C2b behavior, one flattened
+                    // emission (external-heartbeat path).
+                    WindowType::Tumbling(w) => w.advance_watermark(wm).into_iter().collect(),
+                    WindowType::Sliding(w) => w.advance_watermark(wm).into_iter().collect(),
+                    WindowType::Session(w) => w.advance_watermark(wm).into_iter().collect(),
+                    WindowType::PartitionedTumbling(w) => {
+                        let all: Vec<_> = w
+                            .advance_watermark(wm)
+                            .into_iter()
+                            .flat_map(|(_, e)| e)
+                            .collect();
+                        if all.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![all]
+                        }
+                    }
+                    WindowType::PartitionedSliding(w) => {
+                        let all: Vec<_> = w
+                            .advance_watermark(wm)
+                            .into_iter()
+                            .flat_map(|(_, e)| e)
+                            .collect();
+                        if all.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![all]
+                        }
+                    }
+                    WindowType::PartitionedSession(w) => {
+                        let all: Vec<_> = w
+                            .advance_watermark(wm)
+                            .into_iter()
+                            .flat_map(|(_, e)| e)
+                            .collect();
+                        if all.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![all]
+                        }
+                    }
+                    WindowType::BinnedSliding(w) => w.advance_watermark(wm).into_iter().collect(),
+                    WindowType::PartitionedBinnedSliding(w) => {
+                        let all: Vec<_> = w
+                            .advance_watermark(wm)
+                            .into_iter()
+                            .flat_map(|(_, e)| e)
+                            .collect();
+                        if all.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![all]
+                        }
+                    }
+                    _ => Vec::new(), // Count-based windows don't use watermarks
+                };
+
+                return (!emissions.is_empty()).then_some((idx, emissions));
+            }
+        }
+        None
+    }
+
     /// Apply a watermark advance to all windows (async-runtime only).
     #[cfg(feature = "async-runtime")]
     #[tracing::instrument(skip(self))]
@@ -1127,92 +1254,87 @@ impl Engine {
         &mut self,
         wm: DateTime<Utc>,
     ) -> Result<(), super::error::EngineError> {
+        self.apply_watermark_to_windows_inner(wm, false).await
+    }
+
+    /// Watermark advance across all streams; each graduated window's events
+    /// run through the post-window pipeline as their own pass (async-runtime
+    /// only). See [`Self::collect_watermark_emissions`] for
+    /// `only_watermark_driven`.
+    #[cfg(feature = "async-runtime")]
+    pub(super) async fn apply_watermark_to_windows_inner(
+        &mut self,
+        wm: DateTime<Utc>,
+        only_watermark_driven: bool,
+    ) -> Result<(), super::error::EngineError> {
         let stream_names: Vec<String> = self.streams.keys().cloned().collect();
 
         for stream_name in stream_names {
-            let (window_idx, expired) = {
+            let collected = {
                 let stream = self.streams.get_mut(&stream_name).unwrap();
-                let mut result = Vec::new();
-                let mut found_idx = None;
-
-                for (idx, op) in stream.operations.iter_mut().enumerate() {
-                    if let RuntimeOp::Window(window) = op {
-                        let events: Option<Vec<SharedEvent>> = match window {
-                            WindowType::Tumbling(w) => w.advance_watermark(wm),
-                            WindowType::Sliding(w) => w.advance_watermark(wm),
-                            WindowType::Session(w) => w.advance_watermark(wm),
-                            WindowType::PartitionedTumbling(w) => {
-                                let parts = w.advance_watermark(wm);
-                                let all: Vec<_> = parts.into_iter().flat_map(|(_, e)| e).collect();
-                                if all.is_empty() {
-                                    None
-                                } else {
-                                    Some(all)
-                                }
-                            }
-                            WindowType::PartitionedSliding(w) => {
-                                let parts = w.advance_watermark(wm);
-                                let all: Vec<_> = parts.into_iter().flat_map(|(_, e)| e).collect();
-                                if all.is_empty() {
-                                    None
-                                } else {
-                                    Some(all)
-                                }
-                            }
-                            WindowType::PartitionedSession(w) => {
-                                let parts = w.advance_watermark(wm);
-                                let all: Vec<_> = parts.into_iter().flat_map(|(_, e)| e).collect();
-                                if all.is_empty() {
-                                    None
-                                } else {
-                                    Some(all)
-                                }
-                            }
-                            WindowType::BinnedSliding(w) => w.advance_watermark(wm),
-                            WindowType::PartitionedBinnedSliding(w) => {
-                                let parts = w.advance_watermark(wm);
-                                let all: Vec<_> = parts.into_iter().flat_map(|(_, e)| e).collect();
-                                if all.is_empty() {
-                                    None
-                                } else {
-                                    Some(all)
-                                }
-                            }
-                            _ => None, // Count-based windows don't use watermarks
-                        };
-
-                        if let Some(evts) = events {
-                            result = evts;
-                            found_idx = Some(idx);
-                        }
-                        break;
-                    }
-                }
-                (found_idx, result)
+                Self::collect_watermark_emissions(stream, wm, only_watermark_driven)
             };
-
-            if expired.is_empty() {
+            let Some((window_idx, emissions)) = collected else {
                 continue;
-            }
-
-            let window_idx = match window_idx {
-                Some(idx) => idx,
-                None => continue,
             };
 
-            let result = Self::process_post_window(
-                self.streams.get_mut(&stream_name).unwrap(),
-                expired,
-                window_idx,
-                &self.functions,
-                self.sinks.cache(),
-            )
-            .await?;
+            for expired in emissions {
+                let result = Self::process_post_window(
+                    self.streams.get_mut(&stream_name).unwrap(),
+                    expired,
+                    window_idx,
+                    &self.functions,
+                    self.sinks.cache(),
+                )
+                .await?;
 
-            for emitted in &result.emitted_events {
-                self.output_events_emitted += 1;
-                let owned = (**emitted).clone();
-                self.send_output(owned);
+                for emitted in &result.emitted_events {
+                    self.output_events_emitted += 1;
+                    let owned = (**emitted).clone();
+                    self.send_output(owned);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Sync sibling of [`Self::apply_watermark_to_windows_inner`] for the
+    /// sync dispatch path (`process_batch_sync` and sync hosts). Runs the
+    /// post-window pipeline through `execute_pipeline_sync`, which skips
+    /// async-only ops (`.to()` / `.enrich()`) exactly like the rest of the
+    /// sync path.
+    pub(super) fn apply_watermark_to_windows_sync_inner(
+        &mut self,
+        wm: chrono::DateTime<chrono::Utc>,
+        only_watermark_driven: bool,
+    ) -> Result<(), super::error::EngineError> {
+        let stream_names: Vec<String> = self.streams.keys().cloned().collect();
+
+        for stream_name in stream_names {
+            let collected = {
+                let stream = self.streams.get_mut(&stream_name).unwrap();
+                Self::collect_watermark_emissions(stream, wm, only_watermark_driven)
+            };
+            let Some((window_idx, emissions)) = collected else {
+                continue;
+            };
+
+            for expired in emissions {
+                let result = pipeline::execute_pipeline_sync(
+                    self.streams.get_mut(&stream_name).unwrap(),
+                    expired,
+                    window_idx + 1,
+                    pipeline::SkipFlags::for_post_window(),
+                    &self.functions,
+                    false,
+                )?;
+
+                for emitted in &result.emitted_events {
+                    self.output_events_emitted += 1;
+                    let owned = (**emitted).clone();
+                    self.send_output(owned);
+                }
             }
         }
 
