@@ -1059,9 +1059,38 @@ fn execute_op_common(
                     None
                 };
 
+            // Hard backstop against a pathological high-rate stream filling the
+            // window with more events than fit in memory. Well above any real
+            // WITHIN window's worth; only trips in abuse/runaway cases.
+            const MAX_TREND_ACCUMULATED: usize = 1_000_000;
+
             if let Some(hamlet) = effective_hamlet {
                 for event in current_events.iter() {
                     config.accumulated.push(Arc::clone(event));
+
+                    // Bound `accumulated` so it cannot grow without limit (audit:
+                    // unbounded growth → O(n²) re-scan + OOM). The trend aggregate
+                    // is windowed, so the correct bound is the WITHIN window: drop
+                    // events that have aged out of it in event-time, measured from
+                    // the event now being processed. Mirrors Hamlet's own windowing
+                    // (both share `window_ms`), so the count/sum below stay scoped
+                    // to exactly the window Hamlet reports trends over.
+                    if config.window_ms > 0 {
+                        let cutoff = event.timestamp
+                            - chrono::Duration::milliseconds(config.window_ms as i64);
+                        config.accumulated.retain(|e| e.timestamp >= cutoff);
+                    }
+                    if config.accumulated.len() > MAX_TREND_ACCUMULATED {
+                        let overflow = config.accumulated.len() - MAX_TREND_ACCUMULATED;
+                        config.accumulated.drain(0..overflow);
+                        warn!(
+                            "TrendAggregate: accumulated events hit the {} cap; \
+                             dropped {} oldest (window_ms={}). Narrow the WITHIN \
+                             window or reduce the event rate.",
+                            MAX_TREND_ACCUMULATED, overflow, config.window_ms
+                        );
+                    }
+
                     let results = hamlet.process(Arc::clone(event));
                     for agg_result in results {
                         // Only handle results for THIS stream's query
