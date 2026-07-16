@@ -99,6 +99,13 @@ pub trait ManagedConnector: Send + Sync {
     /// connectors (MQTT, NATS) ignore this.
     fn set_engine_offsets_registry(&mut self, _registry: EngineOffsetRegistry) {}
 
+    /// Bind this connector to the engine's cooperative source-pause flag.
+    /// Replayable sources check it before each upstream poll and stop pulling
+    /// while it is set, so the checkpoint barrier can drain in-flight events and
+    /// snapshot a coherent (applied == committed) offset set. Non-replayable
+    /// connectors ignore it.
+    fn set_source_pause_handle(&mut self, _handle: std::sync::Arc<std::sync::atomic::AtomicBool>) {}
+
     /// Commit the given per-partition offsets back to the external system
     /// (e.g. Kafka consumer group coordinator) as part of a 2PC checkpoint
     /// commit. Default no-op for connectors without replayable offsets.

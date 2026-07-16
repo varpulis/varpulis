@@ -183,6 +183,10 @@ pub async fn run_program(
         // the call. Must happen BEFORE start_source so the consumer task
         // picks up the shared handle on its first iteration.
         registry.set_engine_offsets_registry(engine.source_offsets_handle());
+        // Wire the cooperative source-pause flag so replayable sources stop
+        // pulling while the checkpoint barrier drains in-flight events (C3).
+        // Also before start_source, for the same reason.
+        registry.set_source_pause_handle(engine.source_pause_handle());
 
         // Start sources (connector-type-agnostic)
         for binding in &bindings {
@@ -363,8 +367,9 @@ pub async fn run_program(
                             // as a single checkpoint epoch.
                             checkpoint_id += 1;
                             let coordinator = RegistryCommitCoordinator { registry: &registry };
-                            if let Err(e) =
-                                engine.barrier_commit_2pc(checkpoint_id, &coordinator).await
+                            if let Err(e) = engine
+                                .barrier_commit_2pc(checkpoint_id, &mut event_rx, &coordinator)
+                                .await
                             {
                                 tracing::warn!(
                                     "Checkpoint barrier failed (epoch {checkpoint_id}): {e}"
@@ -390,7 +395,10 @@ pub async fn run_program(
                         }
                         checkpoint_id += 1;
                         let coordinator = RegistryCommitCoordinator { registry: &registry };
-                        if let Err(e) = engine.barrier_commit_2pc(checkpoint_id, &coordinator).await {
+                        if let Err(e) = engine
+                            .barrier_commit_2pc(checkpoint_id, &mut event_rx, &coordinator)
+                            .await
+                        {
                             tracing::warn!("Checkpoint barrier failed (epoch {checkpoint_id}): {e}");
                         }
                     }

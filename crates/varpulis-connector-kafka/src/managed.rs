@@ -135,6 +135,11 @@ pub struct ManagedKafkaConnector {
     /// Shared transaction state for exactly-once sinks. `None` when
     /// operating in fire-and-forget (at-least-once) mode.
     txn_state: Option<Arc<SharedTxnState>>,
+    /// Cooperative source-pause flag shared with the engine. While set, the
+    /// consumer loop stops pulling new records (after flushing what it holds)
+    /// so the checkpoint barrier can drain in-flight events and snapshot a
+    /// coherent offset set. `None` until the driver wires it at startup.
+    source_paused: Option<Arc<AtomicBool>>,
 }
 
 impl std::fmt::Debug for ManagedKafkaConnector {
@@ -157,6 +162,7 @@ impl ManagedKafkaConnector {
             sources: Arc::new(RwLock::new(HashMap::new())),
             engine_offsets: None,
             txn_state: None,
+            source_paused: None,
         }
     }
 
@@ -314,6 +320,7 @@ impl ManagedConnector for ManagedKafkaConnector {
         let name = self.connector_name.clone();
         let topic_owned = topic.to_string();
         let engine_offsets = self.engine_offsets.clone();
+        let source_paused = self.source_paused.clone();
 
         tokio::spawn(async move {
             use futures_util::StreamExt;
@@ -375,6 +382,35 @@ impl ManagedConnector for ManagedKafkaConnector {
             let mut cb_degraded = false;
 
             'consume: loop {
+                // C3 barrier alignment: while the engine has paused sources for
+                // a checkpoint drain, flush what we've already decoded (so it
+                // becomes drainable and its offsets are mirrored) and stop
+                // pulling new records until the barrier resumes us. Without this
+                // the barrier's drain could never reach an empty channel under
+                // sustained input.
+                if let Some(ref paused) = source_paused {
+                    if paused.load(Ordering::Relaxed) {
+                        if !batch.is_empty() {
+                            let drained =
+                                std::mem::replace(&mut batch, Vec::with_capacity(BATCH_MAX));
+                            if tx.send(drained).await.is_err() {
+                                break 'consume;
+                            }
+                            commit_pending_offsets(
+                                &mut pending_offsets,
+                                &offsets,
+                                engine_offsets.as_ref(),
+                                &name,
+                            );
+                        }
+                        tokio::time::sleep(Duration::from_millis(2)).await;
+                        if !running.load(Ordering::SeqCst) {
+                            break 'consume;
+                        }
+                        continue;
+                    }
+                }
+
                 if cb_degraded && !cb.allow_request() {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     if !running.load(Ordering::SeqCst) {
@@ -547,6 +583,10 @@ impl ManagedConnector for ManagedKafkaConnector {
 
     fn set_engine_offsets_registry(&mut self, registry: EngineOffsetRegistry) {
         self.engine_offsets = Some(registry);
+    }
+
+    fn set_source_pause_handle(&mut self, handle: Arc<AtomicBool>) {
+        self.source_paused = Some(handle);
     }
 
     async fn commit_source_offsets(
