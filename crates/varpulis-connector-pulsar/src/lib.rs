@@ -199,6 +199,32 @@ impl PulsarSource {
             running: Arc::new(AtomicBool::new(false)),
         }
     }
+
+    /// Build a consumer subscribed to the configured topic. Used for the initial
+    /// connection and for every reconnect after the broker drops the stream.
+    async fn build_consumer(
+        config: &PulsarConfig,
+        name: &str,
+    ) -> Result<Consumer<JsonMessage, TokioExecutor>, ConnectorError> {
+        let client = build_client(config).await?;
+        let subscription = config
+            .subscription
+            .clone()
+            .unwrap_or_else(|| format!("varpulis-{name}"));
+        let mut consumer_builder = client
+            .consumer()
+            .with_topic(&config.topic)
+            .with_subscription(&subscription)
+            .with_subscription_type(SubType::Shared);
+        if let Some(ref cname) = config.consumer_name {
+            consumer_builder = consumer_builder.with_consumer_name(cname);
+        }
+        consumer_builder = consumer_builder.with_batch_size(config.batch_size as u32);
+        consumer_builder
+            .build()
+            .await
+            .map_err(|e| ConnectorError::ConnectionFailed(format!("Pulsar consumer: {}", e)))
+    }
 }
 
 #[async_trait]
@@ -208,85 +234,106 @@ impl SourceConnector for PulsarSource {
     }
 
     async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
-        let client = build_client(&self.config).await?;
-
-        let subscription = self
-            .config
-            .subscription
-            .clone()
-            .unwrap_or_else(|| format!("varpulis-{}", self.name));
-
-        let mut consumer_builder = client
-            .consumer()
-            .with_topic(&self.config.topic)
-            .with_subscription(&subscription)
-            .with_subscription_type(SubType::Shared);
-
-        if let Some(ref cname) = self.config.consumer_name {
-            consumer_builder = consumer_builder.with_consumer_name(cname);
-        }
-
-        consumer_builder = consumer_builder.with_batch_size(self.config.batch_size as u32);
-
-        let mut consumer: Consumer<JsonMessage, TokioExecutor> = consumer_builder
-            .build()
-            .await
-            .map_err(|e| ConnectorError::ConnectionFailed(format!("Pulsar consumer: {}", e)))?;
+        // Fail-fast: the initial consumer must build now.
+        let initial = Self::build_consumer(&self.config, &self.name).await?;
 
         self.running.store(true, Ordering::SeqCst);
         let running = self.running.clone();
         let name = self.name.clone();
+        let config = self.config.clone();
 
         tokio::spawn(async move {
             info!("Pulsar source {} started, consuming from topic", name);
 
-            while running.load(Ordering::SeqCst) {
-                match tokio::time::timeout(
-                    std::time::Duration::from_millis(100),
-                    consumer.try_next(),
-                )
-                .await
-                {
-                    Ok(Ok(Some(msg))) => {
-                        let data = &msg.payload.data;
-                        if data.len() > varpulis_connector_api::limits::MAX_EVENT_PAYLOAD_BYTES {
-                            warn!(
-                                "Pulsar source {}: payload too large ({} bytes), skipped",
-                                name,
-                                data.len()
-                            );
-                            let _ = consumer.ack(&msg).await;
-                            continue;
+            // Reconnect loop: the initial consumer is consumed first; if the
+            // broker closes the stream (`try_next` yields `None`), rebuild the
+            // consumer and resume instead of exiting the task (going silently
+            // deaf). pulsar-rs does not transparently survive a broker restart
+            // here — the stream ends and the task must re-subscribe.
+            let mut current = Some(initial);
+            'reconnect: loop {
+                let mut consumer = match current.take() {
+                    Some(c) => c,
+                    None => loop {
+                        if !running.load(Ordering::SeqCst) {
+                            break 'reconnect;
                         }
-
-                        match serde_json::from_slice::<serde_json::Value>(data) {
-                            Ok(json) => {
-                                let event_type = json
-                                    .get("event_type")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("PulsarEvent")
-                                    .to_string();
-
-                                let event = json_to_event(&event_type, &json);
-
-                                if tx.send(event).await.is_err() {
-                                    break;
-                                }
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        match Self::build_consumer(&config, &name).await {
+                            Ok(c) => {
+                                info!("Pulsar source {} reconnected, resumed subscription", name);
+                                break c;
                             }
                             Err(e) => {
-                                warn!("Pulsar source {}: failed to parse JSON: {}", name, e);
+                                warn!("Pulsar source {}: reconnect failed: {}; retrying", name, e);
                             }
                         }
+                    },
+                };
 
-                        let _ = consumer.ack(&msg).await;
+                while running.load(Ordering::SeqCst) {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_millis(100),
+                        consumer.try_next(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(Some(msg))) => {
+                            let data = &msg.payload.data;
+                            if data.len() > varpulis_connector_api::limits::MAX_EVENT_PAYLOAD_BYTES
+                            {
+                                warn!(
+                                    "Pulsar source {}: payload too large ({} bytes), skipped",
+                                    name,
+                                    data.len()
+                                );
+                                let _ = consumer.ack(&msg).await;
+                                continue;
+                            }
+
+                            match serde_json::from_slice::<serde_json::Value>(data) {
+                                Ok(json) => {
+                                    let event_type = json
+                                        .get("event_type")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("PulsarEvent")
+                                        .to_string();
+
+                                    let event = json_to_event(&event_type, &json);
+
+                                    if tx.send(event).await.is_err() {
+                                        // Downstream gone — stop entirely.
+                                        break 'reconnect;
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Pulsar source {}: failed to parse JSON: {}", name, e);
+                                }
+                            }
+
+                            let _ = consumer.ack(&msg).await;
+                        }
+                        Ok(Ok(None)) => {
+                            // Broker closed the stream — rebuild the consumer.
+                            warn!(
+                                "Pulsar source {}: consumer stream ended, reconnecting",
+                                name
+                            );
+                            break;
+                        }
+                        Ok(Err(e)) => {
+                            warn!("Pulsar source {}: consumer error: {}", name, e);
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        }
+                        Err(_) => {} // Timeout
                     }
-                    Ok(Ok(None)) => break,
-                    Ok(Err(e)) => {
-                        warn!("Pulsar source {}: consumer error: {}", name, e);
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    }
-                    Err(_) => {} // Timeout
                 }
+
+                if !running.load(Ordering::SeqCst) {
+                    break 'reconnect;
+                }
+                // Inner loop broke on `Ok(Ok(None))` with running still true →
+                // `current` is None → the outer loop rebuilds the consumer.
             }
 
             info!("Pulsar source {} stopped", name);
@@ -384,6 +431,98 @@ impl SinkConnector for PulsarSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn probe_send_one(url: &str, topic: &str, phase: &str) -> bool {
+        let mut sink = PulsarSink::new("probe-sink", PulsarConfig::new(url, topic));
+        if sink.connect().await.is_err() {
+            return false;
+        }
+        let ev = Event::new("Probe").with_field("phase", phase);
+        let ok = sink.send(&ev).await.is_ok();
+        sink.close().await.ok();
+        ok
+    }
+
+    /// The Pulsar source must keep delivering after a broker restart, not go
+    /// silently deaf (empirically the stream ends and the old code exited the
+    /// task). Restarts the broker container mid-run and requires events to flow
+    /// again. Skips unless VARPULIS_TEST_PULSAR_URL is set (so it never runs in
+    /// normal CI, which has no broker).
+    #[tokio::test]
+    async fn pulsar_source_reconnects_after_broker_restart() {
+        use std::time::Duration;
+        let Ok(url) = std::env::var("VARPULIS_TEST_PULSAR_URL") else {
+            eprintln!("[skip] set VARPULIS_TEST_PULSAR_URL to run the pulsar reconnect probe");
+            return;
+        };
+        let container = std::env::var("VARPULIS_TEST_PULSAR_CONTAINER")
+            .unwrap_or_else(|_| "varpulis-pulsar".to_string());
+        let topic = "persistent://public/default/varpulis-reconnect-probe";
+
+        let (tx, mut rx) = mpsc::channel::<Event>(100);
+        let mut source = PulsarSource::new("probe-src", PulsarConfig::new(&url, topic));
+        if source.start(tx).await.is_err() {
+            eprintln!("[skip] pulsar source start failed");
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        let mut got_before = false;
+        for _ in 0..10 {
+            probe_send_one(&url, topic, "before").await;
+            if tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                got_before = true;
+                break;
+            }
+        }
+        if !got_before {
+            eprintln!("[skip] pulsar not delivering (broker unreachable?)");
+            return;
+        }
+        while rx.try_recv().is_ok() {}
+
+        eprintln!("[probe] restarting pulsar broker '{container}'...");
+        let _ = std::process::Command::new("docker")
+            .args(["restart", &container])
+            .output();
+        for _ in 0..30 {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if std::process::Command::new("curl")
+                .args(["-sf", "http://localhost:8081/admin/v2/brokers/health"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        let mut got_after = false;
+        for _ in 0..30 {
+            probe_send_one(&url, topic, "after").await;
+            if tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                got_after = true;
+                break;
+            }
+        }
+        source.stop().await.ok();
+        assert!(
+            got_after,
+            "Pulsar source must reconnect + resume its subscription after a broker \
+             restart, then deliver events again (otherwise it went silently deaf)"
+        );
+    }
 
     #[test]
     fn pulsar_config_debug_redacts_token() {
