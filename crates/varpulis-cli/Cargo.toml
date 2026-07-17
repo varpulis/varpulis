@@ -19,9 +19,9 @@ name = "varpulis"
 path = "src/main.rs"
 
 [dependencies]
-varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
-varpulis-parser = { version = "0.10.0", path = "../varpulis-parser" }
-varpulis-runtime = { version = "0.10.0", path = "../varpulis-runtime", features = ["mqtt", "interactive"] }
+varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
+varpulis-parser = { version = "0.11.0", path = "../varpulis-parser" }
+varpulis-runtime = { version = "0.11.0", path = "../varpulis-runtime", features = ["mqtt", "interactive"] }
 tokio = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
@@ -47,8 +47,8 @@ thiserror = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 reqwest = { workspace = true }
 async-trait = "0.1"
-varpulis-cluster = { version = "0.10.0", path = "../varpulis-cluster" }
-varpulis-datagen = { version = "0.10.0", path = "../varpulis-datagen" }
+varpulis-cluster = { version = "0.11.0", path = "../varpulis-cluster" }
+varpulis-datagen = { version = "0.11.0", path = "../varpulis-datagen" }
 jsonwebtoken = { workspace = true }
 urlencoding = "2"
 bytes = "1"
@@ -60,8 +60,8 @@ getrandom = "0.4"
 indicatif = "0.17"
 owo-colors = "4"
 comfy-table = "7"
-varpulis-connector-api = { version = "0.10.0", path = "../varpulis-connector-api" }
-varpulis-connectors = { version = "0.10.0", path = "../varpulis-connectors" }
+varpulis-connector-api = { version = "0.11.0", path = "../varpulis-connector-api" }
+varpulis-connectors = { version = "0.11.0", path = "../varpulis-connectors" }
 notify = "7"
 
 # REPL (optional, behind "repl" feature)
@@ -75,7 +75,7 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 openidconnect = { version = "4", optional = true }
 
 # SaaS layer (optional, behind "saas" feature)
-varpulis-db = { version = "0.10.0", path = "../varpulis-db", optional = true }
+varpulis-db = { version = "0.11.0", path = "../varpulis-db", optional = true }
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "builder"], optional = true }
 
 # OpenTelemetry (optional, behind "otel" feature)

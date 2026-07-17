@@ -9,7 +9,7 @@ documentation.workspace = true
 description = "Shared traits and types for Varpulis connector crates"
 
 [dependencies]
-varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
+varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
 tokio = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }

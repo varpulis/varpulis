@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-17
+
+Outcome of a full 11-scope codebase audit plus the distributed exactly-once
+("Flink-parity") work. This release closes every audit critical and the
+high/medium-severity findings — silent event drops, unbounded-memory growth,
+cleartext credentials, and cluster control-plane gaps — and adds end-to-end
+exactly-once checkpointing. (Documents everything since v0.10.0, which shipped
+without a changelog entry.) No VPL language changes; a few connector/sink
+behaviours changed — see **Changed**.
+
+### Added
+
+- **Distributed exactly-once checkpointing** — a two-phase-commit checkpoint
+  barrier in the engine, a coordinator orchestrator, worker-side barrier handler,
+  Raft integration, and a NATS checkpoint protocol, with checkpoint-based pipeline
+  migration and recovery-commit of restored 2PC state.
+- **Postgres CDC over TLS** — the CDC connector now honours `sslmode`
+  (`require`/`verify-ca`/`verify-full`) via rustls, with CA pinning
+  (`ssl_ca_location`) and optional mTLS (`ssl_certificate_location` /
+  `ssl_key_location`).
+- **Dynamic topic routing on Redis** — `.to(expr)` publishes to the evaluated
+  channel (pub/sub) or stream key (streams), matching Kafka/MQTT/NATS.
+- **Source auto-reconnect** — MQTT, Redis pub/sub, and Pulsar sources reconnect
+  and re-subscribe after the broker drops the connection instead of going
+  silently deaf.
+- **Kafka dead-letter for undecodable records** — malformed source records are
+  counted, logged, and (when a DLQ is configured) dead-lettered instead of being
+  silently skipped.
+
+### Changed
+
+- **Dynamic `.to(topic)` on a sink that cannot route by topic now returns an
+  explicit error** instead of silently delivering to the connector's fixed
+  destination — the caller's routing intent is no longer dropped without a
+  signal. Sinks that can route by topic (Kafka/MQTT/NATS/Redis/syslog/slack) are
+  unaffected.
+- **SequenceMatch build is now lazy** — per-alias `_events`/aggregate structures
+  are materialised only when a downstream operator references them.
+- Toolchain moved to Rust 1.95; `wasm32-unknown-unknown` target added.
+
+### Fixed
+
+- **Exactly-once correctness** — checkpoint windowed-aggregate state (C1); drain
+  in-flight events before the snapshot (C3); commit source offsets inside the sink
+  transaction (C4); checkpoint-barrier failures are now fatal rather than
+  logged-and-ignored.
+- **Event-time watermarks** — observed on all four dispatch paths (C2a); time
+  windows close on watermark advance, not on event arrival (C2b); empty partition
+  windows are evicted on advance.
+- **Cluster control plane** — dead workers are detected via a replicated heartbeat
+  sequence (C5); deploy/teardown/inject/migrate and auto-failover migration are
+  routed over NATS when configured (C6); `/api/v1/cluster/raft` now requires auth.
+- **Bounded memory** — `TrendAggregate` accumulation is bounded to the WITHIN
+  window; SASE evicts empty partitions during cleanup; idle partition windows are
+  evicted; event-file reads are capped; `S3StateStore` no longer panics on
+  `block_on` inside the runtime; orphaned `.tmp` files are swept on
+  `FileStore::open`.
+- **Connectors** — `HttpSink` returns `Err` on a non-2xx response instead of
+  silently dropping events; hot reload preserves Sequence/Join routing.
+- **Parser/evaluator safety** — checked integer arithmetic, saturating timestamp
+  parsing, order-independent map `Hash`/`Eq`; run-grouped dispatch preserves
+  cross-stream FIFO interleave.
+- **Kafka hot path** — allocation-lean rewrite: 88.5k → 136k+ eps on the Arroyo
+  filter benchmark.
+
+### Security
+
+- **CDC replication slot name** is validated to close a SQL-injection hole.
+- **CDC replication is no longer cleartext** — `sslmode` is honoured (was silently
+  ignored under a hardcoded `NoTls`).
+- **Credentials are redacted from `Debug`** across Kafka, Redis, HTTP, Pulsar, the
+  generic `ConnectorConfig`, and `ConnectorProfile` — passwords, tokens, and API
+  keys no longer leak into logs, error chains, or panic messages.
+- **Internal API-key checks are constant-time**; the standalone server caps
+  concurrent WebSocket connections; the public pipeline-graph endpoints bound VPL
+  parse cost so they cannot be used for CPU-exhaustion DoS.
+
 ## [0.9.0] - 2026-03-26
 
 ### Added

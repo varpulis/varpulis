@@ -8575,7 +8575,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "varpulis"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "varpulis-core",
  "varpulis-runtime",
@@ -8583,7 +8583,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-actors"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -8596,7 +8596,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-cli"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -8658,7 +8658,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-cluster"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -8694,7 +8694,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-api"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8713,7 +8713,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-cdc"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "rustls 0.23.37",
@@ -8731,7 +8731,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-database"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "inventory",
@@ -8747,7 +8747,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-elasticsearch"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8764,7 +8764,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-http"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -8783,7 +8783,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-kafka"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -8802,7 +8802,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-kinesis"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -8820,7 +8820,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-mqtt"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "indexmap 2.13.1",
@@ -8839,7 +8839,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-nats"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -8858,7 +8858,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-pulsar"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -8875,7 +8875,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-redis"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -8892,7 +8892,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-s3"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -8908,7 +8908,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-slack"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8923,7 +8923,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-splunk"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -8939,7 +8939,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-syslog"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8952,7 +8952,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connectors"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -8989,7 +8989,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-core"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "indexmap 2.13.1",
@@ -9004,7 +9004,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-datagen"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "rand 0.10.0",
@@ -9014,7 +9014,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-db"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "serde",
@@ -9027,7 +9027,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-dead-letter"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "serde",
@@ -9038,7 +9038,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-engine-wasm"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "getrandom 0.4.2",
  "serde",
@@ -9052,7 +9052,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-enrichment"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "redis",
@@ -9067,7 +9067,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-hamlet"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "proptest",
  "rustc-hash",
@@ -9078,7 +9078,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-lsp"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "dashmap 6.1.0",
  "tokio",
@@ -9091,7 +9091,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-mcp"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -9113,7 +9113,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-parser"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "insta",
  "logos",
@@ -9128,7 +9128,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-pst"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "hashlink 0.11.0",
  "proptest",
@@ -9138,7 +9138,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-runtime"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -9196,7 +9196,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-sase"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "iai-callgrind",
@@ -9207,14 +9207,14 @@ dependencies = [
 
 [[package]]
 name = "varpulis-simd"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "varpulis-core",
 ]
 
 [[package]]
 name = "varpulis-wasm"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -9228,7 +9228,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-zdd"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "criterion",
  "rustc-hash",
