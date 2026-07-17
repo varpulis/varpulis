@@ -137,6 +137,25 @@ impl RedisSource {
             running: Arc::new(AtomicBool::new(false)),
         }
     }
+
+    /// Open a fresh pub/sub connection and subscribe to `channel`. Used for the
+    /// initial connection and for every reconnect after the server drops it.
+    async fn connect_and_subscribe(
+        url: &str,
+        channel: &str,
+    ) -> Result<redis::aio::PubSub, ConnectorError> {
+        let client = redis::Client::open(url)
+            .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+        let mut pubsub = client
+            .get_async_pubsub()
+            .await
+            .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+        pubsub
+            .subscribe(channel)
+            .await
+            .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+        Ok(pubsub)
+    }
 }
 
 #[async_trait]
@@ -146,63 +165,96 @@ impl SourceConnector for RedisSource {
     }
 
     async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
-        let client = redis::Client::open(self.config.url.as_str())
-            .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
-
-        let mut pubsub = client
-            .get_async_pubsub()
-            .await
-            .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
-
-        pubsub
-            .subscribe(&self.config.channel)
-            .await
-            .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+        // Fail-fast: the initial connection + subscription must succeed now.
+        let initial = Self::connect_and_subscribe(&self.config.url, &self.config.channel).await?;
 
         self.running.store(true, Ordering::SeqCst);
         let running = self.running.clone();
         let name = self.name.clone();
+        let url = self.config.url.clone();
+        let channel = self.config.channel.clone();
 
         tokio::spawn(async move {
             info!("Redis source {} started, subscribed to channel", name);
 
-            let mut stream = pubsub.on_message();
-
-            while running.load(Ordering::SeqCst) {
-                match tokio::time::timeout(std::time::Duration::from_millis(100), stream.next())
-                    .await
-                {
-                    Ok(Some(msg)) => {
-                        let payload: String = match msg.get_payload() {
-                            Ok(p) => p,
-                            Err(e) => {
-                                warn!("Redis source {}: failed to get payload: {}", name, e);
-                                continue;
-                            }
-                        };
-
-                        match serde_json::from_str::<serde_json::Value>(&payload) {
-                            Ok(json) => {
-                                let event_type = json
-                                    .get("event_type")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("RedisEvent")
-                                    .to_string();
-
-                                let event = json_to_event(&event_type, &json);
-
-                                if tx.send(event).await.is_err() {
-                                    break;
-                                }
+            // Reconnect loop: the initial connection is consumed first; if the
+            // server closes the pub/sub connection (the stream yields `None`),
+            // reconnect and re-subscribe instead of going silently deaf.
+            let mut current = Some(initial);
+            'reconnect: loop {
+                let mut pubsub = match current.take() {
+                    Some(ps) => ps,
+                    None => loop {
+                        if !running.load(Ordering::SeqCst) {
+                            break 'reconnect;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        match Self::connect_and_subscribe(&url, &channel).await {
+                            Ok(ps) => {
+                                info!(
+                                    "Redis source {} reconnected, re-subscribed to channel",
+                                    name
+                                );
+                                break ps;
                             }
                             Err(e) => {
-                                warn!("Redis source {}: failed to parse JSON: {}", name, e);
+                                warn!("Redis source {}: reconnect failed: {}; retrying", name, e);
                             }
                         }
+                    },
+                };
+
+                let mut stream = pubsub.on_message();
+                while running.load(Ordering::SeqCst) {
+                    match tokio::time::timeout(std::time::Duration::from_millis(100), stream.next())
+                        .await
+                    {
+                        Ok(Some(msg)) => {
+                            let payload: String = match msg.get_payload() {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    warn!("Redis source {}: failed to get payload: {}", name, e);
+                                    continue;
+                                }
+                            };
+
+                            match serde_json::from_str::<serde_json::Value>(&payload) {
+                                Ok(json) => {
+                                    let event_type = json
+                                        .get("event_type")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("RedisEvent")
+                                        .to_string();
+
+                                    let event = json_to_event(&event_type, &json);
+
+                                    if tx.send(event).await.is_err() {
+                                        // Downstream is gone — stop entirely.
+                                        break 'reconnect;
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Redis source {}: failed to parse JSON: {}", name, e);
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            // Server closed the subscription connection — reconnect.
+                            warn!(
+                                "Redis source {}: subscription connection closed, reconnecting",
+                                name
+                            );
+                            break;
+                        }
+                        Err(_) => {} // Timeout — keep polling.
                     }
-                    Ok(None) => break,
-                    Err(_) => {} // Timeout
                 }
+
+                if !running.load(Ordering::SeqCst) {
+                    break 'reconnect;
+                }
+                // Inner loop broke on `Ok(None)` with running still true →
+                // `current` is None → the outer loop reconnects.
             }
 
             info!("Redis source {} stopped", name);
@@ -796,6 +848,89 @@ impl SinkConnector for RedisStreamSinkStub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Redis pub/sub SOURCE must reconnect + re-subscribe when the server
+    /// drops its subscription connection, instead of going silently deaf. Needs
+    /// a reachable Redis; skips gracefully otherwise (CI without a broker stays
+    /// green). Point elsewhere with `VARPULIS_TEST_REDIS_URL` (default 6390).
+    #[tokio::test]
+    async fn redis_source_reconnects_after_connection_loss() {
+        use std::time::Duration;
+
+        let url = std::env::var("VARPULIS_TEST_REDIS_URL")
+            .unwrap_or_else(|_| "redis://127.0.0.1:6390".to_string());
+        let channel = "varpulis-source-reconnect-test-channel";
+
+        let Ok(client) = redis::Client::open(url.as_str()) else {
+            eprintln!("[skip] redis client open failed for {url}");
+            return;
+        };
+        let mut admin = match client.get_multiplexed_async_connection().await {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[skip] redis not reachable at {url}: {e}");
+                return;
+            }
+        };
+
+        let (tx, mut rx) = mpsc::channel::<Event>(100);
+        let mut source = RedisSource::new("reconnect-test", RedisConfig::new(&url, channel));
+        if source.start(tx).await.is_err() {
+            eprintln!("[skip] source failed to start");
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // Phase 1: the initial subscription delivers events.
+        let before = r#"{"event_type":"ReconEvt","phase":"before"}"#;
+        let mut got_before = false;
+        for _ in 0..25 {
+            let _: redis::RedisResult<i64> = admin.publish(channel, before).await;
+            if let Ok(Some(ev)) = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await
+            {
+                if &*ev.event_type == "ReconEvt" {
+                    got_before = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            got_before,
+            "source should deliver events before the connection is dropped"
+        );
+
+        // Drain buffered duplicates, then sever the source's pub/sub connection.
+        while rx.try_recv().is_ok() {}
+        let _: redis::RedisResult<()> = redis::cmd("CLIENT")
+            .arg("KILL")
+            .arg("TYPE")
+            .arg("pubsub")
+            .query_async(&mut admin)
+            .await;
+
+        // Phase 2: after reconnect + re-subscribe, events must flow again. Keep
+        // publishing while the source reconnects (1s backoff) until one lands.
+        let after = r#"{"event_type":"ReconEvt","phase":"after"}"#;
+        let mut got_after = false;
+        for _ in 0..80 {
+            let _: redis::RedisResult<i64> = admin.publish(channel, after).await;
+            if let Ok(Some(ev)) = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await
+            {
+                if matches!(ev.get("phase"), Some(varpulis_core::Value::Str(s)) if &**s == "after")
+                {
+                    got_after = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            got_after,
+            "source must reconnect + re-subscribe after its pub/sub connection is \
+             killed, then deliver events again (otherwise it went silently deaf)"
+        );
+
+        source.stop().await.ok();
+    }
 
     /// RedisSink must honor a dynamic `.to(topic)` by publishing to the
     /// requested channel, not the configured one (and not reject/drop it).
