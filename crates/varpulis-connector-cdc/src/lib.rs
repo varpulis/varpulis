@@ -212,6 +212,301 @@ fn validate_slot_name(name: &str) -> Result<(), ConnectorError> {
     Ok(())
 }
 
+// =============================================================================
+// TLS support for PostgreSQL connections
+//
+// tokio-postgres only understands sslmode = disable | prefer | require and,
+// when handed `NoTls`, SILENTLY ignores any TLS intent (sslmode=prefer =>
+// cleartext; verify-ca/verify-full aren't even parseable). We therefore map the
+// full set of libpq sslmode values to an explicit (tokio-postgres sslmode, TLS
+// connector, certificate verifier) triple here, so replication traffic (row
+// data + credentials) is genuinely encrypted when the operator asks for it.
+//
+// SECURITY: the no-verify verifier below is reachable ONLY for
+// require/prefer/allow. verify-ca/verify-full always use the standard WebPki
+// verifier and reject an untrusted certificate.
+// =============================================================================
+
+/// Build the base libpq connection string WITHOUT an `sslmode=` fragment.
+///
+/// [`connect_pg`] appends the tokio-postgres-level sslmode that matches the TLS
+/// connector it chooses. Keeping sslmode out of the base string means the raw
+/// (and possibly richer, e.g. `verify-full`) user value is never handed to
+/// tokio-postgres's parser, which only accepts disable/prefer/require.
+fn base_conn_string(config: &PostgresCdcConfig) -> String {
+    format!(
+        "host={} port={} dbname={} user={} password={}",
+        config.host,
+        config.port,
+        config.dbname,
+        config.user,
+        config.password.expose(),
+    )
+}
+
+/// Server-certificate verifier that ACCEPTS ANY certificate without validation.
+///
+/// SECURITY: performs no chain, expiry, or hostname checks — it implements the
+/// libpq `require`/`prefer`/`allow` semantics of "encrypt the connection but do
+/// not authenticate the server". It is installed EXCLUSIVELY by
+/// [`build_tls_config_noverify`] and MUST NEVER be used for verify-ca /
+/// verify-full (those go through [`build_tls_config_verify`], which uses the
+/// standard `WebPkiServerVerifier`).
+#[derive(Debug)]
+struct NoCertVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Read a PEM certificate chain from `path`.
+fn load_cert_chain(
+    path: &str,
+) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>, ConnectorError> {
+    let data = std::fs::read(path).map_err(|e| {
+        ConnectorError::ConfigError(format!("cannot read certificate {path:?}: {e}"))
+    })?;
+    let certs = rustls_pemfile::certs(&mut std::io::BufReader::new(&data[..]))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| {
+            ConnectorError::ConfigError(format!("invalid PEM certificate {path:?}: {e}"))
+        })?;
+    if certs.is_empty() {
+        return Err(ConnectorError::ConfigError(format!(
+            "no certificates found in {path:?}"
+        )));
+    }
+    Ok(certs)
+}
+
+/// Read the first PEM private key from `path`.
+fn load_private_key(
+    path: &str,
+) -> Result<rustls::pki_types::PrivateKeyDer<'static>, ConnectorError> {
+    let data = std::fs::read(path).map_err(|e| {
+        ConnectorError::ConfigError(format!("cannot read private key {path:?}: {e}"))
+    })?;
+    rustls_pemfile::private_key(&mut std::io::BufReader::new(&data[..]))
+        .map_err(|e| ConnectorError::ConfigError(format!("invalid PEM private key {path:?}: {e}")))?
+        .ok_or_else(|| ConnectorError::ConfigError(format!("no private key found in {path:?}")))
+}
+
+/// Apply mTLS client authentication to a rustls builder in the `WantsClientCert`
+/// state — shared by the verify and no-verify code paths.
+///
+/// If BOTH `ssl_certificate_location` and `ssl_key_location` are set, the client
+/// cert/key are loaded and installed. If NEITHER is set, no client auth is used.
+/// If exactly one is set, that is a misconfiguration and a `ConfigError` is
+/// returned (fail closed rather than silently connect without the intended
+/// client identity).
+fn finish_client_auth(
+    builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>,
+    config: &PostgresCdcConfig,
+) -> Result<rustls::ClientConfig, ConnectorError> {
+    match (
+        config.ssl_certificate_location.as_deref(),
+        config.ssl_key_location.as_deref(),
+    ) {
+        (Some(cert_path), Some(key_path)) => {
+            let certs = load_cert_chain(cert_path)?;
+            let key = load_private_key(key_path)?;
+            builder.with_client_auth_cert(certs, key).map_err(|e| {
+                ConnectorError::ConfigError(format!("invalid mTLS client certificate/key: {e}"))
+            })
+        }
+        (None, None) => Ok(builder.with_no_client_auth()),
+        (Some(_), None) => Err(ConnectorError::ConfigError(
+            "mTLS misconfigured: ssl_certificate_location is set but ssl_key_location is not"
+                .to_string(),
+        )),
+        (None, Some(_)) => Err(ConnectorError::ConfigError(
+            "mTLS misconfigured: ssl_key_location is set but ssl_certificate_location is not"
+                .to_string(),
+        )),
+    }
+}
+
+/// Build a rustls `ClientConfig` that ENCRYPTS but does NOT verify the server
+/// certificate — the libpq `require`/`prefer`/`allow` semantics.
+///
+/// SECURITY: installs [`NoCertVerifier`]. Only [`connect_pg`]'s
+/// require/prefer/allow arm calls this.
+fn build_tls_config_noverify(
+    config: &PostgresCdcConfig,
+) -> Result<rustls::ClientConfig, ConnectorError> {
+    // Mirror the MQTT connector: ensure a process-default crypto provider is
+    // installed before constructing any ClientConfig (idempotent; ignore the
+    // "already installed" error).
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let builder = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(NoCertVerifier));
+    finish_client_auth(builder, config)
+}
+
+/// Build a rustls `ClientConfig` that VERIFIES the server certificate chain and
+/// hostname via rustls's default `WebPkiServerVerifier` — the libpq
+/// `verify-ca`/`verify-full` semantics.
+///
+/// Roots come from `ssl_ca_location` (a PEM bundle) when set, otherwise the OS
+/// trust store. NEVER installs [`NoCertVerifier`].
+fn build_tls_config_verify(
+    config: &PostgresCdcConfig,
+) -> Result<rustls::ClientConfig, ConnectorError> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let mut roots = rustls::RootCertStore::empty();
+    if let Some(ca_path) = config.ssl_ca_location.as_deref() {
+        for cert in load_cert_chain(ca_path)? {
+            roots.add(cert).map_err(|e| {
+                ConnectorError::ConfigError(format!("invalid CA certificate {ca_path:?}: {e}"))
+            })?;
+        }
+    } else {
+        let native = rustls_native_certs::load_native_certs();
+        for cert in native.certs {
+            // Skip individual malformed system certs; a single bad root should
+            // not abort the connection as long as some roots load.
+            let _ = roots.add(cert);
+        }
+        if roots.is_empty() {
+            let detail = match native.errors.first() {
+                Some(e) => e.to_string(),
+                None => "system trust store is empty".to_string(),
+            };
+            return Err(ConnectorError::ConfigError(format!(
+                "sslmode={} requires trusted CA roots but none were loaded from the system \
+                 trust store ({detail}); set ssl_ca_location to a PEM CA bundle",
+                config.sslmode
+            )));
+        }
+    }
+
+    let builder = rustls::ClientConfig::builder().with_root_certificates(roots);
+    finish_client_auth(builder, config)
+}
+
+/// Open a cleartext (`NoTls`) connection and spawn its background driver task.
+async fn connect_notls(conn_string: &str) -> Result<tokio_postgres::Client, ConnectorError> {
+    let (client, connection) = tokio_postgres::connect(conn_string, tokio_postgres::NoTls)
+        .await
+        .map_err(|e| ConnectorError::ConnectionFailed(format!("PostgreSQL: {e}")))?;
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            tracing::error!("PostgreSQL connection error: {e}");
+        }
+    });
+    Ok(client)
+}
+
+/// Open a rustls TLS connection with `tls_config` and spawn its background
+/// driver task. Split from [`connect_notls`] because tokio-postgres returns a
+/// differently-typed `Connection` per TLS connector, so each driver future must
+/// be spawned in its own monomorphized arm.
+async fn connect_rustls(
+    conn_string: &str,
+    tls_config: rustls::ClientConfig,
+) -> Result<tokio_postgres::Client, ConnectorError> {
+    let tls = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
+    let (client, connection) = tokio_postgres::connect(conn_string, tls)
+        .await
+        .map_err(|e| ConnectorError::ConnectionFailed(format!("PostgreSQL: {e}")))?;
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            tracing::error!("PostgreSQL connection error: {e}");
+        }
+    });
+    Ok(client)
+}
+
+/// Connect to PostgreSQL, honoring `config.sslmode` with a real rustls TLS
+/// implementation.
+///
+/// `base_conn_string` MUST NOT contain an `sslmode=` fragment (see
+/// [`base_conn_string`]); this function appends the tokio-postgres-level sslmode
+/// (`disable` or `require`) that matches the connector it selects.
+///
+/// SECURITY — sslmode -> (connector, server-cert verification):
+/// - `disable`                 -> `NoTls` (cleartext)
+/// - `require`                 -> rustls, NO verification (encrypt only); no fallback
+/// - `prefer` / `allow`        -> rustls, NO verification; fall back to cleartext on failure
+/// - `verify-ca` / `verify-full` -> rustls, WebPki verification of chain + hostname
+async fn connect_pg(
+    base_conn_string: &str,
+    config: &PostgresCdcConfig,
+) -> Result<tokio_postgres::Client, ConnectorError> {
+    let mode = config.sslmode.trim().to_ascii_lowercase();
+    match mode.as_str() {
+        "disable" => connect_notls(&format!("{base_conn_string} sslmode=disable")).await,
+        "require" | "prefer" | "allow" => {
+            // Encrypt but do NOT authenticate the server (libpq require/prefer).
+            let tls_config = build_tls_config_noverify(config)?;
+            // Force tokio-postgres to actually perform TLS: sslmode=require makes
+            // it send the SSLRequest and error if the server refuses SSL, so the
+            // prefer/allow cleartext fallback is driven explicitly here rather
+            // than by tokio-postgres silently downgrading.
+            let tls_conn_string = format!("{base_conn_string} sslmode=require");
+            match connect_rustls(&tls_conn_string, tls_config).await {
+                Ok(client) => Ok(client),
+                Err(e) => {
+                    if mode == "prefer" || mode == "allow" {
+                        tracing::warn!(
+                            "TLS connection failed for sslmode={mode}; falling back to \
+                             cleartext (libpq {mode} semantics): {e}"
+                        );
+                        connect_notls(&format!("{base_conn_string} sslmode=disable")).await
+                    } else {
+                        // require: never downgrade to cleartext.
+                        Err(e)
+                    }
+                }
+            }
+        }
+        "verify-ca" | "verify-full" => {
+            // Encrypt AND verify the certificate chain + hostname.
+            let tls_config = build_tls_config_verify(config)?;
+            connect_rustls(&format!("{base_conn_string} sslmode=require"), tls_config).await
+        }
+        other => Err(ConnectorError::ConfigError(format!(
+            "unsupported sslmode {other:?}: expected one of disable, allow, prefer, \
+             require, verify-ca, verify-full"
+        ))),
+    }
+}
+
 #[async_trait]
 impl SourceConnector for PostgresCdcSource {
     fn name(&self) -> &str {
@@ -225,34 +520,20 @@ impl SourceConnector for PostgresCdcSource {
         // it is interpolated into replication SQL with no parameter binding.
         validate_slot_name(&self.config.slot_name)?;
 
-        use tokio_postgres::NoTls;
         use tracing::{error, info, warn};
 
         self.running.store(true, Ordering::SeqCst);
 
-        let conn_string = format!(
-            "host={} port={} dbname={} user={} password={} sslmode={}",
-            self.config.host,
-            self.config.port,
-            self.config.dbname,
-            self.config.user,
-            self.config.password.expose(),
-            self.config.sslmode
-        );
+        // Base connection string WITHOUT sslmode: connect_pg appends the
+        // tokio-postgres-level sslmode (disable/require) that matches the TLS
+        // connector it selects for self.config.sslmode. See connect_pg for the
+        // full sslmode -> (connector, verifier) mapping.
+        let conn_string = base_conn_string(&self.config);
 
-        // TODO: For TLS support, add tokio-postgres-rustls dependency.
-        // Currently sslmode is passed in connection string but NoTls is used.
-        // sslmode=disable works; other modes require a TLS implementation.
-        let (client, connection) = tokio_postgres::connect(&conn_string, NoTls)
-            .await
-            .map_err(|e| ConnectorError::ConnectionFailed(format!("PostgreSQL: {}", e)))?;
-
-        // Spawn the connection task
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                error!("PostgreSQL connection error: {}", e);
-            }
-        });
+        // Connect honoring sslmode with a real rustls TLS implementation. Unlike
+        // the previous NoTls-only path, sslmode=require/verify-* now genuinely
+        // encrypt (and, for verify-*, authenticate) the replication stream.
+        let client = connect_pg(&conn_string, &self.config).await?;
 
         let slot_name = self.config.slot_name.clone();
         let publication = self.config.publication.clone();
@@ -867,5 +1148,134 @@ mod tests {
             err.to_string().contains("invalid replication slot name"),
             "must be rejected by slot validation, not a connection attempt: {err}"
         );
+    }
+}
+
+// =============================================================================
+// TLS integration tests
+//
+// These exercise connect_pg against a REAL TLS-enabled PostgreSQL (a container).
+// They skip gracefully (eprintln + return) when no such server is reachable, so
+// CI without one stays green — mirroring the MQTT real-broker test. Bring up the
+// server with the recipe in the connector's test docs and point the tests at it
+// via VARPULIS_TLS_PG_PORT / VARPULIS_TLS_PG_HOST / VARPULIS_TLS_PG_CA.
+// =============================================================================
+
+#[cfg(test)]
+mod tls_integration {
+    use super::*;
+
+    /// Resolve the TLS PostgreSQL test target `(host, port)` and confirm the
+    /// port is open, else return `None` so the caller skips. Host defaults to
+    /// `localhost` (the server cert's SAN); port to 5433. Both are overridable
+    /// via env so the same tests can target any TLS Postgres.
+    fn tls_pg_target() -> Option<(String, u16)> {
+        use std::net::{TcpStream, ToSocketAddrs};
+        let host =
+            std::env::var("VARPULIS_TLS_PG_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let port: u16 = std::env::var("VARPULIS_TLS_PG_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(5433);
+        let reachable = (host.as_str(), port)
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut addrs| addrs.next())
+            .and_then(|addr| {
+                TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500)).ok()
+            })
+            .is_some();
+        reachable.then_some((host, port))
+    }
+
+    fn target_config(host: &str, port: u16, sslmode: &str) -> PostgresCdcConfig {
+        PostgresCdcConfig::new(host, "postgres")
+            .with_port(port)
+            .with_credentials("postgres", "")
+            .with_sslmode(sslmode)
+    }
+
+    /// PRIMARY GATE — `sslmode=require` genuinely uses TLS.
+    ///
+    /// Against a PostgreSQL that REQUIRES SSL (its `pg_hba.conf` rejects non-SSL
+    /// connections), an `sslmode=require` connect must SUCCEED, which is only
+    /// possible if real TLS is negotiated.
+    ///
+    /// Fail-before: force the require arm to `connect_notls` -> the SSL-only
+    /// server rejects the plaintext connection -> `connect_pg` errors ->
+    /// `expect` panics (RED). Pass-after: rustls TLS -> connects and a trivial
+    /// query returns 1 (GREEN).
+    #[tokio::test]
+    async fn sslmode_require_negotiates_real_tls() {
+        let Some((host, port)) = tls_pg_target() else {
+            eprintln!("[skip] TLS PostgreSQL not reachable (set VARPULIS_TLS_PG_PORT)");
+            return;
+        };
+        let config = target_config(&host, port, "require");
+        let client = connect_pg(&base_conn_string(&config), &config)
+            .await
+            .expect("sslmode=require must negotiate TLS against the SSL-requiring server");
+        let rows = client
+            .query("SELECT 1::int AS one", &[])
+            .await
+            .expect("query over the TLS connection");
+        let one: i32 = rows[0].get("one");
+        assert_eq!(one, 1, "the TLS connection must be usable");
+    }
+
+    /// GUARD — `sslmode=verify-full` cannot silently skip verification.
+    ///
+    /// With NO `ssl_ca_location` (system roots only), verify-full against a
+    /// SELF-SIGNED server cert must FAIL with a verification error, proving the
+    /// verify path uses the real WebPki verifier.
+    ///
+    /// Fail-before: point the verify arm at `build_tls_config_noverify` -> the
+    /// self-signed cert is wrongly accepted -> `connect_pg` returns Ok ->
+    /// `expect_err` panics (RED). Pass-after: WebPki rejects the untrusted
+    /// self-signed cert -> `connect_pg` errors (GREEN).
+    #[tokio::test]
+    async fn sslmode_verify_full_rejects_untrusted_self_signed() {
+        let Some((host, port)) = tls_pg_target() else {
+            eprintln!("[skip] TLS PostgreSQL not reachable (set VARPULIS_TLS_PG_PORT)");
+            return;
+        };
+        let config = target_config(&host, port, "verify-full");
+        let err = connect_pg(&base_conn_string(&config), &config)
+            .await
+            .expect_err("verify-full with system roots must reject the self-signed server cert");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("certificate")
+                || msg.contains("verif")
+                || msg.contains("unknown")
+                || msg.contains("self-signed")
+                || msg.contains("tls"),
+            "expected a certificate-verification failure, got: {err}"
+        );
+    }
+
+    /// NICE-TO-HAVE — verify-full succeeds when the self-signed cert is pinned as
+    /// the CA and the host matches the cert SAN. Requires VARPULIS_TLS_PG_CA to
+    /// point at the server cert PEM; skips otherwise.
+    #[tokio::test]
+    async fn sslmode_verify_full_succeeds_with_pinned_ca() {
+        let Some((host, port)) = tls_pg_target() else {
+            eprintln!("[skip] TLS PostgreSQL not reachable");
+            return;
+        };
+        let Ok(ca_path) = std::env::var("VARPULIS_TLS_PG_CA") else {
+            eprintln!("[skip] VARPULIS_TLS_PG_CA not set (path to server self-signed cert PEM)");
+            return;
+        };
+        let config = target_config(&host, port, "verify-full").with_ca_cert(&ca_path);
+        let client = connect_pg(&base_conn_string(&config), &config)
+            .await
+            .expect("verify-full with the pinned CA and SAN-matching host must connect");
+        let rows = client
+            .query("SELECT 1::int AS one", &[])
+            .await
+            .expect("query over the verified TLS connection");
+        let one: i32 = rows[0].get("one");
+        assert_eq!(one, 1);
     }
 }
