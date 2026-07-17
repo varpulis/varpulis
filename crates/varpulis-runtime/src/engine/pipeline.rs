@@ -40,6 +40,29 @@ fn empty_vars() -> &'static FxHashMap<String, Value> {
     &EMPTY_VARS
 }
 
+/// Build the capped `_events_{alias}` array for a Kleene alias: one
+/// `Value::Map` per captured event (fields deep-cloned), truncated to at most
+/// `cap` elements.
+///
+/// Extracted from the `Sequence` arm so the cap is unit-testable: a Kleene
+/// closure is bounded by SASE's `MAX_KLEENE_EVENTS` (20), which is far below
+/// `crate::limits::MAX_ARRAY_ELEMENTS`, so the truncation cannot be exercised
+/// end-to-end through the normal VPL path. The cap is a defensive backstop for
+/// any code path that groups more entries under one alias.
+fn build_events_array(events: &[&Event], cap: usize) -> Vec<Value> {
+    events
+        .iter()
+        .take(cap)
+        .map(|ev| {
+            let mut map = IndexMap::with_hasher(FxBuildHasher);
+            for (k, v) in &ev.data {
+                map.insert(k.clone(), v.clone());
+            }
+            Value::Map(Box::new(map))
+        })
+        .collect()
+}
+
 /// Flags indicating which operation types to skip during pipeline execution.
 /// Different entry points (normal stream, join result, post-window) skip different ops.
 #[derive(Default, Clone, Copy)]
@@ -141,7 +164,7 @@ pub async fn execute_pipeline(
 
         // Don't exit early if the Forecast op hasn't run yet — it needs to
         // learn from every event even when Sequence produces no match.
-        if current_events.is_empty() && !(has_forecast && matches!(op, RuntimeOp::Sequence)) {
+        if current_events.is_empty() && !(has_forecast && matches!(op, RuntimeOp::Sequence(_))) {
             return Ok(StreamProcessResult {
                 emitted_events,
                 output_events: vec![],
@@ -193,7 +216,7 @@ const fn should_skip_op(op: &RuntimeOp, flags: SkipFlags) -> bool {
         RuntimeOp::Print(_) | RuntimeOp::Log(_) => flags.print_log,
 
         // Sequence/Pattern/TrendAggregate/Forecast skipping
-        RuntimeOp::Sequence
+        RuntimeOp::Sequence(_)
         | RuntimeOp::Pattern(_)
         | RuntimeOp::TrendAggregate(_)
         | RuntimeOp::Forecast(_) => flags.sequence_pattern,
@@ -862,7 +885,7 @@ fn execute_op_common(
             }
         }
 
-        RuntimeOp::Sequence => {
+        RuntimeOp::Sequence(seq_cfg) => {
             let mut sequence_results = Vec::with_capacity(8);
 
             if let Some(ref mut sase) = sase_engine {
@@ -920,25 +943,37 @@ fn execute_op_common(
                                 .data
                                 .insert(format!("_count_{alias}").into(), Value::Int(count as i64));
 
-                            // _events_alias: Value::Array of Value::Map (one map per captured event)
-                            // Used by the evaluator to support array-style access:
-                            // alias.LEN, alias[i], alias[i].field, collect(alias.field)
-                            let events_array: Vec<Value> = events
-                                .iter()
-                                .map(|ev| {
-                                    let mut map = IndexMap::with_hasher(FxBuildHasher);
-                                    for (k, v) in &ev.data {
-                                        map.insert(k.clone(), v.clone());
-                                    }
-                                    Value::Map(Box::new(map))
-                                })
-                                .collect();
-                            seq_event.data.insert(
-                                format!("_events_{alias}").into(),
-                                Value::array(events_array),
-                            );
+                            // _events_alias: Value::Array of Value::Map (one map
+                            // per captured event). The evaluator reads it only for
+                            // positional access (`alias[i]`) and `collect(alias…)`,
+                            // so build it only when the compile-time analysis found
+                            // this alias referenced that way. Building it for every
+                            // match is O(events) memory per match and O(events²)
+                            // over a Kleene run — the OOM this gate prevents.
+                            if seq_cfg.aliases_needing_events.contains(*alias) {
+                                // Cap the materialized array so a runaway Kleene
+                                // closure cannot allocate without bound. The true
+                                // count is still reported via `_count_{alias}`;
+                                // only positional access / collect is truncated.
+                                let cap = crate::limits::MAX_ARRAY_ELEMENTS;
+                                if count > cap {
+                                    tracing::warn!(
+                                        alias = %alias,
+                                        count,
+                                        cap,
+                                        "Kleene alias captured more events than the per-match \
+                                         array cap; positional access / collect(...) is truncated \
+                                         to the cap (the _count_ field still reports the true count)"
+                                    );
+                                }
+                                seq_event.data.insert(
+                                    format!("_events_{alias}").into(),
+                                    Value::array(build_events_array(events, cap)),
+                                );
+                            }
 
-                            // first(alias) and last(alias) as Value::Map
+                            // first(alias) and last(alias) as Value::Map (cheap:
+                            // one map each) — always built.
                             if let Some(first_ev) = events.first() {
                                 let mut map = IndexMap::with_hasher(FxBuildHasher);
                                 for (k, v) in &first_ev.data {
@@ -960,68 +995,85 @@ fn execute_op_common(
                                 );
                             }
 
-                            // Collect all unique field names across events
-                            let mut all_fields: Vec<Arc<str>> = Vec::new();
-                            for ev in events {
-                                for (k, _) in &ev.data {
-                                    if !all_fields.iter().any(|f| f == k) {
-                                        all_fields.push(k.clone());
-                                    }
-                                }
-                            }
-
-                            // Pre-compute aggregates for each field
-                            for field in &all_fields {
-                                // Numeric aggregates (sum, avg, min, max)
-                                let numeric_vals: Vec<f64> = events
-                                    .iter()
-                                    .filter_map(|ev| ev.get(field.as_ref()))
-                                    .filter_map(|v| match v {
-                                        Value::Float(f) => Some(*f),
-                                        Value::Int(i) => Some(*i as f64),
-                                        _ => None,
-                                    })
-                                    .collect();
-
-                                if !numeric_vals.is_empty() {
-                                    let sum: f64 = numeric_vals.iter().sum();
-                                    let avg = sum / numeric_vals.len() as f64;
-                                    let min =
-                                        numeric_vals.iter().copied().fold(f64::INFINITY, f64::min);
-                                    let max = numeric_vals
-                                        .iter()
-                                        .copied()
-                                        .fold(f64::NEG_INFINITY, f64::max);
-
-                                    seq_event.data.insert(
-                                        format!("_agg_sum_{alias}_{field}").into(),
-                                        Value::Float(sum),
-                                    );
-                                    seq_event.data.insert(
-                                        format!("_agg_avg_{alias}_{field}").into(),
-                                        Value::Float(avg),
-                                    );
-                                    seq_event.data.insert(
-                                        format!("_agg_min_{alias}_{field}").into(),
-                                        Value::Float(min),
-                                    );
-                                    seq_event.data.insert(
-                                        format!("_agg_max_{alias}_{field}").into(),
-                                        Value::Float(max),
-                                    );
-                                }
-
-                                // Distinct count (works for all value types)
-                                let mut distinct = std::collections::HashSet::new();
+                            // Numeric aggregates (sum/avg/min/max) and the distinct
+                            // count are read only by
+                            // `sum|avg|min|max|distinct_count(alias.field)`, so
+                            // build them only when the compile-time analysis found
+                            // this alias referenced that way. The all_fields +
+                            // per-field loop is itself O(events) per match, so
+                            // skipping it removes a big part of the O(events²).
+                            if seq_cfg.aliases_needing_aggs.contains(*alias) {
+                                // Collect all unique field names across events
+                                let mut all_fields: Vec<Arc<str>> = Vec::new();
                                 for ev in events {
-                                    if let Some(v) = ev.get(field.as_ref()) {
-                                        distinct.insert(format!("{v:?}"));
+                                    for (k, _) in &ev.data {
+                                        if !all_fields.iter().any(|f| f == k) {
+                                            all_fields.push(k.clone());
+                                        }
                                     }
                                 }
-                                seq_event.data.insert(
-                                    format!("_agg_distinct_{alias}_{field}").into(),
-                                    Value::Int(distinct.len() as i64),
-                                );
+
+                                // Pre-compute aggregates for each field
+                                for field in &all_fields {
+                                    // Numeric aggregates (sum, avg, min, max)
+                                    let numeric_vals: Vec<f64> = events
+                                        .iter()
+                                        .filter_map(|ev| ev.get(field.as_ref()))
+                                        .filter_map(|v| match v {
+                                            Value::Float(f) => Some(*f),
+                                            Value::Int(i) => Some(*i as f64),
+                                            _ => None,
+                                        })
+                                        .collect();
+
+                                    if !numeric_vals.is_empty() {
+                                        let sum: f64 = numeric_vals.iter().sum();
+                                        let avg = sum / numeric_vals.len() as f64;
+                                        let min = numeric_vals
+                                            .iter()
+                                            .copied()
+                                            .fold(f64::INFINITY, f64::min);
+                                        let max = numeric_vals
+                                            .iter()
+                                            .copied()
+                                            .fold(f64::NEG_INFINITY, f64::max);
+
+                                        seq_event.data.insert(
+                                            format!("_agg_sum_{alias}_{field}").into(),
+                                            Value::Float(sum),
+                                        );
+                                        seq_event.data.insert(
+                                            format!("_agg_avg_{alias}_{field}").into(),
+                                            Value::Float(avg),
+                                        );
+                                        seq_event.data.insert(
+                                            format!("_agg_min_{alias}_{field}").into(),
+                                            Value::Float(min),
+                                        );
+                                        seq_event.data.insert(
+                                            format!("_agg_max_{alias}_{field}").into(),
+                                            Value::Float(max),
+                                        );
+                                    }
+
+                                    // Distinct count (works for all value types).
+                                    // `Value` implements a consistent `Hash + Eq`
+                                    // (NaN==NaN, -0.0==0.0), so borrow each value
+                                    // into a `HashSet<&Value>` rather than
+                                    // allocating a `format!("{v:?}")` String per
+                                    // value.
+                                    let mut distinct: std::collections::HashSet<&Value> =
+                                        std::collections::HashSet::new();
+                                    for ev in events {
+                                        if let Some(v) = ev.get(field.as_ref()) {
+                                            distinct.insert(v);
+                                        }
+                                    }
+                                    seq_event.data.insert(
+                                        format!("_agg_distinct_{alias}_{field}").into(),
+                                        Value::Int(distinct.len() as i64),
+                                    );
+                                }
                             }
                         }
 
@@ -1524,7 +1576,7 @@ pub fn execute_pipeline_sync(
         )?;
 
         // Don't exit early if the Forecast op hasn't run yet
-        if current_events.is_empty() && !(has_forecast && matches!(op, RuntimeOp::Sequence)) {
+        if current_events.is_empty() && !(has_forecast && matches!(op, RuntimeOp::Sequence(_))) {
             return Ok(StreamProcessResult {
                 emitted_events,
                 output_events: vec![],
@@ -1584,4 +1636,47 @@ fn execute_op_sync(
         emitted_events,
         functions,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use varpulis_core::Value;
+
+    use super::build_events_array;
+    use crate::event::Event;
+
+    fn tick(price: f64) -> Event {
+        Event::new("Tick").with_field("price", price)
+    }
+
+    /// The `_events_{alias}` array is truncated to the cap. This is the
+    /// resource-safety backstop: a Kleene closure is bounded by SASE's
+    /// `MAX_KLEENE_EVENTS` (20), far below `MAX_ARRAY_ELEMENTS`, so the cap
+    /// cannot be reached end-to-end and is verified here instead.
+    ///
+    /// Fail-before: removing `.take(cap)` in `build_events_array` returns all
+    /// `cap + 5` elements and this assertion fails. Pass-after: it is capped.
+    #[test]
+    fn build_events_array_truncates_at_cap() {
+        let cap = crate::limits::MAX_ARRAY_ELEMENTS;
+        let evs: Vec<Event> = (0..(cap + 5)).map(|i| tick(i as f64)).collect();
+        let refs: Vec<&Event> = evs.iter().collect();
+        let arr = build_events_array(&refs, cap);
+        assert_eq!(arr.len(), cap, "array must be capped at MAX_ARRAY_ELEMENTS");
+        // Truncation keeps the FIRST `cap` events so positional access (alias[i]
+        // for small i) stays valid.
+        match &arr[0] {
+            Value::Map(m) => assert_eq!(m.get("price"), Some(&Value::Float(0.0))),
+            other => panic!("expected Map element, got {other:?}"),
+        }
+    }
+
+    /// Below the cap, every captured event is materialized (no truncation).
+    #[test]
+    fn build_events_array_keeps_all_under_cap() {
+        let evs: Vec<Event> = (0..5).map(|i| tick(i as f64)).collect();
+        let refs: Vec<&Event> = evs.iter().collect();
+        let arr = build_events_array(&refs, crate::limits::MAX_ARRAY_ELEMENTS);
+        assert_eq!(arr.len(), 5);
+    }
 }
