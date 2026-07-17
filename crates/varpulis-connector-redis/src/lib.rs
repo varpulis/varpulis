@@ -307,6 +307,24 @@ impl SinkConnector for RedisSink {
         Ok(())
     }
 
+    /// Honor dynamic `.to(topic)` by publishing to the requested channel
+    /// instead of the configured one (the default rejects unsupported routing).
+    async fn send_to_topic(
+        &self,
+        events: &[std::sync::Arc<Event>],
+        topic: &str,
+    ) -> Result<(), ConnectorError> {
+        let mut conn = self.conn.clone();
+        for event in events {
+            let payload = String::from_utf8(event.to_sink_payload())
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+            conn.publish::<_, _, ()>(topic, &payload)
+                .await
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+        }
+        Ok(())
+    }
+
     async fn flush(&self) -> Result<(), ConnectorError> {
         Ok(())
     }
@@ -664,6 +682,32 @@ impl SinkConnector for RedisStreamSink {
         Ok(())
     }
 
+    /// Honor dynamic `.to(topic)` by XADDing to the requested stream key
+    /// instead of the configured one (the default rejects unsupported routing).
+    async fn send_to_topic(
+        &self,
+        events: &[std::sync::Arc<Event>],
+        topic: &str,
+    ) -> Result<(), ConnectorError> {
+        let mut conn = self.conn.clone();
+        for event in events {
+            let payload = String::from_utf8(event.to_sink_payload())
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+            let mut cmd = redis::cmd("XADD");
+            cmd.arg(topic);
+            if let Some(max_len) = self.config.max_len {
+                cmd.arg("MAXLEN").arg("~").arg(max_len);
+            }
+            cmd.arg("*");
+            cmd.arg("data").arg(&payload);
+            cmd.arg("event_type").arg(event.event_type.as_ref());
+            cmd.query_async::<String>(&mut conn)
+                .await
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+        }
+        Ok(())
+    }
+
     async fn flush(&self) -> Result<(), ConnectorError> {
         Ok(())
     }
@@ -720,6 +764,16 @@ impl SinkConnector for RedisStreamSinkStub {
         guard.as_ref().unwrap().send(event).await
     }
 
+    async fn send_to_topic(
+        &self,
+        events: &[std::sync::Arc<Event>],
+        topic: &str,
+    ) -> Result<(), ConnectorError> {
+        self.ensure_connected().await?;
+        let guard = self.inner.lock().await;
+        guard.as_ref().unwrap().send_to_topic(events, topic).await
+    }
+
     async fn flush(&self) -> Result<(), ConnectorError> {
         let guard = self.inner.lock().await;
         if let Some(ref sink) = *guard {
@@ -742,6 +796,63 @@ impl SinkConnector for RedisStreamSinkStub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RedisSink must honor a dynamic `.to(topic)` by publishing to the
+    /// requested channel, not the configured one (and not reject/drop it).
+    /// Needs a reachable Redis; skips gracefully when none is available so CI
+    /// without a broker stays green. Point it elsewhere with
+    /// `VARPULIS_TEST_REDIS_URL` (defaults to the local test container on 6390).
+    #[tokio::test]
+    async fn redis_sink_honors_dynamic_topic_publishes_to_requested_channel() {
+        use std::time::Duration;
+
+        let url = std::env::var("VARPULIS_TEST_REDIS_URL")
+            .unwrap_or_else(|_| "redis://127.0.0.1:6390".to_string());
+
+        let Ok(client) = redis::Client::open(url.as_str()) else {
+            eprintln!("[skip] redis client open failed for {url}");
+            return;
+        };
+        let mut pubsub = match client.get_async_pubsub().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] redis not reachable at {url}: {e}");
+                return;
+            }
+        };
+        let dyn_channel = "varpulis-dyn-topic-test-channel";
+        if pubsub.subscribe(dyn_channel).await.is_err() {
+            eprintln!("[skip] redis subscribe failed");
+            return;
+        }
+        let mut messages = pubsub.on_message();
+
+        // Sink is configured with a DIFFERENT fixed channel; the dynamic route
+        // must win over it.
+        let config = RedisConfig::new(&url, "fixed-channel-should-not-receive");
+        let sink = match RedisSink::new("dyn-topic-test-sink", config).await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[skip] redis sink connect failed: {e}");
+                return;
+            }
+        };
+
+        let event = Arc::new(Event::new("DynEvt").with_field("marker", "honor-me-42"));
+        sink.send_to_topic(std::slice::from_ref(&event), dyn_channel)
+            .await
+            .expect("send_to_topic must honor the dynamic channel, not reject or drop it");
+
+        let msg = tokio::time::timeout(Duration::from_secs(5), messages.next())
+            .await
+            .expect("timed out waiting for a message on the dynamic channel")
+            .expect("pubsub stream ended unexpectedly");
+        let payload: String = msg.get_payload().expect("payload should decode");
+        assert!(
+            payload.contains("honor-me-42"),
+            "event must be published to the dynamic channel; payload: {payload}"
+        );
+    }
 
     #[test]
     fn redis_config_debug_redacts_url_password() {
