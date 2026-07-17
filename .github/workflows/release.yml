@@ -109,6 +109,13 @@ jobs:
       - name: Build (native, non-PGO)
         if: ${{ !matrix.use_cross && matrix.target != 'x86_64-unknown-linux-gnu' }}
         run: |
+          # rust-toolchain.toml pins the toolchain cargo actually uses (1.95.0),
+          # and dtolnay/rust-toolchain@stable only adds the matrix target to
+          # `stable`. For a cross target that isn't the runner's host (e.g.
+          # x86_64-apple-darwin on the ARM macos-latest runner), the pinned
+          # toolchain is missing it → E0463 "can't find crate for `core`".
+          # Add it to the toolchain resolved by rust-toolchain.toml in this dir.
+          rustup target add ${{ matrix.target }}
           cargo build --release --target ${{ matrix.target }} -p varpulis-cli
           cargo build --release --target ${{ matrix.target }} -p varpulis-lsp
 
@@ -194,6 +201,10 @@ jobs:
   release:
     name: Create Release
     needs: [build, docker]
+    # Publish whatever built. A single failed target (or the docker job) must not
+    # skip the release entirely — otherwise a missing binary silently blocks the
+    # whole release, which is how v0.11.0 initially failed to publish.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -242,6 +253,9 @@ jobs:
           name: Varpulis v${{ steps.release_notes.outputs.version }}
           body_path: notes.md
           draft: false
+          # Don't fail the release if a target's binary is missing (e.g. one
+          # build target failed) — publish the assets that are present.
+          fail_on_unmatched_files: false
           prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
           files: |
             artifacts/varpulis-linux-x86_64/varpulis-linux-x86_64
