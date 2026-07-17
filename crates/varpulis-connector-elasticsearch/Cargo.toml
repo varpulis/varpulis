@@ -9,8 +9,8 @@ documentation.workspace = true
 description = "Elasticsearch connector for Varpulis CEP engine"
 
 [dependencies]
-varpulis-connector-api = { version = "0.10.0", path = "../varpulis-connector-api" }
-varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
+varpulis-connector-api = { version = "0.11.0", path = "../varpulis-connector-api" }
+varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
 elasticsearch = "9.1.0-alpha.1"
 tokio = { workspace = true }
 serde = { workspace = true }

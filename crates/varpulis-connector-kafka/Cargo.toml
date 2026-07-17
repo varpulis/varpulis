@@ -9,9 +9,9 @@ documentation.workspace = true
 description = "Kafka connector for Varpulis CEP engine"
 
 [dependencies]
-varpulis-connector-api = { version = "0.10.0", path = "../varpulis-connector-api" }
-varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
-varpulis-dead-letter = { version = "0.10.0", path = "../varpulis-dead-letter" }
+varpulis-connector-api = { version = "0.11.0", path = "../varpulis-connector-api" }
+varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
+varpulis-dead-letter = { version = "0.11.0", path = "../varpulis-dead-letter" }
 rdkafka = { version = "0.39", features = ["cmake-build", "ssl-vendored"] }
 tokio = { workspace = true }
 serde = { workspace = true }

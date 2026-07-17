@@ -9,8 +9,8 @@ documentation.workspace = true
 description = "AWS S3 connector for Varpulis CEP engine"
 
 [dependencies]
-varpulis-connector-api = { version = "0.10.0", path = "../varpulis-connector-api" }
-varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
+varpulis-connector-api = { version = "0.11.0", path = "../varpulis-connector-api" }
+varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
 aws-config = "1.8"
 aws-sdk-s3 = "1.124"
 tokio = { workspace = true }

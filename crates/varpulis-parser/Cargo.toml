@@ -12,7 +12,7 @@ categories = ["parser-implementations", "development-tools"]
 build = "build.rs"
 
 [dependencies]
-varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
+varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
 logos = { workspace = true }
 thiserror = { workspace = true }
 miette = { workspace = true }

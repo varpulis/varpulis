@@ -11,8 +11,8 @@ keywords = ["pattern-matching", "streaming", "detection", "nfa", "temporal"]
 categories = ["science", "algorithms", "data-structures"]
 
 [dependencies]
-varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
-varpulis-zdd = { version = "0.10.0", path = "../varpulis-zdd" }
+varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
+varpulis-zdd = { version = "0.11.0", path = "../varpulis-zdd" }
 chrono = { workspace = true }
 rustc-hash = { workspace = true }
 

@@ -11,7 +11,7 @@ keywords = ["streaming", "aggregation", "analytics", "real-time", "detection"]
 categories = ["science", "algorithms", "data-structures"]
 
 [dependencies]
-varpulis-core = { version = "0.10.0", path = "../varpulis-core" }
+varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
 rustc-hash = { workspace = true }
 smallvec = "1.13"
 tracing = { workspace = true }
