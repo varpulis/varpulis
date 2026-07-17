@@ -91,7 +91,7 @@ impl ManagedConnectorRegistry {
 
     /// Fan the engine's cooperative source-pause flag out to every managed
     /// connector, so replayable sources stop pulling during a checkpoint
-    /// barrier's drain. Mirrors [`set_engine_offsets_registry`].
+    /// barrier's drain. Mirrors [`Self::set_engine_offsets_registry`].
     pub fn set_source_pause_handle(
         &mut self,
         handle: std::sync::Arc<std::sync::atomic::AtomicBool>,
