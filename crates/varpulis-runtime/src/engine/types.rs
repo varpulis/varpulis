@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use varpulis_core::ast::{ConfigValue, Expr, SasePatternExpr};
 use varpulis_core::Value;
 
@@ -180,6 +180,36 @@ pub struct MergeSource {
     pub filter: Option<varpulis_core::ast::Expr>,
 }
 
+/// Compile-time analysis carried on [`RuntimeOp::Sequence`]: which Kleene
+/// aliases the downstream pipeline actually references.
+///
+/// When a Kleene/sequence match completes, the builder in `pipeline.rs` used to
+/// construct — for every match and every alias — a `_events_{alias}` array (a
+/// deep clone of every captured event) plus per-field numeric aggregates and a
+/// distinct count. For a closure like `News -> all Tick as tick` fed N events
+/// that is O(N) memory per match and O(N²) overall, which OOMs on long runs.
+///
+/// Most of that is dead: the evaluator only reads the `_events_{alias}` array
+/// for positional access (`alias[i]`) or `collect(alias.field)`, and only reads
+/// the aggregates for `sum/avg/min/max/distinct_count(alias.field)`. This struct
+/// records which aliases are referenced by each so the builder skips the rest.
+///
+/// The cheap per-alias fields (`_count_{alias}`, `_first_{alias}`,
+/// `_last_{alias}`) are always built and are not gated by this analysis.
+///
+/// Correctness bias: over-inclusion is safe (builds something unused);
+/// under-inclusion drops a field a pipeline reads. The analysis is deliberately
+/// conservative — when in doubt, include.
+#[derive(Debug, Clone, Default)]
+pub struct SequenceMatchConfig {
+    /// Aliases read via positional index (`alias[i]`) or `collect(alias.field)`.
+    /// These require the full `_events_{alias}` array to be materialized.
+    pub aliases_needing_events: FxHashSet<String>,
+    /// Aliases read via `sum/avg/min/max/distinct_count(alias.field)`.
+    /// These require the per-field numeric/distinct aggregates.
+    pub aliases_needing_aggs: FxHashSet<String>,
+}
+
 /// Runtime operations that can be applied to a stream
 #[allow(dead_code)]
 pub enum RuntimeOp {
@@ -228,8 +258,13 @@ pub enum RuntimeOp {
     Print(PrintConfig),
     /// Log with level
     Log(LogConfig),
-    /// Sequence operation - index into sequence_tracker steps
-    Sequence,
+    /// Sequence operation - index into sequence_tracker steps.
+    ///
+    /// Carries a compile-time analysis of which Kleene aliases the downstream
+    /// pipeline actually references, so the per-match builder can skip the
+    /// expensive per-alias structures (`_events_{alias}` arrays, per-field
+    /// aggregates) that nothing reads. See [`SequenceMatchConfig`].
+    Sequence(SequenceMatchConfig),
     /// Pattern matching with lambda expression
     Pattern(PatternConfig),
     /// Process with expression: `.process(expr)` - evaluates for side effects (emit)
@@ -279,7 +314,7 @@ impl RuntimeOp {
             Self::EmitExpr(_) => "EmitExpr",
             Self::Print(_) => "Print",
             Self::Log(_) => "Log",
-            Self::Sequence => "Sequence",
+            Self::Sequence(_) => "Sequence",
             Self::Pattern(_) => "Pattern",
             Self::Process(_) => "Process",
             Self::To(_) => "Sink",

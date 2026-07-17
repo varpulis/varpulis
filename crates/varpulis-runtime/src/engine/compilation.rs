@@ -1665,8 +1665,13 @@ impl Engine {
             matches!(source, StreamSource::Ident(name) if self.patterns.contains_key(name));
 
         if !followed_by_clauses.is_empty() || matches!(source, StreamSource::Sequence(_)) {
-            // Add Sequence operation marker at the beginning
-            runtime_ops.insert(0, RuntimeOp::Sequence);
+            // Add Sequence operation marker at the beginning.
+            // `runtime_ops` currently holds exactly the DOWNSTREAM ops (the
+            // Sequence op is prepended below), so analyze them first to learn
+            // which Kleene aliases are actually referenced and gate the
+            // expensive per-alias build in pipeline.rs on the result.
+            let seq_cfg = super::sequence_analysis::analyze_downstream_alias_needs(runtime_ops);
+            runtime_ops.insert(0, RuntimeOp::Sequence(seq_cfg));
 
             // Create stream resolver for derived streams
             let stream_resolver = |name: &str| -> Option<compiler::DerivedStreamInfo> {
@@ -1752,8 +1757,11 @@ impl Engine {
                 *partition_key = Some(field.clone());
             }
 
-            // Add Sequence operation marker
-            runtime_ops.insert(0, RuntimeOp::Sequence);
+            // Add Sequence operation marker.
+            // `runtime_ops` currently holds exactly the DOWNSTREAM ops, so
+            // analyze them first to gate the expensive per-alias build.
+            let seq_cfg = super::sequence_analysis::analyze_downstream_alias_needs(runtime_ops);
+            runtime_ops.insert(0, RuntimeOp::Sequence(seq_cfg));
 
             // Compile the named pattern expression to a SASE pattern
             if let Some(pattern) =

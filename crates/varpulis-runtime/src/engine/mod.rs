@@ -18,6 +18,7 @@ pub mod physical_plan;
 mod pipeline;
 pub mod planner;
 mod router;
+mod sequence_analysis;
 #[cfg(feature = "async-runtime")]
 mod sink_factory;
 pub mod topology;
