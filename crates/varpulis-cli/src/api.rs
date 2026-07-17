@@ -410,9 +410,18 @@ pub fn api_routes(
             "/api/v1/pipelines/{pipeline_id}/dlq/replay",
             post(handle_dlq_replay),
         )
-        // Pipeline graph (visual builder)
-        .route("/api/v1/pipeline/graph", post(handle_pipeline_to_graph))
-        .route("/api/v1/pipeline/generate", post(handle_graph_to_pipeline))
+        // Pipeline graph (visual builder) — unauthenticated stateless VPL↔graph
+        // transforms; body limits bound the parse cost (mirrors playground).
+        .route(
+            "/api/v1/pipeline/graph",
+            post(handle_pipeline_to_graph)
+                .layer(tower_http::limit::RequestBodyLimitLayer::new(256 * 1024)),
+        )
+        .route(
+            "/api/v1/pipeline/generate",
+            post(handle_graph_to_pipeline)
+                .layer(tower_http::limit::RequestBodyLimitLayer::new(1024 * 1024)),
+        )
         // Tenant admin routes
         .route(
             "/api/v1/tenants",
@@ -1667,7 +1676,20 @@ async fn handle_delete_tenant(
 // Pipeline Graph Handlers (Visual Builder)
 // =============================================================================
 
+/// Largest VPL source the graph endpoints will parse. These routes are
+/// unauthenticated by design (pure stateless VPL↔graph transforms exposing no
+/// state — same class as `/playground/validate`), so they must bound the parse
+/// cost to stay a non-DoS-able public utility. Mirrors playground's cap.
+const MAX_PIPELINE_VPL_BYTES: usize = 50_000;
+
 async fn handle_pipeline_to_graph(Json(body): Json<PipelineGraphRequest>) -> Response {
+    if body.vpl.len() > MAX_PIPELINE_VPL_BYTES {
+        return error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
+            &format!("VPL source exceeds maximum size of {MAX_PIPELINE_VPL_BYTES} bytes"),
+        );
+    }
     match varpulis_parser::parse(&body.vpl) {
         Ok(program) => {
             let graph = varpulis_runtime::engine::graph::program_to_graph(&program);
@@ -1768,6 +1790,27 @@ mod tests {
     use varpulis_runtime::tenant::{TenantManager, TenantQuota};
 
     use super::*;
+
+    #[tokio::test]
+    async fn pipeline_graph_rejects_oversized_vpl_before_parsing() {
+        // These endpoints are unauthenticated by design, so an oversized VPL
+        // body must be rejected up-front rather than handed to the parser —
+        // otherwise it's an unbounded-CPU DoS vector.
+        let oversized = format!("# {}\nstream AB = A -> B", "x".repeat(60_000));
+        let resp = handle_pipeline_to_graph(Json(PipelineGraphRequest { vpl: oversized })).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "oversized VPL must be rejected before parsing"
+        );
+
+        // A normal-size, valid VPL still converts to a graph.
+        let ok = handle_pipeline_to_graph(Json(PipelineGraphRequest {
+            vpl: "stream AB = A -> B .emit(done: \"yes\")".to_string(),
+        }))
+        .await;
+        assert_eq!(ok.status(), StatusCode::OK, "normal VPL must still work");
+    }
 
     /// Test response wrapper for axum integration tests.
     struct TestResponse {
