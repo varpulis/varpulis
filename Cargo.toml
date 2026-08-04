@@ -121,7 +121,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 
 # Crypto (HMAC for Stripe webhooks)
 hmac = "0.12"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 
 # Testing
