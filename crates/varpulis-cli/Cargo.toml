@@ -65,7 +65,7 @@ varpulis-connectors = { version = "0.11.0", path = "../varpulis-connectors" }
 notify = "7"
 
 # REPL (optional, behind "repl" feature)
-rustyline = { version = "15", optional = true }
+rustyline = { version = "17", optional = true }
 
 # TUI
 ratatui = "0.29"
