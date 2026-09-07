@@ -92,7 +92,13 @@ All connector crates share `varpulis-connector-api` for the `ConnectorFactory`,
 
 | Feature | Description | Key Dependency |
 |---------|-------------|---------------|
-| `smartmodule` | SmartModule host runtime (filter/map) | `wasmtime 42` |
+| `smartmodule` | SmartModule host runtime (filter/map) | `wasmtime 48` |
+
+> **MSRV exception:** `wasmtime 48` declares `rust-version = 1.95`, and no
+> release that fixes RUSTSEC-2026-0222 / RUSTSEC-2026-0269 builds on 1.93.
+> The default workspace build stays on the 1.93 MSRV; enabling `smartmodule`
+> (or `varpulis-runtime/wasm-udf`) requires rustc 1.95+, which is what the
+> pinned `rust-toolchain.toml` and the CI feature-flag matrix already use.
 
 ### Cluster Features
 
