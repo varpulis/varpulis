@@ -74,7 +74,8 @@ pub struct WorkerNode {
     /// Total events processed by this worker (from heartbeats).
     pub events_processed: u64,
     /// Monotonic heartbeat counter maintained by this coordinator for the
-    /// worker. Incremented once per heartbeat received in [`Coordinator::heartbeat`]
+    /// worker. Incremented once per heartbeat received in
+    /// [`Coordinator::heartbeat`](crate::coordinator::Coordinator::heartbeat)
     /// and replicated through Raft so other coordinators can detect liveness.
     pub heartbeat_seq: u64,
     /// Highest replicated `heartbeat_seq` this coordinator has already observed

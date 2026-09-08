@@ -12,7 +12,11 @@ description = "AWS S3 connector for Varpulis CEP engine"
 varpulis-connector-api = { version = "0.11.0", path = "../varpulis-connector-api" }
 varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
 aws-config = "1.8"
-aws-sdk-s3 = "1.124"
+# `default-features = false` drops the SDK's `rustls` feature, which pulls in the
+# legacy hyper 0.14 / h2 0.3 client (RUSTSEC-2026-0258 has no fix on the h2 0.3
+# line). HTTPS still goes through `default-https-client` (hyper 1.x + rustls),
+# which is the client the SDK selects at runtime anyway.
+aws-sdk-s3 = { version = "1.128", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
 tokio = { workspace = true }
 serde = { workspace = true }
 schemars = { workspace = true }

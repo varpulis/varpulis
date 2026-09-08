@@ -97,7 +97,8 @@ impl Engine {
     /// crashing would skip the event on restart (data loss). To prevent it, the
     /// barrier first pauses the sources and drains everything already in flight
     /// (`event_rx`) into engine state, so the snapshot's offsets reflect
-    /// *applied* state. Sources are resumed on every exit via [`ResumeGuard`].
+    /// *applied* state. Sources are resumed on every exit via the private
+    /// `ResumeGuard` drop guard.
     #[cfg(feature = "async-runtime")]
     pub async fn barrier_commit_2pc(
         &mut self,

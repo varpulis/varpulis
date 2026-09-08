@@ -68,8 +68,8 @@ notify = "7"
 rustyline = { version = "15", optional = true }
 
 # TUI
-ratatui = "0.29"
-crossterm = { version = "0.28", features = ["event-stream"] }
+ratatui = "0.30"
+crossterm = { version = "0.29", features = ["event-stream"] }
 
 # OIDC/SSO (optional, behind "oidc" feature)
 openidconnect = { version = "4", optional = true }
