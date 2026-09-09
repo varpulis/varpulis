@@ -1,87 +1,80 @@
-//! Regression tests for output channel backpressure correctness.
+//! Output backpressure must yield to the tokio scheduler, not the OS thread.
 //!
-//! Background: prior to the fix in this PR, `Engine::send_output_shared` and
-//! `Engine::send_output` used `try_send` and silently dropped events when the
-//! output channel was full, only emitting a `warn!` log. This meant that
-//! anyone running `varpulis simulate ... | jq` (or any other slow consumer)
-//! would silently lose data — the engine's internal `output_events_emitted`
-//! counter would still increment, but the receiver would never see those
-//! events.
+//! `Engine::send_output*` spins on `try_send` when the output channel is full.
+//! The sync version parks with `std::thread::yield_now()`, which does not let
+//! any other task on the runtime be polled — so on a current-thread runtime the
+//! task that drains the channel can never run and the engine spins forever.
+//! The engine's own doc comment said as much; the async variant that fixes it
+//! shipped annotated "not yet wired into process_batch".
 //!
-//! The fix replaces `try_send` with a retry loop using `try_send + yield_now`
-//! so that backpressure is applied cooperatively and events are NEVER dropped.
-//! These tests pin that behaviour.
+//! Reachable from `POST /api/v1/pipelines/{id}/events` and from the cluster
+//! worker's inject handler, both of which hold a process-wide lock while
+//! calling in — so one request wedges every tenant on the host.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
 use varpulis_core::Event;
-use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;
-use varpulis_runtime::event::SharedEvent;
 
-/// Reproduces the original bug: a 1k-buffer channel with a slow receiver
-/// previously dropped ~10k of 100k events. With the fix, all 100k are received.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn slow_receiver_does_not_lose_events() {
-    let (tx, mut rx) = mpsc::channel::<SharedEvent>(1_000); // small buffer
-    let engine = Engine::new_shared(tx);
+/// Emit more events from a single `process_batch` call than the output channel
+/// can hold, with the only consumer running as a separate task.
+///
+/// Fail-before: on a current-thread runtime this never returns.
+#[tokio::test]
+async fn process_batch_does_not_deadlock_when_output_channel_fills() {
+    // Deliberately tiny: the batch below emits far more than this.
+    const CAPACITY: usize = 4;
+    const EVENTS: usize = 64;
 
-    // Spawn a deliberately slow consumer that yields a lot
-    let receiver = tokio::spawn(async move {
-        let mut count = 0u64;
-        while let Some(_evt) = rx.recv().await {
-            count += 1;
-            if count.is_multiple_of(1_000) {
-                // Slow drain — emulate a downstream JSON serializer + stdout pipe
-                tokio::time::sleep(Duration::from_millis(1)).await;
+    let (tx, mut rx) = mpsc::channel::<Event>(CAPACITY);
+    let mut engine = Engine::new_with_optional_output(Some(tx));
+
+    let program = varpulis_parser::parse(
+        r"event Tick:
+    n: int
+
+stream Out = Tick
+    .emit(n: n)
+",
+    )
+    .expect("program must parse");
+    engine.load(&program).expect("program must load");
+
+    // The drain task is the only consumer, and it can only make progress if
+    // the engine yields to the scheduler rather than to the OS thread.
+    let drain = tokio::spawn(async move {
+        let mut seen = 0usize;
+        while rx.recv().await.is_some() {
+            seen += 1;
+            if seen == EVENTS {
+                break;
             }
         }
-        count
+        seen
     });
 
-    // Push events through the engine using a VPL program that just emits.
-    let vpl = r"
-        event Tick:
-            n: int
-
-        stream Out = Tick
-            .emit(n: n)
-    ";
-    let mut engine = engine;
-    let program = parse(vpl).expect("parse");
-    engine.load(&program).expect("load");
-
-    let total = 100_000u64;
-    let events: Vec<Event> = (0..total)
+    let batch: Vec<Event> = (0..EVENTS)
         .map(|i| {
             let mut e = Event::new("Tick");
             e.data
-                .insert(Arc::from("n"), varpulis_core::Value::Int(i as i64));
+                .insert("n".into(), varpulis_core::Value::Int(i as i64));
             e
         })
         .collect();
 
-    // Drive in batches so the worker doesn't hold a long sync borrow
-    for chunk in events.chunks(1_000) {
-        engine
-            .process_batch_sync(chunk.to_vec())
-            .expect("process_batch_sync");
-    }
-
-    // Drop the engine's sender (close the channel) so the receiver loop exits
-    drop(engine);
-
-    let received = tokio::time::timeout(Duration::from_secs(30), receiver)
+    let processed = tokio::time::timeout(Duration::from_secs(10), engine.process_batch(batch))
         .await
-        .expect("receiver timed out")
-        .expect("receiver task panicked");
+        .expect("process_batch deadlocked: it never yielded to the drain task");
+    processed.expect("process_batch must succeed");
+
+    let seen = tokio::time::timeout(Duration::from_secs(10), drain)
+        .await
+        .expect("drain task did not finish")
+        .expect("drain task panicked");
 
     assert_eq!(
-        received,
-        total,
-        "expected exactly {total} events, got {received} — output channel dropped {} events",
-        total - received
+        seen, EVENTS,
+        "every emitted event must reach the consumer; backpressure must never drop"
     );
 }

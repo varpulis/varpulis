@@ -452,7 +452,6 @@ impl Engine {
     /// allow the drain task to be polled.
     #[cfg(feature = "async-runtime")]
     #[inline]
-    #[allow(dead_code)] // Foundation for async batch dispatch — not yet wired into process_batch
     pub(super) async fn send_output_shared_async(&mut self, event: &SharedEvent) {
         use tokio::sync::mpsc::error::TrySendError;
         match &self.output_channel {
@@ -491,6 +490,56 @@ impl Engine {
             Some(OutputChannel::Discard) => {}
             None => {
                 self.collected_outputs.push((**event).clone());
+            }
+        }
+    }
+
+    /// Async variant of [`send_output`], for the same reason as
+    /// [`send_output_shared_async`]: the sync version parks the OS thread with
+    /// `std::thread::yield_now()`, which never lets the tokio task that drains
+    /// the channel be polled. Emitting more events from one call than the
+    /// channel holds therefore deadlocks the runtime rather than applying
+    /// backpressure.
+    #[cfg(feature = "async-runtime")]
+    #[inline]
+    pub(super) async fn send_output_async(&mut self, event: Event) {
+        use tokio::sync::mpsc::error::TrySendError;
+        match &self.output_channel {
+            Some(OutputChannel::Shared(tx)) => {
+                let mut item = Arc::new(event);
+                loop {
+                    match tx.try_send(item) {
+                        Ok(()) => break,
+                        Err(TrySendError::Full(returned)) => {
+                            item = returned;
+                            tokio::task::yield_now().await;
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            warn!("output channel closed; dropping output event");
+                            break;
+                        }
+                    }
+                }
+            }
+            Some(OutputChannel::Owned(tx)) => {
+                let mut item = event;
+                loop {
+                    match tx.try_send(item) {
+                        Ok(()) => break,
+                        Err(TrySendError::Full(returned)) => {
+                            item = returned;
+                            tokio::task::yield_now().await;
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            warn!("output channel closed; dropping output event");
+                            break;
+                        }
+                    }
+                }
+            }
+            Some(OutputChannel::Discard) => {}
+            None => {
+                self.collected_outputs.push(event);
             }
         }
     }
