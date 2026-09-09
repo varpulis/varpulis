@@ -282,13 +282,55 @@ impl RbacConfig {
         self.keys.len()
     }
 
-    /// Extract any admin-level key for backward-compatible subsystems
-    /// (Raft inter-node auth, WebSocket identify protocol).
+    /// Extract an admin-level key for the subsystems that authenticate with a
+    /// single shared secret rather than the full RBAC path: Raft inter-node
+    /// auth and the internal output-events endpoint.
+    ///
+    /// # Fail-closed contract
+    ///
+    /// Both consumers treat `None` as "no authentication configured, allow the
+    /// request". That is correct only when the deployment has opted out of
+    /// API-key auth entirely, which is already gated at startup by the
+    /// anonymous-admin refusal. It is NOT correct when keys *are* configured
+    /// but none carries the Admin role — a least-privilege keys file holding
+    /// only Operator and Viewer entries is a legitimate configuration, and it
+    /// must not silently unauthenticate Raft's write endpoints or let forged
+    /// events be broadcast to every operator's live view.
+    ///
+    /// So this returns `None` only when no keys exist at all. When keys exist
+    /// without an admin among them, it returns an unguessable per-process
+    /// token that nothing can present, which makes those consumers fail closed
+    /// without any change at their call sites.
     pub fn any_admin_key(&self) -> Option<String> {
-        self.keys
+        if let Some(key) = self
+            .keys
             .iter()
             .find(|(_, entry)| entry.role == Role::Admin)
             .map(|(key, _)| key.expose().to_string())
+        {
+            return Some(key);
+        }
+        if self.keys.is_empty() {
+            // No API keys at all: the deployment opted out of key auth.
+            return None;
+        }
+        // Keys configured, but no Admin role among them.
+        Some(self.unmatchable_admin_key().to_string())
+    }
+
+    /// A stable, unguessable value for this process, used to fail closed when
+    /// keys are configured without an Admin role. Stable so that all consumers
+    /// within one process agree, and so a peer's key can never coincide with it.
+    fn unmatchable_admin_key(&self) -> &str {
+        static SENTINEL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        SENTINEL.get_or_init(|| {
+            tracing::warn!(
+                "API keys are configured but none has the Admin role; Raft inter-node \
+                 auth and the internal output-events endpoint will reject every request. \
+                 Add an Admin key, or run without a keys file to disable key auth."
+            );
+            format!("no-admin-key-configured-{}", uuid::Uuid::new_v4())
+        })
     }
 }
 
