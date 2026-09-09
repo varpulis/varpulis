@@ -100,8 +100,17 @@ pub fn event_to_slack_payload(event: &Event) -> serde_json::Value {
     if !context_parts.is_empty() {
         // Truncate to avoid Slack's 3000 char limit per block
         let context_text = context_parts.join(" | ");
+        // `len()` counts bytes but `[..n]` slices on char boundaries, so a
+        // multi-byte character straddling byte 2900 panics — and this text is
+        // built from event field values, i.e. verbatim payload content from
+        // Kafka/MQTT/NATS/HTTP. A panic here both silences the alert and kills
+        // the delivery task.
         let truncated = if context_text.len() > 2900 {
-            format!("{}...", &context_text[..2900])
+            let mut end = 2900;
+            while end > 0 && !context_text.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}...", &context_text[..end])
         } else {
             context_text
         };
@@ -291,6 +300,28 @@ inventory::submit! { &SlackFactory as &dyn ConnectorFactory }
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
+
+    /// A multi-byte character straddling the 2900-byte truncation point must
+    /// not panic. Reachable from any event field an attacker can influence
+    /// (a hostname, a username, a command line) that reaches a Slack alert.
+    ///
+    /// Fail-before: `&context_text[..2900]` panics with
+    /// "byte index 2900 is not a char boundary".
+    #[test]
+    fn slack_payload_truncates_on_a_char_boundary() {
+        let mut event = Event::new("Alert");
+        // 2894 ASCII bytes then a 3-byte character spanning byte 2900.
+        let mut v = "a".repeat(2894);
+        v.push('\u{20AC}');
+        event.data.insert("x".into(), Value::Str(v.into()));
+
+        let payload = event_to_slack_payload(&event);
+        let rendered = serde_json::to_string(&payload).expect("payload must serialise");
+        assert!(
+            rendered.len() > 100,
+            "expected a rendered payload, got {rendered}"
+        );
+    }
     use varpulis_core::event::Event;
     use varpulis_core::value::FxIndexMap;
 

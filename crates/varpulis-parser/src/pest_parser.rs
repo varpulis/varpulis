@@ -126,6 +126,16 @@ fn check_nesting_depth(source: &str) -> ParseResult<()> {
     let mut depth: usize = 0;
     let mut max_depth: usize = 0;
     let mut max_depth_pos: usize = 0;
+    // `if_expr` recurses through `expr` back into `primary_expr` without any
+    // bracket, so bracket depth alone does not bound it: `if if if ... 1` is
+    // ~18 pest stack frames per token and overflows the stack (an abort, not a
+    // catchable panic, so neither the guard thread nor the parse timeout can
+    // intervene). Track keyword nesting in the same pass: `if` opens, `else`
+    // closes. Well-formed VPL pairs them, so sequential `if` expressions never
+    // accumulate and only genuine nesting counts.
+    let mut if_depth: usize = 0;
+    let mut max_if_depth: usize = 0;
+    let mut max_if_pos: usize = 0;
     let bytes = source.as_bytes();
     let len = bytes.len();
     let mut i = 0;
@@ -176,6 +186,35 @@ fn check_nesting_depth(source: &str) -> ParseResult<()> {
                     break;
                 }
                 i += 1;
+            }
+            continue;
+        }
+
+        // Consume a whole identifier word. This both keeps `if`/`else`
+        // detection on word boundaries and skips the interior of identifiers.
+        if b.is_ascii_alphabetic() || b == b'_' {
+            let start = i;
+            while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            match &source[start..i] {
+                "if" => {
+                    if_depth += 1;
+                    if if_depth > max_if_depth {
+                        max_if_depth = if_depth;
+                        max_if_pos = start;
+                    }
+                    if max_if_depth > MAX_NESTING_DEPTH {
+                        return Err(ParseError::InvalidToken {
+                            position: max_if_pos,
+                            message: format!(
+                                "Conditional nesting exceeds maximum of {MAX_NESTING_DEPTH} levels"
+                            ),
+                        });
+                    }
+                }
+                "else" => if_depth = if_depth.saturating_sub(1),
+                _ => {}
             }
             continue;
         }

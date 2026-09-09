@@ -878,10 +878,22 @@ pub fn graph_to_vpl(graph: &PipelineGraph) -> String {
         let source_vpl = generate_source_vpl(source_node);
         output.push_str(&format!("stream {stream_name} = {source_vpl}\n"));
 
-        // Walk the chain of operators
+        // Walk the chain of operators.
+        //
+        // The graph comes from an unauthenticated HTTP body, so it is not
+        // guaranteed to be acyclic: `a -> b -> a` would walk forever, appending
+        // to `output` on every lap until the process is OOM-killed. A per-chain
+        // visited set bounds the walk at the number of distinct nodes, which is
+        // also the longest legitimate chain.
+        let mut visited: HashSet<&str> = HashSet::new();
+        visited.insert(source_id);
         let mut current_id = source_id;
         while let Some(targets) = successors.get(current_id) {
             if let Some(&next_id) = targets.first() {
+                if !visited.insert(next_id) {
+                    // Cycle: stop this chain rather than loop.
+                    break;
+                }
                 if let Some(node) = node_map.get(next_id) {
                     let op_vpl = generate_op_vpl(node);
                     output.push_str(&format!("    {op_vpl}\n"));
@@ -1254,6 +1266,63 @@ fn generate_op_vpl(node: &GraphNode) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cyclic graph must not make `graph_to_vpl` walk forever.
+    ///
+    /// The graph arrives as an unauthenticated HTTP body on
+    /// `POST /api/v1/pipeline/generate`, so it is not guaranteed acyclic.
+    /// Without a visited set the operator walk laps the cycle indefinitely,
+    /// appending to the output `String` each time, until the process is
+    /// OOM-killed — taking every tenant on the host with it.
+    ///
+    /// Fail-before: this test hangs and grows unboundedly instead of returning.
+    #[test]
+    fn graph_to_vpl_terminates_on_a_cycle() {
+        fn node(id: &str, ty: &str) -> GraphNode {
+            GraphNode {
+                id: id.to_string(),
+                label: id.to_string(),
+                node_type: ty.to_string(),
+                config: serde_json::json!({}),
+                position: None,
+            }
+        }
+        fn edge(id: &str, from: &str, to: &str) -> GraphEdge {
+            GraphEdge {
+                id: id.to_string(),
+                source: from.to_string(),
+                target: to.to_string(),
+            }
+        }
+
+        // s -> a -> b -> a : `a` and `b` cycle forever once entered.
+        let graph = PipelineGraph {
+            nodes: vec![
+                node("s", "source"),
+                node("a", "filter"),
+                node("b", "filter"),
+            ],
+            edges: vec![
+                edge("e1", "s", "a"),
+                edge("e2", "a", "b"),
+                edge("e3", "b", "a"),
+            ],
+        };
+
+        let vpl = graph_to_vpl(&graph);
+
+        // Terminating at all is the property under test; the bound is the
+        // number of distinct nodes, so the output stays small.
+        assert!(
+            vpl.len() < 4096,
+            "cyclic graph produced {} bytes, the walk did not terminate early",
+            vpl.len()
+        );
+        assert!(
+            vpl.contains("stream"),
+            "the acyclic prefix should still be emitted, got: {vpl}"
+        );
+    }
 
     fn parse_vpl(source: &str) -> Program {
         varpulis_parser::parse(source).expect("Failed to parse VPL")

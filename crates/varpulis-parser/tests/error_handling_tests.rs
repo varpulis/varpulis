@@ -220,3 +220,63 @@ fn test_fuzz_timeout_regression_nested_unclosed_brackets() {
         );
     }
 }
+
+/// Keyword recursion must be bounded, not just bracket nesting.
+///
+/// `if_expr` recurses through `expr` back into `primary_expr` with no bracket,
+/// so the bracket-only pre-scan let `if if if ... 1` through. At ~18 pest stack
+/// frames per token that overflows the stack, which aborts the process: not a
+/// catchable panic, so the parser's own guard thread and 10s timeout cannot
+/// intervene. Reachable from two unauthenticated HTTP routes.
+///
+/// Fail-before: with only bracket counting, this input aborts the test binary.
+#[test]
+fn keyword_recursion_is_bounded() {
+    let bomb = format!(
+        "event E:\n    v: int\n\nstream S = E\n    .where({}1)\n",
+        "if ".repeat(1000)
+    );
+    let start = std::time::Instant::now();
+    let result = varpulis_parser::parse(&bomb);
+    let elapsed = start.elapsed();
+
+    let err = result.expect_err("1000 nested `if` keywords must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Conditional nesting"),
+        "error should name conditional nesting, got: {msg}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "must be rejected by the O(n) pre-scan, took {elapsed:?}"
+    );
+}
+
+/// The guard must not fire on legitimate code: `if`/`else` pair, so sequential
+/// and modestly nested conditionals stay well under the limit, and identifiers
+/// that merely start with the keyword are not keywords.
+#[test]
+fn keyword_recursion_guard_allows_real_programs() {
+    let nested = r#"event E:
+    v: int
+
+stream S = E
+    .emit(r: if v > 10 then "hi" else if v > 5 then "mid" else "lo")
+"#;
+    assert!(
+        varpulis_parser::parse(nested).is_ok(),
+        "nested if/else within the limit must parse"
+    );
+
+    let wordlike = r"event E:
+    notify: int
+    elsewhere: int
+
+stream S = E
+    .where(notify > 1 and elsewhere < 2)
+";
+    assert!(
+        varpulis_parser::parse(wordlike).is_ok(),
+        "identifiers containing `if`/`else` must not count as keywords"
+    );
+}
