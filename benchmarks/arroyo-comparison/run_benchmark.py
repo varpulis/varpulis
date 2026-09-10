@@ -220,7 +220,15 @@ def run_arroyo(scenario, expected_out, run_idx) -> dict:
     resp = arroyo_submit_pipeline(pipeline_name, sql)
     pipeline_id = resp["id"]
 
-    # Poll for Running
+    # Poll for Running.
+    #
+    # `submit_to_running_ms` is recorded for the same reason Varpulis records
+    # `spawn_to_ready_ms`: both timers start at their engine's readiness
+    # signal, so both engines' startup is excluded, and a reader comparing the
+    # two numbers should be able to see what was excluded on each side rather
+    # than take it on trust. Adding one engine's startup back in while leaving
+    # the other's out is not a like-for-like comparison in either direction.
+    submit_t0 = time.perf_counter()
     deadline = time.perf_counter() + 60
     while time.perf_counter() < deadline:
         if arroyo_pipeline_state(pipeline_id) == "Running":
@@ -230,6 +238,7 @@ def run_arroyo(scenario, expected_out, run_idx) -> dict:
         arroyo_stop_pipeline(pipeline_id)
         arroyo_delete_pipeline(pipeline_id)
         raise RuntimeError("Arroyo pipeline never reached Running")
+    submit_to_running_ms = (time.perf_counter() - submit_t0) * 1000
 
     # Start the timer NOW; the source begins consuming from earliest offset
     start = time.perf_counter()
@@ -256,7 +265,11 @@ def run_arroyo(scenario, expected_out, run_idx) -> dict:
     except Exception:
         pass
 
-    return {"elapsed_s": elapsed, "output_count": out}
+    return {
+        "elapsed_s": elapsed,
+        "output_count": out,
+        "startup_ms": submit_to_running_ms,
+    }
 
 
 def run_varpulis(scenario, expected_out, run_idx) -> dict:
@@ -298,6 +311,7 @@ def run_varpulis(scenario, expected_out, run_idx) -> dict:
     )
 
     cmd = [str(VARPULIS_BIN), "run", "--code", vpl, "--quiet"]
+    spawn_t0 = time.perf_counter()
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
     )
@@ -321,6 +335,8 @@ def run_varpulis(scenario, expected_out, run_idx) -> dict:
             proc.wait()
             raise RuntimeError("Varpulis never reported readiness")
 
+    spawn_to_ready_ms = (time.perf_counter() - spawn_t0) * 1000
+
     start = time.perf_counter()
     deadline = time.perf_counter() + 180
     out = 0
@@ -341,7 +357,11 @@ def run_varpulis(scenario, expected_out, run_idx) -> dict:
         proc.kill()
         proc.wait()
 
-    return {"elapsed_s": elapsed, "output_count": out}
+    return {
+        "elapsed_s": elapsed,
+        "output_count": out,
+        "startup_ms": spawn_to_ready_ms,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -386,25 +406,29 @@ def run_scenario(scenario, events, runs):
 
     # Arroyo
     print("  Arroyo…")
-    a_times, a_outs = [], []
+    a_times, a_outs, a_starts = [], [], []
     for i in range(runs):
         try:
             r = run_arroyo(scenario, expected_out, i)
             a_times.append(r["elapsed_s"])
             a_outs.append(r["output_count"])
-            print(f"    run {i+1}: {r['elapsed_s']*1000:.1f}ms  out={r['output_count']}")
+            a_starts.append(r["startup_ms"])
+            print(f"    run {i+1}: {r['elapsed_s']*1000:.1f}ms  out={r['output_count']}"
+                  f"  (startup {r['startup_ms']:.0f}ms, excluded)")
         except Exception as e:
             print(f"    run {i+1}: ERROR — {e}")
 
     # Varpulis
     print("  Varpulis…")
-    v_times, v_outs = [], []
+    v_times, v_outs, v_starts = [], [], []
     for i in range(runs):
         try:
             r = run_varpulis(scenario, expected_out, i)
             v_times.append(r["elapsed_s"])
             v_outs.append(r["output_count"])
-            print(f"    run {i+1}: {r['elapsed_s']*1000:.1f}ms  out={r['output_count']}")
+            v_starts.append(r["startup_ms"])
+            print(f"    run {i+1}: {r['elapsed_s']*1000:.1f}ms  out={r['output_count']}"
+                  f"  (startup {r['startup_ms']:.0f}ms, excluded)")
         except Exception as e:
             print(f"    run {i+1}: ERROR — {e}")
 
@@ -417,13 +441,24 @@ def run_scenario(scenario, events, runs):
                 "median_s": statistics.median(a_times) if a_times else None,
                 "throughput_eps": events / statistics.median(a_times) if a_times else None,
                 "output_count": a_outs[-1] if a_outs else -1,
+                "startup_excluded_ms": statistics.median(a_starts) if a_starts else None,
+                "timing": "from pipeline state=Running to output high-watermark",
             },
             "varpulis": {
                 "median_s": statistics.median(v_times) if v_times else None,
                 "throughput_eps": events / statistics.median(v_times) if v_times else None,
                 "output_count": v_outs[-1] if v_outs else -1,
+                "startup_excluded_ms": statistics.median(v_starts) if v_starts else None,
+                "timing": "from 'Listening for events' readiness marker to output high-watermark",
             },
         },
+        "startup_note": (
+            "`startup_excluded_ms` is the time each engine spent before its own "
+            "timer started, and is NOT in `median_s` for either engine. It is "
+            "recorded so the exclusion is visible rather than asserted: adding "
+            "one engine's startup back in while leaving the other's out is not "
+            "a like-for-like comparison in either direction."
+        ),
     }
 
 
