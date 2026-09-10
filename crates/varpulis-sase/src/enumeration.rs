@@ -93,7 +93,9 @@ pub(crate) fn enumerate_with_filter(
         Some(p) => p.clone(),
         None => {
             // No deferred predicate — just emit all combinations
-            for combo in kc.iter_combinations() {
+            let mut combos = kc.iter_combinations();
+            let mut stopped_early = false;
+            while let Some(combo) = combos.next() {
                 if combo.is_empty() {
                     continue;
                 }
@@ -109,9 +111,20 @@ pub(crate) fn enumerate_with_filter(
                     stack,
                     duration: run.started_at.elapsed(),
                     kleene_truncated: truncated,
+                    enumeration_truncated: false,
                 });
                 if results.len() >= max_results {
+                    // Stopping at the cap is only a truncation if something
+                    // was left unexplored. Hitting it on the last combination
+                    // dropped nothing, and saying otherwise would put a
+                    // warning on a complete answer.
+                    stopped_early = combos.next().is_some();
                     break;
+                }
+            }
+            if stopped_early {
+                for r in &mut results {
+                    r.enumeration_truncated = true;
                 }
             }
             return results;
@@ -119,7 +132,9 @@ pub(crate) fn enumerate_with_filter(
     };
 
     // Enumerate combinations and filter by deferred predicate
-    for combo in kc.iter_combinations() {
+    let mut combos = kc.iter_combinations();
+    let mut stopped_early = false;
+    while let Some(combo) = combos.next() {
         if combo.is_empty() {
             continue;
         }
@@ -137,12 +152,96 @@ pub(crate) fn enumerate_with_filter(
                 stack,
                 duration: run.started_at.elapsed(),
                 kleene_truncated: truncated,
+                enumeration_truncated: false,
             });
             if results.len() >= max_results {
+                // As above: unexplored combinations are what make this a
+                // truncation. Whether any of them would have passed the
+                // predicate is exactly the thing that is now unknown, which is
+                // why the flag reports "we stopped looking" rather than a
+                // count of what was missed.
+                stopped_early = combos.next().is_some();
                 break;
             }
         }
     }
 
+    if stopped_early {
+        for r in &mut results {
+            r.enumeration_truncated = true;
+        }
+    }
+
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use varpulis_core::{Event, Value};
+
+    use super::*;
+    use crate::kleene::KleeneCapture;
+    use crate::run::Run;
+
+    fn ev(i: usize) -> SharedEvent {
+        let mut e = Event::new("E");
+        e.data.insert("i".into(), Value::Int(i as i64));
+        Arc::new(e)
+    }
+
+    /// Build a run whose closure captured `n` events, so the enumeration has
+    /// 2^n - 1 non-empty combinations to walk.
+    fn run_with(n: usize) -> Run {
+        let mut kc = KleeneCapture::new();
+        for i in 0..n {
+            kc.extend(ev(i), Some("k".into()));
+        }
+        let mut run = Run::new(0);
+        run.kleene_capture = Some(kc);
+        run
+    }
+
+    /// The cap on the *result set* used to be applied in silence.
+    ///
+    /// `kleene_truncated` reports events dropped from a closure. This reports
+    /// whole matches dropped from the enumeration, which is a different loss:
+    /// the emitted alerts are the first N of an unknown number rather than all
+    /// of them, and a detection engineer reading them needs to know which.
+    #[test]
+    fn stopping_at_the_result_cap_says_so_on_every_match() {
+        // 6 events is 63 combinations; asking for 5 leaves 58 unexplored.
+        let mut run = run_with(6);
+        let results = enumerate_with_filter(&mut run, 5, None);
+
+        assert_eq!(results.len(), 5, "the cap should bound the result set");
+        assert!(
+            results.iter().all(|r| r.enumeration_truncated),
+            "every match from a truncated enumeration must carry the mark"
+        );
+    }
+
+    /// Reaching the cap on the last combination dropped nothing, and marking
+    /// that would put a warning on a complete answer.
+    #[test]
+    fn an_enumeration_that_finished_is_not_marked_truncated() {
+        // 3 events is exactly 7 combinations.
+        let mut run = run_with(3);
+        let results = enumerate_with_filter(&mut run, 7, None);
+
+        assert_eq!(results.len(), 7, "all combinations should be enumerated");
+        assert!(
+            results.iter().all(|r| !r.enumeration_truncated),
+            "an enumeration that saw every combination is not truncated"
+        );
+    }
+
+    /// A cap far above the number of combinations is not a truncation either.
+    #[test]
+    fn a_cap_that_is_never_reached_is_not_a_truncation() {
+        let mut run = run_with(3);
+        let results = enumerate_with_filter(&mut run, 10_000, None);
+
+        assert_eq!(results.len(), 7);
+        assert!(results.iter().all(|r| !r.enumeration_truncated));
+    }
 }

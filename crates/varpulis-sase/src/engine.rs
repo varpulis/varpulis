@@ -688,6 +688,7 @@ impl SaseEngine {
                 stack: run.stack.clone(),
                 duration: run.started_at.elapsed(),
                 kleene_truncated: run.kleene_capture.as_ref().map_or(0, |kc| kc.truncated),
+                enumeration_truncated: false,
             });
         }
         None

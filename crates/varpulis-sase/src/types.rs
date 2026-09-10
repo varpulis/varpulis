@@ -186,6 +186,19 @@ pub struct MatchResult {
     /// stamps `_kleene_truncated` onto the emitted event, so a count derived
     /// from the closure is visibly a floor rather than the truth.
     pub kleene_truncated: u32,
+    /// Whether the enumeration that produced this match stopped at
+    /// [`MAX_ENUMERATION_RESULTS`] with combinations still unexplored.
+    ///
+    /// A different truncation from `kleene_truncated`, and one the engine used
+    /// to perform in silence: that one drops *events* from a closure, this one
+    /// drops whole *matches* from the result set. A detection engineer reading
+    /// ten thousand alerts needs to know whether that is all of them or the
+    /// first ten thousand of an unknown number, because the two call for
+    /// different responses.
+    ///
+    /// No count, deliberately. Knowing how many were dropped would mean
+    /// enumerating them, which is the work the cap exists to avoid.
+    pub enumeration_truncated: bool,
 }
 
 /// SASE+ Pattern Matching Engine

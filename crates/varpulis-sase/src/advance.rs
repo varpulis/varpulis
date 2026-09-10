@@ -129,6 +129,7 @@ fn complete_run(
         EmissionMode::Each if has_kleene_capture => RunAdvanceResult::Drained,
         EmissionMode::Each => RunAdvanceResult::Complete(MatchResult {
             kleene_truncated: kleene_truncated_count(run),
+            enumeration_truncated: false,
             captured: std::mem::take(&mut run.captured),
             stack: std::mem::take(&mut run.stack),
             duration: run.started_at.elapsed(),
@@ -140,6 +141,7 @@ fn complete_run(
         ),
         EmissionMode::Subsets => RunAdvanceResult::Complete(MatchResult {
             kleene_truncated: kleene_truncated_count(run),
+            enumeration_truncated: false,
             captured: std::mem::take(&mut run.captured),
             stack: std::mem::take(&mut run.stack),
             duration: run.started_at.elapsed(),
@@ -147,6 +149,7 @@ fn complete_run(
         // Longest mode: single emit with the last/longest captured sequence.
         EmissionMode::Longest => RunAdvanceResult::Complete(MatchResult {
             kleene_truncated: kleene_truncated_count(run),
+            enumeration_truncated: false,
             captured: std::mem::take(&mut run.captured),
             stack: std::mem::take(&mut run.stack),
             duration: run.started_at.elapsed(),
@@ -286,6 +289,7 @@ pub(crate) fn advance_run_shared(
             EmissionMode::Each => {
                 return RunAdvanceResult::CompleteAndContinue(MatchResult {
                     kleene_truncated: kleene_truncated_count(run),
+                    enumeration_truncated: false,
                     captured: run.captured.clone(),
                     stack: run.stack.clone(),
                     duration: run.started_at.elapsed(),
@@ -435,6 +439,7 @@ pub(crate) fn advance_run_shared(
                     EmissionMode::Each => {
                         return RunAdvanceResult::CompleteAndContinue(MatchResult {
                             kleene_truncated: kleene_truncated_count(run),
+                            enumeration_truncated: false,
                             captured: run.captured.clone(),
                             stack: run.stack.clone(),
                             duration: run.started_at.elapsed(),

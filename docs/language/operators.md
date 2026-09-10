@@ -140,6 +140,29 @@ stream BruteForce = AuthEvent where status == "failed" as first
 If you need an exact count of an unbounded run, count it in a windowed
 aggregation rather than a Kleene closure.
 
+### The other cap: how many matches one closure emits
+
+Separate from the 20-event cap, an enumeration emits **at most 10 000 matches**
+from a single closure. The two are different losses. The first drops events
+from a closure; this one drops whole matches from the result set, so what you
+receive is the first 10 000 of an unknown number rather than all of them.
+
+A match from a truncated enumeration carries **`_enumeration_truncated`**, set
+to `true`. It is absent when the enumeration saw every combination, including
+when it reached the cap on the very last one — a complete answer is not marked
+incomplete.
+
+There is deliberately no count. Knowing how many matches were dropped would
+mean enumerating them, which is the work the cap exists to avoid.
+
+```varpulis
+stream Combinations = Login as start
+    -> all Action as steps
+    .within(1h)
+    .subsets()
+    .emit(steps: count(steps), partial: _enumeration_truncated)
+```
+
 ### Monotonic pattern shortcuts
 
 | Operator | Description | Example |
