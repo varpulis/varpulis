@@ -808,6 +808,21 @@ fn e090_concurrent_not_implemented() {
     );
 }
 
+/// `varpulis check` and the engine now agree about `.filter()`.
+///
+/// They did not: the validator emitted E090 "not implemented — use .where()
+/// instead" while the engine compiled `.filter(expr)` as an alias for
+/// `.where(expr)`. The disagreement ran the wrong way — `varpulis check`
+/// rejected programs the engine would have run correctly.
+#[test]
+fn e090_filter_is_not_a_stream_operation() {
+    let diags = validate_vpl("event A:\n    x: int\n\nstream S = A\n    .filter(x > 0)");
+    assert!(
+        has_error(&diags, "E090"),
+        "Expected E090 for .filter(): {diags:?}"
+    );
+}
+
 #[test]
 fn e092_partition_by_computed_expression() {
     // `.partition_by(<computed>)` used to be dropped on the floor: a global

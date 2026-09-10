@@ -1368,9 +1368,30 @@ impl Engine {
                 StreamOp::On(_) => {
                     // Join condition - handled by extract_join_keys(), not a runtime op
                 }
-                StreamOp::Filter(expr) => {
-                    // .filter(expr) is an alias for .where(expr)
-                    runtime_ops.push(RuntimeOp::WhereExpr(expr.clone()));
+                StreamOp::Filter(_) => {
+                    // `varpulis check` has always refused `.filter()` with
+                    // E090 "not implemented — use .where() instead", while the
+                    // engine quietly compiled it as an alias for `.where()`.
+                    // The two disagreed, and the direction of the disagreement
+                    // meant `varpulis check` rejected programs that ran
+                    // correctly.
+                    //
+                    // Refusing rather than blessing the alias, because the
+                    // name is taken: `arr.filter(x => cond)` is a documented
+                    // array builtin with lambda syntax, and `StreamOp::Filter`
+                    // is still described in the AST as "Filter with lambda:
+                    // `.filter(fn)`" — a form the parser does not accept. One
+                    // spelling for a stream predicate keeps `.filter()` free
+                    // for the lambda form that comment anticipates. No shipped
+                    // `.vpl` uses it.
+                    return Err(super::error::EngineError::Compilation(
+                        concat!(
+                            ".filter() is not a stream operation — use ",
+                            ".where(<condition>). (`arr.filter(x => ...)` on an ",
+                            "array value is unrelated and still works.)"
+                        )
+                        .into(),
+                    ));
                 }
                 StreamOp::Distinct(expr) => {
                     runtime_ops.push(RuntimeOp::Distinct(DistinctState {
