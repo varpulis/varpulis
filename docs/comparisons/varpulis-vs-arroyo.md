@@ -359,6 +359,16 @@ readiness signal — Arroyo `state=Running`, Varpulis's run-loop marker — so
 neither engine's compile/startup is counted, and both pay their Kafka
 connect and consumer-group join inside the timed window.)*
 
+The harness records what it excluded, on both sides, as
+`startup_excluded_ms` in the results JSON: Arroyo's submit-to-`Running`, and
+Varpulis's spawn-to-readiness (113 ms in the run above). Neither number is
+inside the throughput figures. It is written down rather than asserted
+because the exclusion is the one methodological choice the ratio is
+sensitive to — add Varpulis's 113 ms back in and the same run reads 1.37×,
+but that is Varpulis's startup measured against Arroyo's *omitted*, which is
+not a comparison. Either count both or count neither; this table counts
+neither.
+
 Both engines deliver identical output: 89,000 records, same content, same
 order. Varpulis is **1.62× faster on the identical input path**, while its
 output records additionally carry `event_type` and the event-time
