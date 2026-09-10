@@ -24,6 +24,50 @@ use std::time::Duration;
 
 use serde_json::Value as Json;
 
+// ---------------------------------------------------------------------------
+// Abstention gate
+// ---------------------------------------------------------------------------
+//
+// Every chaos test that needs Docker, Kafka, NATS or the `raft` feature used
+// to print a `[skip]` line and return, which libtest scores as a pass. Nine
+// such sites existed, and between them they covered leader election, network
+// partition, distributed exactly-once and multi-replica checkpointing — the
+// four properties this suite is for.
+//
+// A test that goes green by abstaining satisfies "the test passed" and proves
+// nothing. So the abstention is now a hard failure whenever the caller says
+// the environment should have been there, and it is only ever a skip on a
+// developer box that has none of it running.
+//
+// Mirrors `VARPULIS_REQUIRE_BROKERS` in the connector suites deliberately: one
+// switch turns every abstention in the repository into a failure.
+
+/// Record an abstention. Panics when `VARPULIS_REQUIRE_BROKERS` is set.
+///
+/// Returns so the caller can `return` straight after it, which keeps the shape
+/// of the existing early-exits.
+#[track_caller]
+pub fn abstain(test: &str, reason: &str) {
+    assert!(
+        std::env::var_os("VARPULIS_REQUIRE_BROKERS").is_none(),
+        "VARPULIS_REQUIRE_BROKERS=1 but {test} could not run: {reason}. \
+         This suite exists to prove the cluster survives failure; it must not \
+         report success because the cluster was never started. Provision the \
+         infrastructure instead of relaxing the gate."
+    );
+    // The `[skip]` marker is load-bearing: `scripts/run-chaos-tests.sh` greps
+    // for it to tell an abstention from a real pass, and scores it as a hard
+    // failure when the tier's infrastructure was declared present. Changing
+    // this string silently converts every abstention into a green tick.
+    eprintln!("  [skip] {test}: {reason}");
+    if let Ok(summary) = std::env::var("GITHUB_STEP_SUMMARY") {
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(summary) {
+            let _ = writeln!(f, "- :warning: **SKIPPED (no infra)** `{test}` — {reason}");
+        }
+    }
+}
+
 /// Starting port for test clusters. Each cluster consumes 1 (coordinator) + N (workers).
 static NEXT_PORT: AtomicU16 = AtomicU16::new(19100);
 

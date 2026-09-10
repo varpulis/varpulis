@@ -617,9 +617,12 @@ async fn run_iteration(index: usize, kill_fraction: f64) -> IterationResult {
 async fn test_distributed_exactly_once() {
     let infra = probe_infra().await;
     if !infra.available {
-        eprintln!(
-            "  [skip] test_distributed_exactly_once: {} (set up Docker + Kafka + NATS to run)",
-            infra.reason.unwrap_or("unknown")
+        crate::abstain(
+            "test_distributed_exactly_once",
+            &format!(
+                "{} (set up Docker + Kafka + NATS to run)",
+                infra.reason.unwrap_or("unknown")
+            ),
         );
         return;
     }
@@ -674,9 +677,12 @@ async fn test_distributed_exactly_once() {
 async fn test_distributed_exactly_once_smoke() {
     let infra = probe_infra().await;
     if !infra.available {
-        eprintln!(
-            "  [skip] test_distributed_exactly_once_smoke: {} (set up Docker + Kafka + NATS to run)",
-            infra.reason.unwrap_or("unknown")
+        crate::abstain(
+            "test_distributed_exactly_once_smoke",
+            &format!(
+                "{} (set up Docker + Kafka + NATS to run)",
+                infra.reason.unwrap_or("unknown")
+            ),
         );
         return;
     }

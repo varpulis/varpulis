@@ -743,9 +743,12 @@ async fn run_iteration(label: &str, kill_fraction: f64) -> IterationOutcome {
 async fn test_multi_replica_checkpoint() {
     let infra = probe_infra().await;
     if !infra.available {
-        eprintln!(
-            "  [skip] test_multi_replica_checkpoint: {} (set up Docker + Kafka + NATS to run)",
-            infra.reason.unwrap_or("unknown")
+        crate::abstain(
+            "test_multi_replica_checkpoint",
+            &format!(
+                "{} (set up Docker + Kafka + NATS to run)",
+                infra.reason.unwrap_or("unknown")
+            ),
         );
         return;
     }
@@ -808,9 +811,12 @@ async fn test_multi_replica_checkpoint() {
 async fn test_multi_replica_checkpoint_smoke() {
     let infra = probe_infra().await;
     if !infra.available {
-        eprintln!(
-            "  [skip] test_multi_replica_checkpoint_smoke: {} (set up Docker + Kafka + NATS to run)",
-            infra.reason.unwrap_or("unknown")
+        crate::abstain(
+            "test_multi_replica_checkpoint_smoke",
+            &format!(
+                "{} (set up Docker + Kafka + NATS to run)",
+                infra.reason.unwrap_or("unknown")
+            ),
         );
         return;
     }

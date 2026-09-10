@@ -95,6 +95,12 @@ onnx = ["varpulis-runtime/onnx"]
 k8s = ["varpulis-cluster/k8s"]
 raft = ["varpulis-cluster/raft"]
 persistent = ["raft", "varpulis-cluster/persistent"]
+# Without this the chaos suite's five distributed-checkpoint tests could not
+# run at all: they spawn the real `varpulis` binary as coordinator and worker,
+# and a binary built without the feature has no barrier handler compiled in,
+# so the worker never answers a checkpoint barrier. The tests were written,
+# listed in the runner, and unreachable.
+distributed-checkpoint = ["varpulis-cluster/distributed-checkpoint"]
 saas = ["varpulis-db", "lettre"]
 oidc = ["openidconnect"]
 encryption = ["varpulis-connectors/encryption"]

@@ -332,8 +332,8 @@ jobs:
       # `raft` and `nats-transport` are what the coordinator/worker processes
       # spawned by the chaos harness need in order to elect a leader and to
       # register over NATS. Without them tier 2 cannot run at all.
-      - name: Build release binary (raft + NATS transport)
-        run: cargo build --release -p varpulis-cli --features raft,nats-transport
+      - name: Build release binary (raft + NATS transport + checkpoint barriers)
+        run: cargo build --release -p varpulis-cli --features raft,nats-transport,distributed-checkpoint
       - name: Run chaos tests with retry
         run: ./scripts/run-chaos-tests.sh 2
         env:
@@ -343,10 +343,12 @@ jobs:
           # of the test binary and silently never run.
           CHAOS_FEATURES: distributed-checkpoint,raft
           CHAOS_NATS: "1"
-          # CHAOS_DC stays off: the blocker is that varpulis-cli exposes no
-          # `distributed-checkpoint` feature, so the spawned worker has no
-          # barrier handler compiled in. Adding a Kafka container would not
-          # change that. See the tier-3 comment in the runner.
+          # CHAOS_DC stays off, but the reason has changed. The binary now
+          # carries the barrier handler, so the remaining gap is only
+          # infrastructure: tier 3 wants Kafka reachable on 9092 in a
+          # container this job does not start, and reads that container by
+          # name to kill it mid-run. Adding it is a services + docker change,
+          # not a compile-time one.
           NO_COLOR: "1"
 
   # Web UI moved to https://github.com/varpulis/varpulis-web-ui
