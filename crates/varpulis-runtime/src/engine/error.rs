@@ -18,6 +18,17 @@ pub enum EngineError {
     #[error("stream not found: {0}")]
     StreamNotFound(String),
 
+    /// This engine has been fenced: another worker owns its partition now.
+    ///
+    /// Returned by every ingestion entry point once the fence flag is set, so a
+    /// worker that was partitioned, declared dead, migrated away from and then
+    /// came back cannot keep processing — no emits, no state mutation, no
+    /// offset advancement. Refusing at the entry point rather than at the sink
+    /// is deliberate: a fenced worker has lost ownership of the partition, so
+    /// there is nothing it may correctly do with an event.
+    #[error("engine is fenced: another worker owns this partition")]
+    Fenced,
+
     /// Sink I/O or protocol error (async-runtime only).
     #[cfg(feature = "async-runtime")]
     #[error("sink error: {0}")]
