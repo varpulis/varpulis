@@ -139,6 +139,14 @@ pub enum ClusterError {
     #[error("Event routing failed: {0}")]
     RoutingFailed(String),
 
+    /// The worker could not be reached at all: connection refused, timed out,
+    /// DNS failure. Distinct from `RoutingFailed`, which also covers a worker
+    /// that answered and refused, because only this one is evidence about the
+    /// worker's liveness — and evidence the coordinator should act on rather
+    /// than wait out the heartbeat timeout for.
+    #[error("Worker {worker_id} unreachable: {detail}")]
+    WorkerUnreachable { worker_id: String, detail: String },
+
     #[error("Connector not found: {0}")]
     ConnectorNotFound(String),
 

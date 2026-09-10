@@ -22,14 +22,36 @@ use crate::worker::{WorkerId, WorkerNode, WorkerStatus};
 use crate::{ClusterError, LeastLoadedPlacement, PlacementStrategy};
 
 impl Coordinator {
-    /// Reconcile pipeline placements: re-deploy pipelines to workers that
-    /// restarted and lost their in-memory state.  Called from the health-sweep
-    /// loop on the leader when `pending_rebalance` is true.
+    /// Reconcile pipeline placements toward "every running pipeline sits on an
+    /// available worker".
+    ///
+    /// Two ways a placement drifts from that, and both are handled here:
+    ///
+    /// 1. The worker is available but has lost the pipeline — it restarted and
+    ///    its in-memory state went with it. Re-deploy to the same worker.
+    /// 2. The worker is not available at all. Move the pipeline to one that is.
+    ///
+    /// The second case used to be skipped, and failover was reached only
+    /// through `handle_worker_failure`, which the health loop calls for
+    /// workers the sweep marks unhealthy *on that pass*. A transition fires
+    /// once. Miss it — because the worker was already unhealthy, because the
+    /// failover itself failed, because the coordinator restarted — and the
+    /// pipeline stayed on a dead worker indefinitely, with every event routed
+    /// to it and lost. The chaos soak reproduced exactly that: after the
+    /// storm, the cluster did not accept an event again within 90 seconds.
+    ///
+    /// Making this convergent rather than edge-triggered is the point. It does
+    /// not matter how the placement became wrong, or how many passes it takes;
+    /// each one moves the cluster toward the invariant.
     #[tracing::instrument(skip(self))]
     pub async fn reconcile_placements(&mut self) -> usize {
         // Collect (group_id, pipeline_name, worker_id, worker_addr, api_key, source)
         // for placements where the worker is available but doesn't list the pipeline.
         let mut to_redeploy: Vec<(String, String, WorkerId, String, String, String)> = Vec::new();
+        // (group, pipeline, old worker, new worker, new address, new api key)
+        let mut relocations: Vec<(String, String, WorkerId, WorkerId, String, String)> = Vec::new();
+        let mut updated_workers_early: std::collections::HashSet<WorkerId> =
+            std::collections::HashSet::new();
 
         for (gid, group) in &self.pipeline_groups {
             if group.status != GroupStatus::Running {
@@ -39,9 +61,51 @@ impl Coordinator {
                 if dep.status != PipelineDeploymentStatus::Running {
                     continue;
                 }
-                let worker = match self.workers.get(&dep.worker_id) {
+                // Case 2: the placement's worker is gone. Pick the least
+                // loaded worker that is available and move the pipeline there.
+                let host = self.workers.get(&dep.worker_id);
+                let worker = match host {
                     Some(w) if w.is_available() => w,
-                    _ => continue,
+                    _ => {
+                        let candidates: Vec<&WorkerNode> = self
+                            .workers
+                            .values()
+                            .filter(|w| w.is_available() && w.id != dep.worker_id)
+                            .collect();
+                        let Some(target_id) = LeastLoadedPlacement.place(
+                            &crate::pipeline_group::PipelinePlacement {
+                                name: pname.clone(),
+                                source: String::new(),
+                                worker_affinity: None,
+                                replicas: 1,
+                                partition_key: None,
+                            },
+                            &candidates,
+                        ) else {
+                            // Nothing to move it to. Say so once per pass
+                            // rather than silently leaving it stranded.
+                            warn!(
+                                pipeline = %pname,
+                                group = %gid,
+                                worker = %dep.worker_id,
+                                "Placement is on an unavailable worker and no healthy worker \
+                                 can take it; it stays stranded until one registers"
+                            );
+                            continue;
+                        };
+                        let Some(target) = self.workers.get(&target_id) else {
+                            continue;
+                        };
+                        relocations.push((
+                            gid.clone(),
+                            pname.clone(),
+                            dep.worker_id.clone(),
+                            target_id.clone(),
+                            target.address.clone(),
+                            target.api_key.expose().to_string(),
+                        ));
+                        continue;
+                    }
                 };
                 // If the worker's assigned_pipelines already lists this pipeline,
                 // the placement is healthy -- nothing to do.
@@ -76,8 +140,90 @@ impl Coordinator {
             }
         }
 
+        // Relocations first: a pipeline stranded on a dead worker is losing
+        // every event routed to it, while a stale placement on a live worker
+        // is only missing state.
+        let mut moved = 0usize;
+        for (gid, pname, from, to_id, to_addr, to_key) in relocations {
+            let logical = pname.rsplit_once('#').map(|(b, _)| b).unwrap_or(&pname);
+            let Some(source) = self
+                .pipeline_groups
+                .get(&gid)
+                .and_then(|g| g.spec.pipelines.iter().find(|p| p.name == logical))
+                .map(|p| connector_config::inject_connectors(&p.source, &self.connectors).0)
+            else {
+                continue;
+            };
+
+            let url = format!("{to_addr}/api/v1/pipelines");
+            let body = serde_json::json!({ "name": pname, "source": source });
+            match self
+                .http_client
+                .post(&url)
+                .header("x-api-key", &to_key)
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let pipeline_id = resp
+                        .json::<serde_json::Value>()
+                        .await
+                        .ok()
+                        .and_then(|v| v["id"].as_str().map(str::to_owned))
+                        .unwrap_or_default();
+                    info!(
+                        pipeline = %pname,
+                        group = %gid,
+                        from = %from,
+                        to = %to_id,
+                        "Moved a pipeline off an unavailable worker"
+                    );
+                    if let Some(group) = self.pipeline_groups.get_mut(&gid) {
+                        if let Some(dep) = group.placements.get_mut(&pname) {
+                            // Bump the epoch: it is the fencing token that
+                            // makes the old deployment's events ignorable if
+                            // the old worker ever comes back.
+                            let epoch = dep.epoch + 1;
+                            *dep = PipelineDeployment {
+                                worker_id: to_id.clone(),
+                                worker_address: to_addr.clone(),
+                                worker_api_key: to_key.clone(),
+                                pipeline_id,
+                                status: PipelineDeploymentStatus::Running,
+                                epoch,
+                                failure_reason: None,
+                            };
+                        }
+                        group.update_status();
+                    }
+                    if let Some(w) = self.workers.get_mut(&from) {
+                        w.assigned_pipelines.retain(|p| p != &pname);
+                        w.capacity.pipelines_running =
+                            w.capacity.pipelines_running.saturating_sub(1);
+                    }
+                    if let Some(w) = self.workers.get_mut(&to_id) {
+                        w.assigned_pipelines.push(pname.clone());
+                        w.capacity.pipelines_running += 1;
+                    }
+                    updated_workers_early.insert(to_id);
+                    moved += 1;
+                }
+                Ok(resp) => {
+                    let status = resp.status();
+                    let detail = resp.text().await.unwrap_or_default();
+                    error!(
+                        "Relocating '{pname}' to worker {to_id} failed: HTTP {status} - {detail}"
+                    );
+                }
+                Err(e) => {
+                    error!("Relocating '{pname}' — cannot reach worker {to_id}: {e}");
+                }
+            }
+        }
+
         if to_redeploy.is_empty() {
-            return 0;
+            return moved;
         }
 
         info!(
@@ -86,8 +232,7 @@ impl Coordinator {
         );
 
         let mut redeployed = 0usize;
-        let mut updated_workers: std::collections::HashSet<WorkerId> =
-            std::collections::HashSet::new();
+        let mut updated_workers: std::collections::HashSet<WorkerId> = updated_workers_early;
 
         for (gid, pname, worker_id, worker_addr, api_key, source) in to_redeploy {
             let url = format!("{}/api/v1/pipelines", worker_addr);
@@ -149,7 +294,7 @@ impl Coordinator {
             }
         }
 
-        redeployed
+        moved + redeployed
     }
 
     // =========================================================================

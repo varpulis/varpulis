@@ -688,13 +688,21 @@ impl Coordinator {
             "fields": event.fields,
         });
 
+        // A send error means the worker did not answer at all. That is
+        // evidence about its liveness, and the caller marks it unhealthy on
+        // the strength of it rather than waiting out the heartbeat timeout —
+        // so it must not be flattened into `RoutingFailed`, which also covers
+        // a worker that answered and refused.
         let response = http_client
             .post(&target.url)
             .header("x-api-key", &target.api_key)
             .json(&inject_body)
             .send()
             .await
-            .map_err(|e| ClusterError::RoutingFailed(e.to_string()))?;
+            .map_err(|e| ClusterError::WorkerUnreachable {
+                worker_id: target.worker_id.clone(),
+                detail: e.to_string(),
+            })?;
 
         if !response.status().is_success() {
             let body = response.text().await.unwrap_or_default();
