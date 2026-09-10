@@ -227,7 +227,7 @@ Deprecated endpoints do not return errors; they continue to function normally un
 
 | Protocol | Path | Description |
 |----------|------|-------------|
-| `WS` | `/api/v1/cluster/ws` | Persistent worker connection for heartbeats and event forwarding. Frame size limited to 64 KB. |
+| `WS` | `/ws` | Persistent worker connection for heartbeats and event forwarding. Frame size limited to 64 KB. Mounted at the router root, not under `/api/v1/cluster`. |
 
 **Probes (SaaS and Cluster, unauthenticated):**
 
@@ -264,7 +264,7 @@ All endpoints listed in v0.2.0 were present in v0.1.0 with the following excepti
 - `GET /api/v1/cluster/prometheus` was not present (Prometheus scraping added in v0.2.0).
 - `GET /api/v1/cluster/summary` was not present.
 - Models and Chat endpoints were not present.
-- WebSocket (`/api/v1/cluster/ws`) was not present.
+- WebSocket (`/ws`) was not present.
 - RBAC roles were not enforced; all cluster endpoints required only a non-empty `x-api-key`.
 
 ---
