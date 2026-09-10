@@ -166,7 +166,10 @@ const EXAMPLE_CASES: &[(&str, &str, usize)] = &[
     (
         "examples/vpl-by-example/05_tumbling_window.vpl",
         "examples/vpl-by-example/05_tumbling_window.evt",
-        2,
+        // Three, as its own .evt documents: "Window 1 (0s-5s) ... Window 2
+        // (5s-10s) ... Window 3 (10s-15s)". It was recorded as 2 because the
+        // final window was dropped at end of input until #218.
+        3,
     ),
     (
         "examples/vpl-by-example/06_count_window.vpl",
