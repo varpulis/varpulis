@@ -633,13 +633,19 @@ impl Engine {
             }
         }
 
-        // For join sources - return empty (join requires async in some paths)
+        // Join sources are not implemented on the synchronous path.
+        //
+        // This used to return an empty result, so every match was silently
+        // discarded and the caller saw a successful run that emitted nothing.
+        // Callers that can choose now consult `Engine::requires_async_dispatch`
+        // and take the async path; anything genuinely confined to this path
+        // (the WASM build) gets a loud error instead of wrong results.
         if matches!(stream.source, RuntimeSource::Join(_)) {
-            return Ok(StreamProcessResult {
-                emitted_events: vec![],
-                output_events: vec![],
-                sink_events_sent: 0,
-            });
+            return Err(super::error::EngineError::Compilation(format!(
+                "stream '{}' is a join, which the synchronous execution path \
+                 does not implement; run it on the asynchronous path",
+                stream.name
+            )));
         }
 
         // Use synchronous pipeline execution
@@ -1243,8 +1249,91 @@ impl Engine {
 
                 return (!emissions.is_empty()).then_some((idx, emissions));
             }
+
+            // Fused columnar aggregates hold their own bins, so they are not
+            // `RuntimeOp::Window` and the loop above never sees them. Their
+            // `flush_all` has carried a comment claiming it is "wired into the
+            // engine teardown path" since it was written; it was not, so a
+            // `.window(...).aggregate(...)` — the most ordinary shape there is
+            // — silently lost its last window at end of input. Only drain them
+            // at a genuine end of input, never on a routine watermark advance.
+            #[cfg(feature = "arrow")]
+            if !only_watermark_driven {
+                match op {
+                    RuntimeOp::WindowedColumnarAggregate(state) => {
+                        let bin_ms = state.bin_duration_ms;
+                        let emissions: Vec<Vec<SharedEvent>> = state
+                            .flush_all()
+                            .into_iter()
+                            .map(|(bin_start_ms, result)| {
+                                vec![Self::aggregation_result_event(
+                                    bin_start_ms + bin_ms,
+                                    result,
+                                )]
+                            })
+                            .collect();
+                        return (!emissions.is_empty()).then_some((idx, emissions));
+                    }
+                    RuntimeOp::PartitionedWindowedColumnarAggregate(state) => {
+                        let bin_ms = state.bin_duration_ms;
+                        let partition_key = state.partition_key.clone();
+                        let emissions: Vec<Vec<SharedEvent>> = state
+                            .flush_all()
+                            .into_iter()
+                            .map(|(bin_start_ms, key, mut result)| {
+                                result.insert(
+                                    partition_key.clone(),
+                                    varpulis_core::Value::Str(key.into()),
+                                );
+                                vec![Self::aggregation_result_event(
+                                    bin_start_ms + bin_ms,
+                                    result,
+                                )]
+                            })
+                            .collect();
+                        return (!emissions.is_empty()).then_some((idx, emissions));
+                    }
+                    _ => {}
+                }
+            }
         }
         None
+    }
+
+    /// Whether a stream's `output_events` should also reach the output channel.
+    ///
+    /// A terminal stream — one with no `.to()` sink and no `.process()` — has
+    /// nothing downstream to consume it, so its pipeline result IS the output.
+    /// The steady-state dispatch loop has always done this; the watermark and
+    /// end-of-input paths did not, so a stream whose last operator is a fused
+    /// columnar aggregate produced its final bin and then dropped it on the
+    /// floor.
+    fn stream_emits_its_own_output(stream: &StreamDefinition) -> bool {
+        !stream
+            .operations
+            .iter()
+            .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)))
+    }
+
+    /// Build the `AggregationResult` event a fused columnar bin flushes to,
+    /// timestamped at the bin end — the same shape `ingest_and_flush` produces
+    /// on the steady-state path in `pipeline.rs`.
+    #[cfg(feature = "arrow")]
+    fn aggregation_result_event(
+        bin_end_ms: i64,
+        result: indexmap::IndexMap<String, varpulis_core::Value>,
+    ) -> SharedEvent {
+        let ts = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(bin_end_ms)
+            .unwrap_or_else(chrono::Utc::now);
+        let mut agg_event = crate::event::Event::with_capacity_at(
+            super::pipeline::AGGREGATION_RESULT_TYPE.clone(),
+            result.len(),
+            ts,
+        );
+        for (key, value) in result {
+            agg_event.data.insert(key.into(), value);
+        }
+        std::sync::Arc::new(agg_event)
     }
 
     /// Apply a watermark advance to all windows (async-runtime only).
@@ -1254,7 +1343,8 @@ impl Engine {
         &mut self,
         wm: DateTime<Utc>,
     ) -> Result<(), super::error::EngineError> {
-        self.apply_watermark_to_windows_inner(wm, false).await
+        self.apply_watermark_to_windows_inner(wm, false, false)
+            .await
     }
 
     /// Watermark advance across all streams; each graduated window's events
@@ -1266,13 +1356,22 @@ impl Engine {
         &mut self,
         wm: DateTime<Utc>,
         only_watermark_driven: bool,
+        end_of_input: bool,
     ) -> Result<(), super::error::EngineError> {
         let stream_names: Vec<String> = self.streams.keys().cloned().collect();
 
         for stream_name in stream_names {
-            let collected = {
+            let (collected, send_outputs) = {
                 let stream = self.streams.get_mut(&stream_name).unwrap();
-                Self::collect_watermark_emissions(stream, wm, only_watermark_driven)
+                // Only on a genuine end-of-input drain. A routine watermark
+                // advance must keep its existing behaviour, which the
+                // event-time golden tests pin. `only_watermark_driven` does
+                // NOT distinguish the two — the routine path passes false too.
+                let send_outputs = end_of_input && Self::stream_emits_its_own_output(stream);
+                (
+                    Self::collect_watermark_emissions(stream, wm, only_watermark_driven),
+                    send_outputs,
+                )
             };
             let Some((window_idx, emissions)) = collected else {
                 continue;
@@ -1288,6 +1387,13 @@ impl Engine {
                 )
                 .await?;
 
+                if send_outputs {
+                    for output in &result.output_events {
+                        self.output_events_emitted += 1;
+                        let owned = (**output).clone();
+                        self.send_output_async(owned).await;
+                    }
+                }
                 for emitted in &result.emitted_events {
                     self.output_events_emitted += 1;
                     let owned = (**emitted).clone();
@@ -1308,13 +1414,22 @@ impl Engine {
         &mut self,
         wm: chrono::DateTime<chrono::Utc>,
         only_watermark_driven: bool,
+        end_of_input: bool,
     ) -> Result<(), super::error::EngineError> {
         let stream_names: Vec<String> = self.streams.keys().cloned().collect();
 
         for stream_name in stream_names {
-            let collected = {
+            let (collected, send_outputs) = {
                 let stream = self.streams.get_mut(&stream_name).unwrap();
-                Self::collect_watermark_emissions(stream, wm, only_watermark_driven)
+                // Only on a genuine end-of-input drain. A routine watermark
+                // advance must keep its existing behaviour, which the
+                // event-time golden tests pin. `only_watermark_driven` does
+                // NOT distinguish the two — the routine path passes false too.
+                let send_outputs = end_of_input && Self::stream_emits_its_own_output(stream);
+                (
+                    Self::collect_watermark_emissions(stream, wm, only_watermark_driven),
+                    send_outputs,
+                )
             };
             let Some((window_idx, emissions)) = collected else {
                 continue;
@@ -1330,6 +1445,13 @@ impl Engine {
                     false,
                 )?;
 
+                if send_outputs {
+                    for output in &result.output_events {
+                        self.output_events_emitted += 1;
+                        let owned = (**output).clone();
+                        self.send_output(owned);
+                    }
+                }
                 for emitted in &result.emitted_events {
                     self.output_events_emitted += 1;
                     let owned = (**emitted).clone();

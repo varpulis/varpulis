@@ -373,7 +373,7 @@ pub async fn run_simulation(
                     }
 
                     // End-of-input drain for event-time windows (C2b).
-                    if let Err(e) = worker_engine.flush_final_watermark_sync() {
+                    if let Err(e) = worker_engine.flush_end_of_input_sync() {
                         eprintln!("Worker {worker_id}: Watermark drain error: {e}");
                     }
 
@@ -398,7 +398,7 @@ pub async fn run_simulation(
         info!("Preloaded {} events from file", events.len());
 
         // PERF: Extract owned events (zero-clone), use sync path when no sinks
-        let use_sync = !engine.has_sink_operations();
+        let use_sync = !engine.requires_async_dispatch();
         let mut all_events: Vec<Event> = events.into_iter().map(|te| te.event).collect();
         let total_events = all_events.len();
 
@@ -610,7 +610,7 @@ pub async fn run_simulation(
         for (i, engine_mutex) in worker_engines.iter().enumerate() {
             let mut w_engine = engine_mutex.lock().unwrap_or_else(|e| e.into_inner());
             // End-of-input drain for event-time windows (C2b).
-            if let Err(e) = w_engine.flush_final_watermark_sync() {
+            if let Err(e) = w_engine.flush_end_of_input_sync() {
                 eprintln!("Worker {i}: Watermark drain error: {e}");
             }
             let worker_metrics = w_engine.metrics();
@@ -628,7 +628,7 @@ pub async fn run_simulation(
     } else if streaming {
         // Single-threaded streaming mode (--streaming for huge files)
         const BATCH_SIZE: usize = 10000;
-        let use_sync = !engine.has_sink_operations();
+        let use_sync = !engine.requires_async_dispatch();
 
         let mut event_reader = StreamingEventReader::from_file(events_path)
             .map_err(|e| anyhow::anyhow!("Failed to open event file: {e}"))?;
@@ -731,13 +731,15 @@ pub async fn run_simulation(
             .map_err(|e| anyhow::anyhow!("Player error: {e}"))?;
     }
 
-    // End-of-input drain (C2b): graduate any still-open event-time windows.
-    // Watermark-driven only — arrival-driven windows keep today's EOF
-    // behavior. No-op when the program declares no `.watermark()`.
+    // End-of-input drain: the input is bounded, so every still-open window is
+    // as complete as it will ever be. This used to graduate watermark-driven
+    // windows only, so any program without an explicit `.watermark()` silently
+    // lost its final window — including the shipped join and aggregation
+    // examples, which is why they emitted nothing.
     engine
-        .flush_final_watermark()
+        .flush_end_of_input()
         .await
-        .map_err(|e| anyhow::anyhow!("Watermark drain error: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("End-of-input drain error: {e}"))?;
 
     // Flush any remaining session windows after all events are processed
     if engine.has_session_windows() {
@@ -754,11 +756,17 @@ pub async fn run_simulation(
             .map_err(|e| anyhow::anyhow!("Final checkpoint error: {e}"))?;
     }
 
-    // Wait a bit for any pending output events
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-    // Summary
+    // Stop the clock before waiting on the reporting channel.
+    //
+    // The 100 ms grace below exists so the summary can see output events still
+    // in flight; it is not part of the work being measured. It used to sit
+    // inside the timed region, and every benchmark harness that shells out to
+    // `simulate` parses this duration or the event rate derived from it — so
+    // every published Varpulis figure was understated by the whole 100 ms.
     let elapsed = start.elapsed();
+
+    // Wait a bit for any pending output events to reach the reporting channel.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Get total events processed (from parallel counter or single engine)
     let events_processed = if num_workers > 1 && !timed {

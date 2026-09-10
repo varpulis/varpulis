@@ -239,7 +239,7 @@ async fn run_rule_file(
 
     // Process events
     let events_owned: Vec<Event> = events.to_vec();
-    let use_sync = !engine.has_sink_operations();
+    let use_sync = !engine.requires_async_dispatch();
 
     if use_sync {
         engine

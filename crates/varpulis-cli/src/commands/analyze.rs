@@ -125,7 +125,7 @@ async fn run_and_count(
 
     // Process events
     let events_owned: Vec<Event> = events.to_vec();
-    if !engine.has_sink_operations() {
+    if !engine.requires_async_dispatch() {
         engine
             .process_batch_sync(events_owned)
             .map_err(|e| anyhow::anyhow!("Process error: {e}"))?;
