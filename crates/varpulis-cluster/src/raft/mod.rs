@@ -18,8 +18,11 @@ use std::sync::Arc;
 use openraft::network::RaftNetworkFactory;
 use serde::{Deserialize, Serialize};
 
-use crate::connector_config::ClusterConnector;
-use crate::worker::WorkerCapacity;
+// The command set and the state it mutates are backend-agnostic: the
+// `jetstream-control-plane` backend drives the identical commands against the
+// identical state over a KV bucket. They live in [`crate::control_state`] and
+// are re-exported here so `raft::ClusterCommand` keeps working.
+pub use crate::control_state::{ClusterCommand, ClusterResponse};
 
 /// Raft node ID type.
 pub type NodeId = u64;
@@ -58,135 +61,6 @@ impl std::fmt::Display for RaftNode {
 }
 
 // Node is auto-implemented by openraft 0.9 for types that satisfy the bounds.
-
-// ---------------------------------------------------------------------------
-// Log entry data (replicated commands)
-// ---------------------------------------------------------------------------
-
-/// Commands that mutate the shared coordinator state via Raft log replication.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ClusterCommand {
-    // -- Worker lifecycle --
-    RegisterWorker {
-        id: String,
-        address: String,
-        api_key: String,
-        capacity: WorkerCapacity,
-    },
-    DeregisterWorker {
-        id: String,
-    },
-    WorkerStatusChanged {
-        id: String,
-        status: String,
-    },
-    WorkerPipelinesUpdated {
-        id: String,
-        assigned_pipelines: Vec<String>,
-    },
-    WorkerMetricsUpdated {
-        id: String,
-        events_processed: u64,
-        pipelines_running: usize,
-        #[serde(default)]
-        pipeline_metrics: Vec<crate::worker::PipelineMetrics>,
-        /// Monotonic per-worker heartbeat counter (liveness signal). Advances
-        /// once per received heartbeat; `sync_from_raft` refreshes a worker's
-        /// `last_heartbeat` only when this value moves forward. `#[serde(default)]`
-        /// keeps older replicated/persisted commands deserializable.
-        #[serde(default)]
-        heartbeat_seq: u64,
-    },
-
-    // -- Pipeline groups --
-    GroupDeployed {
-        name: String,
-        group: serde_json::Value,
-    },
-    GroupUpdated {
-        name: String,
-        group: serde_json::Value,
-    },
-    GroupRemoved {
-        name: String,
-    },
-
-    // -- Migrations --
-    MigrationStarted {
-        task: serde_json::Value,
-    },
-    MigrationUpdated {
-        id: String,
-        status: String,
-    },
-    MigrationRemoved {
-        id: String,
-    },
-
-    // -- Connectors --
-    ConnectorCreated {
-        name: String,
-        connector: ClusterConnector,
-    },
-    ConnectorUpdated {
-        name: String,
-        connector: ClusterConnector,
-    },
-    ConnectorRemoved {
-        name: String,
-    },
-
-    // -- Scaling --
-    ScalingPolicySet {
-        policy: Option<serde_json::Value>,
-    },
-
-    // -- Model Registry --
-    ModelRegistered {
-        name: String,
-        entry: crate::model_registry::ModelRegistryEntry,
-    },
-    ModelRemoved {
-        name: String,
-    },
-
-    // -- Distributed checkpoints (Flink-parity, Phase 1, Task 1.4) --
-    /// A distributed checkpoint for `group_id` was successfully persisted to
-    /// the shared state store. Replicating this through Raft makes the new
-    /// checkpoint id visible to every coordinator, which they use on recovery
-    /// to decide which assembled snapshot to restore from.
-    #[cfg(feature = "distributed-checkpoint")]
-    CheckpointCompleted {
-        /// Pipeline group whose checkpoint completed.
-        group_id: String,
-        /// Id of the durable checkpoint.
-        checkpoint_id: u64,
-    },
-    /// A distributed checkpoint for `group_id` was aborted (timeout, NACK,
-    /// persistence failure, …). Replicated for observability and so that
-    /// other coordinators do not retry the same id.
-    #[cfg(feature = "distributed-checkpoint")]
-    CheckpointAborted {
-        /// Pipeline group whose checkpoint aborted.
-        group_id: String,
-        /// Id of the aborted checkpoint.
-        checkpoint_id: u64,
-        /// Recorded reason — same string the coordinator broadcast in the
-        /// `CheckpointAbortNotification`.
-        reason: String,
-    },
-}
-
-// ---------------------------------------------------------------------------
-// Apply response
-// ---------------------------------------------------------------------------
-
-/// Response returned after a command is applied to the state machine.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ClusterResponse {
-    Ok,
-    Error { message: String },
-}
 
 // ---------------------------------------------------------------------------
 // Bootstrap

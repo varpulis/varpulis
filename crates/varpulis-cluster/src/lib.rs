@@ -58,6 +58,7 @@ pub mod chat;
 #[cfg(feature = "distributed-checkpoint")]
 pub mod checkpoint_protocol;
 pub mod connector_config;
+pub mod control_state;
 pub mod coordinator;
 #[cfg(feature = "federation")]
 pub mod federation;
@@ -66,6 +67,8 @@ pub mod federation_routing;
 #[cfg(feature = "k8s")]
 pub mod ha;
 pub mod health;
+#[cfg(feature = "jetstream-control-plane")]
+pub mod jetstream_control_plane;
 #[cfg(feature = "k8s")]
 pub mod k8s_watcher;
 pub mod metrics;

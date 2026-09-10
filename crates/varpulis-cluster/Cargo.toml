@@ -51,6 +51,11 @@ onnx = ["varpulis-runtime/onnx"]
 raft = ["openraft"]
 persistent = ["raft", "rocksdb"]
 nats-transport = ["async-nats", "futures-util"]
+# JetStream KV control plane (step 3a of collapsing raft + k8s-lease HA +
+# core-NATS onto JetStream). Adds NO new dependency — async-nats already ships
+# `jetstream::kv`. Off by default, and inert unless
+# `VARPULIS_CONTROL_PLANE_URL` is set. Does not disable or replace `raft`.
+jetstream-control-plane = ["async-nats", "futures-util"]
 federation = ["nats-transport"]
 otel = ["opentelemetry", "tracing-opentelemetry"]
 # Distributed exactly-once checkpoint protocol (Flink-parity plan, Phase 1).
