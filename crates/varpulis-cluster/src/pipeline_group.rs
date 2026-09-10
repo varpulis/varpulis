@@ -107,6 +107,16 @@ pub struct PipelineDeployment {
     /// Used as a fencing token to ignore events from stale deployments.
     #[serde(default)]
     pub epoch: u64,
+    /// Why this placement is `Failed`, verbatim from the worker.
+    ///
+    /// The coordinator already had this text — a worker that refuses a
+    /// pipeline says why, and the reason is usually the submitted VPL failing
+    /// to compile. It was written to the coordinator's log and dropped, so the
+    /// API answered "Failed" and nothing else, and the only way to learn what
+    /// was wrong with your own program was to have shell access to the
+    /// coordinator. `None` on any placement that is not failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<String>,
 }
 
 /// A deployed pipeline group with placement and status tracking.
@@ -282,6 +292,11 @@ pub struct PipelinePlacementInfo {
     pub worker_address: String,
     pub pipeline_id: String,
     pub status: String,
+    /// Why this placement failed, verbatim from the worker. Absent unless it
+    /// did. Usually a compile error in the submitted VPL, which the caller
+    /// could previously only find in the coordinator's log.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<String>,
 }
 
 impl From<&DeployedPipelineGroup> for PipelineGroupInfo {
@@ -295,6 +310,7 @@ impl From<&DeployedPipelineGroup> for PipelineGroupInfo {
                 worker_address: dep.worker_address.clone(),
                 pipeline_id: dep.pipeline_id.clone(),
                 status: format!("{:?}", dep.status),
+                failure_reason: dep.failure_reason.clone(),
             })
             .collect();
         let sources = group
@@ -355,6 +371,7 @@ mod tests {
                 pipeline_id: "pid1".into(),
                 status: PipelineDeploymentStatus::Running,
                 epoch: 0,
+                failure_reason: None,
             },
         );
         group.placements.insert(
@@ -366,6 +383,7 @@ mod tests {
                 pipeline_id: "pid2".into(),
                 status: PipelineDeploymentStatus::Running,
                 epoch: 0,
+                failure_reason: None,
             },
         );
         group.update_status();
@@ -435,6 +453,7 @@ mod tests {
                 pipeline_id: "".into(),
                 status: PipelineDeploymentStatus::Failed,
                 epoch: 0,
+                failure_reason: None,
             },
         );
         group.placements.insert(
@@ -446,6 +465,7 @@ mod tests {
                 pipeline_id: "".into(),
                 status: PipelineDeploymentStatus::Failed,
                 epoch: 0,
+                failure_reason: None,
             },
         );
         group.update_status();
@@ -504,6 +524,7 @@ mod tests {
                 pipeline_id: "pid1".into(),
                 status: PipelineDeploymentStatus::Running,
                 epoch: 0,
+                failure_reason: None,
             },
         );
         group.placements.insert(
@@ -515,6 +536,7 @@ mod tests {
                 pipeline_id: "pid2".into(),
                 status: PipelineDeploymentStatus::Deploying,
                 epoch: 0,
+                failure_reason: None,
             },
         );
         group.update_status();
@@ -548,6 +570,7 @@ mod tests {
                 pipeline_id: "pid1".into(),
                 status: PipelineDeploymentStatus::Stopped,
                 epoch: 0,
+                failure_reason: None,
             },
         );
         group.update_status();
@@ -618,6 +641,7 @@ mod tests {
                 pipeline_id: "pid-abc".into(),
                 status: PipelineDeploymentStatus::Running,
                 epoch: 0,
+                failure_reason: None,
             },
         );
 
@@ -650,6 +674,7 @@ mod tests {
                 worker_address: "http://localhost:9000".into(),
                 pipeline_id: "pid1".into(),
                 status: "Running".into(),
+                failure_reason: None,
             }],
             sources: HashMap::new(),
         };
@@ -726,6 +751,7 @@ mod tests {
                 pipeline_id: "pid1".into(),
                 status: PipelineDeploymentStatus::Running,
                 epoch: 0,
+                failure_reason: None,
             },
         );
         group.update_status();

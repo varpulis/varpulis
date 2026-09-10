@@ -108,7 +108,14 @@ async fn test_failover_preserves_state() {
                 "name": "state-failover",
                 "pipelines": [{
                     "name": "windowed",
-                    "source": "stream Alerts = SensorReading .window(count, 5) .aggregate(count() as cnt)"
+                    // `.window(count, 5)` and `count() as cnt` are not VPL —
+                    // the grammar wants a bare duration or count for the
+                    // window and `name: aggregate()` for the projection. The
+                    // worker refused this pipeline every run, and the test
+                    // reached its first assertion having deployed nothing, so
+                    // what looked like a state-preservation failure was really
+                    // a pipeline that never started.
+                    "source": "stream Alerts = SensorReading .window(5) .aggregate(cnt: count())"
                 }],
                 "routes": []
             }))

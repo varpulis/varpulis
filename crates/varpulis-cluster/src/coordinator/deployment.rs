@@ -295,6 +295,7 @@ impl Coordinator {
                         pipeline_id: resp_body.id,
                         status: PipelineDeploymentStatus::Running,
                         epoch: 0,
+                        failure_reason: None,
                     };
                     group
                         .placements
@@ -312,7 +313,7 @@ impl Coordinator {
                             .push(result.replica_name);
                     }
                 }
-                Err(_) => {
+                Err(reason) => {
                     group.placements.insert(
                         result.replica_name.clone(),
                         PipelineDeployment {
@@ -322,6 +323,7 @@ impl Coordinator {
                             pipeline_id: String::new(),
                             status: PipelineDeploymentStatus::Failed,
                             epoch: 0,
+                            failure_reason: Some(reason),
                         },
                     );
                 }
@@ -488,6 +490,7 @@ impl Coordinator {
                             pipeline_id: resp_body.id,
                             status: PipelineDeploymentStatus::Running,
                             epoch: 0,
+                            failure_reason: None,
                         };
 
                         group.placements.insert(replica_name.clone(), deployment);
@@ -518,6 +521,7 @@ impl Coordinator {
                                 pipeline_id: String::new(),
                                 status: PipelineDeploymentStatus::Failed,
                                 epoch: 0,
+                                failure_reason: Some(format!("HTTP {status} - {body}")),
                             },
                         );
                     }
@@ -535,6 +539,7 @@ impl Coordinator {
                                 pipeline_id: String::new(),
                                 status: PipelineDeploymentStatus::Failed,
                                 epoch: 0,
+                                failure_reason: Some(e.to_string()),
                             },
                         );
                     }

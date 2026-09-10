@@ -1496,6 +1496,7 @@ mod tests {
                 pipeline_id: String::new(),
                 status: crate::pipeline_group::PipelineDeploymentStatus::Running,
                 epoch: 0,
+                failure_reason: None,
             },
         );
         group.placements.insert(
@@ -1507,6 +1508,7 @@ mod tests {
                 pipeline_id: String::new(),
                 status: crate::pipeline_group::PipelineDeploymentStatus::Running,
                 epoch: 0,
+                failure_reason: None,
             },
         );
         coord.pipeline_groups.insert("g1".into(), group);
@@ -1547,6 +1549,7 @@ mod tests {
                     pipeline_id: String::new(),
                     status: crate::pipeline_group::PipelineDeploymentStatus::Running,
                     epoch: 0,
+                    failure_reason: None,
                 },
             );
         }
@@ -1596,6 +1599,7 @@ mod tests {
                     pipeline_id: String::new(),
                     status: crate::pipeline_group::PipelineDeploymentStatus::Running,
                     epoch: 0,
+                    failure_reason: None,
                 },
             );
         }
@@ -1671,6 +1675,7 @@ mod tests {
                     pipeline_id: String::new(),
                     status: crate::pipeline_group::PipelineDeploymentStatus::Running,
                     epoch: 0,
+                    failure_reason: None,
                 },
             );
         }

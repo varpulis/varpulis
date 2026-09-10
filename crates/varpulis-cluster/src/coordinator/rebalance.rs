@@ -247,6 +247,7 @@ impl Coordinator {
                         pipeline_id: new_pipeline_id.to_string(),
                         status: PipelineDeploymentStatus::Running,
                         epoch: new_epoch,
+                        failure_reason: None,
                     },
                 );
                 group.update_status();
