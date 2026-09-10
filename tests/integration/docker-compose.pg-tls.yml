@@ -1,0 +1,51 @@
+# TLS-requiring PostgreSQL for the CDC connector's TLS gate tests
+# (crates/varpulis-connector-cdc/src/lib.rs, mod tls_integration).
+#
+# Its pg_hba.conf has no plain `host` line, so a plaintext TCP connection is
+# refused: `sslmode=require` can only succeed by negotiating real TLS. The
+# server certificate is self-signed and untrusted, which is what lets the
+# verify-full guard test prove the WebPki verifier is actually consulted.
+#
+# Run `pg-tls/generate-certs.sh` first, then:
+#   docker compose -f tests/integration/docker-compose.pg-tls.yml up -d
+#
+# Published on 5433 (not 5432) so it can coexist with the plain CDC fixture.
+services:
+  postgres-tls:
+    image: postgres:16-alpine
+    hostname: postgres-tls
+    container_name: varpulis-pg-tls
+    ports:
+      - "${VARPULIS_TLS_PG_PORT:-5433}:5432"
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+    volumes:
+      - ./pg-tls/server.crt:/certs/server.crt:ro
+      - ./pg-tls/server.key:/certs/server.key:ro
+      - ./pg-tls/pg_hba.conf:/certs/pg_hba.conf:ro
+    # The bind-mounted key is owned by the host user; postgres refuses to start
+    # unless the key is owned by the server user and mode 0600, so copy it into
+    # place before handing off to the stock entrypoint.
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        cp /certs/server.crt /var/lib/postgresql/server.crt
+        cp /certs/server.key /var/lib/postgresql/server.key
+        cp /certs/pg_hba.conf /var/lib/postgresql/pg_hba.conf
+        chown postgres:postgres /var/lib/postgresql/server.crt /var/lib/postgresql/server.key /var/lib/postgresql/pg_hba.conf
+        chmod 600 /var/lib/postgresql/server.key
+        exec docker-entrypoint.sh postgres \
+          -c ssl=on \
+          -c ssl_cert_file=/var/lib/postgresql/server.crt \
+          -c ssl_key_file=/var/lib/postgresql/server.key \
+          -c hba_file=/var/lib/postgresql/pg_hba.conf
+    healthcheck:
+      # Local socket only — TCP requires TLS, which pg_isready will not do.
+      test: ["CMD", "pg_isready", "-h", "/var/run/postgresql", "-U", "postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20

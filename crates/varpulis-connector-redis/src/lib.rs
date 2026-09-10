@@ -849,10 +849,43 @@ impl SinkConnector for RedisStreamSinkStub {
 mod tests {
     use super::*;
 
+    // -----------------------------------------------------------------------
+    // Broker-gate policy (mirrored verbatim in the mqtt / pulsar / cdc
+    // connectors — test-only, so it is duplicated rather than pulling a new
+    // dependency into four published crates).
+    //
+    // A broker-backed test must NEVER report success because the broker was
+    // absent. Every CI job that provisions a broker sets
+    // `VARPULIS_REQUIRE_BROKERS=1`; under that flag a missing broker is a hard
+    // failure. Without the flag (a dev box with nothing running) the abstention
+    // is reported loudly — on stderr and, under GitHub Actions, in the job
+    // summary — so nobody mistakes it for a pass.
+    // -----------------------------------------------------------------------
+
+    /// Record an abstention. Panics when `VARPULIS_REQUIRE_BROKERS` is set.
+    #[track_caller]
+    fn report_skip(test: &str, reason: &str) {
+        assert!(
+            std::env::var_os("VARPULIS_REQUIRE_BROKERS").is_none(),
+            "VARPULIS_REQUIRE_BROKERS=1 but {test} could not reach its broker: {reason}. \
+             This test is the fail-before/pass-after gate for a merged fix — it must not \
+             pass by abstaining. Fix the broker fixture instead of relaxing the gate."
+        );
+        eprintln!("SKIPPED(no-broker) {test}: {reason}");
+        if let Ok(summary) = std::env::var("GITHUB_STEP_SUMMARY") {
+            use std::io::Write as _;
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(summary) {
+                let _ = writeln!(f, "- :warning: **SKIPPED (no broker)** `{test}` — {reason}");
+            }
+        }
+    }
+
     /// The Redis pub/sub SOURCE must reconnect + re-subscribe when the server
     /// drops its subscription connection, instead of going silently deaf. Needs
-    /// a reachable Redis; skips gracefully otherwise (CI without a broker stays
-    /// green). Point elsewhere with `VARPULIS_TEST_REDIS_URL` (default 6390).
+    /// a reachable Redis. With `VARPULIS_REQUIRE_BROKERS=1` (all broker CI jobs)
+    /// an unreachable Redis fails the test; otherwise the abstention is reported
+    /// via `report_skip`. Point elsewhere with `VARPULIS_TEST_REDIS_URL`
+    /// (default 6390).
     #[tokio::test]
     async fn redis_source_reconnects_after_connection_loss() {
         use std::time::Duration;
@@ -861,14 +894,15 @@ mod tests {
             .unwrap_or_else(|_| "redis://127.0.0.1:6390".to_string());
         let channel = "varpulis-source-reconnect-test-channel";
 
+        const TEST: &str = "redis_source_reconnects_after_connection_loss";
         let Ok(client) = redis::Client::open(url.as_str()) else {
-            eprintln!("[skip] redis client open failed for {url}");
+            report_skip(TEST, &format!("redis client open failed for {url}"));
             return;
         };
         let mut admin = match client.get_multiplexed_async_connection().await {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[skip] redis not reachable at {url}: {e}");
+                report_skip(TEST, &format!("redis not reachable at {url}: {e}"));
                 return;
             }
         };
@@ -876,7 +910,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<Event>(100);
         let mut source = RedisSource::new("reconnect-test", RedisConfig::new(&url, channel));
         if source.start(tx).await.is_err() {
-            eprintln!("[skip] source failed to start");
+            report_skip(TEST, "source failed to start");
             return;
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -934,9 +968,10 @@ mod tests {
 
     /// RedisSink must honor a dynamic `.to(topic)` by publishing to the
     /// requested channel, not the configured one (and not reject/drop it).
-    /// Needs a reachable Redis; skips gracefully when none is available so CI
-    /// without a broker stays green. Point it elsewhere with
-    /// `VARPULIS_TEST_REDIS_URL` (defaults to the local test container on 6390).
+    /// Needs a reachable Redis. With `VARPULIS_REQUIRE_BROKERS=1` an
+    /// unreachable Redis fails the test; otherwise the abstention is reported
+    /// via `report_skip`. Point it elsewhere with `VARPULIS_TEST_REDIS_URL`
+    /// (defaults to the local test container on 6390).
     #[tokio::test]
     async fn redis_sink_honors_dynamic_topic_publishes_to_requested_channel() {
         use std::time::Duration;
@@ -944,20 +979,21 @@ mod tests {
         let url = std::env::var("VARPULIS_TEST_REDIS_URL")
             .unwrap_or_else(|_| "redis://127.0.0.1:6390".to_string());
 
+        const TEST: &str = "redis_sink_honors_dynamic_topic_publishes_to_requested_channel";
         let Ok(client) = redis::Client::open(url.as_str()) else {
-            eprintln!("[skip] redis client open failed for {url}");
+            report_skip(TEST, &format!("redis client open failed for {url}"));
             return;
         };
         let mut pubsub = match client.get_async_pubsub().await {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("[skip] redis not reachable at {url}: {e}");
+                report_skip(TEST, &format!("redis not reachable at {url}: {e}"));
                 return;
             }
         };
         let dyn_channel = "varpulis-dyn-topic-test-channel";
         if pubsub.subscribe(dyn_channel).await.is_err() {
-            eprintln!("[skip] redis subscribe failed");
+            report_skip(TEST, "redis subscribe failed");
             return;
         }
         let mut messages = pubsub.on_message();
@@ -968,7 +1004,7 @@ mod tests {
         let sink = match RedisSink::new("dyn-topic-test-sink", config).await {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[skip] redis sink connect failed: {e}");
+                report_skip(TEST, &format!("redis sink connect failed: {e}"));
                 return;
             }
         };

@@ -9,12 +9,22 @@
 # Parameters:
 #   confidence  Minimum confidence threshold (0.0 to 1.0)
 #   horizon     How far ahead to predict
-#   warmup      Number of completed patterns needed before predictions start
+#   warmup      Number of COMPLETED patterns the PST must observe before it
+#               starts predicting. Nothing is emitted until then, so `warmup`
+#               must be smaller than the number of complete runs in your input
+#               — this example used to ask for 50 against a 9-event file, which
+#               is structurally impossible and emitted nothing.
 #
 # Output fields added by .forecast():
 #   forecast_probability  Likelihood the pattern will complete (0.0 to 1.0)
 #   forecast_confidence   Calibrated confidence of the prediction
 #   forecast_time         Estimated time to pattern completion
+#
+# KNOWN LIMITATION (engine, v0.11.0): on a forecast stream the .emit() resolves
+# literals and the forecast_* variables, but NOT the pattern aliases — `user`,
+# `ip` and `amount` below come out absent rather than filled in. The alert still
+# fires with its probability and severity. Tracked as a known-failing assertion
+# in crates/varpulis-runtime/tests/examples_e2e.rs.
 #
 # Use cases:
 #   - Proactive fraud alerts before damage occurs
@@ -39,7 +49,7 @@ stream PredictedTakeover = Login as login
     -> PasswordChange where user_id == login.user_id as pwd
     -> Transaction where user_id == login.user_id and amount > 500 as tx
     .within(30m)
-    .forecast(confidence: 0.5, horizon: 15m, warmup: 50)
+    .forecast(confidence: 0.5, horizon: 15m, warmup: 3)
     .where(forecast_probability > 0.6)
     .emit(
         alert: "PREDICTED_TAKEOVER",

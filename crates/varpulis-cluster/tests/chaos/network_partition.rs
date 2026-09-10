@@ -810,7 +810,7 @@ mod integration {
                     "127.0.0.1",
                     "--api-key",
                     API_KEY,
-                    "--nats-url",
+                    "--nats",
                     nats_url,
                 ])
                 .stdout(Stdio::null())
@@ -845,7 +845,7 @@ mod integration {
                     API_KEY,
                     "--bind",
                     "127.0.0.1",
-                    "--nats-url",
+                    "--nats",
                     nats_url,
                 ])
                 .stdout(Stdio::null())
@@ -867,7 +867,7 @@ mod integration {
                     API_KEY,
                     "--bind",
                     "127.0.0.1",
-                    "--nats-url",
+                    "--nats",
                     nats_url,
                 ])
                 .stdout(Stdio::null())

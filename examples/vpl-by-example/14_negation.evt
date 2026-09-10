@@ -1,7 +1,8 @@
-# 14 — Negation: Order without Payment
-# Expected:
-#   Order 2 (Bob, 200) → unpaid (no Payment with order_id=2)
-#   Order 1 (Alice, 100) → paid at 50ms, so NOT flagged
+# 14 — Negation: a cancellation in between kills the run
+# Expected: exactly 1 output
+#   Order 1 (Alice, 100) -> Payment      => order_confirmed
+#   Order 2 (Bob,   200) -> Cancellation -> Payment
+#                                        => run cancelled, NOT emitted
 
 Order { id: 1, customer: "Alice", amount: 100.0 }
 
@@ -11,4 +12,9 @@ Payment { order_id: 1, amount: 100.0 }
 BATCH 100
 Order { id: 2, customer: "Bob", amount: 200.0 }
 
-# No payment for order 2 within the window
+BATCH 150
+Cancellation { order_id: 2, reason: "fraud_hold" }
+
+# Arrives after the cancellation, so it cannot complete the run.
+BATCH 200
+Payment { order_id: 2, amount: 200.0 }

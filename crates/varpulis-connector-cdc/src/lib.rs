@@ -1155,15 +1155,50 @@ mod tests {
 // TLS integration tests
 //
 // These exercise connect_pg against a REAL TLS-enabled PostgreSQL (a container).
-// They skip gracefully (eprintln + return) when no such server is reachable, so
-// CI without one stays green — mirroring the MQTT real-broker test. Bring up the
-// server with the recipe in the connector's test docs and point the tests at it
-// via VARPULIS_TLS_PG_PORT / VARPULIS_TLS_PG_HOST / VARPULIS_TLS_PG_CA.
+// Bring the server up with
+//   tests/integration/run_pg_tls_tests.sh
+// (docker-compose.pg-tls.yml, port 5433) and point the tests at it via
+// VARPULIS_TLS_PG_PORT / VARPULIS_TLS_PG_HOST / VARPULIS_TLS_PG_CA.
+//
+// When no such server is reachable the tests report an abstention rather than a
+// pass; with VARPULIS_REQUIRE_BROKERS=1 (the pg-tls CI job) the abstention is a
+// hard failure, so these can never go green without actually negotiating TLS.
 // =============================================================================
 
 #[cfg(test)]
 mod tls_integration {
     use super::*;
+
+    // -----------------------------------------------------------------------
+    // Broker-gate policy (mirrored verbatim in the redis / mqtt / pulsar
+    // connectors — test-only, so it is duplicated rather than pulling a new
+    // dependency into four published crates).
+    //
+    // A server-backed test must NEVER report success because the server was
+    // absent. Every CI job that provisions one sets
+    // `VARPULIS_REQUIRE_BROKERS=1`; under that flag a missing server is a hard
+    // failure. Without the flag (a dev box with nothing running) the abstention
+    // is reported loudly — on stderr and, under GitHub Actions, in the job
+    // summary — so nobody mistakes it for a pass.
+    // -----------------------------------------------------------------------
+
+    /// Record an abstention. Panics when `VARPULIS_REQUIRE_BROKERS` is set.
+    #[track_caller]
+    fn report_skip(test: &str, reason: &str) {
+        assert!(
+            std::env::var_os("VARPULIS_REQUIRE_BROKERS").is_none(),
+            "VARPULIS_REQUIRE_BROKERS=1 but {test} could not reach its server: {reason}. \
+             This test is the fail-before/pass-after gate for a merged fix — it must not \
+             pass by abstaining. Fix the server fixture instead of relaxing the gate."
+        );
+        eprintln!("SKIPPED(no-broker) {test}: {reason}");
+        if let Ok(summary) = std::env::var("GITHUB_STEP_SUMMARY") {
+            use std::io::Write as _;
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(summary) {
+                let _ = writeln!(f, "- :warning: **SKIPPED (no server)** `{test}` — {reason}");
+            }
+        }
+    }
 
     /// Resolve the TLS PostgreSQL test target `(host, port)` and confirm the
     /// port is open, else return `None` so the caller skips. Host defaults to
@@ -1208,7 +1243,10 @@ mod tls_integration {
     #[tokio::test]
     async fn sslmode_require_negotiates_real_tls() {
         let Some((host, port)) = tls_pg_target() else {
-            eprintln!("[skip] TLS PostgreSQL not reachable (set VARPULIS_TLS_PG_PORT)");
+            report_skip(
+                "sslmode_require_negotiates_real_tls",
+                "TLS PostgreSQL not reachable (set VARPULIS_TLS_PG_HOST/VARPULIS_TLS_PG_PORT)",
+            );
             return;
         };
         let config = target_config(&host, port, "require");
@@ -1236,7 +1274,10 @@ mod tls_integration {
     #[tokio::test]
     async fn sslmode_verify_full_rejects_untrusted_self_signed() {
         let Some((host, port)) = tls_pg_target() else {
-            eprintln!("[skip] TLS PostgreSQL not reachable (set VARPULIS_TLS_PG_PORT)");
+            report_skip(
+                "sslmode_verify_full_rejects_untrusted_self_signed",
+                "TLS PostgreSQL not reachable (set VARPULIS_TLS_PG_HOST/VARPULIS_TLS_PG_PORT)",
+            );
             return;
         };
         let config = target_config(&host, port, "verify-full");
@@ -1254,17 +1295,24 @@ mod tls_integration {
         );
     }
 
-    /// NICE-TO-HAVE — verify-full succeeds when the self-signed cert is pinned as
-    /// the CA and the host matches the cert SAN. Requires VARPULIS_TLS_PG_CA to
-    /// point at the server cert PEM; skips otherwise.
+    /// NICE-TO-HAVE — verify-full succeeds when the fixture's private CA is
+    /// pinned and the host matches the cert SAN. Requires VARPULIS_TLS_PG_CA to
+    /// point at that CA's PEM (tests/integration/pg-tls/ca.crt).
     #[tokio::test]
     async fn sslmode_verify_full_succeeds_with_pinned_ca() {
+        const TEST: &str = "sslmode_verify_full_succeeds_with_pinned_ca";
         let Some((host, port)) = tls_pg_target() else {
-            eprintln!("[skip] TLS PostgreSQL not reachable");
+            report_skip(
+                TEST,
+                "TLS PostgreSQL not reachable (set VARPULIS_TLS_PG_HOST/VARPULIS_TLS_PG_PORT)",
+            );
             return;
         };
         let Ok(ca_path) = std::env::var("VARPULIS_TLS_PG_CA") else {
-            eprintln!("[skip] VARPULIS_TLS_PG_CA not set (path to server self-signed cert PEM)");
+            report_skip(
+                TEST,
+                "VARPULIS_TLS_PG_CA not set (path to the server's self-signed cert PEM)",
+            );
             return;
         };
         let config = target_config(&host, port, "verify-full").with_ca_cert(&ca_path);
