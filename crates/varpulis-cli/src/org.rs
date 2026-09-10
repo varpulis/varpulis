@@ -1190,7 +1190,11 @@ async fn handle_list_org_pipelines(
                         "id": p.id.to_string(),
                         "name": p.name,
                         "status": p.status,
-                        "vpl_source": p.vpl_source,
+                        // Redacted on the way out: a pipeline's stored source
+                        // carries whatever connector credentials were injected
+                        // into it at deploy time, and a global template's copy
+                        // carries whatever the operator wrote inline.
+                        "vpl_source": varpulis_core::security::redact_vpl_secrets(&p.vpl_source),
                         "scope_level": p.scope_level,
                         "inherited_from_org_id": p.inherited_from_org_id.map(|id| id.to_string()),
                         "read_only": is_inherited,

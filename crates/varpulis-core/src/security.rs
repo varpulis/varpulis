@@ -236,3 +236,292 @@ mod secret_key_tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// VPL source redaction
+// ---------------------------------------------------------------------------
+
+/// The value substituted for a secret when a VPL source is rendered for a
+/// client. Deliberately not a usable credential, and easy to grep for.
+pub const REDACTED_VALUE: &str = "[REDACTED]";
+
+/// Redact secret parameter values inside VPL `connector` declarations.
+///
+/// A cluster-level named connector is rendered back into VPL as
+/// `connector kafka_signals = kafka(brokers: "…", sasl_password: "…")` and
+/// prepended to a tenant's pipeline source before deployment. That enriched
+/// source is what gets stored, and it is what the pipeline read APIs return —
+/// so a tenant who *avoided* inline secrets by using a named connector still
+/// got those secrets handed back by `GET /api/v1/pipelines/{id}`.
+///
+/// The redaction belongs on the serialised shape, not on `Debug`. `Debug`
+/// protects the logs; `Serialize` is what feeds the REST API, and applying the
+/// control only to the former is the mistake this codebase kept making.
+///
+/// Scope is deliberately narrow — only the parenthesised parameter list of a
+/// `connector` declaration. VPL uses secret-looking identifiers elsewhere for
+/// entirely non-secret things (`registry_key:` in a Sysmon detection's `emit`
+/// record, `key:` as the join key of `.enrich(…)`), and rewriting those would
+/// corrupt the detection logic the operator is trying to read.
+#[must_use]
+pub fn redact_vpl_secrets(source: &str) -> String {
+    let spans = connector_secret_params(source);
+    if spans.is_empty() {
+        return source.to_string();
+    }
+    let mut out = String::with_capacity(source.len() + spans.len() * REDACTED_VALUE.len());
+    let mut last = 0usize;
+    for span in &spans {
+        out.push_str(&source[last..span.value.start]);
+        out.push('"');
+        out.push_str(REDACTED_VALUE);
+        out.push('"');
+        last = span.value.end;
+    }
+    out.push_str(&source[last..]);
+    out
+}
+
+/// Names of the secret parameters that carry a literal value inside a
+/// `connector` declaration in `source`.
+///
+/// Used to refuse input that would fan a credential out to readers who must not
+/// see it — a global pipeline template is copied verbatim into every tenant, so
+/// one inline SASL password in it is handed to all of them.
+#[must_use]
+pub fn vpl_inline_secret_params(source: &str) -> Vec<String> {
+    let mut names: Vec<String> = connector_secret_params(source)
+        .into_iter()
+        .filter(|s| !source[s.value.clone()].trim_matches('"').is_empty())
+        .map(|s| source[s.key].to_string())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Whether `source` carries a redaction placeholder where a credential belongs.
+///
+/// A client that reads a redacted source and posts it straight back would
+/// otherwise deploy `[REDACTED]` as the password and fail at connect time with
+/// no indication why. Callers reject such a source instead.
+#[must_use]
+pub fn vpl_has_redacted_secret(source: &str) -> bool {
+    connector_secret_params(source)
+        .into_iter()
+        .any(|s| source[s.value].trim_matches('"') == REDACTED_VALUE)
+}
+
+/// A secret parameter located inside a `connector` declaration.
+struct SecretParamSpan {
+    key: std::ops::Range<usize>,
+    value: std::ops::Range<usize>,
+}
+
+/// Locate `key: value` pairs whose key names a secret and which sit inside the
+/// argument list of a `connector <name> = <type>( … )` declaration.
+fn connector_secret_params(source: &str) -> Vec<SecretParamSpan> {
+    let bytes = source.as_bytes();
+    let len = bytes.len();
+    let mut spans = Vec::new();
+    let mut brackets: Vec<u8> = Vec::new();
+    // Depth of the paren group opened by a `connector` declaration, when we are
+    // inside one.
+    let mut connector_depth: Option<usize> = None;
+    // Saw the `connector` keyword; waiting for its `(`.
+    let mut pending_connector = false;
+    let mut pos = 0usize;
+
+    while pos < len {
+        match bytes[pos] {
+            b'"' => pos = string_literal_end(bytes, pos),
+            b'#' => pos = line_end(bytes, pos),
+            b'/' if pos + 1 < len && bytes[pos + 1] == b'/' => pos = line_end(bytes, pos),
+            b'(' | b'[' | b'{' => {
+                brackets.push(bytes[pos]);
+                if pending_connector && bytes[pos] == b'(' {
+                    connector_depth = Some(brackets.len());
+                }
+                pending_connector = false;
+                pos += 1;
+            }
+            b')' | b']' | b'}' => {
+                if connector_depth == Some(brackets.len()) {
+                    connector_depth = None;
+                }
+                brackets.pop();
+                pending_connector = false;
+                pos += 1;
+            }
+            byte if is_vpl_ident_byte(byte) => {
+                let key_start = pos;
+                while pos < len && is_vpl_ident_byte(bytes[pos]) {
+                    pos += 1;
+                }
+                let key_end = pos;
+                let ident = &source[key_start..key_end];
+                if ident == "connector" && connector_depth.is_none() {
+                    pending_connector = true;
+                    continue;
+                }
+                if connector_depth != Some(brackets.len()) || !is_secret_key(ident) {
+                    continue;
+                }
+
+                // `key` must be followed by `:` for this to be a parameter.
+                let mut colon = pos;
+                while colon < len && bytes[colon].is_ascii_whitespace() {
+                    colon += 1;
+                }
+                if colon >= len || bytes[colon] != b':' {
+                    continue;
+                }
+
+                let mut value_start = colon + 1;
+                while value_start < len
+                    && (bytes[value_start] == b' ' || bytes[value_start] == b'\t')
+                {
+                    value_start += 1;
+                }
+                if value_start >= len {
+                    continue;
+                }
+
+                let value_end = if bytes[value_start] == b'"' {
+                    string_literal_end(bytes, value_start)
+                } else {
+                    // A bare literal — `to_vpl_declaration` emits numeric
+                    // parameter values unquoted — runs to the next separator.
+                    let mut end = value_start;
+                    while end < len
+                        && !matches!(bytes[end], b',' | b')' | b']' | b'}' | b'\n' | b'\r')
+                    {
+                        end += 1;
+                    }
+                    while end > value_start && (bytes[end - 1] == b' ' || bytes[end - 1] == b'\t') {
+                        end -= 1;
+                    }
+                    end
+                };
+
+                if value_end > value_start {
+                    spans.push(SecretParamSpan {
+                        key: key_start..key_end,
+                        value: value_start..value_end,
+                    });
+                    pos = value_end;
+                }
+            }
+            _ => pos += 1,
+        }
+    }
+
+    spans
+}
+
+const fn is_vpl_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// Index just past the closing quote of the string literal starting at `start`,
+/// or `bytes.len()` when the literal is unterminated.
+fn string_literal_end(bytes: &[u8], start: usize) -> usize {
+    let mut pos = start + 1;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\\' => pos += 2,
+            b'"' => return pos + 1,
+            _ => pos += 1,
+        }
+    }
+    bytes.len()
+}
+
+/// Index of the newline ending the line containing `start`, or `bytes.len()`.
+fn line_end(bytes: &[u8], start: usize) -> usize {
+    let mut pos = start;
+    while pos < bytes.len() && bytes[pos] != b'\n' {
+        pos += 1;
+    }
+    pos
+}
+
+#[cfg(test)]
+mod vpl_redaction_tests {
+    use super::*;
+
+    const INJECTED: &str = concat!(
+        "connector kafka_signals = kafka(brokers: \"broker:9092\", ",
+        "sasl_username: \"svc\", sasl_password: \"hunter2-the-real-one\")\n",
+        "\n",
+        "stream Alerts = Login.from(kafka_signals, topic: \"auth\")\n",
+    );
+
+    #[test]
+    fn strips_the_credential_the_coordinator_injected() {
+        let out = redact_vpl_secrets(INJECTED);
+        assert!(
+            !out.contains("hunter2-the-real-one"),
+            "credential survived redaction: {out}"
+        );
+        assert!(out.contains("sasl_password: \"[REDACTED]\""), "{out}");
+        // Non-secret parameters must survive, or the operator cannot diagnose.
+        assert!(out.contains("brokers: \"broker:9092\""), "{out}");
+        assert!(out.contains("sasl_username: \"svc\""), "{out}");
+        assert!(out.contains("topic: \"auth\""), "{out}");
+    }
+
+    #[test]
+    fn leaves_detection_logic_alone() {
+        // `registry_key` is a Sysmon field and `key` is `.enrich`'s join key.
+        // Both match `is_secret_key`; neither is a secret. Rewriting them
+        // corrupts the rule an operator is reading.
+        let src = "stream S = E.enrich(ProductDB, key: o.product_id, fields: [name])\n\
+                   stream P = R.emit(Alert { registry_key: r.TargetObject })\n";
+        assert_eq!(redact_vpl_secrets(src), src);
+    }
+
+    #[test]
+    fn handles_unquoted_and_escaped_values() {
+        let src = "connector c = kafka(api_key: 1234567, token: \"a\\\"b\")\n";
+        let out = redact_vpl_secrets(src);
+        assert!(!out.contains("1234567"), "{out}");
+        assert!(!out.contains("a\\\"b"), "{out}");
+        assert_eq!(
+            out,
+            "connector c = kafka(api_key: \"[REDACTED]\", token: \"[REDACTED]\")\n"
+        );
+    }
+
+    #[test]
+    fn multiline_declarations_are_covered() {
+        let src = "connector AuthKafka = kafka (\n    brokers: \"b:9092\",\n    sasl_password: \"s3cret\"\n)\n";
+        let out = redact_vpl_secrets(src);
+        assert!(!out.contains("s3cret"), "{out}");
+        assert!(out.contains("brokers: \"b:9092\""), "{out}");
+    }
+
+    #[test]
+    fn reports_inline_secret_parameters() {
+        assert_eq!(
+            vpl_inline_secret_params(INJECTED),
+            vec!["sasl_password".to_string()]
+        );
+        assert!(vpl_inline_secret_params("stream S = E.from(c, topic: \"t\")").is_empty());
+        // An empty value is a placeholder, not a credential.
+        assert!(vpl_inline_secret_params("connector c = kafka(sasl_password: \"\")").is_empty());
+    }
+
+    #[test]
+    fn detects_a_round_tripped_placeholder() {
+        assert!(vpl_has_redacted_secret(&redact_vpl_secrets(INJECTED)));
+        assert!(!vpl_has_redacted_secret(INJECTED));
+    }
+
+    #[test]
+    fn ignores_comments_and_strings() {
+        let src = "# connector c = kafka(password: \"not-real\")\n\
+                   stream S = E.filter(msg == \"connector x = kafka(password: 1)\")\n";
+        assert_eq!(redact_vpl_secrets(src), src);
+    }
+}
