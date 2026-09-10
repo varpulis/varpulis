@@ -1195,18 +1195,42 @@ async fn no_session_windows_when_count_based() {
 // 28. Filter alias (.filter = .where)
 // ===========================================================================
 
+/// Retargeted: this asserted that `.filter()` behaved as `.where()`, which is
+/// the behaviour `varpulis check` refused with E090. The engine and the
+/// validator now agree that `.where()` is the spelling, and the `.where()`
+/// half of the old assertion is kept so the predicate itself stays covered.
 #[tokio::test]
-async fn filter_alias_behaves_like_where() {
-    let code = r"
+async fn filter_is_refused_and_where_passes_the_same_events() {
+    let program = parse(
+        r"
         stream S = Tick
             .filter(x > 5)
             .emit(val: x)
-    ";
+    ",
+    )
+    .expect("parse");
+    let (tx, _rx) = mpsc::channel(100);
+    let err = Engine::new(tx)
+        .load(&program)
+        .expect_err(".filter() should return an error");
+    assert!(
+        err.to_string().contains(".where("),
+        "the error should name .where(), got: {err}"
+    );
+
     let events: Vec<Event> = (1..=10)
         .map(|i| Event::new("Tick").with_field("x", Value::Int(i)))
         .collect();
-    let out = run(code, events).await;
-    assert_eq!(out.len(), 5, ".filter(x>5) should pass x=6..10");
+    let out = run(
+        r"
+        stream S = Tick
+            .where(x > 5)
+            .emit(val: x)
+    ",
+        events,
+    )
+    .await;
+    assert_eq!(out.len(), 5, ".where(x>5) should pass x=6..10");
 }
 
 // ===========================================================================

@@ -473,8 +473,10 @@ fn check_stream_ops(
                     Severity::Error,
                     op_span,
                     "E090",
-                    ".filter() is not implemented".to_string(),
-                    "use .where() instead".to_string(),
+                    ".filter() is not a stream operation".to_string(),
+                    "use .where(<condition>); `arr.filter(x => ...)` on an array \
+                     value is unrelated and still works"
+                        .to_string(),
                 );
             }
             StreamOp::Concurrent(ref args) => {

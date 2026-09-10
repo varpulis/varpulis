@@ -796,3 +796,53 @@ fn an_alias_qualified_trend_aggregate_still_compiles() {
         "the documented form must still compile"
     );
 }
+
+/// The engine refuses `.filter()`, agreeing with `varpulis check`.
+///
+/// It used to compile `.filter(expr)` as an alias for `.where(expr)` while the
+/// validator refused the same program with E090. A program that fails `check`
+/// and then runs correctly is a different failure from one that passes `check`
+/// and then does not, but both are the two halves disagreeing, and this one
+/// stopped valid programs from shipping.
+///
+/// Refused rather than blessed because the name is taken: `arr.filter(x =>
+/// cond)` is a documented array builtin, and `StreamOp::Filter` is still
+/// described in the AST as the lambda form the parser does not accept.
+#[test]
+fn filter_is_refused_and_names_the_operator_that_works() {
+    let err = load_error(
+        r"
+        event A:
+            x: int
+
+        stream S = A
+            .filter(x > 0)
+            .emit(v: x)
+        ",
+    )
+    .expect(".filter() must not compile");
+    assert!(
+        err.contains(".where("),
+        "the error must name the operator that does work, got: {err}"
+    );
+}
+
+/// The equivalent program written with `.where()` must still load, so the
+/// refusal above is about the spelling and not about the predicate.
+#[test]
+fn the_same_predicate_written_with_where_still_loads() {
+    assert!(
+        load_error(
+            r"
+        event A:
+            x: int
+
+        stream S = A
+            .where(x > 0)
+            .emit(v: x)
+        ",
+        )
+        .is_none(),
+        "the .where() spelling must still compile"
+    );
+}

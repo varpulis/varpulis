@@ -3302,36 +3302,49 @@ async fn test_engine_first() {
 }
 
 // =============================================================================
-// .filter() alias tests
+// .filter() tests
 // =============================================================================
 
+/// Retargeted: this asserted the `.filter()`-as-`.where()` alias, which
+/// `varpulis check` refused with E090 the whole time. The engine now refuses
+/// it too, and the `.where()` half is kept so the predicate stays covered.
 #[tokio::test]
-async fn test_engine_filter_alias() {
-    let source = r"
+async fn test_engine_filter_is_refused_and_where_works() {
+    let program = parse_program(
+        r"
         stream Filtered = Input
             .filter(value > 10)
             .emit(value: value)
-    ";
+    ",
+    );
+    let (tx, _rx) = mpsc::channel(100);
+    let err = Engine::new(tx)
+        .load(&program)
+        .expect_err(".filter() must not load");
+    assert!(
+        err.to_string().contains(".where("),
+        "the error must name .where(), got: {err}"
+    );
 
-    let program = parse_program(source);
+    let program = parse_program(
+        r"
+        stream Filtered = Input
+            .where(value > 10)
+            .emit(value: value)
+    ",
+    );
     let (tx, mut rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
     engine.load(&program).unwrap();
 
-    engine
-        .process(Event::new("Input").with_field("value", 5i64))
-        .await
-        .unwrap();
-    engine
-        .process(Event::new("Input").with_field("value", 15i64))
-        .await
-        .unwrap();
-    engine
-        .process(Event::new("Input").with_field("value", 3i64))
-        .await
-        .unwrap();
+    for v in [5i64, 15, 3] {
+        engine
+            .process(Event::new("Input").with_field("value", v))
+            .await
+            .unwrap();
+    }
 
-    let output = rx.try_recv().expect("value=15 should pass filter");
+    let output = rx.try_recv().expect("value=15 should pass the predicate");
     assert_eq!(output.get("value").unwrap().as_int().unwrap(), 15);
     assert!(rx.try_recv().is_err(), "Only one event should pass");
 }

@@ -1558,21 +1558,48 @@ async fn emit_with_expression() {
 }
 
 // ===========================================================================
-// 44. filter alias for where
+// 44. .filter() is refused, and .where() is the spelling that works
 // ===========================================================================
 
+/// This test used to assert the alias — that `.filter(x > 5)` loaded and
+/// behaved as `.where(x > 5)` — which is exactly the behaviour `varpulis
+/// check` refused with E090. The engine and the validator disagreed, and the
+/// disagreement rejected programs that ran correctly.
+///
+/// They now agree, and the test asserts the agreement rather than one side
+/// of it.
 #[tokio::test]
-async fn filter_alias_for_where() {
-    let code = r"
+async fn filter_is_refused_and_where_is_the_spelling_that_works() {
+    let program = parse(
+        r"
         stream S = Tick
             .filter(x > 5)
             .emit(x: x)
-    ";
+    ",
+    )
+    .expect("parse");
+    let (tx, _rx) = mpsc::channel(16);
+    let err = Engine::new(tx)
+        .load(&program)
+        .expect_err(".filter() must not load");
+    assert!(
+        err.to_string().contains(".where("),
+        "the error must name the operator that works, got: {err}"
+    );
+
     let events = vec![
         Event::new("Tick").with_field("x", Value::Int(3)),
         Event::new("Tick").with_field("x", Value::Int(10)),
     ];
-    let out = run(code, events).await;
+    let out = run(
+        r"
+        stream S = Tick
+            .where(x > 5)
+            .emit(x: x)
+    ",
+        events,
+    )
+    .await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].get("x"), Some(&Value::Int(10)));
 }
