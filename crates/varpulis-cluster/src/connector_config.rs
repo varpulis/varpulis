@@ -19,6 +19,54 @@ pub struct ClusterConnector {
     pub description: Option<String>,
 }
 
+/// A [`ClusterConnector`] as the read API returns it: secret parameter values
+/// replaced by a presence flag.
+///
+/// `ClusterConnector.params` is a flat `HashMap<String, String>` that carries
+/// Kafka SASL passwords, MQTT and NATS passwords, database passwords and Slack
+/// webhook URLs. It derives `Serialize`, and the two read handlers returned it
+/// verbatim behind `RbacViewer` — the lowest role there is. Read-only
+/// monitoring access was therefore upstream compromise: one request returned
+/// every credential in the cluster.
+///
+/// Redaction lives on the serialised shape rather than on `Debug`, because it
+/// is `Serialize` that feeds the REST API. Applying it only to `Debug`, as this
+/// codebase did, protects the logs and leaves the API open.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterConnectorView {
+    pub name: String,
+    pub connector_type: String,
+    /// Non-secret parameters, verbatim.
+    pub params: HashMap<String, String>,
+    /// Names of the parameters that are set but withheld, so an operator can
+    /// still see *that* a password is configured without seeing it.
+    pub redacted_params: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl From<&ClusterConnector> for ClusterConnectorView {
+    fn from(c: &ClusterConnector) -> Self {
+        let mut params = HashMap::new();
+        let mut redacted_params = Vec::new();
+        for (k, v) in &c.params {
+            if varpulis_core::security::is_secret_key(k) {
+                redacted_params.push(k.clone());
+            } else {
+                params.insert(k.clone(), v.clone());
+            }
+        }
+        redacted_params.sort();
+        Self {
+            name: c.name.clone(),
+            connector_type: c.connector_type.clone(),
+            params,
+            redacted_params,
+            description: c.description.clone(),
+        }
+    }
+}
+
 impl ClusterConnector {
     /// Render this connector as a VPL `connector` declaration.
     ///

@@ -2388,8 +2388,13 @@ async fn handle_list_connectors(
         return resp;
     }
     let coord = coordinator.read().await;
-    let all_connectors: Vec<ClusterConnector> =
-        coord.list_connectors().into_iter().cloned().collect();
+    // Redacted view: this route is behind `RbacViewer`, and the raw params
+    // carry every upstream credential in the cluster.
+    let all_connectors: Vec<crate::connector_config::ClusterConnectorView> = coord
+        .list_connectors()
+        .into_iter()
+        .map(Into::into)
+        .collect();
     let (connectors, meta) = pagination.paginate(all_connectors);
     let resp = serde_json::json!({
         "connectors": connectors,
@@ -2417,7 +2422,10 @@ async fn handle_get_connector(
     }
     let coord = coordinator.read().await;
     match coord.get_connector(&name) {
-        Ok(connector) => reply_json_status(connector, StatusCode::OK),
+        Ok(connector) => reply_json_status(
+            &crate::connector_config::ClusterConnectorView::from(connector),
+            StatusCode::OK,
+        ),
         Err(e) => cluster_error_response(e),
     }
 }

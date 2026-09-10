@@ -155,3 +155,84 @@ mod tests {
         assert_eq!(LARGE_BODY_LIMIT, 16 * 1024 * 1024);
     }
 }
+
+/// Whether a configuration key names a secret.
+///
+/// One predicate for the whole workspace. There used to be two that disagreed —
+/// `varpulis-connectors::credentials::is_sensitive_field` and
+/// `varpulis-connector-api::types::is_secret_key` — and between them they
+/// missed `webhook_url` (for Slack the URL *is* the credential), `auth`, `pwd`,
+/// `credential`, `dsn` and `connection_string`. A key that one caller redacts
+/// and another does not is worse than no redaction, because the operator
+/// believes the control applies everywhere.
+///
+/// `*_location` is deliberately excluded: `ssl_ca_location` and friends name a
+/// path on disk, not a secret, and redacting them makes a misconfiguration
+/// impossible to diagnose.
+#[must_use]
+pub fn is_secret_key(key: &str) -> bool {
+    let k = key.to_ascii_lowercase();
+    if k.ends_with("_location") {
+        return false;
+    }
+    const NEEDLES: &[&str] = &[
+        "password",
+        "passwd",
+        "pwd",
+        "secret",
+        "token",
+        "apikey",
+        "api_key",
+        "credential",
+        "webhook_url",
+        "connection_string",
+        "dsn",
+        "private_key",
+        "auth",
+    ];
+    NEEDLES.iter().any(|n| k.contains(n)) || k.contains("key")
+}
+
+#[cfg(test)]
+mod secret_key_tests {
+    use super::is_secret_key;
+
+    #[test]
+    fn catches_what_the_two_old_predicates_missed_between_them() {
+        for k in [
+            "webhook_url",
+            "auth",
+            "pwd",
+            "credential",
+            "dsn",
+            "connection_string",
+            "sasl_password",
+            "api_key",
+            "apiKey",
+            "ssl_key_password",
+            "private_key",
+        ] {
+            assert!(is_secret_key(k), "`{k}` must be treated as a secret");
+        }
+    }
+
+    #[test]
+    fn leaves_paths_and_plain_settings_alone() {
+        for k in [
+            "ssl_ca_location",
+            "ssl_certificate_location",
+            "ssl_key_location",
+            "bootstrap_servers",
+            "topic",
+            "group_id",
+            "host",
+            "port",
+            "username",
+        ] {
+            assert!(
+                !is_secret_key(k),
+                "`{k}` is not a secret; redacting it hides misconfiguration"
+            );
+        }
+    }
+}

@@ -58,13 +58,11 @@ fn redact_url_password(url: &str) -> String {
 }
 
 /// True when a property key names a secret that must not be logged.
+///
+/// Delegates to the workspace's single predicate. This copy used to miss
+/// `webhook_url`, `auth`, `pwd`, `credential`, `dsn` and `connection_string`.
 fn is_secret_key(key: &str) -> bool {
-    let k = key.to_ascii_lowercase();
-    k.contains("password")
-        || k.contains("secret")
-        || k.contains("token")
-        || k.contains("apikey")
-        || k.contains("api_key")
+    varpulis_core::security::is_secret_key(key)
 }
 
 /// Hand-written so credentials never reach logs / errors / panic output via
