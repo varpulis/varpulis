@@ -219,7 +219,10 @@ const EXAMPLE_CASES: &[(&str, &str, usize)] = &[
     (
         "examples/vpl-by-example/15_temporal_constraints.vpl",
         "examples/vpl-by-example/15_temporal_constraints.evt",
-        2,
+        // One, as its own .evt documents: "slow_traveler: US -> Japan in 2
+        // hours → NO MATCH (exceeds 1h)". It was recorded as 2 because
+        // `.within()` was enforced against arrival time until #219.
+        1,
     ),
     (
         "examples/vpl-by-example/16_partition_by_patterns.vpl",
