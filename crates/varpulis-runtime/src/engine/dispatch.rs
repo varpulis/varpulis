@@ -1387,7 +1387,12 @@ impl Engine {
                 )
                 .await?;
 
-                if send_outputs {
+                // `execute_pipeline` documents that `output_events` is a
+                // pass-through duplicate whenever `emitted_events` is non-empty,
+                // and the steady-state dispatch loop ignores it in that case.
+                // Sending both here double-emitted every window that has an
+                // `.emit()` after its aggregate.
+                if send_outputs && result.emitted_events.is_empty() {
                     for output in &result.output_events {
                         self.output_events_emitted += 1;
                         let owned = (**output).clone();
@@ -1445,7 +1450,12 @@ impl Engine {
                     false,
                 )?;
 
-                if send_outputs {
+                // `execute_pipeline` documents that `output_events` is a
+                // pass-through duplicate whenever `emitted_events` is non-empty,
+                // and the steady-state dispatch loop ignores it in that case.
+                // Sending both here double-emitted every window that has an
+                // `.emit()` after its aggregate.
+                if send_outputs && result.emitted_events.is_empty() {
                     for output in &result.output_events {
                         self.output_events_emitted += 1;
                         let owned = (**output).clone();
