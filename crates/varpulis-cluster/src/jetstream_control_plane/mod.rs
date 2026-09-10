@@ -161,8 +161,11 @@
 //!   instantaneously would not be expressible and must not be added without
 //!   revisiting this.
 //! * **Durability is delegated.** Raft's quorum is replaced by JetStream's
-//!   (`num_replicas`). A single-replica bucket on a single-node broker is a
-//!   single point of failure in a way a three-node Raft group is not.
+//!   (`num_replicas`), set with `VARPULIS_CONTROL_PLANE_REPLICAS` and
+//!   defaulting to 1. A single-replica bucket on a single-node broker is a
+//!   single point of failure in a way a three-node Raft group is not, so any
+//!   deployment replacing Raft with this must set it to 3 against a NATS
+//!   cluster of at least that size.
 //! * **Leadership is a lease, not an election.** See [`leader`] for the
 //!   uncertainty window and why every write is CAS-guarded regardless.
 //!
@@ -190,5 +193,5 @@ pub use reconcile::{
 };
 pub use store::{
     ControlPlane, ControlPlaneConfig, ControlPlaneError, Expect, Snapshot, Versioned,
-    DEFAULT_BUCKET,
+    DEFAULT_BUCKET, ENV_BUCKET, ENV_REPLICAS, ENV_TTL_SECS, ENV_URL,
 };

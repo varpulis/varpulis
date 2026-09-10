@@ -8,6 +8,20 @@
 //!   --test jetstream_control_plane
 //! ```
 //!
+//! A single server exercises the logic but not the durability. Against a
+//! three-node cluster, `VARPULIS_CONTROL_PLANE_REPLICAS=3` runs the same
+//! suite on a replicated bucket — which is what a deployment that has
+//! replaced Raft with this actually has, and the only configuration in which
+//! passing here says anything about surviving a broker failure.
+//!
+//! ```bash
+//! scripts/nats-cluster.sh start
+//! VARPULIS_TEST_NATS_URL=nats://127.0.0.1:4231 \
+//!   VARPULIS_CONTROL_PLANE_REPLICAS=3 VARPULIS_REQUIRE_BROKERS=1 \
+//!   cargo test -p varpulis-cluster --features jetstream-control-plane \
+//!   --test jetstream_control_plane
+//! ```
+//!
 //! No mocking, and no abstaining-as-passing: with `VARPULIS_REQUIRE_BROKERS=1`
 //! an unreachable broker is a hard failure. Without it the abstention is
 //! reported loudly on stderr and in the GitHub job summary.
@@ -57,6 +71,17 @@ fn nats_url() -> String {
     std::env::var("VARPULIS_TEST_NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4223".to_string())
 }
 
+/// How many JetStream replicas the test buckets should have.
+///
+/// 1 by default so the documented single-node `docker run` still works.
+fn replicas() -> usize {
+    std::env::var("VARPULIS_CONTROL_PLANE_REPLICAS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1)
+        .clamp(1, 5)
+}
+
 /// Open a control plane on a bucket private to this test.
 ///
 /// Returns `None` (after reporting the skip) when the broker is unreachable.
@@ -74,7 +99,13 @@ async fn open(test: &str) -> Option<ControlPlane> {
         // No entry expiry: these tests exercise fencing, not TTL failover, and
         // a record ageing out mid-test would be a confusing false negative.
         ttl: Duration::ZERO,
-        num_replicas: 1,
+        // Replication is the whole of this control plane's durability, and
+        // hardcoding 1 meant the suite never exercised it: every property
+        // below was only ever checked against a bucket living on one server.
+        // Point `VARPULIS_TEST_NATS_URL` at a clustered broker and set
+        // `VARPULIS_CONTROL_PLANE_REPLICAS=3` to run the same suite against a
+        // replicated bucket, which is what a deployment replacing Raft has.
+        num_replicas: replicas(),
         history: 8,
     };
     match ControlPlane::connect(&cfg).await {
@@ -84,6 +115,34 @@ async fn open(test: &str) -> Option<ControlPlane> {
             None
         }
     }
+}
+
+/// The bucket really has the replication that was asked for.
+///
+/// `num_replicas` is the whole of this control plane's durability, and until
+/// recently nothing could set it: `ControlPlaneConfig::from_env` read the URL,
+/// the bucket and the TTL and not the replica count, so every deployment
+/// configured the documented way ran on one replica. This asserts the number
+/// the broker reports, not the number the config holds, because binding to a
+/// pre-existing bucket ignores the requested count entirely — a coordinator
+/// can believe it asked for three and be running on one.
+///
+/// Against a single server it asserts 1, which is the honest answer there.
+/// Against `scripts/nats-cluster.sh` with `VARPULIS_CONTROL_PLANE_REPLICAS=3`
+/// it asserts 3, and that is the configuration in which the rest of this file
+/// says anything about surviving a broker failure.
+#[tokio::test]
+async fn the_bucket_has_the_replication_that_was_asked_for() {
+    let Some(cp) = open("replication").await else {
+        return;
+    };
+    let want = replicas();
+    let got = cp.replicas().await.expect("bucket status");
+    assert_eq!(
+        got, want,
+        "asked for {want} replica(s) and the broker reports {got}; the control \
+         plane's durability is exactly this number"
+    );
 }
 
 fn worker(id: &str, pipelines: &[&str]) -> WorkerRecord {
