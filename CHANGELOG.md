@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`RunCheckpoint` is now `#[non_exhaustive]`.** It gains two fields
+  (`deadline_ms`, `started_at_ms`) so a restored partial match keeps its
+  `.within()` bound instead of becoming immortal. Both are `#[serde(default)]`,
+  so checkpoints written by earlier versions still load. Adding public fields to
+  a struct that external code could construct exhaustively is a breaking change,
+  which the semver job correctly reports; sealing the struct takes that break
+  once, on a 0.x release, rather than on every future field. Nothing outside
+  `varpulis-runtime` constructs it.
+
 ### Fixed
 
 - **`.within()` is now enforced against event time, not wall-clock arrival

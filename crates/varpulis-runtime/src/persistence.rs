@@ -1318,7 +1318,16 @@ pub struct SaseCheckpoint {
 }
 
 /// Checkpoint for a single SASE+ run (partial match).
+///
+/// `#[non_exhaustive]`: this is a serialization DTO for engine-internal state
+/// and it gains fields whenever the engine learns to preserve more of a partial
+/// match across a restart — `deadline_ms` and `started_at_ms` below are the
+/// latest, added because a restored run used to lose its WITHIN bound entirely
+/// and become immortal. Exhaustive literal construction from outside the crate
+/// was never a contract worth keeping; sealing it now means this is the last
+/// time adding a field breaks a downstream build.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RunCheckpoint {
     /// Current NFA state index
     pub current_state: usize,
