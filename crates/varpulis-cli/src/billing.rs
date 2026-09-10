@@ -218,6 +218,10 @@ pub struct BillingState {
     #[cfg(feature = "saas")]
     pub db_pool: Option<varpulis_db::PgPool>,
     pub audit_logger: Option<SharedAuditLogger>,
+    /// Shared OAuth state, used to *verify* the bearer token the billing
+    /// endpoints derive tenant identity from. Without it there is no way to
+    /// establish who is calling, and every billing handler fails closed.
+    pub oauth_state: Option<crate::oauth::SharedOAuthState>,
 }
 
 impl BillingState {
@@ -229,11 +233,17 @@ impl BillingState {
             #[cfg(feature = "saas")]
             db_pool: None,
             audit_logger: None,
+            oauth_state: None,
         }
     }
 
     pub fn with_audit_logger(mut self, logger: Option<SharedAuditLogger>) -> Self {
         self.audit_logger = logger;
+        self
+    }
+
+    pub fn with_oauth_state(mut self, oauth: Option<crate::oauth::SharedOAuthState>) -> Self {
+        self.oauth_state = oauth;
         self
     }
 
@@ -379,7 +389,7 @@ pub fn usage_limit_response(err: &UsageLimitExceeded) -> Response {
 #[cfg(feature = "saas")]
 pub fn spawn_usage_flush(state: SharedBillingState, pool: varpulis_db::PgPool) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        let mut interval = tokio::time::interval(std::time::Duration::from_mins(1));
         loop {
             interval.tick().await;
             let entries = state.usage.write().await.drain();
@@ -446,6 +456,24 @@ async fn stripe_post(
     Ok(body)
 }
 
+/// How far a webhook's `t=` timestamp may be from now before the delivery is
+/// treated as a replay. Matches Stripe's own default tolerance.
+const WEBHOOK_TOLERANCE_SECS: i64 = 300;
+
+/// Whether the `t=` timestamp in a Stripe signature header is inside the replay
+/// window. A signature stays valid forever, so without this a once-captured
+/// delivery can be re-sent indefinitely.
+fn signature_timestamp_is_fresh(sig_header: &str, now: i64, tolerance: i64) -> bool {
+    let Some(ts) = sig_header
+        .split(',')
+        .find_map(|part| part.strip_prefix("t="))
+        .and_then(|t| t.trim().parse::<i64>().ok())
+    else {
+        return false;
+    };
+    (now - ts).abs() <= tolerance
+}
+
 /// Verify Stripe webhook signature (HMAC-SHA256).
 fn verify_stripe_signature(payload: &[u8], sig_header: &str, secret: &str) -> bool {
     use hmac::{Hmac, Mac};
@@ -477,8 +505,10 @@ fn verify_stripe_signature(payload: &[u8], sig_header: &str, secret: &str) -> bo
     hmac::Mac::update(&mut mac, signed_payload.as_bytes());
     let expected = hex::encode(mac.finalize().into_bytes());
 
-    // Constant-time comparison
-    expected == signature
+    // Actually constant-time. The comment above this line used to claim as much
+    // over a plain `String` `==`, which short-circuits on the first differing
+    // byte and on a length mismatch.
+    varpulis_core::security::constant_time_compare(&expected, signature)
 }
 
 // ---------------------------------------------------------------------------
@@ -497,10 +527,18 @@ async fn handle_usage(
 
     match state {
         Some(s) => {
+            // Scope the answer to the caller's own organisation. The former
+            // fallback iterated the whole in-memory buffer and returned every
+            // organisation's event counts to an unauthenticated caller.
+            let org_id_str = match extract_org_id_str_from_header(&auth_header, &s).await {
+                Some(v) => v,
+                None => return billing_unauthorized(),
+            };
+
             // Try DB first when saas is enabled
             #[cfg(feature = "saas")]
             if let Some(ref pool) = s.db_pool {
-                if let Some(org_id) = extract_org_id_from_header(&auth_header, &s) {
+                if let Ok(org_id) = org_id_str.parse::<Uuid>() {
                     let today = chrono::Utc::now().date_naive();
                     let start = chrono::NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
                         .unwrap_or(today);
@@ -522,20 +560,18 @@ async fn handle_usage(
                 }
             }
 
-            // Fallback: in-memory buffer
-            let _ = auth_header;
-            let tracker = s.usage.read().await;
-            let orgs: Vec<serde_json::Value> = tracker
-                .buffer
-                .iter()
-                .map(|(org_id, count)| {
-                    serde_json::json!({
-                        "org_id": org_id.to_string(),
-                        "events_today": count,
-                    })
-                })
-                .collect();
-            (StatusCode::OK, Json(serde_json::json!({ "usage": orgs }))).into_response()
+            // Fallback: this organisation's in-memory counter, and no other's.
+            let events_today = match org_id_str.parse::<Uuid>() {
+                Ok(id) => s.usage.read().await.get(&id),
+                Err(_) => 0,
+            };
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "usage": [{ "org_id": org_id_str, "events_today": events_today }],
+                })),
+            )
+                .into_response()
         }
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -557,10 +593,18 @@ async fn handle_plan(
 
     match state {
         Some(_s) => {
+            // A plan is an organisation's plan; without a verified identity
+            // there is nothing to answer about.
+            #[cfg_attr(not(feature = "saas"), allow(unused_variables))]
+            let org_id_str = match extract_org_id_str_from_header(&auth_header, &_s).await {
+                Some(v) => v,
+                None => return billing_unauthorized(),
+            };
+
             // Try DB for real plan when saas enabled
             #[cfg(feature = "saas")]
             if let Some(ref pool) = _s.db_pool {
-                if let Some(org_id) = extract_org_id_from_header(&auth_header, &_s) {
+                if let Ok(org_id) = org_id_str.parse::<Uuid>() {
                     if let Ok(Some(org)) = varpulis_db::repo::get_organization(pool, org_id).await {
                         let tier: Tier = org.tier.parse().unwrap_or(Tier::Free);
                         return (
@@ -617,6 +661,13 @@ async fn handle_checkout(
 
     match state {
         Some(s) => {
+            // A checkout session is created *for* an organisation. Establish
+            // which one before spending a Stripe API call on it.
+            let org_id_str = match extract_org_id_str_from_header(&auth_header, &s).await {
+                Some(v) => v,
+                None => return billing_unauthorized(),
+            };
+
             // Determine target tier from request body
             let target_tier: Tier = body
                 .tier
@@ -646,8 +697,6 @@ async fn handle_checkout(
                 .unwrap_or_else(|| format!("{}/billing", s.config.frontend_url));
 
             // Build Stripe Checkout params
-            let org_id_str = extract_org_id_str_from_header(&auth_header, &s).unwrap_or_default();
-
             let mut params: Vec<(&str, &str)> = vec![
                 ("mode", "subscription"),
                 ("line_items[0][price]", &price_id),
@@ -665,7 +714,7 @@ async fn handle_checkout(
             let mut customer_id = String::new();
             #[cfg(feature = "saas")]
             if let Some(ref pool) = s.db_pool {
-                if let Some(org_uuid) = extract_org_id_from_header(&auth_header, &s) {
+                if let Ok(org_uuid) = org_id_str.parse::<Uuid>() {
                     if let Ok(Some(org)) = varpulis_db::repo::get_organization(pool, org_uuid).await
                     {
                         if let Some(cid) = org.stripe_customer_id {
@@ -742,12 +791,21 @@ async fn handle_portal(
 
     match state {
         Some(s) => {
+            // The portal URL exposes an organisation's subscription, payment
+            // methods and invoices. Which organisation must be proven, not
+            // asserted by the caller.
+            #[cfg_attr(not(feature = "saas"), allow(unused_variables))]
+            let org_id_str = match extract_org_id_str_from_header(&auth_header, &s).await {
+                Some(v) => v,
+                None => return billing_unauthorized(),
+            };
+
             #[allow(unused_mut)]
             let mut customer_id = String::new();
 
             #[cfg(feature = "saas")]
             if let Some(ref pool) = s.db_pool {
-                if let Some(org_uuid) = extract_org_id_from_header(&auth_header, &s) {
+                if let Ok(org_uuid) = org_id_str.parse::<Uuid>() {
                     if let Ok(Some(org)) = varpulis_db::repo::get_organization(pool, org_uuid).await
                     {
                         if let Some(cid) = org.stripe_customer_id {
@@ -827,16 +885,44 @@ async fn handle_webhook(
         }
     };
 
-    // Verify signature
-    if !s.config.stripe_webhook_secret.is_empty() {
-        let sig = sig_header.unwrap_or_default();
-        if !verify_stripe_signature(&body, &sig, &s.config.stripe_webhook_secret) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "Invalid signature"})),
-            )
-                .into_response();
-        }
+    // Verify signature.
+    //
+    // This gate used to be `if !secret.is_empty()`, and the secret defaulted to
+    // the empty string when `STRIPE_WEBHOOK_SECRET` was unset — so on a Cloud
+    // deployment that had configured Stripe but not the webhook secret, every
+    // unauthenticated POST to this route was accepted as genuine. The body then
+    // names an organisation UUID and drives `update_org_stripe_customer`,
+    // `update_org_tier` and `update_org_status`, none of which carry a tenant
+    // predicate. Missing configuration must disable the route, never disable
+    // its authentication.
+    if s.config.stripe_webhook_secret.is_empty() {
+        tracing::error!(
+            "Stripe webhook rejected: STRIPE_WEBHOOK_SECRET is not set, so deliveries \
+             cannot be authenticated"
+        );
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "Webhook signature verification is not configured"
+            })),
+        )
+            .into_response();
+    }
+
+    let sig = sig_header.unwrap_or_default();
+    if !verify_stripe_signature(&body, &sig, &s.config.stripe_webhook_secret) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Invalid signature"})),
+        )
+            .into_response();
+    }
+    if !signature_timestamp_is_fresh(&sig, chrono::Utc::now().timestamp(), WEBHOOK_TOLERANCE_SECS) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Signature timestamp outside tolerance"})),
+        )
+            .into_response();
     }
 
     // Parse event
@@ -1028,37 +1114,58 @@ async fn handle_webhook(
 // JWT claim extraction helpers
 // ---------------------------------------------------------------------------
 
-/// Extract org_id UUID from Authorization header JWT.
-#[cfg_attr(not(feature = "saas"), allow(dead_code))]
-fn extract_org_id_from_header(
+/// Extract org_id string from a **verified** Authorization header JWT.
+///
+/// This used to call `jsonwebtoken::dangerous::insecure_decode`, which reads the
+/// claims without checking the signature. Nothing downstream re-checked, so the
+/// `org_id` claim was attacker-chosen: a self-made bearer token naming another
+/// organisation's UUID returned that organisation's Stripe billing-portal URL,
+/// and because an unverified token's `exp` is meaningless, a logged-out or
+/// expired session kept working forever.
+///
+/// Verification now goes through the same OAuth state the rest of the API uses:
+/// revocation is consulted first (so a logged-out session cannot be replayed),
+/// then the signature and `exp` are checked. Absent OAuth state there is no way
+/// to establish identity, so the caller gets nothing and the handlers fail
+/// closed with 401.
+async fn extract_org_id_str_from_header(
     auth_header: &Option<String>,
     state: &BillingState,
-) -> Option<uuid::Uuid> {
-    extract_org_id_str_from_header(auth_header, state)?
-        .parse()
-        .ok()
-}
-
-/// Extract org_id string from Authorization header JWT.
-fn extract_org_id_str_from_header(
-    auth_header: &Option<String>,
-    _state: &BillingState,
 ) -> Option<String> {
+    let oauth = state.oauth_state.as_ref()?;
+
     let header = auth_header.as_ref()?;
-    let token = header.strip_prefix("Bearer ")?.trim();
+    let token = header.strip_prefix("Bearer ")?.trim().to_string();
     if token.is_empty() {
         return None;
     }
 
-    // Decode JWT without full verification (billing state doesn't have JWT secret).
-    // Use jsonwebtoken's dangerous decode to read claims without signature check.
-    let token_data = jsonwebtoken::dangerous::insecure_decode::<serde_json::Value>(token).ok()?;
+    let hash = crate::oauth::token_hash(&token);
+    if oauth.sessions.read().await.is_revoked(&hash) {
+        return None;
+    }
 
-    let org_id = token_data.claims["org_id"].as_str()?;
+    let token_data = jsonwebtoken::decode::<crate::oauth::Claims>(
+        &token,
+        &jsonwebtoken::DecodingKey::from_secret(oauth.config.jwt_secret.as_bytes()),
+        &jsonwebtoken::Validation::default(),
+    )
+    .ok()?;
+
+    let org_id = token_data.claims.org_id;
     if org_id.is_empty() {
         return None;
     }
-    Some(org_id.to_string())
+    Some(org_id)
+}
+
+/// 401 for a billing request that carries no verifiable organisation identity.
+fn billing_unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({ "error": "Unauthorized" })),
+    )
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -1094,6 +1201,316 @@ mod tests {
             .uri(uri)
             .body(Body::empty())
             .unwrap()
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers for the authentication tests
+    // -----------------------------------------------------------------------
+
+    const JWT_SECRET: &str = "billing-tests-jwt-secret";
+
+    fn test_config(webhook_secret: &str) -> BillingConfig {
+        BillingConfig {
+            stripe_secret_key: "sk_test_xxx".to_string(),
+            stripe_webhook_secret: webhook_secret.to_string(),
+            pro_price_id: "price_xxx".to_string(),
+            business_price_id: "price_biz_xxx".to_string(),
+            frontend_url: "http://localhost:5173".to_string(),
+        }
+    }
+
+    fn oauth_state() -> crate::oauth::SharedOAuthState {
+        Arc::new(crate::oauth::OAuthState::new(crate::oauth::OAuthConfig {
+            github_client_id: String::new(),
+            github_client_secret: String::new(),
+            jwt_secret: JWT_SECRET.to_string(),
+            frontend_url: "http://localhost:5173".to_string(),
+            server_url: "http://localhost:9000".to_string(),
+        }))
+    }
+
+    /// A bearer token for `org_id`, signed with `signing_secret` and expiring
+    /// `exp_offset` seconds from now.
+    fn token_for(org_id: Uuid, signing_secret: &str, exp_offset: i64) -> String {
+        let now = chrono::Utc::now().timestamp();
+        let claims = crate::oauth::Claims {
+            sub: "1".to_string(),
+            name: "User".to_string(),
+            login: "user".to_string(),
+            avatar: String::new(),
+            email: String::new(),
+            exp: (now + exp_offset).max(0) as usize,
+            iat: now as usize,
+            user_id: Uuid::new_v4().to_string(),
+            org_id: org_id.to_string(),
+            role: "viewer".to_string(),
+            session_id: String::new(),
+            auth_method: "local".to_string(),
+            org_role: "owner".to_string(),
+        };
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(signing_secret.as_bytes()),
+        )
+        .expect("test JWT must encode")
+    }
+
+    fn bearer(uri: &str, method: &str, token: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder().method(method).uri(uri);
+        if let Some(t) = token {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::empty()).unwrap()
+    }
+
+    async fn read_body(res: axum::response::Response) -> String {
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body must read");
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn stripe_signature(payload: &[u8], secret: &str, timestamp: i64) -> String {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        let signed = format!("{}.{}", timestamp, std::str::from_utf8(payload).unwrap());
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        hmac::Mac::update(&mut mac, signed.as_bytes());
+        format!(
+            "t={timestamp},v1={}",
+            hex::encode(mac.finalize().into_bytes())
+        )
+    }
+
+    fn webhook_req(body: &str, signature: Option<&str>) -> Request<Body> {
+        let mut b = Request::builder()
+            .method("POST")
+            .uri("/api/v1/billing/webhook")
+            .header("content-type", "application/octet-stream");
+        if let Some(sig) = signature {
+            b = b.header("stripe-signature", sig);
+        }
+        b.body(Body::from(body.to_string())).unwrap()
+    }
+
+    // -----------------------------------------------------------------------
+    // Webhook authentication (C1)
+    // -----------------------------------------------------------------------
+
+    /// The signature gate used to read `if !secret.is_empty()`, over a secret
+    /// that defaulted to the empty string. A Cloud deployment with Stripe
+    /// configured but no webhook secret therefore accepted any unauthenticated
+    /// POST as a genuine Stripe delivery — and the body names the organisation
+    /// whose customer id, tier and status get written.
+    #[tokio::test]
+    async fn webhook_without_a_configured_secret_is_refused_rather_than_trusted() {
+        let app = billing_routes(Some(Arc::new(BillingState::new(test_config("")))));
+        let victim = Uuid::new_v4();
+        let payload = serde_json::json!({
+            "type": "checkout.session.completed",
+            "data": { "object": {
+                "customer": "cus_attacker",
+                "client_reference_id": victim.to_string(),
+            }},
+        })
+        .to_string();
+
+        let res = app.oneshot(webhook_req(&payload, None)).await.unwrap();
+        let status = res.status();
+        let body = read_body(res).await;
+
+        assert_ne!(
+            status,
+            StatusCode::OK,
+            "an unauthenticated webhook must not be processed: {body}"
+        );
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert!(
+            !body.contains("received"),
+            "the event must not be acknowledged as handled: {body}"
+        );
+    }
+
+    /// A correctly signed delivery whose timestamp is outside the tolerance is a
+    /// replay: the signature stays valid forever, so the timestamp is the only
+    /// thing bounding how long a captured delivery can be re-sent.
+    #[tokio::test]
+    async fn webhook_rejects_a_correctly_signed_but_stale_delivery() {
+        let secret = "whsec_real_secret";
+        let app = billing_routes(Some(Arc::new(BillingState::new(test_config(secret)))));
+        let payload = "{\"type\":\"invoice.payment_failed\"}";
+        let stale = chrono::Utc::now().timestamp() - 86_400;
+        let sig = stripe_signature(payload.as_bytes(), secret, stale);
+
+        let res = app.oneshot(webhook_req(payload, Some(&sig))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// The control has to be specific: a fresh, correctly signed delivery is
+    /// still accepted.
+    #[tokio::test]
+    async fn webhook_accepts_a_fresh_correctly_signed_delivery() {
+        let secret = "whsec_real_secret";
+        let app = billing_routes(Some(Arc::new(BillingState::new(test_config(secret)))));
+        let payload = "{\"type\":\"invoice.payment_failed\"}";
+        let now = chrono::Utc::now().timestamp();
+        let sig = stripe_signature(payload.as_bytes(), secret, now);
+
+        let res = app.oneshot(webhook_req(payload, Some(&sig))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn signature_timestamp_tolerance() {
+        let now = 1_700_000_000i64;
+        assert!(signature_timestamp_is_fresh("t=1700000000,v1=x", now, 300));
+        assert!(signature_timestamp_is_fresh("t=1699999800,v1=x", now, 300));
+        assert!(!signature_timestamp_is_fresh("t=1699999699,v1=x", now, 300));
+        assert!(!signature_timestamp_is_fresh("v1=x", now, 300));
+        assert!(!signature_timestamp_is_fresh(
+            "t=not-a-number,v1=x",
+            now,
+            300
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Billing endpoint authentication (C2)
+    // -----------------------------------------------------------------------
+
+    /// Tenant identity used to come from `insecure_decode`, which reads the
+    /// claims without checking the signature. A self-made token therefore named
+    /// whichever organisation the caller liked, and because an unverified
+    /// token's `exp` means nothing, a logged-out or expired session kept
+    /// working. All three must now be refused, and a genuine token must not be.
+    #[tokio::test]
+    async fn billing_plan_requires_a_token_whose_signature_actually_verifies() {
+        let oauth = oauth_state();
+        let org = Uuid::new_v4();
+        let state = Arc::new(
+            BillingState::new(test_config("whsec_x")).with_oauth_state(Some(oauth.clone())),
+        );
+
+        let genuine = token_for(org, JWT_SECRET, 3600);
+        let forged = token_for(org, "attacker-chosen-secret", 3600);
+        let expired = token_for(org, JWT_SECRET, -3600);
+
+        let res = billing_routes(Some(state.clone()))
+            .oneshot(bearer("/api/v1/billing/plan", "GET", Some(&genuine)))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "a genuine token must work");
+
+        for (label, token) in [("forged", &forged), ("expired", &expired)] {
+            let res = billing_routes(Some(state.clone()))
+                .oneshot(bearer("/api/v1/billing/plan", "GET", Some(token)))
+                .await
+                .unwrap();
+            assert_eq!(
+                res.status(),
+                StatusCode::UNAUTHORIZED,
+                "a {label} token must be refused"
+            );
+        }
+
+        // A revoked session must stop working immediately, which an unverified
+        // decode can never notice.
+        oauth
+            .sessions
+            .write()
+            .await
+            .revoke(crate::oauth::token_hash(&genuine));
+        let res = billing_routes(Some(state))
+            .oneshot(bearer("/api/v1/billing/plan", "GET", Some(&genuine)))
+            .await
+            .unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::UNAUTHORIZED,
+            "a revoked session must be refused"
+        );
+    }
+
+    /// The usage endpoint's fallback iterated the whole in-memory buffer, so a
+    /// caller with no token at all got back every organisation's event counts.
+    /// Assert the *value* is absent, not merely that the status changed.
+    #[tokio::test]
+    async fn billing_usage_never_returns_another_organisations_counters() {
+        let victim = Uuid::new_v4();
+        let attacker = Uuid::new_v4();
+        let state = Arc::new(
+            BillingState::new(test_config("whsec_x")).with_oauth_state(Some(oauth_state())),
+        );
+        state.usage.write().await.record_events(victim, 424_242);
+        state.usage.write().await.record_events(attacker, 7);
+
+        // No token at all.
+        let res = billing_routes(Some(state.clone()))
+            .oneshot(get_req("/api/v1/billing/usage"))
+            .await
+            .unwrap();
+        let status = res.status();
+        let body = read_body(res).await;
+        assert!(
+            !body.contains(&victim.to_string()) && !body.contains("424242"),
+            "an unauthenticated caller must learn nothing about any org: {body}"
+        );
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        // A genuine token for the attacker's own org: their counter, nobody
+        // else's.
+        let token = token_for(attacker, JWT_SECRET, 3600);
+        let res = billing_routes(Some(state))
+            .oneshot(bearer("/api/v1/billing/usage", "GET", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = read_body(res).await;
+        assert!(
+            !body.contains(&victim.to_string()) && !body.contains("424242"),
+            "one tenant must not see another tenant's usage: {body}"
+        );
+        assert!(
+            body.contains(&attacker.to_string()),
+            "the caller's own usage must still be reported: {body}"
+        );
+    }
+
+    /// The portal URL exposes an organisation's subscription, payment methods
+    /// and invoices. A self-made token naming that organisation must not reach
+    /// the Stripe call at all.
+    #[tokio::test]
+    async fn billing_portal_refuses_a_self_made_token() {
+        let state = Arc::new(
+            BillingState::new(test_config("whsec_x")).with_oauth_state(Some(oauth_state())),
+        );
+        let forged = token_for(Uuid::new_v4(), "attacker-chosen-secret", 3600);
+
+        let res = billing_routes(Some(state))
+            .oneshot(bearer("/api/v1/billing/portal", "POST", Some(&forged)))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// Checkout creates a Stripe session on an organisation's behalf; without a
+    /// verified organisation there is nothing to create it for, and an
+    /// unauthenticated caller must not be able to spend Stripe API calls.
+    #[tokio::test]
+    async fn billing_checkout_refuses_an_unauthenticated_caller() {
+        let state = Arc::new(
+            BillingState::new(test_config("whsec_x")).with_oauth_state(Some(oauth_state())),
+        );
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/billing/checkout")
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+
+        let res = billing_routes(Some(state)).oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[test]
@@ -1191,43 +1608,45 @@ mod tests {
         assert_eq!(res.status(), 503);
     }
 
+    /// Billing answers are per-organisation. A configured-but-unauthenticated
+    /// request has no organisation, so it gets 401 rather than a default.
     #[tokio::test]
-    async fn test_billing_routes_usage() {
-        let config = BillingConfig {
-            stripe_secret_key: "sk_test_xxx".to_string(),
-            stripe_webhook_secret: "whsec_xxx".to_string(),
-            pro_price_id: "price_xxx".to_string(),
-            business_price_id: "price_biz_xxx".to_string(),
-            frontend_url: "http://localhost:5173".to_string(),
-        };
-        let state = Arc::new(BillingState::new(config));
+    async fn test_billing_routes_usage_requires_authentication() {
+        let state = Arc::new(
+            BillingState::new(test_config("whsec_xxx")).with_oauth_state(Some(oauth_state())),
+        );
         let app = billing_routes(Some(state));
 
         let res = app.oneshot(get_req("/api/v1/billing/usage")).await.unwrap();
 
-        assert_eq!(res.status(), 200);
+        assert_eq!(res.status(), 401);
     }
 
     #[tokio::test]
-    async fn test_billing_routes_plan() {
-        let config = BillingConfig {
-            stripe_secret_key: "sk_test_xxx".to_string(),
-            stripe_webhook_secret: "whsec_xxx".to_string(),
-            pro_price_id: "price_xxx".to_string(),
-            business_price_id: "price_biz_xxx".to_string(),
-            frontend_url: "http://localhost:5173".to_string(),
-        };
-        let state = Arc::new(BillingState::new(config));
+    async fn test_billing_routes_plan_requires_authentication() {
+        let state = Arc::new(
+            BillingState::new(test_config("whsec_xxx")).with_oauth_state(Some(oauth_state())),
+        );
         let app = billing_routes(Some(state));
 
         let res = app.oneshot(get_req("/api/v1/billing/plan")).await.unwrap();
 
-        assert_eq!(res.status(), 200);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        assert_eq!(res.status(), 401);
+    }
+
+    /// With no OAuth state there is no key to verify a token against, so
+    /// identity cannot be established and every billing endpoint fails closed.
+    #[tokio::test]
+    async fn billing_without_jwt_infrastructure_fails_closed() {
+        let state = Arc::new(BillingState::new(test_config("whsec_xxx")));
+        let token = token_for(Uuid::new_v4(), JWT_SECRET, 3600);
+
+        let res = billing_routes(Some(state))
+            .oneshot(bearer("/api/v1/billing/plan", "GET", Some(&token)))
             .await
             .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(body["tier"], "free");
+
+        assert_eq!(res.status(), 401);
     }
 
     #[tokio::test]

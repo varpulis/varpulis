@@ -727,9 +727,22 @@ pub async fn run_server(
     let billing_state: Option<billing::SharedBillingState> = billing::BillingConfig::from_env()
         .map(|billing_config| {
             info!("Stripe billing enabled");
+            if billing_config.stripe_webhook_secret.is_empty() {
+                tracing::warn!(
+                    "STRIPE_WEBHOOK_SECRET is not set — /api/v1/billing/webhook will reject \
+                     every delivery. Set it, or Stripe cannot drive tier changes."
+                );
+            }
+            if oauth_state.is_none() {
+                tracing::warn!(
+                    "Billing is enabled but no JWT/OAuth state is configured — billing \
+                     endpoints cannot verify a caller's organisation and will return 401."
+                );
+            }
             #[allow(unused_mut)]
-            let mut billing =
-                billing::BillingState::new(billing_config).with_audit_logger(audit_logger.clone());
+            let mut billing = billing::BillingState::new(billing_config)
+                .with_audit_logger(audit_logger.clone())
+                .with_oauth_state(oauth_state.clone());
             #[cfg(feature = "saas")]
             if let Some(ref pool) = db_pool {
                 billing = billing.with_db_pool(pool.clone());

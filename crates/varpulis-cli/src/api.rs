@@ -39,11 +39,27 @@ pub struct DeployPipelineResponse {
     pub status: String,
 }
 
+/// Serialize a VPL source with connector credentials redacted.
+///
+/// Applied on `Serialize` rather than `Debug` on purpose. The coordinator
+/// prepends `connector <name> = <type>(…, password: "…")` declarations to a
+/// pipeline's source before deploying it, and the worker stores that enriched
+/// text as the pipeline's source. Redacting only `Debug` would protect the logs
+/// and leave `GET /api/v1/pipelines/{id}` handing the credential straight back
+/// to the tenant.
+fn serialize_redacted_vpl<S: serde::Serializer>(
+    source: &str,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&varpulis_core::security::redact_vpl_secrets(source))
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PipelineInfo {
     pub id: String,
     pub name: String,
     pub status: String,
+    #[serde(serialize_with = "serialize_redacted_vpl")]
     pub source: String,
     pub uptime_secs: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -457,6 +473,10 @@ async fn handle_deploy(
             )
         }
     };
+
+    if let Some(resp) = reject_redacted_source(&body.source) {
+        return resp;
+    }
 
     let pipeline_name = body.name.clone();
     #[cfg(feature = "saas")]
@@ -1088,6 +1108,10 @@ async fn handle_reload(
         }
     };
 
+    if let Some(resp) = reject_redacted_source(&body.source) {
+        return resp;
+    }
+
     let result = {
         let tenant = match mgr.get_tenant_mut(&tenant_id) {
             Some(t) => t,
@@ -1714,6 +1738,24 @@ async fn handle_graph_to_pipeline(
 // Helpers
 // =============================================================================
 
+/// Reject a VPL source that still carries a redaction placeholder.
+///
+/// The read APIs return connector credentials redacted, so a client that reads
+/// a pipeline, edits it and posts it back would otherwise deploy `[REDACTED]`
+/// as the password and fail at connect time with nothing to explain why. Fail
+/// loudly at the boundary instead.
+fn reject_redacted_source(source: &str) -> Option<Response> {
+    varpulis_core::security::vpl_has_redacted_secret(source).then(|| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "redacted_secret_in_source",
+            "VPL source contains a redacted connector credential placeholder. \
+             Supply the real value, or drop the inline declaration and reference \
+             a named cluster connector instead.",
+        )
+    })
+}
+
 fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
     let body = ApiError {
         error: message.to_string(),
@@ -1790,6 +1832,29 @@ mod tests {
     use varpulis_runtime::tenant::{TenantManager, TenantQuota};
 
     use super::*;
+
+    /// `api_routes` with the `saas`-only database argument supplied, so this
+    /// module compiles under both feature sets.
+    ///
+    /// It did not before: every call here passed four arguments, so
+    /// `cargo test -p varpulis-cli --features saas --lib` failed to build and
+    /// none of these tests had ever run against the feature that gates the
+    /// multi-tenant code paths.
+    fn test_api_routes(
+        manager: SharedTenantManager,
+        admin_key: Option<String>,
+        cors_origins: Option<Vec<String>>,
+        billing_state: Option<SharedBillingState>,
+    ) -> Router {
+        api_routes(
+            manager,
+            admin_key,
+            cors_origins,
+            billing_state,
+            #[cfg(feature = "saas")]
+            None,
+        )
+    }
 
     #[tokio::test]
     async fn pipeline_graph_rejects_oversized_vpl_before_parsing() {
@@ -1923,7 +1988,7 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_pipeline() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("POST")
@@ -1945,7 +2010,7 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_invalid_api_key() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("POST")
@@ -1964,7 +2029,7 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_invalid_vpl() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("POST")
@@ -1983,7 +2048,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_pipelines() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("GET")
@@ -2001,7 +2066,7 @@ mod tests {
     #[tokio::test]
     async fn test_usage_endpoint() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("GET")
@@ -2027,7 +2092,7 @@ mod tests {
             tenant.pipelines.keys().next().unwrap().clone()
         };
 
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("POST")
@@ -2100,7 +2165,7 @@ mod tests {
     fn setup_admin_routes(admin_key: Option<&str>) -> (SharedTenantManager, Router) {
         let mgr = Arc::new(RwLock::new(TenantManager::new()));
         let key = admin_key.map(|k| k.to_string());
-        let routes = api_routes(mgr.clone(), key, None, None);
+        let routes = test_api_routes(mgr.clone(), key, None, None);
         (mgr, routes)
     }
 
@@ -2303,7 +2368,7 @@ mod tests {
     async fn test_get_single_pipeline() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("GET")
@@ -2320,10 +2385,96 @@ mod tests {
         assert!(body.source.contains("SensorReading"));
     }
 
+    /// VPL source carrying the connector declarations the coordinator prepends
+    /// before deployment. `to_vpl_declaration` renders a named cluster
+    /// connector's parameters as literals, so the credential ends up inside the
+    /// stored pipeline source of a tenant who never wrote it there.
+    const ENRICHED_SOURCE: &str = concat!(
+        "connector kafka_signals = kafka(brokers: \"broker:9092\", ",
+        "sasl_username: \"svc\", sasl_password: \"coordinator-injected-password\")\n",
+        "\n",
+        "stream A = SensorReading .where(x > 1)\n",
+    );
+
+    async fn manager_with_enriched_pipeline() -> SharedTenantManager {
+        let mut mgr = TenantManager::new();
+        let id = mgr
+            .create_tenant(
+                "Test Corp".into(),
+                "test-key-123".into(),
+                TenantQuota::default(),
+            )
+            .unwrap();
+        let tenant = mgr.get_tenant_mut(&id).unwrap();
+        tenant
+            .deploy_pipeline("Enriched".into(), ENRICHED_SOURCE.into())
+            .await
+            .expect("enriched source must deploy");
+        Arc::new(RwLock::new(mgr))
+    }
+
+    /// The pipeline read API must not hand a tenant the credentials that were
+    /// injected into their source on their behalf. Assert the *value* is
+    /// absent from the serialised payload — the failure mode is a secret
+    /// leaking, not a route being open.
+    #[tokio::test]
+    async fn pipeline_reads_do_not_echo_injected_connector_credentials() {
+        let mgr = manager_with_enriched_pipeline().await;
+        let pipeline_id = get_first_pipeline_id(&mgr).await;
+        let routes = test_api_routes(mgr, None, None, None);
+
+        for path in [
+            "/api/v1/pipelines".to_string(),
+            format!("/api/v1/pipelines/{pipeline_id}"),
+        ] {
+            let resp = test_request()
+                .method("GET")
+                .path(&path)
+                .header("x-api-key", "test-key-123")
+                .reply(&routes)
+                .await;
+
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body = String::from_utf8_lossy(resp.body()).into_owned();
+            assert!(
+                !body.contains("coordinator-injected-password"),
+                "{path} leaked the injected credential: {body}"
+            );
+            // Everything the operator needs to diagnose the pipeline survives.
+            assert!(body.contains("broker:9092"), "{path}: {body}");
+            assert!(body.contains("sasl_username"), "{path}: {body}");
+            assert!(body.contains("SensorReading"), "{path}: {body}");
+        }
+    }
+
+    /// A client that reads a redacted source and posts it straight back would
+    /// otherwise deploy `[REDACTED]` as the password and fail at connect time
+    /// with nothing to explain why.
+    #[tokio::test]
+    async fn deploying_a_redacted_source_is_refused_loudly() {
+        let mgr = setup_test_manager().await;
+        let routes = test_api_routes(mgr, None, None, None);
+
+        let resp = test_request()
+            .method("POST")
+            .path("/api/v1/pipelines")
+            .header("x-api-key", "test-key-123")
+            .json(&DeployPipelineRequest {
+                name: "Round Trip".into(),
+                source: varpulis_core::security::redact_vpl_secrets(ENRICHED_SOURCE),
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = String::from_utf8_lossy(resp.body()).into_owned();
+        assert!(body.contains("redacted_secret_in_source"), "{body}");
+    }
+
     #[tokio::test]
     async fn test_get_pipeline_not_found() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("GET")
@@ -2339,7 +2490,7 @@ mod tests {
     async fn test_delete_pipeline_api() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr.clone(), None, None, None);
+        let routes = test_api_routes(mgr.clone(), None, None, None);
 
         let resp = test_request()
             .method("DELETE")
@@ -2366,7 +2517,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_pipeline_not_found() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("DELETE")
@@ -2386,7 +2537,7 @@ mod tests {
     async fn test_inject_batch() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("POST")
@@ -2424,7 +2575,7 @@ mod tests {
     #[tokio::test]
     async fn test_inject_batch_invalid_pipeline() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         // Batch mode silently skips failed events (including nonexistent pipeline)
         let resp = test_request()
@@ -2454,7 +2605,7 @@ mod tests {
     async fn test_checkpoint_pipeline() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("POST")
@@ -2471,7 +2622,7 @@ mod tests {
     #[tokio::test]
     async fn test_checkpoint_not_found() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("POST")
@@ -2487,7 +2638,7 @@ mod tests {
     async fn test_restore_pipeline() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         // First checkpoint
         let cp_resp = test_request()
@@ -2518,7 +2669,7 @@ mod tests {
     #[tokio::test]
     async fn test_restore_not_found() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let checkpoint = varpulis_runtime::persistence::EngineCheckpoint {
             version: varpulis_runtime::persistence::CHECKPOINT_VERSION,
@@ -2553,7 +2704,7 @@ mod tests {
     async fn test_metrics_endpoint() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("GET")
@@ -2570,7 +2721,7 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_not_found() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("GET")
@@ -2590,7 +2741,7 @@ mod tests {
     async fn test_reload_pipeline() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("POST")
@@ -2611,7 +2762,7 @@ mod tests {
     async fn test_reload_invalid_vpl() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("POST")
@@ -2629,7 +2780,7 @@ mod tests {
     #[tokio::test]
     async fn test_reload_not_found() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("POST")
@@ -2651,7 +2802,7 @@ mod tests {
     #[tokio::test]
     async fn test_logs_invalid_pipeline() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("GET")
@@ -2667,7 +2818,7 @@ mod tests {
     async fn test_logs_invalid_api_key() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("GET")
@@ -2769,7 +2920,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_pipelines_default_pagination() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("GET")
@@ -2813,7 +2964,7 @@ mod tests {
                 .unwrap();
         }
 
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         // First page: limit=1, offset=0
         let resp = test_request()
@@ -2848,7 +2999,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_pipelines_limit_exceeds_max() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None, None);
+        let routes = test_api_routes(mgr, None, None, None);
 
         let resp = test_request()
             .method("GET")
@@ -2932,7 +3083,7 @@ mod tests {
         mgr.pending_events_counter().store(5, Ordering::Relaxed);
 
         let shared = Arc::new(RwLock::new(mgr));
-        let routes = api_routes(shared, None, None, None);
+        let routes = test_api_routes(shared, None, None, None);
 
         let resp = test_request()
             .method("POST")
@@ -2980,7 +3131,7 @@ mod tests {
         mgr.pending_events_counter().store(5, Ordering::Relaxed);
 
         let shared = Arc::new(RwLock::new(mgr));
-        let routes = api_routes(shared, None, None, None);
+        let routes = test_api_routes(shared, None, None, None);
 
         let resp = test_request()
             .method("POST")

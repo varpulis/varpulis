@@ -826,7 +826,7 @@ async fn handle_create_tenant(
 /// Spawn a background task that checks for expired trials every hour.
 pub fn spawn_trial_expiry_checker(pool: varpulis_db::PgPool) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        let mut interval = tokio::time::interval(std::time::Duration::from_hours(1));
         loop {
             interval.tick().await;
             let now = chrono::Utc::now();
@@ -863,6 +863,38 @@ struct DeployGlobalPipelineRequest {
     vpl_source: String,
 }
 
+/// Refuse a global pipeline template that carries an inline connector
+/// credential.
+///
+/// A global template is not stored once — it is copied verbatim into a row
+/// owned by every non-revoked organisation, and each tenant reads its own copy
+/// back through `GET /api/v1/orgs/{id}/pipelines`. So an operator who points a
+/// detection template at their own SIEM with an inline SASL password is handing
+/// that password to every tenant on the platform. There is no way to make that
+/// safe at read time: the copy has already been written into the tenant's row.
+/// Reject it at the point of entry instead.
+fn reject_inline_secrets(vpl_source: &str) -> Option<Response> {
+    let params = varpulis_core::security::vpl_inline_secret_params(vpl_source);
+    if params.is_empty() {
+        return None;
+    }
+    Some(
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!(
+                    "Global pipeline templates are copied into every tenant, so they must not \
+                     contain inline connector credentials. Remove {} and reference a named \
+                     cluster connector instead.",
+                    params.join(", ")
+                ),
+                "secret_params": params,
+            })),
+        )
+            .into_response(),
+    )
+}
+
 /// POST /api/v1/admin/global-pipelines — deploy a global pipeline to all tenants.
 async fn handle_deploy_global_pipeline(
     State(state): State<AdminState>,
@@ -878,12 +910,8 @@ async fn handle_deploy_global_pipeline(
         }
     };
 
-    let pool = match require_pool(&state) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-
-    // Validate VPL source parses
+    // Validate the body before acquiring resources, so a rejected template is
+    // rejected for the reason that actually applies to it.
     if let Err(e) = varpulis_parser::parse(&body.vpl_source) {
         return (
             StatusCode::BAD_REQUEST,
@@ -891,6 +919,15 @@ async fn handle_deploy_global_pipeline(
         )
             .into_response();
     }
+
+    if let Some(resp) = reject_inline_secrets(&body.vpl_source) {
+        return resp;
+    }
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
 
     // Parse deployer UUID from claims
     let deployed_by = claims.user_id.parse::<uuid::Uuid>().ok();
@@ -1016,7 +1053,7 @@ async fn handle_list_global_pipelines(
         items.push(serde_json::json!({
             "id": t.id.to_string(),
             "name": t.name,
-            "vpl_source": t.vpl_source,
+            "vpl_source": varpulis_core::security::redact_vpl_secrets(&t.vpl_source),
             "status": t.status,
             "tenant_count": copies.len(),
             "deployed_by": t.deployed_by.map(|u| u.to_string()),
@@ -1050,11 +1087,6 @@ async fn handle_update_global_pipeline(
         return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
     }
 
-    let pool = match require_pool(&state) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-
     let template_uuid: uuid::Uuid = match template_id.parse() {
         Ok(id) => id,
         Err(_) => {
@@ -1074,6 +1106,15 @@ async fn handle_update_global_pipeline(
         )
             .into_response();
     }
+
+    if let Some(resp) = reject_inline_secrets(&body.vpl_source) {
+        return resp;
+    }
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
 
     // Check template exists
     match varpulis_db::repo::get_global_template(&pool, template_uuid).await {
@@ -2021,4 +2062,128 @@ pub fn admin_routes(
                 .delete(handle_remove_kafka),
         )
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    const JWT_SECRET: &str = "admin-tests-jwt-secret";
+
+    fn oauth_state() -> SharedOAuthState {
+        Arc::new(crate::oauth::OAuthState::new(crate::oauth::OAuthConfig {
+            github_client_id: String::new(),
+            github_client_secret: String::new(),
+            jwt_secret: JWT_SECRET.to_string(),
+            frontend_url: "http://localhost:5173".to_string(),
+            server_url: "http://localhost:9000".to_string(),
+        }))
+    }
+
+    fn admin_token() -> String {
+        let now = chrono::Utc::now().timestamp() as usize;
+        let claims = crate::oauth::Claims {
+            sub: "1".to_string(),
+            name: "Operator".to_string(),
+            login: "operator".to_string(),
+            avatar: String::new(),
+            email: String::new(),
+            exp: now + 3600,
+            iat: now,
+            user_id: uuid::Uuid::new_v4().to_string(),
+            org_id: uuid::Uuid::new_v4().to_string(),
+            role: "admin".to_string(),
+            session_id: String::new(),
+            auth_method: "local".to_string(),
+            org_role: "owner".to_string(),
+        };
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(JWT_SECRET.as_bytes()),
+        )
+        .expect("test JWT must encode")
+    }
+
+    async fn post_global_template(vpl_source: &str) -> (StatusCode, String) {
+        let app = admin_routes(None, Some(oauth_state()), None);
+        let body = serde_json::json!({ "name": "detections", "vpl_source": vpl_source });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/v1/admin/global-pipelines")
+            .header("authorization", format!("Bearer {}", admin_token()))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request must build");
+        let res = app.oneshot(req).await.expect("router must respond");
+        let status = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body must read");
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// A global template is copied verbatim into a row owned by every
+    /// non-revoked organisation, and each tenant reads its own copy back. An
+    /// inline SASL password in the template is therefore handed to every tenant
+    /// on the platform, and no amount of redaction at read time un-writes it.
+    #[tokio::test]
+    async fn global_template_carrying_an_inline_credential_is_refused() {
+        let (status, body) = post_global_template(
+            "connector siem = kafka(brokers: \"siem:9092\", sasl_username: \"svc\", \
+             sasl_password: \"operator-own-siem-password\")\n\
+             \n\
+             stream Detections = Login.from(siem, topic: \"auth\")\n",
+        )
+        .await;
+
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "a template with an inline credential must be refused, got {status}: {body}"
+        );
+        assert!(
+            !body.contains("operator-own-siem-password"),
+            "the rejection must not echo the credential back: {body}"
+        );
+        assert!(
+            body.contains("sasl_password"),
+            "the rejection must name the offending parameter: {body}"
+        );
+    }
+
+    /// The control has to be specific: a template with no credential in it gets
+    /// past validation and fails later for the reason that actually applies
+    /// (here, no database configured in the test).
+    #[tokio::test]
+    async fn global_template_without_credentials_is_not_refused_by_the_secret_check() {
+        let (status, body) = post_global_template(
+            "connector siem = kafka(brokers: \"siem:9092\")\n\
+             \n\
+             stream Detections = Login.from(siem, topic: \"auth\")\n",
+        )
+        .await;
+
+        assert_ne!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "a credential-free template must not be rejected: {body}"
+        );
+    }
+
+    /// `registry_key` is a Sysmon field name, not a credential. A detection
+    /// template that inspects the registry must still deploy.
+    #[tokio::test]
+    async fn detection_fields_that_look_like_secrets_are_not_treated_as_credentials() {
+        assert!(reject_inline_secrets(
+            "stream P = RegWrite\n    .emit(Alert { registry_key: r.TargetObject })\n"
+        )
+        .is_none());
+    }
 }
