@@ -56,17 +56,17 @@ across the chain.
 
 ```vpl
 event OrderReceived:
-    orderId: string
-    partner: string
+    orderId: str
+    partner: str
 
 event OrderEnriched:
-    orderId: string
+    orderId: str
 
 event OrderConfirmed:
-    orderId: string
+    orderId: str
 
--- Enrichment lag: flag if enrichment takes more than 5 minutes
--- (early warning — distinct from the end-to-end SLA)
+# Enrichment lag: flag if enrichment takes more than 5 minutes
+# (early warning — distinct from the end-to-end SLA)
 stream EnrichmentLag = OrderReceived as recv
     -> NOT OrderEnriched .where(orderId == recv.orderId)
     .within(5m)
@@ -75,7 +75,7 @@ stream EnrichmentLag = OrderReceived as recv
           warning: "enrichment exceeds 5m")
     .to(kafka(brokers: "ops-kafka:9092", topic: "sla-warnings"))
 
--- End-to-end SLA: full flow must complete within 30 minutes
+# End-to-end SLA: full flow must complete within 30 minutes
 stream SlaBreachRisk = OrderReceived as recv
     -> OrderEnriched as enr
     -> OrderConfirmed as conf
@@ -118,12 +118,12 @@ requires manual SQL against TN tables.
 
 ```vpl
 event EdiDoc:
-    docType: string
-    partnerId: string
-    controlNumber: string
+    docType: str
+    partnerId: str
+    controlNumber: str
 
--- Pattern 1: Missing functional acknowledgment
--- PO sent, no 997 within 4 hours → contractual penalty risk
+# Pattern 1: Missing functional acknowledgment
+# PO sent, no 997 within 4 hours → contractual penalty risk
 stream MissingAck = EdiDoc as po .where(po.docType == "850")
     -> NOT EdiDoc .where(docType == "997" AND partnerId == po.partnerId)
     .within(4h)
@@ -132,7 +132,7 @@ stream MissingAck = EdiDoc as po .where(po.docType == "850")
           violation: "997 not received within 4h")
     .to(http(url: "https://ops.internal/edi-alerts", method: "POST"))
 
--- Pattern 2: Stale PO — confirmation sent but ASN never follows
+# Pattern 2: Stale PO — confirmation sent but ASN never follows
 stream StaleConfirmation = EdiDoc as conf .where(conf.docType == "855")
     -> NOT EdiDoc .where(docType == "856" AND partnerId == conf.partnerId)
     .within(48h)
@@ -140,10 +140,10 @@ stream StaleConfirmation = EdiDoc as conf .where(conf.docType == "855")
     .emit(partner: conf.partnerId,
           violation: "ASN not received within 48h of PO confirmation")
 
--- Pattern 3: Full happy-path enforcement
--- Entire PO→Confirmation→ASN→Invoice flow must complete within 7 days.
--- The .within(7d) window starts from the first matched event (the 850 PO).
--- The NOT fires if the invoice hasn't arrived before the 7d window expires.
+# Pattern 3: Full happy-path enforcement
+# Entire PO→Confirmation→ASN→Invoice flow must complete within 7 days.
+# The .within(7d) window starts from the first matched event (the 850 PO).
+# The NOT fires if the invoice hasn't arrived before the 7d window expires.
 stream IncompleteFlow = EdiDoc as po .where(po.docType == "850")
     -> EdiDoc as conf .where(conf.docType == "855" AND conf.partnerId == po.partnerId)
     -> EdiDoc as asn .where(asn.docType == "856" AND asn.partnerId == po.partnerId)
@@ -188,13 +188,13 @@ failure patterns across services.
 
 ```vpl
 event ServiceError:
-    serviceName: string
-    errorCode: string
-    targetSystem: string
+    serviceName: str
+    errorCode: str
+    targetSystem: str
 
--- 5+ distinct services failing against the same target within 2 minutes.
--- Uses arrow syntax with `all` for unbounded error accumulation.
--- count() returns the number of matched events in the closure.
+# 5+ distinct services failing against the same target within 2 minutes.
+# Uses arrow syntax with `all` for unbounded error accumulation.
+# count() returns the number of matched events in the closure.
 pattern ErrorBurst = ServiceError as first
     -> all ServiceError as errors
     within 2m partition by targetSystem
@@ -231,17 +231,17 @@ was never violated) requires after-the-fact auditing of logs.
 
 ```vpl
 event BatchRelease:
-    batchId: string
-    product: string
+    batchId: str
+    product: str
 
 event QaSignoff:
-    batchId: string
-    inspector: string
+    batchId: str
+    inspector: str
 
 event ShipmentInitiated:
-    batchId: string
+    batchId: str
 
--- GxP violation: QA sign-off not received within 2 hours of batch release
+# GxP violation: QA sign-off not received within 2 hours of batch release
 stream GxpViolation = BatchRelease as br
     -> NOT QaSignoff .where(batchId == br.batchId)
     .within(2h)
@@ -250,7 +250,7 @@ stream GxpViolation = BatchRelease as br
           violation: "QA sign-off missed within 2h window")
     .to(kafka(brokers: "audit-kafka:9092", topic: "compliance-violations"))
 
--- Happy-path tracking: full compliant release flow
+# Happy-path tracking: full compliant release flow
 stream ValidRelease = BatchRelease as br
     -> QaSignoff as qa .where(qa.batchId == br.batchId)
     -> ShipmentInitiated as ship .where(ship.batchId == br.batchId)
@@ -283,13 +283,13 @@ doesn't correlate temporal sequences of calls.
 
 ```vpl
 event ApiCall:
-    clientIp: string
-    endpoint: string
+    clientIp: str
+    endpoint: str
     statusCode: int
-    apiKey: string
+    apiKey: str
 
--- Credential stuffing: 10+ failed logins from same IP within 5 minutes
--- Uses arrow syntax with `all` for unbounded attempt accumulation
+# Credential stuffing: 10+ failed logins from same IP within 5 minutes
+# Uses arrow syntax with `all` for unbounded attempt accumulation
 pattern StuffingPattern = ApiCall where endpoint == "/auth/login" and statusCode == 401 as first
     -> all ApiCall where endpoint == "/auth/login" and statusCode == 401 as attempts
     within 5m partition by clientIp
@@ -301,7 +301,7 @@ stream CredentialStuffing = StuffingPattern
           action: "block_ip")
     .to(http(url: "https://apigw.internal/blacklist", method: "POST"))
 
--- API enumeration: high-frequency probing on a path prefix
+# API enumeration: high-frequency probing on a path prefix
 pattern EnumPattern = ApiCall where starts_with(endpoint, "/api/users/") as first
     -> all ApiCall where starts_with(endpoint, "/api/users/") as probes
     within 1m partition by clientIp

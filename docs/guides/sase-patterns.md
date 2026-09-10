@@ -41,7 +41,7 @@ Use `->` inside **stream expressions** for a chainable style:
 ```vpl
 stream FraudAlert = login as l
     -> transfer as t .within(5m)
-    .where(l.user_id == t.user_id && t.amount > 5000)
+    .where(l.user_id == t.user_id and t.amount > 5000)
     .emit(alert: "Suspicious transfer", user: l.user_id)
 ```
 
@@ -74,8 +74,8 @@ Pattern matching has **two orthogonal axes** that control how matches are produc
 
 ```vpl
 stream X = ... pattern ...
-    .stam()       // selection: how runs are spawned (default)
-    .each()       // emission: how matches are produced (default)
+    .stam()  # selection: how runs are spawned (default)
+    .each()  # emission: how matches are produced (default)
     .emit(...)
 ```
 
@@ -312,10 +312,10 @@ stream BruteForce = LoginFailed as first
 Zero or more occurrences.
 
 ```vpl
-// Start, any events, then end
+# Start, any events, then end
 pattern Session = SessionStart -> Activity* -> SessionEnd
 
-// Optional middleware
+# Optional middleware
 pattern Request = ClientRequest -> Middleware* -> ServerResponse
 ```
 
@@ -328,11 +328,11 @@ pattern Request = ClientRequest -> Middleware* -> ServerResponse
 Detect the absence of an event within a time window.
 
 ```vpl
-// Order not confirmed within 1 hour
+# Order not confirmed within 1 hour
 pattern UnconfirmedOrder =
     OrderPlaced -> NOT(OrderConfirmed) within 1h
 
-// Payment started but never completed
+# Payment started but never completed
 pattern AbandonedPayment =
     PaymentStart -> NOT(PaymentComplete) within 5m
 ```
@@ -351,11 +351,11 @@ pattern AbandonedPayment =
 Both patterns must match, but order doesn't matter.
 
 ```vpl
-// Both documents required (any order)
+# Both documents required (any order)
 pattern BothDocs =
     AND(DocumentA, DocumentB) within 1h
 
-// Application complete when both submitted
+# Application complete when both submitted
 pattern ApplicationComplete =
     AND(FormSubmitted, PaymentReceived) within 24h
 ```
@@ -370,11 +370,11 @@ pattern ApplicationComplete =
 Either pattern matches.
 
 ```vpl
-// Accept either payment method
+# Accept either payment method
 pattern PaymentReceived =
     OR(CreditCard, BankTransfer)
 
-// Multiple termination conditions
+# Multiple termination conditions
 pattern SessionEnd =
     OR(Logout, Timeout, ForceDisconnect)
 ```
@@ -579,9 +579,9 @@ SASE+ supports different strategies for selecting events when multiple matches a
 Match as many patterns as possible, potentially with overlapping events.
 
 ```vpl
-// Given events: A1, B1, A2, B2
-// Pattern: A -> B
-// Matches: (A1, B1), (A1, B2), (A2, B2)
+# Given events: A1, B1, A2, B2
+# Pattern: A -> B
+# Matches: (A1, B1), (A1, B2), (A2, B2)
 ```
 
 ### Skip-Till-Next-Match
@@ -589,9 +589,9 @@ Match as many patterns as possible, potentially with overlapping events.
 Each event participates in at most one match.
 
 ```vpl
-// Given events: A1, B1, A2, B2
-// Pattern: A -> B
-// Matches: (A1, B1), (A2, B2)
+# Given events: A1, B1, A2, B2
+# Pattern: A -> B
+# Matches: (A1, B1), (A2, B2)
 ```
 
 ### Strict Contiguity
@@ -599,9 +599,9 @@ Each event participates in at most one match.
 Events must be immediately adjacent (no skipping).
 
 ```vpl
-// Given events: A1, C1, B1
-// Pattern: A -> B (strict)
-// Matches: none (C1 breaks contiguity)
+# Given events: A1, C1, B1
+# Pattern: A -> B (strict)
+# Matches: none (C1 breaks contiguity)
 ```
 
 ---
@@ -635,10 +635,10 @@ RUST_LOG=varpulis_runtime::sase=trace varpulis simulate ...
 
 **Debug steps:**
 ```vpl
-// Remove predicates to test basic matching
+# Remove predicates to test basic matching
 pattern Debug1 = A -> B within 1h
 
-// Add predicates back one at a time
+# Add predicates back one at a time
 pattern Debug2 = A[field > 0] -> B within 1h
 ```
 
@@ -651,7 +651,7 @@ pattern Debug2 = A[field > 0] -> B within 1h
 
 **Solution:**
 ```vpl
-// Add partition to isolate matches
+# Add partition to isolate matches
 pattern Isolated =
     Login -> Action -> Logout
     within 1h
@@ -667,12 +667,12 @@ pattern Isolated =
 
 **Solutions:**
 ```vpl
-// Limit Kleene matches
+# Limit Kleene matches
 pattern Limited =
-    Event+ within 5m  // Natural bound via timeout
+    Event+ within 5m  # Natural bound via timeout
 
-// Reduce partition cardinality
-partition by category  // Use low-cardinality field
+# Reduce partition cardinality
+partition by category  # Use low-cardinality field
 ```
 
 #### 4. Negation Not Triggering
@@ -684,7 +684,7 @@ partition by category  // Use low-cardinality field
 
 **Debug:**
 ```vpl
-// Ensure event types match exactly
+# Ensure event types match exactly
 pattern Debug =
     Start -> NOT(Exactly_This_Type) within 10m
 ```
@@ -752,7 +752,7 @@ See `varpulis-zdd` crate for ZDD data structures and `sase.rs` for integration w
 ### Fraud Detection
 
 ```vpl
-// Multiple small transactions followed by large withdrawal
+# Multiple small transactions followed by large withdrawal
 pattern SmurfingPattern = all Transaction where amount < 1000 as small
     -> Transaction where amount > 9000 as large
     within 1h partition by account_id
@@ -768,7 +768,7 @@ stream FraudAlerts = SmurfingPattern
 ### SLA Monitoring
 
 ```vpl
-// Request without response within SLA
+# Request without response within SLA
 pattern SLABreach = Request as req
     -> NOT Response where request_id == req.id
     within 5s
@@ -780,7 +780,7 @@ stream SLAAlerts = SLABreach
 ### IoT Device Monitoring
 
 ```vpl
-// Device going offline (no heartbeat within 1m)
+# Device going offline (no heartbeat within 1m)
 pattern DeviceOffline = Heartbeat as last_beat
     -> NOT Heartbeat
     within 1m partition by device_id

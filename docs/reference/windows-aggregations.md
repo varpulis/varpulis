@@ -181,11 +181,11 @@ stream PerDeviceStats = SensorReading
 
 **Examples:**
 ```vpl
-.window(500ms)              // Half second
-.window(30s)                // 30 seconds
-.window(5m, sliding: 1m)    // 5 min window, 1 min slide
-.window(1h)                 // 1 hour
-.window(1d)                 // 1 day
+.window(500ms)  # Half second
+.window(30s)  # 30 seconds
+.window(5m, sliding: 1m)  # 5 min window, 1 min slide
+.window(1h)  # 1 hour
+.window(1d)  # 1 day
 ```
 
 ---
@@ -561,7 +561,7 @@ stream ApiLatency = RequestEvent
 ### Multi-Level Aggregation
 
 ```vpl
-// First level: per-device minute stats
+# First level: per-device minute stats
 stream DeviceMinutes = SensorReading
     .partition_by(device_id)
     .window(1m)
@@ -570,7 +570,7 @@ stream DeviceMinutes = SensorReading
         minute_avg: avg(value)
     )
 
-// Second level: all-device hour stats
+# Second level: all-device hour stats
 stream HourlyOverview = DeviceMinutes
     .window(1h)
     .aggregate(

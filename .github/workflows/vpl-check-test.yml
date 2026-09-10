@@ -82,6 +82,25 @@ jobs:
           path: 'demos/'
           binary: ${{ github.workspace }}/cli/varpulis
 
+  check-docs:
+    name: Check VPL in the documentation
+    needs: [build-cli]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: varpulis-cli-vpl-check
+          path: cli
+      - run: chmod +x cli/varpulis
+      # The shipped `.vpl` files were already checked; the documentation's
+      # fenced blocks were not, and they are what a reader copies. 82 of them
+      # opened with a `//` comment, which VPL does not have, so the first line
+      # a new user pasted did not parse.
+      - name: Check documented VPL
+        run: python3 scripts/check-doc-vpl.py "$GITHUB_WORKSPACE/cli/varpulis"
+
   run-examples:
     name: Execute examples and assert output
     runs-on: ubuntu-latest

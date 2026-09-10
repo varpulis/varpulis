@@ -50,7 +50,7 @@ The `message` parameter supports `{field_name}` placeholders. Each placeholder i
 
 ```vpl
 stream FraudAlert = Transaction
-    .where(amount > 10000 && country != "US")
+    .where(amount > 10000 and country != "US")
     .alert(
         webhook: "https://example.com/fraud-webhook",
         message: "Suspicious transaction: {user_id} spent {amount} at {merchant} in {country}"
@@ -142,7 +142,7 @@ Here is a full pipeline that detects suspicious transactions, alerts a Slack cha
 Create `fraud_alerts.vpl`:
 
 ```vpl
-// Declare event types
+# Declare event types
 event Transaction:
     user_id: str
     amount: float
@@ -150,9 +150,9 @@ event Transaction:
     country: str
     card_type: str
 
-// High-value foreign transactions
+# High-value foreign transactions
 stream ForeignHighValue = Transaction
-    .where(amount > 5000 && country != "US")
+    .where(amount > 5000 and country != "US")
     .alert(
         webhook: "https://example.com/slack-webhook",
         message: "Foreign high-value: {user_id} spent {amount} at {merchant} in {country}"
@@ -164,7 +164,7 @@ stream ForeignHighValue = Transaction
         country: country
     )
 
-// Any single transaction over $10,000
+# Any single transaction over $10,000
 stream VeryLargeTransaction = Transaction
     .where(amount > 10000)
     .alert(

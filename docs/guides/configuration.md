@@ -202,12 +202,12 @@ Topics are specified per-stream in `.from()` calls, supporting `#` (multi-level)
 ### Topic Wildcards
 
 ```vpl
-// Single-level wildcard (+)
-input_topic: "sensors/+/temperature"  // Matches sensors/1/temperature, sensors/2/temperature
+# Single-level wildcard (+)
+input_topic: "sensors/+/temperature"  # Matches sensors/1/temperature, sensors/2/temperature
 
-// Multi-level wildcard (#)
-input_topic: "sensors/#"              // Matches all topics under sensors/
-input_topic: "building/floor1/#"      // All floor1 sensors
+# Multi-level wildcard (#)
+input_topic: "sensors/#"  # Matches all topics under sensors/
+input_topic: "building/floor1/#"  # All floor1 sensors
 ```
 
 ### Reconnection Behavior
@@ -248,13 +248,13 @@ stream Events = SensorReading
 NATS uses `.` as a subject separator:
 
 ```vpl
-// Single-token wildcard (*)
-topic: "sensors.*"           // Matches sensors.temp, sensors.humidity
-                             // Does NOT match sensors.zone1.temp
+# Single-token wildcard (*)
+topic: "sensors.*"  # Matches sensors.temp, sensors.humidity
+                             # Does NOT match sensors.zone1.temp
 
-// Multi-token wildcard (>)
-topic: "sensors.>"           // Matches sensors.temp AND sensors.zone1.temp
-topic: "market.trades.>"     // All topics under market.trades.
+# Multi-token wildcard (>)
+topic: "sensors.>"  # Matches sensors.temp AND sensors.zone1.temp
+topic: "market.trades.>"  # All topics under market.trades.
 ```
 
 ### NATS Server Requirements

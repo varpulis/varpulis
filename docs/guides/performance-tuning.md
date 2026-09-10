@@ -210,23 +210,23 @@ Benefits:
 
 1. **Prefer count windows for bounded memory:**
 ```vpl
-// Fixed memory: exactly 1000 events
+# Fixed memory: exactly 1000 events
 .window(1000)
 ```
 
 2. **Use shorter time windows:**
 ```vpl
-// 5 minutes instead of 1 hour = 12x less memory
+# 5 minutes instead of 1 hour = 12x less memory
 .window(5m)
 ```
 
 3. **Limit partition cardinality:**
 ```vpl
-// Bad: unbounded partitions
+# Bad: unbounded partitions
 .partition_by(request_id)
 
-// Good: bounded partitions
-.partition_by(region)  // Limited number of regions
+# Good: bounded partitions
+.partition_by(region)  # Limited number of regions
 ```
 
 ### ZDD Optimization (Pattern Matching)
@@ -321,17 +321,17 @@ groups:
 Put selective filters first to reduce data volume:
 
 ```vpl
-// Good: filter first, then aggregate
+# Good: filter first, then aggregate
 stream Optimized = SensorReading
-    .where(sensor_type == "temperature")  // Filter first
+    .where(sensor_type == "temperature")  # Filter first
     .window(1m)
     .aggregate(avg: avg(value))
 
-// Less optimal: aggregate all, then filter
+# Less optimal: aggregate all, then filter
 stream LessOptimal = SensorReading
     .window(1m)
     .aggregate(avg: avg(value), type: first(sensor_type))
-    .where(type == "temperature")  // Filter after aggregation
+    .where(type == "temperature")  # Filter after aggregation
 ```
 
 ### Minimize Pattern Complexity
@@ -339,10 +339,10 @@ stream LessOptimal = SensorReading
 Simpler patterns match faster:
 
 ```vpl
-// Complex: 4 states, Kleene closure
+# Complex: 4 states, Kleene closure
 pattern Complex = A+ -> B -> C+ -> D
 
-// Simpler: can often be split
+# Simpler: can often be split
 pattern Step1 = A -> B
 pattern Step2 = C -> D
 ```
@@ -352,23 +352,23 @@ pattern Step2 = C -> D
 Shorter timeouts = less state to track:
 
 ```vpl
-// Keeping state for 24 hours is expensive
+# Keeping state for 24 hours is expensive
 pattern Long = A -> B within 24h
 
-// If 5 minutes is sufficient, use that
+# If 5 minutes is sufficient, use that
 pattern Short = A -> B within 5m
 ```
 
 ### Avoid Unbounded Kleene
 
 ```vpl
-// Bad: could match millions of events
+# Bad: could match millions of events
 pattern Unbounded = Event* -> End
 
-// Better: bounded by timeout
+# Better: bounded by timeout
 pattern Bounded = Event* -> End within 5m
 
-// Even better: add constraints
+# Even better: add constraints
 pattern Constrained = Event[type == "relevant"]* -> End within 5m
 ```
 

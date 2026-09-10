@@ -44,10 +44,10 @@ varpulis check program.vpl
 
 **Example fix:**
 ```vpl
-// Wrong
+# Wrong
 stream Readings form SensorReading
 
-// Correct
+# Correct
 stream Readings = SensorReading
 ```
 
@@ -123,8 +123,8 @@ head -5 events.evt
 
 2. **Check event type matches:**
 ```vpl
-// If events come as "temperature_reading" (snake_case)
-stream Temps = temperature_reading  // Must match exactly!
+# If events come as "temperature_reading" (snake_case)
+stream Temps = temperature_reading  # Must match exactly!
 ```
 
 3. **Verify topic subscription:**
@@ -136,7 +136,7 @@ connector Sensors = mqtt (
 )
 
 stream Events = SensorReading
-    .from(Sensors, topic: "sensors/#")  // Make sure wildcard is correct
+    .from(Sensors, topic: "sensors/#")  # Make sure wildcard is correct
 ```
 
 ### Events Processed but No Alerts
@@ -147,26 +147,26 @@ stream Events = SensorReading
 
 1. **Check filter conditions:**
 ```vpl
-// Too restrictive?
-.where(temperature > 1000)  // Maybe threshold is too high
+# Too restrictive?
+.where(temperature > 1000)  # Maybe threshold is too high
 
-// Debug: remove filters temporarily
+# Debug: remove filters temporarily
 stream Debug = TemperatureReading
     .print("Got event: {temperature}")
 ```
 
 2. **Verify field names:**
 ```vpl
-// Field names are case-sensitive
-.where(Temperature > 100)  // Wrong if field is "temperature"
-.where(temperature > 100)  // Correct
+# Field names are case-sensitive
+.where(Temperature > 100)  # Wrong if field is "temperature"
+.where(temperature > 100)  # Correct
 ```
 
 3. **Check data types:**
 ```vpl
-// String comparison vs numeric
-.where(value > 100)      // Works if value is numeric
-.where(value > "100")    // String comparison - different!
+# String comparison vs numeric
+.where(value > 100)  # Works if value is numeric
+.where(value > "100")  # String comparison - different!
 ```
 
 ### Memory Growing Unbounded
@@ -177,30 +177,30 @@ stream Debug = TemperatureReading
 
 1. **Unbounded windows:**
 ```vpl
-// Bad: no time limit
+# Bad: no time limit
 stream Bad = Event
-    .window(1h, sliding: 1s)  // 3600 overlapping windows!
+    .window(1h, sliding: 1s)  # 3600 overlapping windows!
 
-// Better: reasonable window
+# Better: reasonable window
 stream Better = Event
     .window(1m)
 ```
 
 2. **Too many partitions:**
 ```vpl
-// Bad: high-cardinality partition
-.partition_by(request_id)  // Every request = new partition!
+# Bad: high-cardinality partition
+.partition_by(request_id)  # Every request = new partition!
 
-// Better: use low-cardinality
-.partition_by(customer_id)  // Bounded number of customers
+# Better: use low-cardinality
+.partition_by(customer_id)  # Bounded number of customers
 ```
 
 3. **Pattern state accumulation:**
 ```vpl
-// Bad: long timeout, lots of partial matches
+# Bad: long timeout, lots of partial matches
 pattern Bad = A -> B -> C within 24h
 
-// Better: shorter timeout
+# Better: shorter timeout
 pattern Better = A -> B -> C within 5m
 ```
 
@@ -251,11 +251,11 @@ RUST_LOG=varpulis_runtime::engine=trace varpulis run ...
 
 1. **Simplify the pattern:**
 ```vpl
-// Start with just the first event type
+# Start with just the first event type
 stream Debug1 = A
     .print("Matched A")
 
-// Then test with a sequence
+# Then test with a sequence
 stream Debug2 = A as a -> B
     .within(1h)
     .print("Matched A -> B")
@@ -263,9 +263,9 @@ stream Debug2 = A as a -> B
 
 2. **Check event types exactly:**
 ```vpl
-// Event types are case-sensitive
+# Event types are case-sensitive
 pattern Wrong = LoginEvent -> LogoutEvent
-pattern Right = login_event -> logout_event  // If that's the actual type
+pattern Right = login_event -> logout_event  # If that's the actual type
 ```
 
 3. **Verify timing:**
@@ -281,20 +281,20 @@ varpulis simulate -p rules.vpl -e events.evt --verbose
 
 1. **Missing partition-by:**
 ```vpl
-// Bad: matches across all users
+# Bad: matches across all users
 pattern AllUsers = Login -> Logout
 
-// Better: per-user matching
+# Better: per-user matching
 pattern PerUser = Login -> Logout
     partition by user_id
 ```
 
 2. **Predicates too loose:**
 ```vpl
-// Bad: any transaction
+# Bad: any transaction
 pattern Fraud = Transaction+
 
-// Better: constrained
+# Better: constrained
 pattern Fraud = Transaction[amount > 1000]+
 ```
 
@@ -304,18 +304,18 @@ pattern Fraud = Transaction[amount > 1000]+
 
 1. **Check timeout is sufficient:**
 ```vpl
-// If events are slow, timeout might expire before negated event
+# If events are slow, timeout might expire before negated event
 pattern TooShort = A -> NOT(B) within 1s
 
-// Try longer timeout
+# Try longer timeout
 pattern Longer = A -> NOT(B) within 1m
 ```
 
 2. **Verify event type in NOT:**
 ```vpl
-// Must match exactly
+# Must match exactly
 pattern Check = Order -> NOT(OrderConfirm) within 1h
-// ^^ Make sure "OrderConfirm" is the exact event type
+# ^^ Make sure "OrderConfirm" is the exact event type
 ```
 
 ---
