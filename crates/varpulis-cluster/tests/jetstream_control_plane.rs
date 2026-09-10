@@ -1140,3 +1140,67 @@ async fn a_released_lease_cannot_write_again() {
         .expect_err("a write at the released revision must be refused");
     assert!(err.is_cas_conflict(), "expected a CAS conflict, got {err}");
 }
+
+/// The fence must reach the data plane, not stop at the control plane.
+///
+/// Refusing a fenced worker's control-plane write closes nothing a user can
+/// see: on its own the zombie keeps consuming its sources, mutating window and
+/// pattern state, advancing offsets, and emitting duplicate alerts. This pins
+/// the wiring that makes the engine share the guard's flag, so a lost lease
+/// stops ingestion.
+///
+/// Fail-before: the engine keeps processing after the lease is fenced out.
+#[tokio::test]
+async fn losing_the_lease_stops_the_engine_not_just_the_control_plane() {
+    let Some(cp) = open("fence_reaches_data_plane").await else {
+        return;
+    };
+
+    let ttl = Duration::from_secs(30);
+    let mut lease = WorkerLease::acquire(&cp, &worker("w-dp", &["p1"]), ttl)
+        .await
+        .expect("acquire");
+
+    // An engine that shares the guard's flag.
+    let program =
+        varpulis_parser::parse("event Tick:\n    n: int\n\nstream A = Tick\n    .emit(n: n)\n")
+            .expect("parse");
+    let (tx, _rx) = tokio::sync::mpsc::channel::<varpulis_runtime::event::Event>(16);
+    let mut engine = varpulis_runtime::engine::Engine::new(tx);
+    engine.load(&program).expect("load");
+    engine.use_fence_handle(lease.guard().fence_flag());
+
+    let mut ev = varpulis_runtime::event::Event::new("Tick");
+    ev.data.insert("n".into(), varpulis_core::Value::Int(1));
+    engine
+        .process_batch(vec![ev.clone()])
+        .await
+        .expect("healthy before the fence");
+
+    // The coordinator fences this worker out — what happens at a migration
+    // cut-over, or when a health sweep declares it dead. A competing acquire
+    // would NOT do it: the control plane correctly refuses to hand a live
+    // owner's id to a second process.
+    let observed = lease.fence();
+    fence_out(&cp, "w-dp", observed)
+        .await
+        .expect("the coordinator must be able to fence a worker out");
+
+    // The worker learns it lost on its next renewal, and clearing the shared
+    // flag is what reaches the data plane.
+    let err = lease
+        .renew(&worker("w-dp", &["p1"]))
+        .await
+        .expect_err("a fenced lease must fail to renew");
+    eprintln!("[fence_reaches_data_plane] renewal refused with: {err}");
+
+    assert!(
+        engine.is_fenced(),
+        "losing the lease must fence the engine, or the zombie keeps emitting"
+    );
+    assert!(
+        engine.process_batch(vec![ev]).await.is_err(),
+        "a fenced engine must refuse to process"
+    );
+    eprintln!("[fence_reaches_data_plane] engine refused after the lease was fenced out");
+}

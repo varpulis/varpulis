@@ -25,6 +25,11 @@ impl Engine {
     #[cfg(feature = "async-runtime")]
     #[tracing::instrument(level = "trace", skip(self))]
     pub async fn process(&mut self, event: Event) -> Result<(), super::error::EngineError> {
+        // A fenced engine has lost ownership of its partition: refuse before
+        // anything is emitted, mutated or acknowledged. See `Engine::fence`.
+        if self.is_fenced() {
+            return Err(super::error::EngineError::Fenced);
+        }
         self.events_processed += 1;
         self.observe_pause_on_ingest(1);
         self.process_inner(Arc::new(event)).await
@@ -37,6 +42,11 @@ impl Engine {
         &mut self,
         event: SharedEvent,
     ) -> Result<(), super::error::EngineError> {
+        // A fenced engine has lost ownership of its partition: refuse before
+        // anything is emitted, mutated or acknowledged. See `Engine::fence`.
+        if self.is_fenced() {
+            return Err(super::error::EngineError::Fenced);
+        }
         self.events_processed += 1;
         self.observe_pause_on_ingest(1);
         self.process_inner(event).await
@@ -296,6 +306,11 @@ impl Engine {
         &mut self,
         events: Vec<Event>,
     ) -> Result<(), super::error::EngineError> {
+        // A fenced engine has lost ownership of its partition: refuse before
+        // anything is emitted, mutated or acknowledged. See `Engine::fence`.
+        if self.is_fenced() {
+            return Err(super::error::EngineError::Fenced);
+        }
         if events.is_empty() {
             return Ok(());
         }
@@ -464,6 +479,11 @@ impl Engine {
         &mut self,
         events: Vec<Event>,
     ) -> Result<(), super::error::EngineError> {
+        // A fenced engine has lost ownership of its partition: refuse before
+        // anything is emitted, mutated or acknowledged. See `Engine::fence`.
+        if self.is_fenced() {
+            return Err(super::error::EngineError::Fenced);
+        }
         if events.is_empty() {
             return Ok(());
         }
@@ -666,6 +686,11 @@ impl Engine {
         &mut self,
         events: Vec<SharedEvent>,
     ) -> Result<(), super::error::EngineError> {
+        // A fenced engine has lost ownership of its partition: refuse before
+        // anything is emitted, mutated or acknowledged. See `Engine::fence`.
+        if self.is_fenced() {
+            return Err(super::error::EngineError::Fenced);
+        }
         if events.is_empty() {
             return Ok(());
         }
