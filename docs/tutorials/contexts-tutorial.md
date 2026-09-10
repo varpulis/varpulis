@@ -574,8 +574,13 @@ To handle this:
 
 Enable metrics to track per-context performance:
 
+The Prometheus endpoint belongs to the server, not to `run` — `varpulis run`
+executes a program and exits, with nothing to scrape. Start a server with
+metrics and deploy the pipeline to it:
+
 ```bash
-varpulis run --file pipeline.vpl --metrics --metrics-port 9090
+varpulis server --metrics --metrics-port 9090 --api-key "$KEY" &
+varpulis deploy --file pipeline.vpl --server http://localhost:9000 --api-key "$KEY"
 ```
 
 Query context-specific metrics:

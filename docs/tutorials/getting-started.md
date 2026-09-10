@@ -273,7 +273,7 @@ Bye!
 For a split-pane visual experience with topology, events, and metrics:
 
 ```bash
-varpulis interactive --tui --file temperature_monitor.vpl --trace
+varpulis interactive --file temperature_monitor.vpl --trace
 ```
 
 This opens a full terminal UI with 4 panes:

@@ -25,7 +25,7 @@ Windows Hosts (Sysmon)
 
 ```bash
 # Bootstrap a security deployment
-varpulis security init --dir ./my-soc
+varpulis security-init --dir ./my-soc
 
 cd my-soc
 docker compose up -d

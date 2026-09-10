@@ -663,7 +663,7 @@ varpulis deploy --server http://localhost:9000 --api-key "key" \
 varpulis pipelines --server http://localhost:9000 --api-key "key"
 
 # Remove a pipeline
-varpulis undeploy --server http://localhost:9000 --api-key "key" --id <pipeline-id>
+varpulis undeploy --server http://localhost:9000 --api-key "key" --pipeline-id <pipeline-id>
 
 # Check usage statistics
 varpulis status --server http://localhost:9000 --api-key "key"
