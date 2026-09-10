@@ -538,6 +538,7 @@ async fn test_teardown_skips_undeployed_pipelines() {
             pipeline_id: "pid-deployed".into(),
             status: PipelineDeploymentStatus::Running,
             epoch: 0,
+            failure_reason: None,
         },
     );
     group.placements.insert(
@@ -549,6 +550,7 @@ async fn test_teardown_skips_undeployed_pipelines() {
             pipeline_id: String::new(), // empty = never deployed
             status: PipelineDeploymentStatus::Failed,
             epoch: 0,
+            failure_reason: None,
         },
     );
     coord.pipeline_groups.insert("g1".into(), group);

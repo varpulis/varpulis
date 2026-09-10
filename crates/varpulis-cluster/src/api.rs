@@ -17,7 +17,7 @@ use varpulis_parser::ParseError;
 use crate::connector_config::{self, ClusterConnector};
 use crate::coordinator::{Coordinator, InjectBatchRequest, InjectEventRequest};
 use crate::migration::MigrationReason;
-use crate::pipeline_group::{PipelineGroupInfo, PipelineGroupSpec};
+use crate::pipeline_group::{GroupStatus, PipelineGroupInfo, PipelineGroupSpec};
 use crate::rate_limit::RateLimiter;
 use crate::rbac::{RbacConfig, Role};
 use crate::routing::{
@@ -952,7 +952,25 @@ async fn handle_deploy_group(
                 return cluster_error_response(ClusterError::GroupNotFound(group_id));
             };
             let info = PipelineGroupInfo::from(group);
-            reply_json_status(&info, StatusCode::CREATED)
+            // The status code has to agree with the body. This handler used to
+            // return 201 Created unconditionally, so a group whose every
+            // pipeline failed to deploy — a VPL that does not compile is the
+            // common case — came back as `HTTP 201` with `"status": "failed"`
+            // inside. Any client that checks `is_success()`, including this
+            // repository's own chaos harness, read that as a deployment and
+            // went on to inject events into a pipeline that was never running.
+            //
+            // `Deploying` is 202: the group exists and is still settling.
+            // `PartiallyRunning` stays 2xx because the group does exist and
+            // some of it runs; the body says which placements did not.
+            // `Failed` is 502, because nothing runs and the reason came from
+            // the workers, whose reports are now in `failure_reason`.
+            let code = match group.status {
+                GroupStatus::Running | GroupStatus::PartiallyRunning => StatusCode::CREATED,
+                GroupStatus::Deploying => StatusCode::ACCEPTED,
+                GroupStatus::Failed | GroupStatus::TornDown => StatusCode::BAD_GATEWAY,
+            };
+            reply_json_status(&info, code)
         }
         Err(e) => cluster_error_response(e),
     }
@@ -3429,6 +3447,62 @@ mod tests {
         assert_eq!(body["code"], "no_workers_available");
     }
 
+    /// A deployment that reached a worker and was refused must not come back
+    /// as a success.
+    ///
+    /// `handle_deploy_group` returned `201 Created` unconditionally, so a group
+    /// whose every pipeline failed — a VPL that does not compile is the usual
+    /// cause — answered `HTTP 201` with `"status": "failed"` in the body. Every
+    /// client that checks `is_success()` read that as a deployment, including
+    /// this repository's own chaos harness, which then injected events into a
+    /// pipeline that had never started and reported the resulting failure as a
+    /// state-preservation bug.
+    #[tokio::test]
+    async fn deploy_group_that_no_worker_accepted_is_not_a_success() {
+        let (coord, router) = setup_routes();
+
+        // One registered worker at an address nothing is listening on, so the
+        // deploy attempt fails at the transport rather than being planned away.
+        {
+            let mut c = coord.write().await;
+            c.register_worker(WorkerNode::new(
+                WorkerId("w0".into()),
+                "http://127.0.0.1:1".into(),
+                "key".into(),
+            ));
+        }
+
+        let req = post_json_req(
+            "/api/v1/cluster/pipeline-groups",
+            "admin-key",
+            &serde_json::json!({
+                "name": "unreachable",
+                "pipelines": [{"name": "p1", "source": "stream A = X"}]
+            }),
+        );
+        let resp = send_request(&router, req).await;
+
+        assert!(
+            !resp.status().is_success(),
+            "a group with no running placement must not report success, got {}",
+            resp.status()
+        );
+
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["status"], "failed");
+
+        // The reason the worker gave is on the placement. Without it a caller
+        // learns only "Failed" and has to read the coordinator's log to find
+        // out what was wrong with their own program.
+        let reason = body["placements"][0]["failure_reason"].as_str();
+        assert!(
+            reason.is_some_and(|r| !r.is_empty()),
+            "the failed placement must carry why, got {:?}",
+            body["placements"][0]
+        );
+    }
+
     #[tokio::test]
     async fn test_register_multiple_workers_list() {
         let (coord, router) = setup_routes();
@@ -3491,6 +3565,7 @@ mod tests {
                     pipeline_id: "pid1".into(),
                     status: PipelineDeploymentStatus::Running,
                     epoch: 0,
+                    failure_reason: None,
                 },
             );
             c.pipeline_groups.insert("g1".into(), group);

@@ -787,6 +787,7 @@ fn pipeline_deployment_epoch_serde() {
         pipeline_id: "pid1".into(),
         status: PipelineDeploymentStatus::Running,
         epoch: 3,
+        failure_reason: None,
     };
     let json = serde_json::to_string(&dep).unwrap();
     let parsed: PipelineDeployment = serde_json::from_str(&json).unwrap();

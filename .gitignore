@@ -118,3 +118,7 @@ tests/integration/pg-tls/ca.srl
 tests/integration/pg-tls/server.crt
 tests/integration/pg-tls/server.key
 tests/integration/pg-tls/server.csr
+
+# Runtime artifact: the coordinator writes its audit log relative to the
+# working directory, so running one from the repo root leaves this behind.
+/data/

@@ -573,6 +573,7 @@ async fn test_worker_drain_state_transitions() {
                 pipeline_id: "pid-drain-0".to_string(),
                 status: PipelineDeploymentStatus::Running,
                 epoch: 0,
+                failure_reason: None,
             },
         );
         group.status = GroupStatus::Running;
