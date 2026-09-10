@@ -174,6 +174,27 @@ pub async fn run_coordinator(
         );
     }
     println!("Heartbeat: {heartbeat_interval_secs}s interval, {heartbeat_timeout_secs}s timeout");
+
+    // `VARPULIS_CONTROL_PLANE_URL` selects the JetStream KV control plane, and
+    // nothing reads it yet: `ControlPlaneConfig::from_env` has no caller
+    // outside its own test, so the module is complete, tested against a real
+    // three-node cluster, and wired to nothing.
+    //
+    // An operator who sets the variable to move off Raft would otherwise get
+    // Raft, or standalone, and find out during an incident. Say it at startup
+    // instead — on stderr, so it survives a piped stdout.
+    // Empty counts as unset, matching `ControlPlaneConfig::from_env`, which
+    // filters an empty URL out. `var_os` alone would treat `VAR=` as set and
+    // warn about a variable the config layer would ignore.
+    if std::env::var("VARPULIS_CONTROL_PLANE_URL").is_ok_and(|u| !u.is_empty()) {
+        eprintln!(
+            "WARNING: VARPULIS_CONTROL_PLANE_URL is set and this coordinator is \
+             ignoring it.\n         The JetStream KV control plane is implemented \
+             and tested but not yet\n         wired into the coordinator, so \
+             coordination is still Raft or standalone.\n         Unset the \
+             variable to silence this."
+        );
+    }
     if let Some(ref sp) = scaling_policy {
         println!(
             "Scaling:   min={}, max={}, up={:.1}, down={:.1}",

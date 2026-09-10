@@ -23,6 +23,8 @@ use varpulis_runtime::connector::{ConnectorConfig, ManagedConnectorRegistry};
 use varpulis_runtime::event::Event;
 use varpulis_runtime::sink::Sink;
 
+mod common;
+
 // ===========================================================================
 // Test helpers
 // ===========================================================================
@@ -148,7 +150,10 @@ async fn mqtt_is_available(port: u16) -> bool {
 async fn test_managed_connector_single_source_single_sink() {
     let port = mqtt_port();
     if !mqtt_is_available(port).await {
-        eprintln!("Skipping: Mosquitto not available on port {port}");
+        common::abstain(
+            "test_managed_connector_single_source_single_sink",
+            &format!("Skipping: Mosquitto not available on port {port}"),
+        );
         return;
     }
 
@@ -233,7 +238,10 @@ async fn test_managed_connector_single_source_single_sink() {
 async fn test_managed_connector_two_sources_same_connector() {
     let port = mqtt_port();
     if !mqtt_is_available(port).await {
-        eprintln!("Skipping: Mosquitto not available on port {port}");
+        common::abstain(
+            "test_managed_connector_two_sources_same_connector",
+            &format!("Skipping: Mosquitto not available on port {port}"),
+        );
         return;
     }
 
@@ -309,7 +317,10 @@ async fn test_managed_connector_two_sources_same_connector() {
 async fn test_managed_connector_two_sinks_same_connector() {
     let port = mqtt_port();
     if !mqtt_is_available(port).await {
-        eprintln!("Skipping: Mosquitto not available on port {port}");
+        common::abstain(
+            "test_managed_connector_two_sinks_same_connector",
+            &format!("Skipping: Mosquitto not available on port {port}"),
+        );
         return;
     }
 
@@ -382,7 +393,10 @@ async fn test_managed_connector_two_sinks_same_connector() {
 async fn test_managed_connector_multiple_sources_and_sinks() {
     let port = mqtt_port();
     if !mqtt_is_available(port).await {
-        eprintln!("Skipping: Mosquitto not available on port {port}");
+        common::abstain(
+            "test_managed_connector_multiple_sources_and_sinks",
+            &format!("Skipping: Mosquitto not available on port {port}"),
+        );
         return;
     }
 
@@ -494,7 +508,10 @@ async fn test_managed_connector_multiple_sources_and_sinks() {
 async fn test_managed_connector_sink_only() {
     let port = mqtt_port();
     if !mqtt_is_available(port).await {
-        eprintln!("Skipping: Mosquitto not available on port {port}");
+        common::abstain(
+            "test_managed_connector_sink_only",
+            &format!("Skipping: Mosquitto not available on port {port}"),
+        );
         return;
     }
 

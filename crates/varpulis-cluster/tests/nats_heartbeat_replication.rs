@@ -313,10 +313,16 @@ async fn wait_for_replicated_seq(
 
 #[tokio::test]
 async fn nats_heartbeat_replicates_seq_through_raft() {
-    // Broker-skip-graceful: no broker ⇒ skip green (matches `connect_nats`).
+    // No broker ⇒ abstain, and abstaining is a failure whenever the caller
+    // said a broker should be there. This used to skip green unconditionally.
     let client = match connect_nats(NATS_URL).await {
         Ok(c) => c,
         Err(e) => {
+            assert!(
+                std::env::var_os("VARPULIS_REQUIRE_BROKERS").is_none(),
+                "VARPULIS_REQUIRE_BROKERS=1 but NATS was unavailable at \
+                 {NATS_URL}: {e}. This test must not pass by abstaining."
+            );
             eprintln!("[skip] NATS broker unavailable at {NATS_URL}: {e}");
             return;
         }
