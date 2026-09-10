@@ -66,6 +66,8 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
+mod common;
+
 // ---------------------------------------------------------------------------
 // Shared docker control helpers
 // ---------------------------------------------------------------------------
@@ -278,15 +280,24 @@ mod mqtt_outage {
         let port = mqtt_port();
 
         if !docker_available().await {
-            eprintln!("Skipping: docker not available");
+            common::abstain(
+                "test_mqtt_broker_outage_reconnects",
+                "Skipping: docker not available",
+            );
             return;
         }
         if !container_running(&container).await {
-            eprintln!("Skipping: container '{container}' not running");
+            common::abstain(
+                "test_mqtt_broker_outage_reconnects",
+                &format!("Skipping: container '{container}' not running"),
+            );
             return;
         }
         if !mqtt_is_available(port).await {
-            eprintln!("Skipping: Mosquitto not reachable on port {port}");
+            common::abstain(
+                "test_mqtt_broker_outage_reconnects",
+                &format!("Skipping: Mosquitto not reachable on port {port}"),
+            );
             return;
         }
 
@@ -475,19 +486,31 @@ mod nats_outage {
     #[ignore]
     async fn test_nats_reconnects_after_broker_restart() {
         let Some(container) = nats_container() else {
-            eprintln!("Skipping: NATS_CONTAINER env var not set");
+            common::abstain(
+                "test_nats_reconnects_after_broker_restart",
+                "Skipping: NATS_CONTAINER env var not set",
+            );
             return;
         };
         if !docker_available().await {
-            eprintln!("Skipping: docker not available");
+            common::abstain(
+                "test_nats_reconnects_after_broker_restart",
+                "Skipping: docker not available",
+            );
             return;
         }
         if !container_running(&container).await {
-            eprintln!("Skipping: container '{container}' not running");
+            common::abstain(
+                "test_nats_reconnects_after_broker_restart",
+                &format!("Skipping: container '{container}' not running"),
+            );
             return;
         }
         if !nats_is_available().await {
-            eprintln!("Skipping: NATS not reachable on {NATS_URL}");
+            common::abstain(
+                "test_nats_reconnects_after_broker_restart",
+                &format!("Skipping: NATS not reachable on {NATS_URL}"),
+            );
             return;
         }
 
@@ -687,15 +710,24 @@ mod kafka_outage {
     async fn test_kafka_broker_restart_no_data_loss() {
         let container = kafka_container();
         if !docker_available().await {
-            eprintln!("Skipping: docker not available");
+            common::abstain(
+                "test_kafka_broker_restart_no_data_loss",
+                "Skipping: docker not available",
+            );
             return;
         }
         if !container_running(&container).await {
-            eprintln!("Skipping: container '{container}' not running");
+            common::abstain(
+                "test_kafka_broker_restart_no_data_loss",
+                &format!("Skipping: container '{container}' not running"),
+            );
             return;
         }
         if !kafka_is_available().await {
-            eprintln!("Skipping: Kafka not reachable at {}", kafka_bootstrap());
+            common::abstain(
+                "test_kafka_broker_restart_no_data_loss",
+                &format!("Skipping: Kafka not reachable at {}", kafka_bootstrap()),
+            );
             return;
         }
 

@@ -42,6 +42,8 @@ use varpulis_runtime::connector::{KafkaConfig, ManagedConnector, ManagedKafkaCon
 use varpulis_runtime::event::Event;
 use varpulis_runtime::Sink;
 
+mod common;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -197,7 +199,10 @@ fn assert_exactly_once(seqs: &[i64], expected: usize, label: &str, run: usize) {
 #[ignore]
 async fn crash_after_prepare_before_commit() {
     if !kafka_available().await {
-        eprintln!("Skipping: Kafka not available at {}", bootstrap());
+        common::abstain(
+            "crash_after_prepare_before_commit",
+            &format!("Skipping: Kafka not available at {}", bootstrap()),
+        );
         return;
     }
 
@@ -273,7 +278,10 @@ async fn crash_after_prepare_before_commit() {
 #[ignore]
 async fn crash_after_commit_before_offset_commit() {
     if !kafka_available().await {
-        eprintln!("Skipping: Kafka not available at {}", bootstrap());
+        common::abstain(
+            "crash_after_commit_before_offset_commit",
+            &format!("Skipping: Kafka not available at {}", bootstrap()),
+        );
         return;
     }
 
@@ -329,7 +337,10 @@ async fn crash_after_commit_before_offset_commit() {
 #[ignore]
 async fn full_2pc_clean_multi_epoch() {
     if !kafka_available().await {
-        eprintln!("Skipping: Kafka not available at {}", bootstrap());
+        common::abstain(
+            "full_2pc_clean_multi_epoch",
+            &format!("Skipping: Kafka not available at {}", bootstrap()),
+        );
         return;
     }
 

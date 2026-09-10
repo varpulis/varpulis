@@ -34,12 +34,21 @@ use varpulis_connector_api::ManagedConnector;
 use varpulis_connector_kafka::{KafkaConfig, KafkaSink, ManagedKafkaConnector};
 use varpulis_core::Event;
 
-const BROKER: &str = "localhost:29092";
 const TOPIC: &str = "sink-throughput-smoke";
+
+/// Where to find the broker.
+///
+/// Was a hardcoded `localhost:29092`, which is the port a local
+/// docker-compose happens to publish. CI runs Redpanda as a service container
+/// on 9092, so the address has to be settable or the job could only ever
+/// abstain.
+fn broker() -> String {
+    std::env::var("VARPULIS_TEST_KAFKA_BROKER").unwrap_or_else(|_| "localhost:29092".into())
+}
 
 async fn broker_available() -> bool {
     use tokio::net::TcpStream;
-    tokio::time::timeout(Duration::from_millis(500), TcpStream::connect(BROKER))
+    tokio::time::timeout(Duration::from_millis(500), TcpStream::connect(broker()))
         .await
         .ok()
         .and_then(|r| r.ok())
@@ -57,15 +66,30 @@ fn make_event(i: u64) -> Event {
 /// `KafkaSharedSink::send` (the managed path) must sustain at least
 /// ~10k eps of fire-and-forget enqueue against a local Redpanda broker.
 /// Anything below that means we regressed to blocking-per-event delivery.
+/// Record an abstention. Panics when `VARPULIS_REQUIRE_BROKERS` is set.
+///
+/// These three throughput tests printed "Redpanda not reachable — skipping"
+/// and returned, which libtest scores as a pass. A throughput claim that
+/// reports green without a broker is worse than no claim.
+#[track_caller]
+fn abstain(reason: &str) {
+    assert!(
+        std::env::var_os("VARPULIS_REQUIRE_BROKERS").is_none(),
+        "VARPULIS_REQUIRE_BROKERS=1 but this test could not reach its broker: \
+         {reason}. It must not pass by abstaining."
+    );
+    eprintln!("SKIPPED(no-broker) {reason}");
+}
+
 #[tokio::test]
 #[ignore = "requires live Redpanda on localhost:29092"]
 async fn kafka_shared_sink_fire_and_forget_is_fast() {
     if !broker_available().await {
-        eprintln!("Redpanda not reachable at {BROKER} — skipping");
+        abstain(&format!("Redpanda not reachable at {}", broker()));
         return;
     }
 
-    let cfg = KafkaConfig::new(BROKER, TOPIC);
+    let cfg = KafkaConfig::new(&broker(), TOPIC);
     let mut managed = ManagedKafkaConnector::new("SmokeOut", cfg);
 
     let sink = managed
@@ -114,11 +138,11 @@ async fn kafka_shared_sink_fire_and_forget_is_fast() {
 #[ignore = "requires live Redpanda on localhost:29092"]
 async fn kafka_shared_sink_send_batch_matches_send() {
     if !broker_available().await {
-        eprintln!("Redpanda not reachable at {BROKER} — skipping");
+        abstain(&format!("Redpanda not reachable at {}", broker()));
         return;
     }
 
-    let cfg = KafkaConfig::new(BROKER, TOPIC);
+    let cfg = KafkaConfig::new(&broker(), TOPIC);
     let mut managed = ManagedKafkaConnector::new("SmokeOut", cfg);
     let sink = managed
         .create_sink(TOPIC, &HashMap::new())
@@ -170,11 +194,11 @@ async fn kafka_shared_sink_send_batch_matches_send() {
 #[ignore = "requires live Redpanda on localhost:29092"]
 async fn kafka_legacy_sink_fire_and_forget_is_fast() {
     if !broker_available().await {
-        eprintln!("Redpanda not reachable at {BROKER} — skipping");
+        abstain(&format!("Redpanda not reachable at {}", broker()));
         return;
     }
 
-    let cfg = KafkaConfig::new(BROKER, TOPIC);
+    let cfg = KafkaConfig::new(&broker(), TOPIC);
     let sink = KafkaSink::new("LegacySmokeOut", cfg).expect("KafkaSink::new should succeed");
 
     // Warm up so the producer thread and connection are hot.

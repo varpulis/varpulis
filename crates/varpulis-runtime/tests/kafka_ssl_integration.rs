@@ -21,6 +21,8 @@ use varpulis_runtime::connector::{
 };
 use varpulis_runtime::event::Event;
 
+mod common;
+
 fn ssl_bootstrap() -> String {
     std::env::var("KAFKA_SSL_BOOTSTRAP").unwrap_or_else(|_| "localhost:9093".to_string())
 }
@@ -108,7 +110,10 @@ async fn kafka_ssl_available() -> bool {
 #[ignore]
 async fn test_kafka_ssl_scram_sink() {
     if !kafka_ssl_available().await {
-        eprintln!("Skipping: Kafka SSL not available at {}", ssl_bootstrap());
+        common::abstain(
+            "test_kafka_ssl_scram_sink",
+            &format!("Skipping: Kafka SSL not available at {}", ssl_bootstrap()),
+        );
         return;
     }
 
@@ -131,7 +136,10 @@ async fn test_kafka_ssl_scram_sink() {
 #[ignore]
 async fn test_kafka_ssl_scram_roundtrip() {
     if !kafka_ssl_available().await {
-        eprintln!("Skipping: Kafka SSL not available at {}", ssl_bootstrap());
+        common::abstain(
+            "test_kafka_ssl_scram_roundtrip",
+            &format!("Skipping: Kafka SSL not available at {}", ssl_bootstrap()),
+        );
         return;
     }
 
@@ -191,7 +199,10 @@ async fn test_kafka_ssl_scram_roundtrip() {
 #[ignore]
 async fn test_kafka_ssl_mtls_sink() {
     if !kafka_ssl_available().await {
-        eprintln!("Skipping: Kafka SSL not available at {}", ssl_bootstrap());
+        common::abstain(
+            "test_kafka_ssl_mtls_sink",
+            &format!("Skipping: Kafka SSL not available at {}", ssl_bootstrap()),
+        );
         return;
     }
 
@@ -214,7 +225,10 @@ async fn test_kafka_ssl_mtls_sink() {
 #[ignore]
 async fn test_kafka_ssl_wrong_password_rejected() {
     if !kafka_ssl_available().await {
-        eprintln!("Skipping: Kafka SSL not available at {}", ssl_bootstrap());
+        common::abstain(
+            "test_kafka_ssl_wrong_password_rejected",
+            &format!("Skipping: Kafka SSL not available at {}", ssl_bootstrap()),
+        );
         return;
     }
 
@@ -266,7 +280,10 @@ async fn test_kafka_ssl_wrong_password_rejected() {
 #[ignore]
 async fn test_kafka_ssl_batch_performance() {
     if !kafka_ssl_available().await {
-        eprintln!("Skipping: Kafka SSL not available at {}", ssl_bootstrap());
+        common::abstain(
+            "test_kafka_ssl_batch_performance",
+            &format!("Skipping: Kafka SSL not available at {}", ssl_bootstrap()),
+        );
         return;
     }
 

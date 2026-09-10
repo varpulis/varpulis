@@ -19,6 +19,8 @@ use varpulis_runtime::connector::{
 };
 use varpulis_runtime::event::Event;
 
+mod common;
+
 fn kafka_bootstrap() -> String {
     std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "localhost:9092".to_string())
 }
@@ -42,7 +44,10 @@ async fn kafka_is_available() -> bool {
 async fn test_kafka_sink_basic() {
     let bootstrap = kafka_bootstrap();
     if !kafka_is_available().await {
-        eprintln!("Skipping test: Kafka not available at {}", bootstrap);
+        common::abstain(
+            "test_kafka_sink_basic",
+            &format!("Skipping test: Kafka not available at {}", bootstrap),
+        );
         return;
     }
 
@@ -75,7 +80,10 @@ async fn test_kafka_sink_basic() {
 async fn test_kafka_source_basic() {
     let bootstrap = kafka_bootstrap();
     if !kafka_is_available().await {
-        eprintln!("Skipping test: Kafka not available at {}", bootstrap);
+        common::abstain(
+            "test_kafka_source_basic",
+            &format!("Skipping test: Kafka not available at {}", bootstrap),
+        );
         return;
     }
 
@@ -132,7 +140,10 @@ async fn test_kafka_source_basic() {
 async fn test_kafka_roundtrip() {
     let bootstrap = kafka_bootstrap();
     if !kafka_is_available().await {
-        eprintln!("Skipping test: Kafka not available at {}", bootstrap);
+        common::abstain(
+            "test_kafka_roundtrip",
+            &format!("Skipping test: Kafka not available at {}", bootstrap),
+        );
         return;
     }
 
@@ -215,7 +226,10 @@ async fn test_kafka_roundtrip() {
 async fn test_kafka_sink_batch_performance() {
     let bootstrap = kafka_bootstrap();
     if !kafka_is_available().await {
-        eprintln!("Skipping test: Kafka not available at {}", bootstrap);
+        common::abstain(
+            "test_kafka_sink_batch_performance",
+            &format!("Skipping test: Kafka not available at {}", bootstrap),
+        );
         return;
     }
 
@@ -278,7 +292,10 @@ async fn test_kafka_config_transactional() {
 async fn test_kafka_transactional_sink() {
     let bootstrap = kafka_bootstrap();
     if !kafka_is_available().await {
-        eprintln!("Skipping test: Kafka not available at {}", bootstrap);
+        common::abstain(
+            "test_kafka_transactional_sink",
+            &format!("Skipping test: Kafka not available at {}", bootstrap),
+        );
         return;
     }
 
@@ -322,7 +339,10 @@ async fn test_kafka_transactional_sink() {
 async fn test_kafka_transactional_batch_performance() {
     let bootstrap = kafka_bootstrap();
     if !kafka_is_available().await {
-        eprintln!("Skipping test: Kafka not available at {}", bootstrap);
+        common::abstain(
+            "test_kafka_transactional_batch_performance",
+            &format!("Skipping test: Kafka not available at {}", bootstrap),
+        );
         return;
     }
 
@@ -369,7 +389,10 @@ async fn test_kafka_transactional_batch_performance() {
 async fn test_kafka_sink_batch_concurrent_performance() {
     let bootstrap = kafka_bootstrap();
     if !kafka_is_available().await {
-        eprintln!("Skipping test: Kafka not available at {}", bootstrap);
+        common::abstain(
+            "test_kafka_sink_batch_concurrent_performance",
+            &format!("Skipping test: Kafka not available at {}", bootstrap),
+        );
         return;
     }
 
