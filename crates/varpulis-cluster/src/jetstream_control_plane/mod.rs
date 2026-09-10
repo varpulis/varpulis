@@ -169,10 +169,25 @@
 //! * **Leadership is a lease, not an election.** See [`leader`] for the
 //!   uncertainty window and why every write is CAS-guarded regardless.
 //!
-//! # 5. Selecting this backend
+//! # 5. Selecting this backend — NOT YET WIRED
 //!
-//! Off unless `VARPULIS_CONTROL_PLANE_URL` is set
-//! ([`store::ControlPlaneConfig::from_env`]), so building with the
+//! **No coordinator reads this configuration.**
+//! [`store::ControlPlaneConfig::from_env`] has no caller outside its own test.
+//! Everything below this module is implemented and tested, including against
+//! a real three-node NATS cluster with a replicated bucket, and nothing in a
+//! running coordinator calls it. Setting `VARPULIS_CONTROL_PLANE_URL` today
+//! coordinates through Raft or standalone exactly as before; the coordinator
+//! prints a warning at startup saying so, rather than letting an operator
+//! discover it during an incident.
+//!
+//! What remains, in order: open the control plane at coordinator startup;
+//! run [`leader::LeaderLease`] in place of Raft's election; route the twelve
+//! `client_write` call sites through [`apply::Applier`]; run
+//! [`reconcile::Reconciler`] from the health loop. Only then can `raft/` be
+//! removed.
+//!
+//! When it is wired, the selection contract is that it stays off unless
+//! `VARPULIS_CONTROL_PLANE_URL` is set, so building with the
 //! `jetstream-control-plane` feature changes no deployment's behaviour on its
 //! own.
 
