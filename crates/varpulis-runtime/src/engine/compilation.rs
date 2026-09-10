@@ -31,6 +31,14 @@ use crate::window::{
     SlidingWindow, TumblingWindow,
 };
 
+/// Upper bound on a count-based window, i.e. `.window(N)`.
+///
+/// `N` becomes a `Vec` capacity that is allocated up front, so it is attacker
+/// controlled whenever a VPL file is: the playground and the pipeline-create
+/// routes both compile submitted source. Ten million events is far beyond any
+/// real detection window and still only tens of megabytes if genuinely filled.
+const MAX_COUNT_WINDOW_EVENTS: u64 = 10_000_000;
+
 impl Engine {
     pub(super) fn register_stream(
         &mut self,
@@ -729,7 +737,31 @@ impl Engine {
                         // Check if this is a count-based or time-based window
                         match &args.duration {
                             varpulis_core::ast::Expr::Int(count) => {
-                                // Count-based window
+                                // Count-based window.
+                                //
+                                // The count is used verbatim as a `Vec`
+                                // capacity, allocated eagerly. An absurd value
+                                // from a VPL file therefore either overflows
+                                // the capacity computation or fails the
+                                // allocation outright — and an allocation
+                                // failure aborts the process rather than
+                                // unwinding, so neither the playground's
+                                // execution timeout nor a `catch_unwind` can
+                                // intervene. Reject it loudly at compile time
+                                // instead: `varpulis check` used to answer
+                                // "Syntax OK" for an input that killed the
+                                // process on first run.
+                                if *count <= 0 {
+                                    return Err(super::error::EngineError::Compilation(format!(
+                                        "window size must be positive, got {count}"
+                                    )));
+                                }
+                                if *count as u64 > MAX_COUNT_WINDOW_EVENTS {
+                                    return Err(super::error::EngineError::Compilation(format!(
+                                        "window size {count} exceeds the maximum of \
+                                         {MAX_COUNT_WINDOW_EVENTS} events"
+                                    )));
+                                }
                                 let count = *count as usize;
 
                                 // Get slide amount if specified (default to window size for tumbling)

@@ -157,7 +157,7 @@ impl Engine {
                             if let Some(ref m) = self.metrics {
                                 m.record_output_event("pipeline", &emitted.event_type);
                             }
-                            self.send_output_shared(emitted);
+                            self.send_output_shared_async(emitted).await;
                         }
                         if send_outputs {
                             for output in &result.output_events {
@@ -165,7 +165,7 @@ impl Engine {
                                 if let Some(ref m) = self.metrics {
                                     m.record_output_event("pipeline", &output.event_type);
                                 }
-                                self.send_output_shared(output);
+                                self.send_output_shared_async(output).await;
                             }
                         }
                     } else {
@@ -438,7 +438,7 @@ impl Engine {
         // Send all emitted events in batch (non-blocking to avoid async overhead)
         // PERF: Use send_output_shared to avoid cloning in benchmark mode
         for emitted in &emitted_batch {
-            self.send_output_shared(emitted);
+            self.send_output_shared_async(emitted).await;
         }
 
         // Update Prometheus output metrics
@@ -751,7 +751,7 @@ impl Engine {
 
         // PERF: Use send_output_shared to avoid cloning in benchmark mode
         for emitted in &emitted_batch {
-            self.send_output_shared(emitted);
+            self.send_output_shared_async(emitted).await;
         }
 
         // Update Prometheus output metrics
@@ -1110,7 +1110,7 @@ impl Engine {
             for emitted in &result.emitted_events {
                 self.output_events_emitted += 1;
                 let owned = (**emitted).clone();
-                self.send_output(owned);
+                self.send_output_async(owned).await;
             }
         }
 
@@ -1291,7 +1291,7 @@ impl Engine {
                 for emitted in &result.emitted_events {
                     self.output_events_emitted += 1;
                     let owned = (**emitted).clone();
-                    self.send_output(owned);
+                    self.send_output_async(owned).await;
                 }
             }
         }

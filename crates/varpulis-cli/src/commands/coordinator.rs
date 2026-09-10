@@ -41,14 +41,37 @@ async fn coordinator_metrics_handler(
 }
 
 /// WebSocket route for coordinator — relays output events from workers.
+///
+/// Authenticates before upgrading. This socket carries the live detection feed
+/// for every pipeline and every tenant on the cluster, with no per-tenant
+/// filtering, so an unauthenticated upgrade hands the whole alert stream to
+/// anyone who can reach the port. The server's own `/ws` already checks
+/// (`commands/server.rs`); the coordinator's did not.
 async fn coordinator_ws_handler(
     axum::extract::State(state): axum::extract::State<Arc<CoordinatorAppState>>,
+    headers: axum::http::HeaderMap,
     ws: axum::extract::ws::WebSocketUpgrade,
-) -> impl axum::response::IntoResponse {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let key = headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    // Constant-time, same as the internal output-events endpoint below.
+    if !varpulis_core::security::constant_time_compare(key, &state.expected_api_key) {
+        return (
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({"error": "unauthorized"})),
+        )
+            .into_response();
+    }
+
     let broadcast_tx = state.broadcast_tx.clone();
     ws.max_frame_size(1024 * 1024)
         .max_message_size(1024 * 1024)
         .on_upgrade(move |socket| websocket::handle_coordinator_connection(socket, broadcast_tx))
+        .into_response()
 }
 
 /// Internal endpoint: workers POST output events here for relaying to WS clients.
@@ -117,7 +140,7 @@ pub async fn run_coordinator(
     llm_api_key: Option<String>,
     llm_provider: String,
     tls_config: Option<(PathBuf, PathBuf)>,
-    _tls_ca_cert: Option<PathBuf>,
+    tls_ca_cert: Option<PathBuf>,
     nats_url: Option<String>,
     rate_limit_rps: u32,
     cors_origins: Option<Vec<String>>,
@@ -143,7 +166,7 @@ pub async fn run_coordinator(
     if tls_enabled {
         println!(
             "TLS:       enabled{}",
-            if _tls_ca_cert.is_some() {
+            if tls_ca_cert.is_some() {
                 " (mTLS: client certificates required)"
             } else {
                 ""
@@ -449,7 +472,6 @@ pub async fn run_coordinator(
             }
         }
     };
-    let audit_r = audit::audit_routes(audit_logger.clone());
 
     let session_manager: Option<users::SharedSessionManager> = {
         let session_config = users::SessionConfig::default();
@@ -553,6 +575,10 @@ pub async fn run_coordinator(
             None
         }
     };
+
+    // Mounted after `oauth_state` so the audit log can be gated by the same
+    // admin guard as the /api/v1/admin routes. It is a cross-tenant log.
+    let audit_r = audit::audit_routes(audit_logger.clone(), oauth_state.clone());
     let oauth_r = oauth::oauth_routes(oauth_state.clone());
 
     // Broadcast channel for relaying worker output events to WebSocket clients
@@ -589,9 +615,22 @@ pub async fn run_coordinator(
             let addr = std::net::SocketAddr::new(bind_addr, port);
             if let Some((ref cert_path, ref key_path)) = tls_config {
                 info!("Coordinator TLS enabled with cert: {}", cert_path.display());
-                let tls_config =
+                // When a client CA is supplied, build a config that actually
+                // requires and verifies a client certificate. `from_pem_file`
+                // installs no client verifier, which is why the flag used to
+                // change nothing but the startup banner.
+                let tls_config = if let Some(ref ca) = tls_ca_cert {
+                    info!(
+                        "Coordinator mTLS enabled: client certificates verified against {}",
+                        ca.display()
+                    );
+                    let server_config =
+                        crate::commands::server::build_mtls_server_config(cert_path, key_path, ca)?;
+                    axum_server::tls_rustls::RustlsConfig::from_config(server_config)
+                } else {
                     axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
-                        .await?;
+                        .await?
+                };
                 axum_server::bind_rustls(addr, tls_config)
                     .serve($app.into_make_service_with_connect_info::<std::net::SocketAddr>())
                     .await?;

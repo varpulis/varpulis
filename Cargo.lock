@@ -8738,6 +8738,7 @@ dependencies = [
  "reqwest",
  "rustc-hash",
  "rustls",
+ "rustls-pemfile",
  "rustyline",
  "serde",
  "serde_json",

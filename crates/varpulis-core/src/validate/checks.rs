@@ -16,6 +16,11 @@ use crate::span::Span;
 // Pass 1: Declaration Collection
 // ---------------------------------------------------------------------------
 
+/// Upper bound on a count-based window, mirroring the engine's own limit in
+/// `varpulis-runtime`. Kept in sync deliberately: the validator must not accept
+/// a program the engine will refuse to compile.
+const MAX_COUNT_WINDOW_EVENTS: u64 = 10_000_000;
+
 pub fn pass1_declarations(v: &mut Validator, program: &Program) {
     for stmt in &program.statements {
         let span = stmt.span;
@@ -664,7 +669,7 @@ fn check_stream_ops(
                     }
                 }
             }
-            StreamOp::Window(_) => {
+            StreamOp::Window(args) => {
                 if seen_window {
                     v.emit(
                         Severity::Error,
@@ -672,6 +677,33 @@ fn check_stream_ops(
                         "E012",
                         "duplicate .window() — only one window per stream is allowed".to_string(),
                     );
+                }
+                // A count window's size is used verbatim as a pre-allocated
+                // buffer capacity, so an absurd literal kills the process on
+                // first run rather than failing to load. The engine rejects it
+                // at compile time; report it here too so `varpulis check`
+                // agrees with what running the program will do.
+                if let Expr::Int(count) = &args.duration {
+                    if *count <= 0 {
+                        v.emit(
+                            Severity::Error,
+                            op_span,
+                            "E013",
+                            format!("window size must be positive, got {count}"),
+                        );
+                    } else if *count as u64 > MAX_COUNT_WINDOW_EVENTS {
+                        v.emit_with_hint(
+                            Severity::Error,
+                            op_span,
+                            "E013",
+                            format!(
+                                "window size {count} exceeds the maximum of \
+                                 {MAX_COUNT_WINDOW_EVENTS} events"
+                            ),
+                            "use a time-based window (e.g. .window(5m)) for long horizons"
+                                .to_string(),
+                        );
+                    }
                 }
                 seen_window = true;
             }

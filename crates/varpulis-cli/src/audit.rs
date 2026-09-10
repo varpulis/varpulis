@@ -182,12 +182,51 @@ const fn default_limit() -> usize {
     100
 }
 
+/// State for the audit routes: the log plus the OAuth state the admin guard
+/// validates bearer tokens against.
+#[derive(Clone)]
+pub struct AuditRouteState {
+    pub logger: Option<SharedAuditLogger>,
+    pub oauth_state: Option<crate::oauth::SharedOAuthState>,
+}
+
+// Hand-written rather than derived: the OAuth state holds the JWT signing
+// secret, and this struct ends up inside axum's router, which is printed in
+// several diagnostics paths.
+impl std::fmt::Debug for AuditRouteState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuditRouteState")
+            .field("logger", &self.logger.as_ref().map(|_| "<audit log>"))
+            .field(
+                "oauth_state",
+                &self.oauth_state.as_ref().map(|_| "***REDACTED***"),
+            )
+            .finish()
+    }
+}
+
 /// GET /api/v1/audit — returns recent audit entries (Admin only).
+///
+/// The doc comment always said "Admin only"; the handler read no credentials.
+/// This log is cluster-wide and carries no tenant field: actor identities,
+/// source addresses, successful and failed logins, password changes, tier
+/// changes and API-key lifecycle for every tenant. It is now behind the same
+/// admin guard as every `/api/v1/admin` route.
 async fn handle_audit_list(
     Query(query): Query<AuditQuery>,
-    State(logger): State<Option<SharedAuditLogger>>,
+    State(state): State<AuditRouteState>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let logger = match logger {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    if let Err(status) = crate::oauth::extract_admin_claims(auth_header, &state.oauth_state).await {
+        return (
+            status,
+            Json(serde_json::json!({"error": "admin authentication required"})),
+        )
+            .into_response();
+    }
+
+    let logger = match state.logger {
         Some(l) => l,
         None => {
             return (
@@ -223,10 +262,16 @@ async fn handle_audit_list(
 }
 
 /// Build audit log routes.
-pub fn audit_routes(logger: Option<SharedAuditLogger>) -> Router {
+pub fn audit_routes(
+    logger: Option<SharedAuditLogger>,
+    oauth_state: Option<crate::oauth::SharedOAuthState>,
+) -> Router {
     Router::new()
         .route("/api/v1/audit", get(handle_audit_list))
-        .with_state(logger)
+        .with_state(AuditRouteState {
+            logger,
+            oauth_state,
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -290,9 +335,43 @@ mod tests {
         assert_eq!(recent[2].actor, "user_2");
     }
 
+    /// The audit log must not be readable without admin credentials.
+    ///
+    /// Fail-before: this route read no headers at all, so an unauthenticated
+    /// GET returned 200 with the cross-tenant audit log. The previous version
+    /// of this test asserted exactly that, which is why nothing caught it.
+    #[tokio::test]
+    async fn audit_route_rejects_unauthenticated_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        let logger = AuditLogger::open(path).await.unwrap();
+        logger
+            .log(AuditEntry::new("admin", AuditAction::Login, "/auth"))
+            .await;
+
+        let app = audit_routes(Some(logger), None);
+        let req: Request<Body> = Request::builder()
+            .method("GET")
+            .uri("/api/v1/audit?limit=10")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+
+        assert_ne!(
+            res.status(),
+            200,
+            "unauthenticated request must not receive audit entries"
+        );
+        assert!(
+            res.status() == 401 || res.status() == 503,
+            "expected an auth rejection, got {}",
+            res.status()
+        );
+    }
+
     #[tokio::test]
     async fn test_audit_routes_not_configured() {
-        let app = audit_routes(None);
+        let app = audit_routes(None, None);
 
         let req: Request<Body> = Request::builder()
             .method("GET")
@@ -301,32 +380,7 @@ mod tests {
             .unwrap();
         let res = app.oneshot(req).await.unwrap();
 
-        assert_eq!(res.status(), 503);
-    }
-
-    #[tokio::test]
-    async fn test_audit_routes_returns_entries() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("audit.jsonl");
-        let logger = AuditLogger::open(path).await.unwrap();
-
-        logger
-            .log(AuditEntry::new("admin", AuditAction::Login, "/auth"))
-            .await;
-
-        let app = audit_routes(Some(logger));
-        let req: Request<Body> = Request::builder()
-            .method("GET")
-            .uri("/api/v1/audit?limit=10")
-            .body(Body::empty())
-            .unwrap();
-        let res = app.oneshot(req).await.unwrap();
-
-        assert_eq!(res.status(), 200);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(body["count"], 1);
+        // Unauthenticated: rejected before the "not configured" branch is reached.
+        assert_ne!(res.status(), 200);
     }
 }

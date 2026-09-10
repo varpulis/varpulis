@@ -61,8 +61,11 @@ pub fn parse_timestamp(s: &str) -> i64 {
     }
 
     let year: i32 = parts[0].parse().unwrap_or(1970);
-    let month: u32 = parts[1].parse().unwrap_or(1);
-    let day: u32 = parts[2].parse().unwrap_or(1);
+    // The grammar accepts any two digits, so an out-of-range month or day
+    // reaches here from user input. `month` indexes a 12-entry table and
+    // `day - 1` underflows at 0, so both are clamped rather than trusted.
+    let month: u32 = parts[1].parse().unwrap_or(1).clamp(1, 12);
+    let day: u32 = parts[2].parse().unwrap_or(1).clamp(1, 31);
 
     // Calculate days since epoch (1970-01-01)
     let mut days: i64 = 0;

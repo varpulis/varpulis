@@ -32,38 +32,7 @@ async fn extract_admin_claims(
     auth_header: Option<&str>,
     oauth_state: &Option<SharedOAuthState>,
 ) -> Result<oauth::Claims, StatusCode> {
-    let state = oauth_state
-        .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-
-    let token = auth_header
-        .and_then(|h| h.strip_prefix("Bearer ").map(|t| t.trim().to_string()))
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    if token.is_empty() {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
-    // Check revocation
-    let hash = oauth::token_hash(&token);
-    if state.sessions.read().await.is_revoked(&hash) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
-    use jsonwebtoken::{decode, DecodingKey, Validation};
-    let token_data = decode::<oauth::Claims>(
-        &token,
-        &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-        &Validation::default(),
-    )
-    .map_err(|_| StatusCode::UNAUTHORIZED)?;
-
-    // Require admin role
-    if token_data.claims.role != "admin" {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    Ok(token_data.claims)
+    oauth::extract_admin_claims(auth_header, oauth_state).await
 }
 
 #[allow(clippy::result_large_err)]

@@ -588,7 +588,20 @@ impl ContextRuntime {
             tokio::select! {
                 biased;
 
-                _ = self.shutdown_rx.changed() => {
+                changed = self.shutdown_rx.changed() => {
+                    // `changed()` returns Err the moment the sender is dropped,
+                    // and keeps returning it. Matching that with `_` turned a
+                    // dropped orchestrator into an infinite hot loop that also
+                    // starved the event branch: one pinned core per context,
+                    // for the life of the process. A dropped sender means
+                    // nobody can ever signal us again, so treat it as shutdown.
+                    if changed.is_err() {
+                        info!(
+                            "Context '{}' shutdown channel closed; stopping",
+                            self.name
+                        );
+                        break;
+                    }
                     if *self.shutdown_rx.borrow() {
                         info!("Context '{}' received shutdown signal", self.name);
                         // On shutdown: flush all remaining sessions

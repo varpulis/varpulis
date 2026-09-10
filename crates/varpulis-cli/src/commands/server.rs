@@ -21,6 +21,68 @@ use varpulis_runtime::metrics::{Metrics, MetricsServer};
 /// - `client_key`: Client private key
 ///
 /// Returns `None` when no TLS parameters are provided.
+/// Build a rustls `ServerConfig` that *requires and verifies* a client
+/// certificate signed by `ca_cert`.
+///
+/// `RustlsConfig::from_pem_file` builds a server config with no client
+/// verifier, so passing `--tls-ca-cert` used to change nothing but a startup
+/// banner reading "mTLS: client certificates required". Anyone could connect
+/// with no client certificate while the operator believed the control was
+/// enforced — a false assurance that would survive a compliance review.
+pub fn build_mtls_server_config(
+    cert_path: &std::path::Path,
+    key_path: &std::path::Path,
+    ca_cert: &std::path::Path,
+) -> Result<std::sync::Arc<rustls::ServerConfig>> {
+    use std::sync::Arc;
+
+    let read = |p: &std::path::Path, what: &str| -> Result<Vec<u8>> {
+        std::fs::read(p)
+            .map_err(|e| anyhow::anyhow!("Failed to read {what} '{}': {e}", p.display()))
+    };
+
+    let cert_pem = read(cert_path, "TLS certificate")?;
+    let certs: Vec<_> = rustls_pemfile::certs(&mut std::io::BufReader::new(&cert_pem[..]))
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| anyhow::anyhow!("Invalid TLS certificate: {e}"))?;
+    if certs.is_empty() {
+        anyhow::bail!("No certificate found in '{}'", cert_path.display());
+    }
+
+    let key_pem = read(key_path, "TLS private key")?;
+    let key = rustls_pemfile::private_key(&mut std::io::BufReader::new(&key_pem[..]))
+        .map_err(|e| anyhow::anyhow!("Invalid TLS private key: {e}"))?
+        .ok_or_else(|| anyhow::anyhow!("No private key found in '{}'", key_path.display()))?;
+
+    let ca_pem = read(ca_cert, "client CA certificate")?;
+    let ca_certs: Vec<_> = rustls_pemfile::certs(&mut std::io::BufReader::new(&ca_pem[..]))
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| anyhow::anyhow!("Invalid client CA certificate: {e}"))?;
+    if ca_certs.is_empty() {
+        anyhow::bail!("No CA certificate found in '{}'", ca_cert.display());
+    }
+
+    let mut roots = rustls::RootCertStore::empty();
+    for c in ca_certs {
+        roots
+            .add(c)
+            .map_err(|e| anyhow::anyhow!("Rejected client CA certificate: {e}"))?;
+    }
+
+    let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to build client certificate verifier: {e}"))?;
+
+    let mut config = rustls::ServerConfig::builder()
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(certs, key)
+        .map_err(|e| anyhow::anyhow!("Failed to build TLS server config: {e}"))?;
+    // Match what `RustlsConfig::from_pem_file` negotiates.
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+    Ok(Arc::new(config))
+}
+
 pub fn build_mtls_client_config(
     ca_cert: Option<&std::path::Path>,
     client_cert: Option<&std::path::Path>,
@@ -566,7 +628,6 @@ pub async fn run_server(
             }
         }
     };
-    let audit_r = audit::audit_routes(audit_logger.clone());
 
     // OAuth routes — enabled when GITHUB_CLIENT_ID is set OR session_manager is provided.
     // Both GitHub OAuth and local auth share the same JWT infrastructure.
@@ -656,6 +717,10 @@ pub async fn run_server(
             None
         }
     };
+
+    // Mounted after `oauth_state` so the audit log can be gated by the same
+    // admin guard as the /api/v1/admin routes. It is a cross-tenant log.
+    let audit_r = audit::audit_routes(audit_logger.clone(), oauth_state.clone());
     let oauth_r = oauth::oauth_routes(oauth_state.clone());
 
     // Billing routes (optional — enabled when STRIPE_SECRET_KEY is set)
