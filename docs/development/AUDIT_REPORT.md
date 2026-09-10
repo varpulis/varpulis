@@ -7,6 +7,14 @@
 **Auditor:** Automated deep analysis (6 parallel audit passes)
 **Target:** 10/10 production readiness
 
+> **This is a February 2026 record, kept for its history. Do not read the
+> score as current.** A September 2026 audit of the same codebase found
+> defects this one did not cover — among them encryption at rest that was
+> documented in detail and never applied, a chaos suite in which none of the
+> eighteen tests ran, and nine language constructs that computed a wrong
+> answer without erroring. An audit that returns 10/10 is itself a finding
+> worth being suspicious of.
+
 ---
 
 ## Table of Contents

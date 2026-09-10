@@ -37,10 +37,17 @@ features:
     details: Declarative domain-specific language for event patterns, aggregations, joins, and connectors.
 ---
 
-## What's New in v0.9.0
+## Recent releases
+
+**v0.11.0** brought distributed exactly-once checkpointing (a two-phase-commit
+protocol across workers) and Postgres CDC over TLS. See the
+[changelog](https://github.com/varpulis/varpulis/blob/main/CHANGELOG.md) for
+the full list, and for what has landed since.
+
+### From v0.9.0
 
 - **Interactive shell** — type VPL + events directly like a Python interpreter (`varpulis interactive`)
-- **TUI mode** — split-pane terminal UI with topology, event stream, and metrics (`--tui`)
+- **TUI mode** — the split-pane terminal UI is what `varpulis interactive` opens; `--no-tui` gives a plain shell
 - **Pipeline trace** — explain mode showing per-event operator pass/block (`--trace`)
 - **Schema inference** — generate event declarations from sample data (`varpulis infer`)
 - **Watch mode** — auto-reload simulation on file changes (`--watch`)

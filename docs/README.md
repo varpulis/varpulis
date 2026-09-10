@@ -150,7 +150,6 @@ See [`architecture/cluster.md`](architecture/cluster.md) for full documentation.
 
 ---
 
-**Version**: 0.9.0
+**Version**: 0.11.0
 **Parser**: Pest PEG
-**Tests**: 3,776+
 **License**: MIT
