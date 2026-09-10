@@ -1059,8 +1059,15 @@ async fn emit_simple_fields_only() {
 }
 
 #[tokio::test]
-async fn emit_missing_field_uses_literal() {
-    // When a field name doesn't exist in the event, Emit uses the string as-is
+async fn emit_missing_field_is_omitted_not_fabricated() {
+    // This test used to assert the opposite — that a field reference which
+    // resolves to nothing is emitted as its own *name*, as a string. That is
+    // how `.emit(k: k)` after `.partition_by(k)` came to emit the literal "k",
+    // and how a quoted `.emit(severity: "critical")` came to be replaced by the
+    // value of a field called `critical`. A quoted literal is now always a
+    // literal, and an unresolved field reference emits nothing at all —
+    // matching `.emit()`'s expression path, which already skipped what it could
+    // not evaluate.
     let code = r#"
         stream S = Tick
             .emit(status: "active", missing: nonexistent_field)
@@ -1070,12 +1077,13 @@ async fn emit_missing_field_uses_literal() {
     assert_eq!(out.len(), 1);
     assert_eq!(
         out[0].data.get("status"),
-        Some(&Value::Str("active".into()))
+        Some(&Value::Str("active".into())),
+        "a quoted literal is a literal"
     );
-    // "nonexistent_field" should be treated as string literal
     assert_eq!(
         out[0].data.get("missing"),
-        Some(&Value::Str("nonexistent_field".into()))
+        None,
+        "an unresolved field reference must not fabricate its own name as a value"
     );
 }
 

@@ -15,12 +15,16 @@
 #   )
 #
 # Functions:
-#   avg_trends(field)   Average of field across all trend combinations
-#   sum_trends(field)   Sum of field across all trend combinations
-#   max_trends(field)   Maximum across all trends
-#   min_trends(field)   Minimum across all trends
-#   count_events(alias) Number of events captured by Kleene closure
-#   count_trends()      Number of unique trend combinations (2^n - 1)
+#   avg_trends(alias.field)   Average of field across all trend combinations
+#   sum_trends(alias.field)   Sum of field across all trend combinations
+#   max_trends(alias.field)   Maximum across all trends
+#   min_trends(alias.field)   Minimum across all trends
+#   count_events(alias)       Number of events captured by Kleene closure
+#   count_trends()            Number of unique trend combinations (2^n - 1)
+#
+#   The alias is required on the field aggregates: it names the pattern step
+#   the field is read from. A bare `sum_trends(field)` is refused at compile
+#   time — it used to be dropped silently, producing no output field at all.
 #
 # Use cases:
 #   - Transaction pipeline monitoring

@@ -37,6 +37,16 @@ pub struct KleeneCapture {
     /// PERF: When true, ZDD operations are needed (inconsistent predicate).
     /// When false, we skip expensive `product_with_optional` calls.
     pub(crate) needs_zdd: bool,
+    /// How many events matched this closure but were dropped because the
+    /// capture had already reached [`KleeneLimits::max_events`].
+    ///
+    /// The cap itself is a defensible engineering bound — with n events the ZDD
+    /// enumerates up to 2^n - 1 combinations, so 20 is ~1 M and 30 is ~1 B. What
+    /// was not defensible was dropping the 21st event and every one after it
+    /// with no push, no log, no metric and no mark on the emitted match: a rule
+    /// that says "3, 15, or 1000 failures, identically" quietly plateaued at 21
+    /// and the alert never said so.
+    pub(crate) truncated: u32,
 }
 
 impl KleeneCapture {
@@ -53,6 +63,7 @@ impl KleeneCapture {
             next_var: 0,
             deferred_predicate: None,
             needs_zdd: false,
+            truncated: 0,
         }
     }
 

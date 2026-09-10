@@ -1,12 +1,23 @@
 # Brute Force -> Account Takeover with Kleene Sequence
 # MITRE ATT&CK: T1110 -> T1078
 #
-# UNIQUE CAPABILITY: Detects ANY number of failed logins from the
-# same IP followed by a successful login, then privilege escalation.
-# Unlike the existing T1078 rule (hardcodes exactly 5 failures),
-# this catches 3, 15, or 1000 failures identically.
+# UNIQUE CAPABILITY: Detects a run of failed logins from the same IP
+# followed by a successful login, without hardcoding how many failures.
+# Unlike the existing T1078 rule (hardcodes exactly 5 failures), this
+# fires on 3 or 15 without being rewritten.
 #
 # Sigma must hardcode a fixed count. This rule adapts to the attack.
+#
+# BOUND: the Kleene closure accumulates at most 20 failures per match
+# (see docs/language/operators.md, "The Kleene event cap"), so
+# `failed_count` saturates at 21 and a longer burst produces no further
+# alerts from that run. `varpulis check` warns (W003) about the cap and the
+# engine logs the first dropped failure; under `.longest()` or `.subsets()`
+# the match itself also carries `_kleene_truncated`. The detection is
+# unaffected either way — 20 failures followed by a success is already the
+# thing you want to know about — but the *count* is a floor, not a total.
+# Earlier revisions of this header claimed "3, 15, or 1000 failures
+# identically". The 1000 was never true.
 
 event AuthEvent:
     source_ip: str

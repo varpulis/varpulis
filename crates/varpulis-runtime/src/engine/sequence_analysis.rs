@@ -113,9 +113,6 @@ fn visit_op(op: &RuntimeOp, cfg: &mut SequenceMatchConfig) {
         #[cfg(feature = "arrow")]
         RuntimeOp::PartitionedWindowedColumnarAggregate(_)
         | RuntimeOp::WindowedColumnarAggregate(_) => {}
-
-        #[cfg(feature = "async-runtime")]
-        RuntimeOp::Concurrent(_) => {}
     }
 }
 

@@ -13,13 +13,12 @@ use tracing::{debug, info, warn};
 use varpulis_core::ast::{Expr, StreamOp, StreamSource};
 
 #[cfg(feature = "async-runtime")]
-use super::types::ConcurrentConfig;
 use super::types::{
-    AlertConfig, DistinctState, EmitConfig, EmitExprConfig, EnrichConfig, FieldAggregateInfo,
-    ForecastConfig, LimitState, LogConfig, MergeSource, PartitionedAggregatorState,
-    PartitionedSlidingCountWindowState, PartitionedWindowState, PatternConfig, PrintConfig,
-    RuntimeOp, RuntimeSource, SelectConfig, SourceBinding, StreamDefinition, TimerConfig, ToConfig,
-    TrendAggregateConfig, WindowType,
+    AlertConfig, DistinctState, EmitConfig, EmitExprConfig, EmitSource, EnrichConfig,
+    FieldAggregateInfo, ForecastConfig, LimitState, LogConfig, MergeSource,
+    PartitionedAggregatorState, PartitionedSlidingCountWindowState, PartitionedWindowState,
+    PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig, SourceBinding,
+    StreamDefinition, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
 };
 use super::{compiler, pattern_analyzer, Engine};
 use crate::aggregation::Aggregator;
@@ -566,6 +565,42 @@ impl Engine {
             _ => {}
         }
 
+        // Every alias this stream's pattern binds: the source alias, each
+        // `-> Event as alias` step, and — for a named-pattern reference — the
+        // aliases the pattern declaration binds. Used by `.partition_by()` to
+        // decide whether `alias.field` names a real step.
+        let mut pattern_aliases: Vec<String> = Vec::new();
+        {
+            let mut candidates: Vec<&String> = Vec::new();
+            match source {
+                StreamSource::Sequence(decl) => {
+                    candidates.extend(decl.steps.iter().map(|s| &s.alias));
+                }
+                StreamSource::IdentWithAlias { alias, .. } => candidates.push(alias),
+                StreamSource::IdentWithFilterAndAlias { alias, .. }
+                | StreamSource::AllWithAlias { alias, .. } => {
+                    candidates.extend(alias.as_ref());
+                }
+                StreamSource::Ident(name) => {
+                    if let Some(p) = self.patterns.get(name) {
+                        let varpulis_core::ast::SasePatternExpr::Seq(items) = &p.expr;
+                        candidates.extend(items.iter().filter_map(|i| i.alias.as_ref()));
+                    }
+                }
+                _ => {}
+            }
+            for op in ops {
+                if let StreamOp::FollowedBy(clause) = op {
+                    candidates.extend(clause.alias.as_ref());
+                }
+            }
+            for c in candidates {
+                if !pattern_aliases.contains(c) {
+                    pattern_aliases.push(c.clone());
+                }
+            }
+        }
+
         for op in ops {
             match op {
                 StreamOp::FollowedBy(clause) => {
@@ -951,9 +986,59 @@ impl Engine {
                     } // close else (non-session)
                 }
                 StreamOp::PartitionBy(expr) => {
-                    // Extract partition key field name
-                    if let varpulis_core::ast::Expr::Ident(field) = expr {
-                        partition_key = Some(field.clone());
+                    // The grammar accepts a full expression here. Only two forms
+                    // have a meaning the engine can honour, because a partition
+                    // key is resolved per *incoming* event, before any alias is
+                    // bound:
+                    //
+                    //   .partition_by(field)        — the field, on every event
+                    //   .partition_by(alias.field)  — the same field, written
+                    //                                 with the step that first
+                    //                                 binds it (the form our own
+                    //                                 docs publish)
+                    //
+                    // Anything else used to be dropped on the floor, leaving a
+                    // global window and an *unpartitioned* SASE engine — for a
+                    // detection rule, kill-chain steps correlating across
+                    // different users and hosts. It is now refused.
+                    match expr {
+                        varpulis_core::ast::Expr::Ident(field) => {
+                            partition_key = Some(field.clone());
+                        }
+                        varpulis_core::ast::Expr::Member { expr: base, member } => {
+                            let varpulis_core::ast::Expr::Ident(alias) = base.as_ref() else {
+                                return Err(super::error::EngineError::Compilation(format!(
+                                    ".partition_by() takes a field name or `alias.field`, not \
+                                     a nested expression ({expr:?}) — partition keys are \
+                                     resolved per incoming event"
+                                )));
+                            };
+                            if !pattern_aliases.iter().any(|a| a == alias) {
+                                return Err(super::error::EngineError::Compilation(format!(
+                                    ".partition_by({alias}.{member}) names '{alias}', which is \
+                                     not a step alias of this pattern (known aliases: {}) — use \
+                                     .partition_by({member}) to partition on the field itself",
+                                    if pattern_aliases.is_empty() {
+                                        "none".to_string()
+                                    } else {
+                                        pattern_aliases.join(", ")
+                                    }
+                                )));
+                            }
+                            // `alias.field` and `field` denote the same key: the
+                            // alias only says which step the reader should think
+                            // of it as coming from.
+                            partition_key = Some(member.clone());
+                        }
+                        other => {
+                            return Err(super::error::EngineError::Compilation(format!(
+                                ".partition_by() requires a field name (e.g. \
+                                 .partition_by(user_id)) or an alias-qualified field (e.g. \
+                                 .partition_by(login.user_id)); got {other:?}. A computed \
+                                 partition key is not supported — derive the value into a \
+                                 field with .emit() or .select() first, then partition on it"
+                            )));
+                        }
                     }
                 }
                 StreamOp::Aggregate(items) => {
@@ -1087,11 +1172,23 @@ impl Engine {
                     fields: args,
                     target_context,
                 } => {
-                    // Check if any args have complex expressions (not just strings or idents)
+                    // Split on what the *fast* op can represent, not on what the
+                    // slow one can. `RuntimeOp::Emit` carries literals and field
+                    // references as separate, unambiguous things
+                    // (`EmitSource`), so it stays usable for the common
+                    // `.emit(rule: "x", host: Hostname)` shape; anything that
+                    // needs evaluation goes to `EmitExpr`. Crucially, both paths
+                    // now agree on what a quoted string means, so adding an
+                    // arithmetic item to an `.emit()` no longer changes the
+                    // meaning of its other items.
                     let has_complex_expr = args.iter().any(|arg| {
                         !matches!(
                             &arg.value,
-                            varpulis_core::ast::Expr::Str(_) | varpulis_core::ast::Expr::Ident(_)
+                            varpulis_core::ast::Expr::Str(_)
+                                | varpulis_core::ast::Expr::Int(_)
+                                | varpulis_core::ast::Expr::Float(_)
+                                | varpulis_core::ast::Expr::Bool(_)
+                                | varpulis_core::ast::Expr::Ident(_)
                         )
                     });
 
@@ -1106,16 +1203,29 @@ impl Engine {
                             target_context: target_context.clone(),
                         }));
                     } else {
-                        // Use simple EmitConfig for string/ident only
-                        let fields: Vec<(std::sync::Arc<str>, String)> = args
+                        // Literals and field references, kept apart.
+                        let fields: Vec<(std::sync::Arc<str>, EmitSource)> = args
                             .iter()
                             .filter_map(|arg| {
-                                let value = match &arg.value {
-                                    varpulis_core::ast::Expr::Str(s) => s.clone(),
-                                    varpulis_core::ast::Expr::Ident(s) => s.clone(),
+                                let source = match &arg.value {
+                                    varpulis_core::ast::Expr::Str(s) => {
+                                        EmitSource::Literal(varpulis_core::Value::str(s.as_str()))
+                                    }
+                                    varpulis_core::ast::Expr::Int(n) => {
+                                        EmitSource::Literal(varpulis_core::Value::Int(*n))
+                                    }
+                                    varpulis_core::ast::Expr::Float(x) => {
+                                        EmitSource::Literal(varpulis_core::Value::Float(*x))
+                                    }
+                                    varpulis_core::ast::Expr::Bool(b) => {
+                                        EmitSource::Literal(varpulis_core::Value::Bool(*b))
+                                    }
+                                    varpulis_core::ast::Expr::Ident(s) => {
+                                        EmitSource::Field(s.clone())
+                                    }
                                     _ => return None,
                                 };
-                                Some((std::sync::Arc::from(arg.name.as_str()), value))
+                                Some((std::sync::Arc::from(arg.name.as_str()), source))
                             })
                             .collect();
                         runtime_ops.push(RuntimeOp::Emit(EmitConfig {
@@ -1312,53 +1422,19 @@ impl Engine {
                             .into(),
                     ));
                 }
-                #[cfg(feature = "async-runtime")]
-                StreamOp::Concurrent(ref args) => {
-                    let mut workers = std::thread::available_parallelism()
-                        .map(|n| n.get())
-                        .unwrap_or(4)
-                        .min(128);
-                    let mut partition_key = None;
-
-                    for arg in args {
-                        match arg.name.as_str() {
-                            "workers" => {
-                                if let varpulis_core::Expr::Int(n) = &arg.value {
-                                    workers = (*n as usize).clamp(1, 128);
-                                }
-                            }
-                            "partition_key" => {
-                                if let varpulis_core::Expr::Str(s) = &arg.value {
-                                    partition_key = Some(s.clone());
-                                } else if let varpulis_core::Expr::Ident(s) = &arg.value {
-                                    partition_key = Some(s.clone());
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    let thread_pool = std::sync::Arc::new(
-                        rayon::ThreadPoolBuilder::new()
-                            .num_threads(workers)
-                            .build()
-                            .map_err(|e| {
-                                super::error::EngineError::Compilation(format!(
-                                    "Failed to create thread pool: {e}"
-                                ))
-                            })?,
-                    );
-
-                    runtime_ops.push(RuntimeOp::Concurrent(ConcurrentConfig {
-                        workers,
-                        partition_key,
-                        thread_pool,
-                    }));
-                }
-                #[cfg(not(feature = "async-runtime"))]
                 StreamOp::Concurrent(_) => {
+                    // `.concurrent()` never processed anything in parallel. It
+                    // built a rayon thread pool per stream at load time, then
+                    // the pipeline arm returned immediately for `len() <= 1`,
+                    // the dispatcher never routed a `Concurrent` stream to the
+                    // only path that passes more than one event at a time, and
+                    // the "parallel" body was `.into_par_iter().map(|p| p)`.
+                    // A cost with no effect, described as Production in one doc
+                    // and unimplemented in two others.
                     return Err(super::error::EngineError::Compilation(
-                        ".concurrent() requires async-runtime feature (rayon thread pool)".into(),
+                        ".concurrent() is not yet implemented — use .partition_by() with \
+                         `--workers N`, or a `context` block, for parallelism"
+                            .into(),
                     ));
                 }
                 StreamOp::OrderBy(_) => {
@@ -1608,33 +1684,46 @@ impl Engine {
             }
         }
 
-        let field_aggregates: Vec<FieldAggregateInfo> = agg_items
-            .iter()
-            .filter_map(|item| {
-                let func = match item.func.as_str() {
-                    "sum_trends" => "sum",
-                    "avg_trends" => "avg",
-                    "min_trends" => "min",
-                    "max_trends" => "max",
-                    _ => return None,
-                };
-                if let Some(Expr::Member { expr, member }) = &item.arg {
-                    if let Expr::Ident(alias) = expr.as_ref() {
-                        let event_type = alias_to_event_type
-                            .get(alias)
-                            .cloned()
-                            .unwrap_or_else(|| alias.clone());
-                        return Some(FieldAggregateInfo {
-                            output_alias: item.alias.clone(),
-                            func: func.to_string(),
-                            event_type,
-                            field_name: member.clone(),
-                        });
-                    }
-                }
-                None
-            })
-            .collect();
+        // A field aggregate that cannot be resolved to `alias.field` used to be
+        // dropped here by `filter_map`, so `sum_trends(price)` produced no
+        // output field at all — and `.emit(sum: total)` then fabricated the
+        // literal string "total" for it. Refuse instead: the documented
+        // signature is `sum_trends(alias.field)`, and every shipped example
+        // writes it that way.
+        let mut field_aggregates: Vec<FieldAggregateInfo> = Vec::new();
+        for item in agg_items {
+            let func = match item.func.as_str() {
+                "sum_trends" => "sum",
+                "avg_trends" => "avg",
+                "min_trends" => "min",
+                "max_trends" => "max",
+                _ => continue,
+            };
+            let Some(Expr::Member { expr, member }) = &item.arg else {
+                return Err(super::error::EngineError::Compilation(format!(
+                    "{}() takes an alias-qualified field, e.g. {}(steps.duration); \
+                     got {:?}. The alias must name a step of the pattern.",
+                    item.func, item.func, item.arg
+                )));
+            };
+            let Expr::Ident(alias) = expr.as_ref() else {
+                return Err(super::error::EngineError::Compilation(format!(
+                    "{}() takes an alias-qualified field, e.g. {}(steps.duration); \
+                     the part before '.{member}' must be a step alias",
+                    item.func, item.func
+                )));
+            };
+            let event_type = alias_to_event_type
+                .get(alias)
+                .cloned()
+                .unwrap_or_else(|| alias.clone());
+            field_aggregates.push(FieldAggregateInfo {
+                output_alias: item.alias.clone(),
+                func: func.to_string(),
+                event_type,
+                field_name: member.clone(),
+            });
+        }
 
         // Build reverse map: type index → event type name
         let max_idx = type_indices_map.values().copied().max().unwrap_or(0) as usize;

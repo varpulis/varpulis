@@ -34,7 +34,8 @@
 - [x] Tenant/pipeline state recovery on restart
 - [x] Multi-tenant SaaS API (REST, usage metering, quotas)
 - [x] Engine checkpoint integration (window/pattern state save/restore)
-- [ ] Declarative parallelization (`.concurrent()`)
+- [ ] Declarative parallelization (`.concurrent()`) — deferred to Phase 6; the
+      syntax is reserved and rejected at compile time
 - [x] Automatic supervision and restart (circuit breaker, DLQ, graceful shutdown)
 
 ### Phase 3 Deliverables

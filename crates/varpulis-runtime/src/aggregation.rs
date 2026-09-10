@@ -588,6 +588,102 @@ pub enum AggBinOp {
     Div,
 }
 
+/// Field name under which [`ProjectedAggregate`] stores the value of the
+/// projected expression. Deliberately un-typeable in VPL so it can never
+/// collide with a real field.
+const PROJECTION_FIELD: &str = "__vpl_projection";
+
+/// An aggregate over a computed per-event expression: `sum(price * quantity)`,
+/// `avg(bytes_in + bytes_out)`, `max(x * 1.1)`, `count_distinct(lower(user))`.
+///
+/// Before this existed, `compile_agg_expr` yielded `None` for the field name
+/// whenever the argument was anything but a bare identifier, and every
+/// aggregate then fell back to a field literally named `"value"` — so
+/// `sum(price * quantity)` summed a field that does not exist and returned
+/// `0.0`. A rule shaped `sum(bytes_in + bytes_out) > threshold` never fired.
+///
+/// The expression is evaluated once per event into a synthetic single-field
+/// event, which the wrapped aggregate then consumes exactly as it would a real
+/// field. That keeps every aggregate — including `median`, `p95`, `stddev` and
+/// `count_distinct`, which read `Value`s rather than `f64`s — correct for free.
+/// Events whose expression does not evaluate (a missing field, a type error)
+/// contribute no value, matching how a missing real field behaves.
+pub struct ProjectedAggregate {
+    inner: Box<dyn AggregateFunc>,
+    expr: varpulis_core::ast::Expr,
+}
+
+impl std::fmt::Debug for ProjectedAggregate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProjectedAggregate")
+            .field("inner", &self.inner.name())
+            .field("expr", &self.expr)
+            .finish()
+    }
+}
+
+impl ProjectedAggregate {
+    /// Wrap `inner` so it aggregates the value of `expr` instead of a field.
+    pub fn new(inner: Box<dyn AggregateFunc>, expr: varpulis_core::ast::Expr) -> Self {
+        Self { inner, expr }
+    }
+
+    fn project(&self, events: &[&Event]) -> Vec<Event> {
+        events
+            .iter()
+            .map(|e| {
+                let mut projected =
+                    Event::with_capacity_at(std::sync::Arc::clone(&e.event_type), 1, e.timestamp);
+                if let Some(v) = crate::engine::evaluator::eval_expr_with_functions(
+                    &self.expr,
+                    e,
+                    crate::sequence::SequenceContext::empty(),
+                    &EMPTY_FUNCTIONS,
+                    &EMPTY_BINDINGS,
+                ) {
+                    projected.data.insert(PROJECTION_FIELD.into(), v);
+                }
+                projected
+            })
+            .collect()
+    }
+}
+
+static EMPTY_FUNCTIONS: std::sync::LazyLock<
+    rustc_hash::FxHashMap<String, crate::engine::UserFunction>,
+> = std::sync::LazyLock::new(rustc_hash::FxHashMap::default);
+static EMPTY_BINDINGS: std::sync::LazyLock<rustc_hash::FxHashMap<String, Value>> =
+    std::sync::LazyLock::new(rustc_hash::FxHashMap::default);
+
+impl AggregateFunc for ProjectedAggregate {
+    /// Deliberately *not* the inner function's name: `Aggregator::supported_for_columnar`
+    /// dispatches on that name, and the columnar/Arrow paths key off a real
+    /// column. Reporting a distinct name keeps a projected aggregate on the
+    /// row-oriented path, which is the only one that can evaluate an expression.
+    fn name(&self) -> &str {
+        "projected"
+    }
+
+    fn apply(&self, events: &[Event], _field: Option<&str>) -> Value {
+        let refs: Vec<&Event> = events.iter().collect();
+        self.apply_refs(&refs, None)
+    }
+
+    fn apply_refs(&self, events: &[&Event], _field: Option<&str>) -> Value {
+        let projected = self.project(events);
+        self.inner.apply(&projected, Some(PROJECTION_FIELD))
+    }
+
+    fn apply_shared(&self, events: &[SharedEvent], _field: Option<&str>) -> Value {
+        let refs: Vec<&Event> = events.iter().map(|e| e.as_ref()).collect();
+        self.apply_refs(&refs, None)
+    }
+
+    fn apply_columnar(&self, buffer: &mut ColumnarBuffer, _field: Option<&str>) -> Value {
+        self.apply_shared(buffer.events(), None)
+    }
+}
+
 /// Expression-based aggregate that combines two aggregates with an operator
 pub struct ExprAggregate {
     pub left: Box<dyn AggregateFunc>,

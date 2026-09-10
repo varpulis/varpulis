@@ -146,6 +146,17 @@ stream Name = EventType
     .aggregate(...)
 ```
 
+In a pattern, the key may be written with the step alias that binds it —
+`.partition_by(login.user_id)` — which means the same thing as
+`.partition_by(user_id)`: partition keys are resolved per incoming event, before
+any alias is bound, so the alias is documentation for the reader. The alias must
+name a step of that pattern.
+
+A computed key (`.partition_by(a + b)`, `.partition_by(lower(host))`) is
+**refused at compile time**. It used to be dropped on the floor, leaving a global
+window and an unpartitioned pattern engine. Derive the value into a field with
+`.select()` or `.emit()` first, then partition on that field.
+
 **Behavior:**
 - Creates independent windows per unique partition key
 - Each partition emits separately
@@ -211,13 +222,19 @@ Count the number of events in the window.
 
 Sum numeric field values. SIMD-optimized on x86_64 with AVX2.
 
-**Signature:** `sum(field: string) -> float`
+**Signature:** `sum(field | expression) -> float`
+
+The argument may be a field name or an expression evaluated per event, so
+`sum(price * quantity)` sums the products rather than requiring a precomputed
+column. The same holds for `avg`, `min`, `max`, `stddev`, the percentiles, and
+`count_distinct`.
 
 **Example:**
 ```vpl
 .aggregate(
     total_amount: sum(amount),
-    total_quantity: sum(quantity)
+    total_quantity: sum(quantity),
+    notional: sum(price * quantity)
 )
 ```
 

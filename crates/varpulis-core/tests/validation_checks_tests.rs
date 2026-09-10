@@ -788,13 +788,92 @@ fn e091_concurrent_unknown_param() {
 }
 
 #[test]
-fn concurrent_valid_no_error() {
+fn e090_concurrent_not_implemented() {
+    // `.concurrent()` used to validate clean and then load into the engine as a
+    // no-op that still built a thread pool per stream. The engine now refuses
+    // it, so `varpulis check` must refuse it too — a program that passes check
+    // and then fails to load is worse than either.
     let diags = validate_vpl(
         "event A:\n    x: int\n\nstream S = A\n    .concurrent(workers: 4)\n    .where(x > 0)",
     );
     assert!(
-        !has_error(&diags, "E090") && !has_error(&diags, "E091"),
-        "Expected no E090/E091 for valid concurrent: {diags:?}"
+        has_error(&diags, "E090"),
+        "Expected E090 for concurrent: {diags:?}"
+    );
+    // The parameter checks still apply, so a valid `workers:` is not *also*
+    // reported as a bad parameter.
+    assert!(
+        !has_error(&diags, "E091"),
+        "Expected no E091 for a well-formed concurrent parameter: {diags:?}"
+    );
+}
+
+#[test]
+fn e092_partition_by_computed_expression() {
+    // `.partition_by(<computed>)` used to be dropped on the floor: a global
+    // window and an unpartitioned pattern engine, silently.
+    let diags = validate_vpl(
+        "event A:\n    a: str\n    b: str\n\nstream S = A\n    .partition_by(a + b)\n    \
+         .window(2)\n    .aggregate(n: count())",
+    );
+    assert!(
+        has_error(&diags, "E092"),
+        "Expected E092 for a computed partition key: {diags:?}"
+    );
+}
+
+#[test]
+fn e092_not_raised_for_a_plain_or_alias_qualified_field() {
+    let plain = validate_vpl(
+        "event A:\n    a: str\n\nstream S = A\n    .partition_by(a)\n    .window(2)\n    \
+         .aggregate(n: count())",
+    );
+    assert!(
+        !has_error(&plain, "E092"),
+        "a bare field is the canonical form: {plain:?}"
+    );
+
+    let qualified = validate_vpl(
+        "event Login:\n    user_id: str\n\nevent Transfer:\n    user_id: str\n\n\
+         stream S = Login as login\n    -> Transfer as xfer\n    .within(5m)\n    \
+         .partition_by(login.user_id)\n    .emit(u: login.user_id)",
+    );
+    assert!(
+        !has_error(&qualified, "E092"),
+        "alias-qualified fields are published in our own docs: {qualified:?}"
+    );
+}
+
+#[test]
+fn w003_unbounded_kleene_reports_its_cap() {
+    // "Catches 3, 15, or 1000 failures identically" was not true: the closure
+    // stops accumulating at MAX_KLEENE_EVENTS. Say so at check time.
+    let diags = validate_vpl(
+        "event A:\n    x: int\n\nevent B:\n    x: int\n\nevent C:\n    x: int\n\n\
+         stream S = A as a\n    -> all B as bs\n    -> C as c\n    .within(5m)\n    \
+         .emit(n: count(bs))",
+    );
+    assert!(
+        has_warning(&diags, "W003"),
+        "Expected W003 naming the Kleene cap: {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(_, c, m)| *c == Some("W003") && m.contains("20")),
+        "W003 must name the actual cap: {diags:?}"
+    );
+}
+
+#[test]
+fn w003_not_raised_for_a_single_step() {
+    let diags = validate_vpl(
+        "event A:\n    x: int\n\nevent B:\n    x: int\n\nstream S = A as a\n    -> B as b\n    \
+         .within(5m)\n    .emit(x: b.x)",
+    );
+    assert!(
+        !has_warning(&diags, "W003"),
+        "a non-Kleene step accumulates nothing: {diags:?}"
     );
 }
 

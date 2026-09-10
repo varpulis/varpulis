@@ -478,6 +478,20 @@ fn check_stream_ops(
                 );
             }
             StreamOp::Concurrent(ref args) => {
+                // `.concurrent()` never ran anything concurrently — it built a
+                // thread pool and then passed events straight through. The
+                // engine now refuses it at compile time; `varpulis check` says
+                // so first, like it does for every other unimplemented operator.
+                v.emit_with_hint(
+                    Severity::Error,
+                    op_span,
+                    "E090",
+                    ".concurrent() is not yet implemented".to_string(),
+                    "use .partition_by() with `--workers N`, or a `context` block, \
+                     for parallelism"
+                        .to_string(),
+                );
+
                 // Validate parameters
                 for arg in args {
                     if !crate::validate::builtins::CONCURRENT_PARAMS.contains(&arg.name.as_str()) {
@@ -717,6 +731,30 @@ fn check_stream_ops(
                         "move .partition_by() before .window() for correct behavior".to_string(),
                     );
                 }
+                // A partition key is resolved per *incoming* event, so only a
+                // field name — or the same field written with the step alias
+                // that binds it — has a meaning the engine can honour. Anything
+                // else used to be silently dropped, leaving a global window and
+                // an unpartitioned pattern engine; the engine now refuses it, so
+                // `varpulis check` must say so too rather than passing a program
+                // that will not load.
+                if !matches!(
+                    expr,
+                    crate::ast::Expr::Ident(_)
+                        | crate::ast::Expr::Member { .. }
+                        | crate::ast::Expr::OptionalMember { .. }
+                ) {
+                    v.emit_with_hint(
+                        Severity::Error,
+                        op_span,
+                        "E092",
+                        ".partition_by() requires a field name, not a computed expression"
+                            .to_string(),
+                        "derive the value into a field with .select() or .emit() first, \
+                         then .partition_by() that field"
+                            .to_string(),
+                    );
+                }
                 check_bare_ident_refs(
                     v,
                     expr,
@@ -745,6 +783,31 @@ fn check_stream_ops(
             // --- Sequence tracking ---
             StreamOp::FollowedBy(clause) | StreamOp::Not(clause) => {
                 check_source_name(v, &clause.event_type, op_span);
+                if clause.match_all {
+                    // An unbounded Kleene closure is not unbounded: SASE+ stops
+                    // accumulating at MAX_KLEENE_EVENTS, because the ZDD it
+                    // builds enumerates up to 2^n combinations. Events past the
+                    // cap are dropped from the run, so any count derived from
+                    // the closure plateaus. This used to happen with no push, no
+                    // log and no mark on the emitted match — a rule whose header
+                    // promised "3, 15, or 1000 failures, identically" stopped
+                    // counting at 21 and never said so.
+                    v.emit_with_hint(
+                        Severity::Warning,
+                        op_span,
+                        "W003",
+                        format!(
+                            "`all {}` accumulates at most {} events per match",
+                            clause.event_type,
+                            crate::validate::MAX_KLEENE_EVENTS,
+                        ),
+                        "past the cap the closure stops accumulating, so counts \
+                         derived from it are a floor and .each() emits no further \
+                         matches for that run; under .longest()/.subsets() the match \
+                         carries `_kleene_truncated` with the number dropped"
+                            .to_string(),
+                    );
+                }
                 in_sequence = true;
             }
 
@@ -1699,6 +1762,29 @@ fn check_sase_pattern_refs(v: &mut Validator, expr: &SasePatternExpr, span: Span
             .strip_prefix('!')
             .unwrap_or(&item.event_type);
         check_source_name(v, name, span);
+
+        // Same cap, same warning, as the `-> all X` form in a stream body —
+        // see the `StreamOp::FollowedBy` arm.
+        if matches!(
+            item.kleene,
+            Some(crate::ast::KleeneOp::Plus | crate::ast::KleeneOp::Star)
+        ) {
+            v.emit_with_hint(
+                Severity::Warning,
+                span,
+                "W003",
+                format!(
+                    "Kleene closure over '{}' accumulates at most {} events per match",
+                    name,
+                    crate::validate::MAX_KLEENE_EVENTS,
+                ),
+                "past the cap the closure stops accumulating, so counts derived from \
+                 it are a floor and .each() emits no further matches for that run; \
+                 under .longest()/.subsets() the match carries `_kleene_truncated` \
+                 with the number dropped"
+                    .to_string(),
+            );
+        }
     }
 }
 

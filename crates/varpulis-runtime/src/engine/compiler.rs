@@ -52,6 +52,21 @@ pub fn compile_agg_expr(
                 _ => None,
             });
 
+            // An argument that is not a bare identifier is a per-event
+            // *expression* — `sum(price * quantity)`, `avg(bytes_in + bytes_out)`,
+            // `max(x * 1.1)`, `sum(t.amount)`. Until this branch existed, `field`
+            // came out `None` and `aggregation.rs` fell back to a field literally
+            // named `"value"`, so those aggregates silently returned 0.0.
+            //
+            // `count()` takes no argument, and `count(distinct(x))` is handled
+            // above; anything else with a first positional argument that is not an
+            // identifier gets wrapped in a `ProjectedAggregate`.
+            let projection: Option<varpulis_core::ast::Expr> = match args.first() {
+                Some(Arg::Positional(Expr::Ident(_))) | None => None,
+                Some(Arg::Positional(e)) => Some(e.clone()),
+                Some(Arg::Named(_, _)) => None,
+            };
+
             // Extract second argument as int (period for EMA) or float (quantile for percentile)
             let second_int = args
                 .get(1)
@@ -90,7 +105,16 @@ pub fn compile_agg_expr(
                 }
             };
 
-            Some((agg_func, field))
+            match projection {
+                // `count(<expr>)` counts events, not values — wrapping it would
+                // change nothing, so leave it alone.
+                Some(_) if func_name == "count" => Some((agg_func, field)),
+                Some(expr) => Some((
+                    Box::new(crate::aggregation::ProjectedAggregate::new(agg_func, expr)),
+                    None,
+                )),
+                None => Some((agg_func, field)),
+            }
         }
 
         // Binary expression: left op right (e.g., last(x) - ema(x, 9))

@@ -71,14 +71,14 @@ async fn trend_aggregate_correct_count() {
 
 #[tokio::test]
 async fn trend_aggregate_sum_and_count() {
-    // Both count_trends() and sum_trends(price) in one output
+    // Both count_trends() and sum_trends(alias.field) in one output
     let program = r"
         stream DualTrend = StockTick as first
             -> all StockTick as rising
             .within(60s)
             .trend_aggregate(
                 cnt: count_trends(),
-                total: sum_trends(price)
+                total: sum_trends(rising.price)
             )
             .emit(count: cnt, sum: total)
     ";
@@ -229,7 +229,7 @@ async fn trend_aggregate_with_emit_fields() {
             .within(60s)
             .trend_aggregate(
                 cnt: count_trends(),
-                total: sum_trends(price)
+                total: sum_trends(rising.price)
             )
             .emit(event_count: cnt, price_total: total)
     ";
