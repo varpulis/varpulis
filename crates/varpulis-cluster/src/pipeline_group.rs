@@ -1,7 +1,6 @@
 //! Pipeline group abstraction for deploying related pipelines together.
 
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
@@ -252,9 +251,10 @@ impl ReplicaGroup {
                         String::new()
                     }
                 };
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                value.hash(&mut hasher);
-                (hasher.finish() as usize) % self.replica_names.len()
+                // `crate::stable_hash`, not `DefaultHasher`: this number
+                // decides which machine holds this key's state, so it has to
+                // mean the same thing in every process and every build.
+                crate::stable_hash::bucket(&value, self.replica_names.len())
             }
         };
         &self.replica_names[idx]

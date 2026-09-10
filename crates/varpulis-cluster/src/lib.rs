@@ -84,6 +84,7 @@ pub mod raft;
 pub mod rate_limit;
 pub mod rbac;
 pub mod routing;
+pub mod stable_hash;
 pub mod worker;
 
 // Re-exports

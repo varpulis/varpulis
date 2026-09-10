@@ -198,18 +198,12 @@ pub const CONSUMER_INACTIVE_THRESHOLD: Duration = Duration::from_hours(24 * 7);
 /// Maximum length of a generated durable consumer name before it is hashed.
 const DURABLE_NAME_MAX: usize = 96;
 
-/// FNV-1a, spelled out rather than using `DefaultHasher`, because a durable
-/// consumer name must be stable across Rust versions — `DefaultHasher`'s output
-/// explicitly is not. A name that changes under a toolchain upgrade would
-/// silently orphan the old consumer and its unacked backlog.
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in bytes {
-        hash ^= u64::from(*b);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
+/// A durable consumer name must be stable across Rust versions, so it is
+/// derived with `crate::stable_hash` rather than `DefaultHasher`. A name that
+/// changed under a toolchain upgrade would silently orphan the old consumer
+/// and its unacked backlog. See that module for why the algorithm is written
+/// out rather than borrowed.
+use crate::stable_hash::fnv1a;
 
 /// Map arbitrary text to the characters a NATS consumer name allows.
 fn sanitize_token(s: &str) -> String {
