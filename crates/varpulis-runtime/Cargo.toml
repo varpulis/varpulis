@@ -10,18 +10,29 @@ description = "Runtime execution engine for Varpulis — Rust stream processing 
 keywords = ["stream-processing", "streaming", "runtime", "real-time", "detection"]
 categories = ["science", "development-tools", "data-structures"]
 
-# One deliberate break against the 0.11.0 baseline, taken in the change that
-# made the fence stop the data plane: `EngineError` gained a `Fenced` variant
-# and was marked `#[non_exhaustive]` in the same commit, so that this is the
-# last time adding an engine failure mode is a breaking change.
+# Deliberate breaks against the 0.11.0 baseline. Every lint below is correct;
+# they are allowed only because the break is intended for the next minor.
 #
-# Both lints are correct — they are allowed here only because the break is
-# intended for the next minor. `semver_exceptions_expire_with_their_baseline`
-# in src/engine/error.rs turns red the moment the version moves past 0.11.x,
-# which is when this whole block must be deleted.
+#   enum_variant_added / enum_marked_non_exhaustive
+#       `EngineError` gained a `Fenced` variant and was marked
+#       `#[non_exhaustive]` in the same commit, so that this is the last time
+#       adding an engine failure mode is a breaking change.
+#
+#   feature_missing
+#       The optional `rayon` dependency, and so the implicit `rayon` feature,
+#       went with `.concurrent()`. Both existed solely for that operator, and
+#       that operator processed nothing — a downstream crate enabling `rayon`
+#       was paying for a thread pool that never received work. Keeping the
+#       feature as an empty stub would preserve the name and the no-op, which
+#       is the thing this change exists to remove.
+#
+# `semver_exceptions_expire_with_their_baseline` in src/engine/error.rs turns
+# red the moment the version moves past 0.11.x, which is when this whole
+# block must be deleted.
 [package.metadata.cargo-semver-checks.lints]
 enum_variant_added = "allow"
 enum_marked_non_exhaustive = "allow"
+feature_missing = "allow"
 
 [dependencies]
 varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
