@@ -176,14 +176,7 @@ impl std::fmt::Debug for ConnectorProfile {
 /// "token", or "key" — but NOT if it ends with "_location" (those are file paths,
 /// e.g. `ssl_key_location`).
 pub fn is_sensitive_field(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    if lower.ends_with("_location") {
-        return false;
-    }
-    lower.contains("password")
-        || lower.contains("secret")
-        || lower.contains("token")
-        || lower.contains("key")
+    varpulis_core::security::is_secret_key(name)
 }
 
 /// Check whether a string value is in the encrypted envelope format.
