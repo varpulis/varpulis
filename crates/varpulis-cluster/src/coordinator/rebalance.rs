@@ -328,7 +328,7 @@ impl Coordinator {
         Self::execute_migrate_plan_inner(http_client, plan, source_alive, connectors, None).await
     }
 
-    /// NATS analogue of [`execute_migrate_plan_inner`] (audit C6b).
+    /// NATS analogue of the private `execute_migrate_plan_inner` (audit C6b).
     ///
     /// There is no single worker `"migrate"` command — a migration is
     /// *composed* of the primitive per-command NATS subjects the worker
@@ -347,7 +347,8 @@ impl Coordinator {
     /// Note the checkpoint envelope difference vs HTTP: the worker's
     /// `checkpoint` handler replies with a *bare* `EngineCheckpoint` (the
     /// HTTP route wraps it in a `CheckpointResponsePayload`), so
-    /// [`fetch_source_checkpoint_nats`] deserializes the reply directly.
+    /// the private `fetch_source_checkpoint_nats` deserializes the reply
+    /// directly.
     #[cfg(feature = "nats-transport")]
     pub async fn execute_migrate_plan_nats(
         nats_client: &async_nats::Client,
