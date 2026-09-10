@@ -366,10 +366,24 @@ impl StateStore for MemoryStore {
 }
 
 /// RocksDB-based state store
+///
+/// `Debug` is written out rather than derived because `rocksdb::DB` does not
+/// implement it, and printing a database handle would say nothing useful
+/// anyway. The path and prefix are what an operator reading a log wants.
 #[cfg(feature = "persistence")]
 pub struct RocksDbStore {
     db: rocksdb::DB,
     prefix: String,
+}
+
+#[cfg(feature = "persistence")]
+impl std::fmt::Debug for RocksDbStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RocksDbStore")
+            .field("path", &self.db.path())
+            .field("prefix", &self.prefix)
+            .finish()
+    }
 }
 
 #[cfg(feature = "persistence")]
@@ -472,7 +486,7 @@ impl StateStore for RocksDbStore {
             }
         }
 
-        ids.sort();
+        ids.sort_unstable();
         Ok(ids)
     }
 

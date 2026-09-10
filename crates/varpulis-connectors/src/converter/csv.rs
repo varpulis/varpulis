@@ -21,10 +21,12 @@ pub struct CsvConverter {
 
 #[cfg(feature = "csv-converter")]
 impl CsvConverter {
+    /// A converter that splits on commas.
     pub fn new() -> Self {
         Self { delimiter: b',' }
     }
 
+    /// Split on `delimiter` instead of a comma.
     pub fn with_delimiter(mut self, delimiter: u8) -> Self {
         self.delimiter = delimiter;
         self

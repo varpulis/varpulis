@@ -26,8 +26,9 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 # Tiered CI:
-#   * Fast gate (fmt, clippy, check, test, deny, audit, machete, +semver on PRs)
-#     runs on every push/PR — this is what you watch before merging.
+#   * Fast gate (fmt, clippy, check, test, deny, audit, machete,
+#     feature-matrix-check, +semver on PRs) runs on every push/PR — this is
+#     what you watch before merging.
 #   * Heavy suite (msrv, cross-platform, feature-flags matrix, wasm, coverage,
 #     doc, chaos, CDC/NATS E2E) is gated by `HEAVY` below to: the nightly
 #     schedule, manual `workflow_dispatch`, and release tags (`refs/tags/*`).
@@ -202,6 +203,19 @@ jobs:
         run: cargo install cargo-machete --locked
       - run: cargo machete
 
+  feature-matrix-check:
+    name: Feature Matrix Is Honest
+    needs: [gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # On the fast path on purpose. The generator refuses to run when its SKIP
+    # table names a feature no crate declares, or excuses one as default-on
+    # that is not actually in any default set. Both are ways coverage silently
+    # shrinks, and both are worth catching on the PR rather than at 03:00.
+    steps:
+      - uses: actions/checkout@v6
+      - run: python3 scripts/feature-matrix.py > /dev/null
+
   semver:
     name: Semver Checks
     needs: [gate]
@@ -242,41 +256,43 @@ jobs:
           --package varpulis-connector-api
           --baseline-rev ${{ github.event.pull_request.base.sha }}
 
-  feature-flags:
-    name: Feature Flags (${{ matrix.features }})
+  feature-matrix:
+    name: Feature Matrix
     needs: [gate]
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      features: ${{ steps.generate.outputs.features }}
+    steps:
+      - uses: actions/checkout@v6
+      # The list below used to be hand-written in this file, and it drifted:
+      # `saas` was never added, so varpulis-cli's test targets stopped
+      # compiling under it and no job noticed. Deriving the matrix from the
+      # manifests makes that drift impossible — a new feature is covered on
+      # the next run, and leaving one out costs a justified entry in the
+      # script's SKIP table.
+      # Deliberately not `echo "features=$(...)"`: a command substitution
+      # inside an argument swallows the generator's exit status, so a broken
+      # script would emit an empty matrix and the whole feature suite would
+      # vanish without a red job. That is the failure mode this file is being
+      # changed to remove, so the generator's status is checked directly.
+      - id: generate
+        run: |
+          python3 scripts/feature-matrix.py > matrix.json
+          test -s matrix.json
+          echo "features=$(cat matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "$(python3 -c 'import json;print(len(json.load(open("matrix.json"))))') features will be verified" >> "$GITHUB_STEP_SUMMARY"
+
+  feature-flags:
+    name: Feature Flags (${{ matrix.name }})
+    needs: [feature-matrix]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        features:
-          - kafka
-          - raft
-          - persistent
-          - k8s
-          - binary-codec
-          - nats
-          - mqtt
-          - database
-          - redis
-          - elasticsearch
-          - s3
-          - kinesis
-          - onnx
-          - pulsar
-          - gpu
-          - federation
-          - cdc
-          - encryption
-          - oidc
-          - smartmodule
-          - syslog
-          - slack
-          - splunk
-          - enterprise
-          - all-connectors
+        include: ${{ fromJSON(needs.feature-matrix.outputs.features) }}
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/free-disk-space
@@ -285,11 +301,16 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          key: features-${{ matrix.features }}
+          key: features-${{ matrix.feature }}
       - name: Install connector system dependencies
         run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev protobuf-compiler zlib1g-dev
-      - run: cargo check --workspace --features ${{ matrix.features }}
-      - run: cargo clippy --workspace --all-targets --features ${{ matrix.features }} -- -D warnings
+      # Workspace-wide, because enabling a feature changes feature unification
+      # for every crate that shares a dependency with the ones declaring it.
+      - run: cargo check --workspace --features ${{ matrix.feature }}
+      # Scoped to the declaring crates, because this is the expensive half and
+      # `--all-targets` is the half that matters: it compiles tests, benches
+      # and examples, which is exactly what had rotted under `saas`.
+      - run: cargo clippy ${{ matrix.packages }} --all-targets --features ${{ matrix.feature }} -- -D warnings
 
   wasm:
     name: WASM Build

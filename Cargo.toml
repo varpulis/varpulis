@@ -92,7 +92,10 @@ prometheus = { version = "0.14", default-features = false }
 # OpenTelemetry (opt-in via "otel" feature)
 opentelemetry = { version = "0.31", default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.31", features = ["tonic"] }
+# `grpc-tonic`, not `tonic`: the latter is the optional dependency's name,
+# and enabling it compiles the crate without the gRPC exporter API, so
+# `SpanExporter::builder().with_tonic()` does not exist.
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"] }
 tracing-opentelemetry = "0.32"
 
 # Random
