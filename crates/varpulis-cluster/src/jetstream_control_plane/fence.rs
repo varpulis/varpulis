@@ -182,6 +182,19 @@ pub struct FenceGuard {
 }
 
 impl FenceGuard {
+    /// The flag this guard clears when it loses its fence.
+    ///
+    /// Hand it to [`varpulis_runtime::engine::Engine::use_fence_handle`] so the
+    /// engine and the guard share one allocation. Refusing a fenced worker's
+    /// *control-plane write* closes nothing a user can see: on its own the
+    /// zombie keeps consuming its sources, mutating window and pattern state,
+    /// advancing offsets and emitting duplicate alerts. The data plane has to
+    /// stop too.
+    #[must_use]
+    pub fn fence_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.fenced)
+    }
+
     fn new(ttl: Duration) -> Self {
         Self {
             fenced: Arc::new(AtomicBool::new(false)),

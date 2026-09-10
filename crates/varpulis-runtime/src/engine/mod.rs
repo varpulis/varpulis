@@ -197,6 +197,14 @@ pub struct Engine {
     /// coherent. Pause window target: <50ms (drain current 256-event batch +
     /// checkpoint + prepare).
     pub(super) source_paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+
+    /// Set once this engine has been fenced out of its partition.
+    ///
+    /// Owned here rather than in `varpulis-cluster` because the dependency runs
+    /// cluster -> runtime, so the runtime cannot name the cluster's fence
+    /// guard. Same shape as `source_paused`: the runtime owns an
+    /// `Arc<AtomicBool>` and hands out a handle.
+    pub(super) fenced: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Count of events that entered the engine via `process_batch*` (or
     /// `process` / `process_shared`) while [`source_paused`] was set.
     /// Observability hook — lets tests and operators verify that the pause
@@ -316,6 +324,7 @@ impl Engine {
                 std::collections::HashMap::new(),
             )),
             source_paused: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            fenced: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             events_ingested_while_paused: 0,
             last_committed_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
@@ -363,6 +372,7 @@ impl Engine {
                     std::collections::HashMap::new(),
                 )),
                 source_paused: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                fenced: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 events_ingested_while_paused: 0,
                 last_committed_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             }
@@ -1811,6 +1821,44 @@ impl Engine {
     /// re-check) so the engine can drain in-flight events and snapshot.
     pub fn source_pause_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
         self.source_paused.clone()
+    }
+
+    /// Handle onto this engine's fence flag, for the cluster layer to set.
+    ///
+    /// The control plane's lease renewal is a compare-and-set on the worker's
+    /// key; when it fails, this worker has been fenced out and must stop. It
+    /// sets this flag, and every ingestion entry point then refuses with
+    /// [`EngineError::Fenced`].
+    ///
+    /// Without this the fence exists only in the control plane: a returning
+    /// zombie is refused a *write to the control plane* while still happily
+    /// emitting duplicate alerts to its sinks.
+    pub fn fence_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.fenced.clone()
+    }
+
+    /// Adopt an externally owned fence flag.
+    ///
+    /// The cluster's lease guard already owns an `Arc<AtomicBool>` that its
+    /// renewal loop clears on a failed compare-and-set. Sharing that exact
+    /// allocation, rather than mirroring it, means there is no window in which
+    /// the control plane knows this worker is fenced and the data plane does
+    /// not.
+    pub fn use_fence_handle(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        self.fenced = flag;
+    }
+
+    /// Whether this engine has been fenced out of its partition.
+    pub fn is_fenced(&self) -> bool {
+        self.fenced.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Fence this engine. Irreversible for the engine's lifetime: a worker that
+    /// lost ownership does not get it back without re-registering, which builds
+    /// a new engine.
+    pub fn fence(&self) {
+        self.fenced
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Number of events that arrived via `process_batch*` (or `process` /
