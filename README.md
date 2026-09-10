@@ -14,7 +14,7 @@
 ---
 
 - **Sequence detection SIEMs can't model.** Multi-step kill chains (`A -> all B -> C within 5m`) — Sigma and KQL match single events; behavioral patterns survive renamed binaries, swapped C2, novel evasions.
-- **250K events/sec real-time** on a single core, end-to-end (file → match → emit). 1.5M evt/s on the SASE+ core. Single 15 MB Rust binary, no JVM.
+- **~220K events/sec real-time** on a single core, end-to-end (file → match → emit, output channel attached). 1.5M evt/s on the SASE+ core in isolation. Single 22 MB Rust binary, no JVM.
 - **VPL: rules a blue team can read.** Declarative, auditable, version-controlled. Compiles to a Rust state machine — no DSL-on-DSL, no XML, no Spark job to babysit.
 
 ```python
@@ -84,11 +84,18 @@ The default `varpulis interactive` opens a split-pane TUI with topology, live ev
 |---|---|---|---|---|
 | **Temporal patterns** (Kleene `+/*`, negation, within) | Native (SASE+) | Limited | Yes | Partial |
 | **Predictive forecasting** | `.forecast()` built-in | No | No | No |
-| **Deployment** | Single binary (15 MB) | JVM cluster | Embedded JVM | Embedded JVM |
+| **Deployment** | Single binary (22 MB) | JVM cluster | Embedded JVM | Embedded JVM |
 | **DSL** | VPL (dedicated) | Java API | EPL | SiddhiQL |
-| **Throughput** | 1.5M evt/s (single core) | ~500K evt/s¹ | ~1M evt/s¹ | ~300K evt/s¹ |
+| **Throughput** | 1.5M evt/s (SASE+ core, single thread) | not measured here | not measured here | not measured here |
 
-¹ Approximate figures from published benchmarks and vendor documentation; workload-dependent.
+The throughput column states only what this repository measures. The figures
+previously given for the other three engines cited no source, were never
+reproduced here, and are contradicted elsewhere in these docs — see
+[varpulis-vs-esper](docs/comparisons/varpulis-vs-esper.md), which states that
+head-to-head benchmarks are not available. Where a comparison *has* been run
+against a real competitor on the same hardware, the harness and its raw results
+are committed: [Arroyo](benchmarks/arroyo-comparison/),
+[Proton](benchmarks/proton-comparison/), [Apama](benchmarks/apama-comparison/).
 
 **`.forecast()` is unique.** It uses Probabilistic Suffix Trees to predict that a pattern is *about to* complete — before the final event arrives. Combined with Hawkes process intensity estimation and conformal prediction intervals, it turns reactive detection into proactive alerting.
 
@@ -96,13 +103,18 @@ The default `varpulis interactive` opens a split-pane TUI with topology, live ev
 
 | What | Speed |
 |------|-------|
-| Core SASE+ pattern matching | **1.5M evt/s** |
+| Core SASE+ pattern matching (library, no engine) | **1.5M evt/s** |
 | Full VPL pipeline (filter + emit) | **410K evt/s** |
-| CLI end-to-end (file → process → output) | **256K evt/s** |
+| CLI end-to-end, output channel attached | **~220K evt/s** |
 | Multi-query Hamlet (50 concurrent) | **950K evt/s** |
 | Single-symbol prediction | **51 ns** |
 
-Single core. [Detailed benchmarks →](docs/PERFORMANCE_ANALYSIS.md)
+Single core. The end-to-end figure is a `varpulis simulate` run over 100 000
+events producing 50 000 outputs, measured with the output channel attached — the
+earlier 256K was taken with `--quiet`, which builds the engine with no output
+channel at all and so omits the emit stage it claimed to measure.
+
+[Detailed benchmarks →](docs/PERFORMANCE_ANALYSIS.md)
 
 ## Connectors
 

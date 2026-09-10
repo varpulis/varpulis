@@ -1,5 +1,25 @@
 # Varpulis vs Apama: Benchmark Comparison
 
+> **Three CLI rows below measured no work, and are withdrawn.** Scenarios
+> 03 Temporal Join, 05 EMA Crossover and 06 Multi-Sensor each use `join(...)`
+> with no `.to()` sink. Until v0.11.1 the synchronous dispatch path — the one
+> `varpulis simulate` takes whenever a program has no sink — returned an empty
+> result for join sources, so those runs produced **zero output events** while
+> still reporting a throughput. The repository's own
+> `results/scenario_benchmark_1770495243.json` already recorded
+> `output_count: 0` for them; nothing cross-checked it, because the harness
+> hard-codes Apama's output count to `-1`.
+>
+> After the fix, 03 Temporal emits 33 334 events and 06 Multi-Sensor emits 995,
+> so both need re-measuring before any figure is quoted. 05 EMA Crossover still
+> emits nothing: it joins two *windowed aggregate* streams, and events drained
+> at end of input do not yet feed downstream streams. Its row is not a slow
+> measurement, it is no measurement.
+>
+> The scenarios that were doing real work all along — 01 Filter, 02 Aggregation,
+> 04 Kleene, 07 Sequence — are unaffected.
+
+
 Varpulis consistently outperforms Apama across all benchmark scenarios, using **3x–16x less memory** and delivering **equal or higher throughput**. On Kleene pattern detection, Varpulis finds **5x more matches** than Apama thanks to SASE+ exhaustive semantics.
 
 ## Headline Results
@@ -7,9 +27,9 @@ Varpulis consistently outperforms Apama across all benchmark scenarios, using **
 | Scenario | V Throughput | A Throughput | Speedup | V RSS | A RSS | RAM Ratio |
 |----------|-------------|-------------|---------|-------|-------|-----------|
 | 01 Filter | 234K/s | 199K/s | V 1.2x | 54 MB | 166 MB | **V 3.1x** |
-| 03 Temporal Join | 268K/s | 208K/s | V 1.3x | 66 MB | 189 MB | **V 2.9x** |
+| 03 Temporal Join | withdrawn¹ | 208K/s | — | 66 MB | 189 MB | — |
 | 04 Kleene (SASE+) | 97K/s | 195K/s | A 2.0x\* | 58 MB | 190 MB | **V 3.3x** |
-| 05 EMA Crossover | 266K/s | 212K/s | V 1.3x | 54 MB | 187 MB | **V 3.5x** |
+| 05 EMA Crossover | withdrawn¹ | 212K/s | — | 54 MB | 187 MB | — |
 | 07 Sequence | 256K/s | 221K/s | V 1.2x | 36 MB | 185 MB | **V 5.1x** |
 
 *CLI ramdisk mode, 100K events, median of 3 runs. Varpulis RSS includes ~40 MB for preloaded events.*
@@ -182,7 +202,7 @@ on all Transaction() as tx {
 | Mode | Varpulis | Apama | Winner | V RSS | A RSS |
 |------|----------|-------|--------|-------|-------|
 | MQTT | 5.9K/s | 6.0K/s | Tie | 57 MB | 125 MB |
-| CLI | 268K/s | 208K/s | V 1.3x | 66 MB | 189 MB |
+| CLI | withdrawn¹ | 208K/s | — | 66 MB | 189 MB |
 
 Varpulis's declarative join syntax produces the same result as Apama's hand-coded dictionary lookup, with 1.3x higher CPU-bound throughput and 2.2x less memory in connector mode.
 
@@ -286,7 +306,7 @@ stream Crossover = join(FastEMA, SlowEMA)
 | Mode | Varpulis | Apama | Winner | V RSS | A RSS |
 |------|----------|-------|--------|-------|-------|
 | MQTT | 7.4K/s | 6.3K/s | V 1.2x | 12 MB | 133 MB |
-| CLI | 266K/s | 212K/s | V 1.3x | 54 MB | 187 MB |
+| CLI | withdrawn¹ | 212K/s | — | 54 MB | 187 MB |
 
 Varpulis wins in both modes, with **11x less memory** in connector mode.
 
@@ -297,7 +317,7 @@ Varpulis wins in both modes, with **11x less memory** in connector mode.
 | Mode | Varpulis | Apama | V RSS | A RSS |
 |------|----------|-------|-------|-------|
 | MQTT | 9.4K/s | Error\* | 12 MB | — |
-| CLI | 275K/s | Error\* | 59 MB | — |
+| CLI | withdrawn¹ | Error\* | 59 MB | — |
 
 \*Apama's EPL stream join syntax caused the correlator to hang. The query is valid EPL but exceeds the community edition's stream query capabilities.
 
@@ -454,3 +474,5 @@ python3 run_benchmark.py --connector mqtt --events 100000 --runs 3
 - [`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md) — Optimization history and profiling
 - [`guides/performance-tuning.md`](guides/performance-tuning.md) — Production tuning guide
 - [`guides/sase-patterns.md`](guides/sase-patterns.md) — SASE+ pattern matching reference
+
+¹ Withdrawn: the Varpulis side of this scenario produced zero output events. See the note at the top of this document.

@@ -12,7 +12,7 @@ const vplGrammar = JSON.parse(
 
 export default defineConfig({
   title: 'Varpulis',
-  description: 'Rust stream processing engine for real-time detection. Open-source Apache Flink alternative built for detection engineering, fraud prevention, and MITRE ATT&CK coverage. 1.5M events/sec. Single 15MB binary. No JVM.',
+  description: 'Rust stream processing engine for real-time detection. Open-source Apache Flink alternative built for detection engineering, fraud prevention, and MITRE ATT&CK coverage. 1.5M events/sec. Single 22MB binary. No JVM.',
   lang: 'en-US',
 
   base: '/docs/',
@@ -54,7 +54,7 @@ export default defineConfig({
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'Varpulis' }],
     ['meta', { property: 'og:title', content: 'Varpulis — Rust Stream Processing for Real-Time Detection' }],
-    ['meta', { property: 'og:description', content: 'Open-source Rust stream processing engine. Apache Flink alternative for detection engineering, fraud prevention, and MITRE ATT&CK coverage. 1.5M events/sec. Single 15MB binary. No JVM.' }],
+    ['meta', { property: 'og:description', content: 'Open-source Rust stream processing engine. Apache Flink alternative for detection engineering, fraud prevention, and MITRE ATT&CK coverage. 1.5M events/sec. Single 22MB binary. No JVM.' }],
     ['meta', { property: 'og:url', content: 'https://varpulis-cep.com/docs/' }],
 
     // Twitter Card
