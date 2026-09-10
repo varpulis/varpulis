@@ -103,7 +103,10 @@ persistent = ["raft", "varpulis-cluster/persistent"]
 distributed-checkpoint = ["varpulis-cluster/distributed-checkpoint"]
 saas = ["varpulis-db", "lettre"]
 oidc = ["openidconnect"]
-encryption = ["varpulis-connectors/encryption"]
+# Both halves. This turned on connector-payload encryption only, so a binary
+# built with `--features encryption` still had no `EncryptedStateStore`
+# compiled in and wrote every checkpoint in plaintext.
+encryption = ["varpulis-connectors/encryption", "varpulis-runtime/encryption"]
 syslog = ["varpulis-connectors/syslog"]
 slack = ["varpulis-connectors/slack"]
 splunk = ["varpulis-connectors/splunk"]

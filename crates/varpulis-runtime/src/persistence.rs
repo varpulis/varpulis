@@ -1443,6 +1443,21 @@ pub(crate) fn ser_to_value(sv: SerializableValue) -> varpulis_core::Value {
 // Encrypted State Store (AES-256-GCM)
 // =============================================================================
 
+/// Environment variable holding a 64-hex-character AES-256 key.
+pub const ENV_ENCRYPTION_KEY: &str = "VARPULIS_ENCRYPTION_KEY";
+/// Environment variable holding a passphrase, run through Argon2id.
+pub const ENV_ENCRYPTION_PASSPHRASE: &str = "VARPULIS_ENCRYPTION_PASSPHRASE";
+
+/// Salt for passphrase-derived keys.
+///
+/// Fixed, and that is a real weakness worth naming rather than hiding: a
+/// per-deployment random salt would be stronger, but the key has to be
+/// reproducible across restarts from the passphrase alone, and storing a salt
+/// next to the data it protects buys little. The documented trade-off stands —
+/// use `VARPULIS_ENCRYPTION_KEY` with a random key where it matters.
+#[cfg(feature = "encryption")]
+const PASSPHRASE_SALT: &[u8] = b"varpulis-checkpoint-state-v1";
+
 /// Encrypted wrapper around any `StateStore` implementation.
 ///
 /// Uses AES-256-GCM (authenticated encryption) to encrypt all data at rest.
@@ -1488,12 +1503,46 @@ impl<S: StateStore> EncryptedStateStore<S> {
         Ok(key)
     }
 
-    /// Derive a 256-bit key from a passphrase using Argon2id.
-    pub fn key_from_passphrase(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], StoreError> {
-        use argon2::Argon2;
+    /// The key configured in the environment, if any.
+    ///
+    /// `VARPULIS_ENCRYPTION_KEY` (64 hex characters) wins over
+    /// `VARPULIS_ENCRYPTION_PASSPHRASE`, which is run through Argon2id. Both
+    /// were documented in the configuration guide and the encryption-at-rest
+    /// tutorial, and neither was read by anything: `EncryptedStateStore` was
+    /// constructed only in its own tests and in a doc comment, so checkpoint
+    /// state was written in plaintext no matter what an operator exported.
+    ///
+    /// `None` means neither is set. An error means one is set and unusable,
+    /// which must stop the process rather than fall back to plaintext.
+    pub fn key_from_env() -> Result<Option<[u8; 32]>, StoreError> {
+        if let Ok(hex) = std::env::var(ENV_ENCRYPTION_KEY) {
+            if !hex.trim().is_empty() {
+                return Self::key_from_hex(&hex).map(Some);
+            }
+        }
+        if let Ok(pass) = std::env::var(ENV_ENCRYPTION_PASSPHRASE) {
+            if !pass.is_empty() {
+                return Self::key_from_passphrase(&pass, PASSPHRASE_SALT).map(Some);
+            }
+        }
+        Ok(None)
+    }
 
+    /// Derive a 256-bit key from a passphrase using Argon2id.
+    ///
+    /// Parameters are set explicitly to the ones the encryption-at-rest
+    /// tutorial publishes — 64 MiB, 3 iterations, 4 lanes. `Argon2::default()`
+    /// gives 19 MiB, 2 iterations and 1 lane, so the documented cost was three
+    /// times higher than the cost actually paid. Matching the code to the
+    /// documentation rather than the reverse, because the published numbers
+    /// are the stronger ones and are what an operator chose the mechanism on.
+    pub fn key_from_passphrase(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], StoreError> {
+        use argon2::{Algorithm, Argon2, Params, Version};
+
+        let params = Params::new(64 * 1024, 3, 4, Some(32))
+            .map_err(|e| StoreError::IoError(format!("Argon2 parameters rejected: {e}")))?;
         let mut key = [0u8; 32];
-        Argon2::default()
+        Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
             .hash_password_into(passphrase.as_bytes(), salt, &mut key)
             .map_err(|e| StoreError::IoError(format!("Argon2 key derivation failed: {}", e)))?;
         Ok(key)
