@@ -56,15 +56,15 @@ features:
 **Varpulis** is a next-generation streaming analytics engine built in Rust for low-latency complex event processing.
 
 ```vpl
-// Detect suspicious login patterns in real-time
+# Detect suspicious login patterns in real-time
 event Login:
-    user_id: string
-    city: string
+    user_id: str
+    city: str
     success: bool
 
 stream SuspiciousLogin = Login as a -> Login as b
     .within(5m)
-    .where(a.user_id == b.user_id && a.city != b.city)
+    .where(a.user_id == b.user_id and a.city != b.city)
     .emit(user: a.user_id, from: a.city, to: b.city)
 ```
 

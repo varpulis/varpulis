@@ -44,16 +44,16 @@ Let's create a simple temperature monitoring program.
 Create a file called `temperature_monitor.vpl`:
 
 ```vpl
-// temperature_monitor.vpl
-// Simple temperature monitoring with alerts
+# temperature_monitor.vpl
+# Simple temperature monitoring with alerts
 
-// Declare the event type we expect
+# Declare the event type we expect
 event TemperatureReading:
     sensor_id: str
     temperature: float
     unit: str
 
-// Create an alert stream for high temperatures
+# Create an alert stream for high temperatures
 stream HighTempAlerts = TemperatureReading
     .where(temperature > 100)
     .emit(
@@ -181,12 +181,12 @@ varpulis simulate \
 Let's enhance our program with windowed aggregations:
 
 ```vpl
-// temperature_monitor_v2.vpl
+# temperature_monitor_v2.vpl
 
-// Raw temperature readings
+# Raw temperature readings
 stream Readings = TemperatureReading
 
-// Calculate average temperature over 1-minute windows
+# Calculate average temperature over 1-minute windows
 stream AvgTemperature = TemperatureReading
     .window(1m)
     .aggregate(
@@ -197,7 +197,7 @@ stream AvgTemperature = TemperatureReading
     )
     .print("Minute summary: avg={avg_temp}, max={max_temp}, min={min_temp}")
 
-// Alert on sustained high temperatures (average > 90 over window)
+# Alert on sustained high temperatures (average > 90 over window)
 stream SustainedHighTemp = TemperatureReading
     .window(1m)
     .aggregate(avg_temp: avg(temperature))

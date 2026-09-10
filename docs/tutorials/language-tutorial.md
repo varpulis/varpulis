@@ -54,10 +54,10 @@ event HumidityReading:
 Streams are continuous flows of events. Create streams with the `stream` keyword:
 
 ```vpl
-// Basic stream: listen for all TemperatureReading events
+# Basic stream: listen for all TemperatureReading events
 stream Temperatures = TemperatureReading
 
-// Stream with alias
+# Stream with alias
 stream T = Temperatures
 ```
 
@@ -66,19 +66,19 @@ stream T = Temperatures
 Filter events based on conditions:
 
 ```vpl
-// Single condition
+# Single condition
 stream HighTemps = TemperatureReading
     .where(temperature > 100)
 
-// Multiple conditions (AND)
+# Multiple conditions (AND)
 stream CriticalTemps = TemperatureReading
     .where(temperature > 100 and sensor_id == "critical-zone")
 
-// OR conditions
+# OR conditions
 stream AlertZones = TemperatureReading
     .where(sensor_id == "zone-1" or sensor_id == "zone-2")
 
-// Compound conditions
+# Compound conditions
 stream Filtered = TemperatureReading
     .where((temperature > 90 and humidity > 80) or emergency == true)
 ```
@@ -99,7 +99,7 @@ stream SimplifiedTemps = TemperatureReading
         is_high: temperature > 80
     )
 
-// Computed fields
+# Computed fields
 stream EnhancedTemps = TemperatureReading
     .select(
         sensor_id,
@@ -113,16 +113,16 @@ stream EnhancedTemps = TemperatureReading
 Use `.emit()` and `.print()` to output data when conditions are met:
 
 ```vpl
-// Emit an alert
+# Emit an alert
 stream TempAlerts = TemperatureReading
     .where(temperature > 100)
     .emit(alert_type: "HighTemperature", message: "Sensor {sensor_id} reading {temperature}°F")
 
-// Print to log
+# Print to log
 stream TempLog = TemperatureReading
     .print("Received: {sensor_id} = {temperature}")
 
-// Emit with severity
+# Emit with severity
 stream CriticalAlerts = TemperatureReading
     .where(temperature > 150)
     .emit(alert_type: "CriticalTemperature", message: "DANGER: {sensor_id} at {temperature}°F", severity: "critical")
@@ -131,18 +131,18 @@ stream CriticalAlerts = TemperatureReading
 ### Variables and Constants
 
 ```vpl
-// Immutable variable
+# Immutable variable
 let threshold = 100
 let sensor_name = "main-sensor"
 
-// Mutable variable
+# Mutable variable
 var counter = 0
 
-// Constants (compile-time)
+# Constants (compile-time)
 const MAX_TEMP = 200
 const API_KEY = "secret123"
 
-// Use in streams
+# Use in streams
 stream Alerts = TemperatureReading
     .where(temperature > threshold)
     .emit(alert_type: "High", message: "Above threshold")
@@ -151,7 +151,7 @@ stream Alerts = TemperatureReading
 ### Comments
 
 ```vpl
-// Single-line comment
+# Single-line comment
 
 /*
    Multi-line
@@ -172,7 +172,7 @@ Windows collect events over time or count, enabling aggregate calculations.
 Non-overlapping, fixed-duration windows:
 
 ```vpl
-// 1-minute tumbling window
+# 1-minute tumbling window
 stream MinuteStats = TemperatureReading
     .window(1m)
     .aggregate(
@@ -181,12 +181,12 @@ stream MinuteStats = TemperatureReading
         count: count()
     )
 
-// 5-second window
+# 5-second window
 stream RapidStats = SensorReading
     .window(5s)
     .aggregate(readings: count())
 
-// 1-hour window
+# 1-hour window
 stream HourlyReport = Transaction
     .window(1h)
     .aggregate(
@@ -202,14 +202,14 @@ stream HourlyReport = Transaction
 Overlapping windows with a slide interval:
 
 ```vpl
-// 5-minute window, slides every 1 minute
+# 5-minute window, slides every 1 minute
 stream SlidingAvg = TemperatureReading
     .window(5m, sliding: 1m)
     .aggregate(
         rolling_avg: avg(temperature)
     )
 
-// 10-second window, slides every 2 seconds
+# 10-second window, slides every 2 seconds
 stream RecentTrend = SensorReading
     .window(10s, sliding: 2s)
     .aggregate(
@@ -223,7 +223,7 @@ stream RecentTrend = SensorReading
 Windows based on event count:
 
 ```vpl
-// Every 100 events
+# Every 100 events
 stream BatchStats = Transaction
     .window(100)
     .aggregate(
@@ -231,7 +231,7 @@ stream BatchStats = Transaction
         batch_avg: avg(amount)
     )
 
-// Sliding count window: 50 events, slide by 10
+# Sliding count window: 50 events, slide by 10
 stream RollingBatch = Reading
     .window(50, sliding: 10)
     .aggregate(rolling_sum: sum(value))
@@ -261,7 +261,7 @@ stream RollingBatch = Reading
 Windows partitioned by a key:
 
 ```vpl
-// Per-sensor statistics
+# Per-sensor statistics
 stream PerSensorStats = TemperatureReading
     .partition_by(sensor_id)
     .window(1m)
@@ -271,7 +271,7 @@ stream PerSensorStats = TemperatureReading
         readings: count()
     )
 
-// Per-customer totals
+# Per-customer totals
 stream CustomerTotals = Transaction
     .partition_by(customer_id)
     .window(1h)
@@ -286,7 +286,7 @@ stream CustomerTotals = Transaction
 Compute percentiles for latency monitoring, SLA tracking, and distribution analysis:
 
 ```vpl
-// Latency monitoring with percentile aggregations
+# Latency monitoring with percentile aggregations
 stream LatencyStats = RequestEvent
     .window(1m)
     .aggregate(
@@ -324,13 +324,13 @@ Sequence patterns detect events occurring in a specific order using the `->` ope
 ### Basic Sequences
 
 ```vpl
-// A followed by B
+# A followed by B
 pattern LoginLogout = Login -> Logout
 
-// A followed by B followed by C
+# A followed by B followed by C
 pattern ThreeStep = Start -> Process -> Complete
 
-// Inline sequence in a stream
+# Inline sequence in a stream
 stream Sessions = Login as l -> Logout where user_id == l.user_id
     .within(1h)
     .emit(user_id: l.user_id, message: "Session: user logged in and out")
@@ -339,7 +339,7 @@ stream Sessions = Login as l -> Logout where user_id == l.user_id
 ### Sequences with Conditions
 
 ```vpl
-// Events must match conditions
+# Events must match conditions
 pattern FailedLogin =
     LoginAttempt[status == "failed"] as first
     -> LoginAttempt[status == "failed" and user_id == first.user_id] as second
@@ -374,12 +374,12 @@ stream Spikes = Trade as t1
 Constrain how quickly events must occur:
 
 ```vpl
-// Must complete within 5 minutes
+# Must complete within 5 minutes
 pattern QuickCheckout =
     CartAdd -> PaymentStart -> PaymentComplete
     within 5m
 
-// Different timeouts per step
+# Different timeouts per step
 pattern SlowThenFast =
     SlowEvent
     -> FastEvent within 10s
@@ -395,7 +395,7 @@ SASE+ extends basic patterns with Kleene closures, negation, and logical operato
 ### Kleene Plus (`+`) - One or More
 
 ```vpl
-// One or more failed logins followed by success
+# One or more failed logins followed by success
 pattern BruteForceSuccess =
     LoginFailed+ -> LoginSuccess
     within 10m
@@ -408,12 +408,12 @@ stream Attacks = LoginFailed+ -> LoginSuccess
 ### Kleene Star (`*`) - Zero or More
 
 ```vpl
-// Start, any number of middle events, then end
+# Start, any number of middle events, then end
 pattern FullSession =
     SessionStart -> Activity* -> SessionEnd
     within 1h
 
-// Optional retries before success
+# Optional retries before success
 pattern WithRetries =
     Request -> Retry* -> Success
     within 30s
@@ -422,7 +422,7 @@ pattern WithRetries =
 ### Negation (`NOT`) - Absence of Event
 
 ```vpl
-// Payment started but not completed
+# Payment started but not completed
 pattern AbandonedPayment =
     PaymentStart -> NOT(PaymentComplete) within 5m
 
@@ -430,7 +430,7 @@ stream Abandoned = PaymentStart -> NOT(PaymentComplete)
     .within(5m)
     .emit(alert_type: "Abandoned", message: "Payment started but not completed")
 
-// Order without confirmation
+# Order without confirmation
 pattern UnconfirmedOrder =
     OrderPlaced -> NOT(OrderConfirmed) within 1h
 ```
@@ -438,7 +438,7 @@ pattern UnconfirmedOrder =
 ### AND - Both Events (Any Order)
 
 ```vpl
-// Both A and B must occur (order doesn't matter)
+# Both A and B must occur (order doesn't matter)
 pattern BothRequired =
     AND(DocumentUploaded, SignatureProvided)
     within 1h
@@ -451,7 +451,7 @@ stream Complete = AND(DocumentUploaded, SignatureProvided)
 ### OR - Either Event
 
 ```vpl
-// Either payment method
+# Either payment method
 pattern PaymentReceived =
     OR(CreditCardPayment, BankTransfer)
 
@@ -462,17 +462,17 @@ stream Payments = OR(CreditCardPayment, BankTransfer)
 ### Complex Combinations
 
 ```vpl
-// (A followed by B) AND (C or D), all within 10 minutes
+# (A followed by B) AND (C or D), all within 10 minutes
 pattern ComplexFlow =
     (Start -> Middle) AND (OR(OptionA, OptionB))
     within 10m
 
-// Multiple failures, then either success or lockout
+# Multiple failures, then either success or lockout
 pattern AuthResult =
     LoginFailed+ -> OR(LoginSuccess, AccountLocked)
     within 15m
 
-// Order placed, items added, no cancellation, then shipped
+# Order placed, items added, no cancellation, then shipped
 pattern SuccessfulOrder =
     OrderPlaced
     -> ItemAdded+
@@ -486,7 +486,7 @@ pattern SuccessfulOrder =
 Process patterns independently per partition key:
 
 ```vpl
-// Per-user pattern matching: Kleene+ uses `all` in arrow syntax
+# Per-user pattern matching: Kleene+ uses `all` in arrow syntax
 pattern UserFailures = LoginFailed as first
     -> all LoginFailed as fails
     -> LoginSuccess as success
@@ -582,7 +582,7 @@ Contexts let you run streams on dedicated OS threads for true multi-core paralle
 ### Declaring Contexts
 
 ```vpl
-// Declare named execution contexts
+# Declare named execution contexts
 context ingestion
 context analytics (cores: [2, 3])
 context alerts (cores: [4])
@@ -617,13 +617,13 @@ Send events from one context to another using `context:` in `.emit()`:
 context ingest (cores: [0])
 context analyze (cores: [1])
 
-// Filter in the ingest context, forward to analyze
+# Filter in the ingest context, forward to analyze
 stream Filtered = RawEvent
     .context(ingest)
     .where(priority > 5)
     .emit(context: analyze, data: data, priority: priority)
 
-// Aggregate in the analyze context
+# Aggregate in the analyze context
 stream Stats = Filtered
     .context(analyze)
     .window(1m)
@@ -647,17 +647,17 @@ For a complete tutorial with a multi-stage IoT pipeline, see the [Contexts Guide
 Begin with basic filters before adding windows and patterns:
 
 ```vpl
-// Step 1: Basic filter
+# Step 1: Basic filter
 stream HighTemps = TemperatureReading
     .where(temperature > 100)
 
-// Step 2: Add window
+# Step 2: Add window
 stream HighTempMinutes = TemperatureReading
     .where(temperature > 100)
     .window(1m)
     .aggregate(count: count())
 
-// Step 3: Add alert
+# Step 3: Add alert
 stream HighTempAlerts = TemperatureReading
     .where(temperature > 100)
     .window(1m)
@@ -669,7 +669,7 @@ stream HighTempAlerts = TemperatureReading
 ### 2. Use Partitioning for Scale
 
 ```vpl
-// Process per-device independently
+# Process per-device independently
 stream DeviceAlerts = SensorReading
     .partition_by(device_id)
     .window(1m)
@@ -680,10 +680,10 @@ stream DeviceAlerts = SensorReading
 ### 3. Set Appropriate Timeouts
 
 ```vpl
-// Don't wait forever for patterns
+# Don't wait forever for patterns
 pattern QuickMatch = A -> B -> C within 5m
 
-// Different timeouts for different patterns
+# Different timeouts for different patterns
 pattern SlowProcess = Start -> Middle within 1h -> End within 10m
 ```
 

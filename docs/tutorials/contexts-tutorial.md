@@ -29,8 +29,8 @@ Contexts solve this by giving each stream its own OS thread.
 Create a file called `first_context.vpl`:
 
 ```vpl
-// first_context.vpl
-// A single stream running in a named context
+# first_context.vpl
+# A single stream running in a named context
 
 context sensors
 
@@ -97,8 +97,8 @@ Now let's run two independent streams in separate contexts. Each gets its own OS
 Create `parallel_contexts.vpl`:
 
 ```vpl
-// parallel_contexts.vpl
-// Two independent streams, each on its own thread
+# parallel_contexts.vpl
+# Two independent streams, each on its own thread
 
 context temperature_ctx
 context pressure_ctx
@@ -179,20 +179,20 @@ Real systems often need data to flow between stages: ingest, then compute, then 
 Create `pipeline.vpl`:
 
 ```vpl
-// pipeline.vpl
-// 3-stage pipeline: ingest -> compute -> alert
+# pipeline.vpl
+# 3-stage pipeline: ingest -> compute -> alert
 
 context ingest
 context compute
 context alert
 
-// Stage 1: Filter invalid readings, forward to compute
+# Stage 1: Filter invalid readings, forward to compute
 stream ValidReadings = SensorReading
     .context(ingest)
     .where(value > 0 and sensor_id != "")
     .emit(context: compute, sensor_id: sensor_id, value: value, zone: zone)
 
-// Stage 2: Aggregate per zone, forward high averages to alert
+# Stage 2: Aggregate per zone, forward high averages to alert
 stream ZoneStats = ValidReadings
     .context(compute)
     .partition_by(zone)
@@ -205,7 +205,7 @@ stream ZoneStats = ValidReadings
     )
     .emit(context: alert, zone: zone, avg_value: avg_value, max_value: max_value)
 
-// Stage 3: Generate alerts for overheating zones
+# Stage 3: Generate alerts for overheating zones
 stream OverheatAlerts = ZoneStats
     .context(alert)
     .where(max_value > 150)
@@ -291,13 +291,13 @@ Contexts shine when you have CPU-intensive workloads. Windowed aggregation with 
 Create `parallel_windows.vpl`:
 
 ```vpl
-// parallel_windows.vpl
-// Two contexts doing independent windowed aggregation
+# parallel_windows.vpl
+# Two contexts doing independent windowed aggregation
 
 context zone_a_ctx
 context zone_b_ctx
 
-// Zone A analytics on its own thread
+# Zone A analytics on its own thread
 stream ZoneAStats = SensorReading
     .context(zone_a_ctx)
     .where(zone == "A")
@@ -311,7 +311,7 @@ stream ZoneAStats = SensorReading
         reading_count: count()
     )
 
-// Zone B analytics on its own thread
+# Zone B analytics on its own thread
 stream ZoneBStats = SensorReading
     .context(zone_b_ctx)
     .where(zone == "B")
@@ -378,8 +378,8 @@ Contexts used:    2
 For comparison, here's the same logic without contexts:
 
 ```vpl
-// parallel_windows_single.vpl
-// Same analytics, single-threaded
+# parallel_windows_single.vpl
+# Same analytics, single-threaded
 
 stream ZoneAStats = SensorReading
     .where(zone == "A")
@@ -423,8 +423,8 @@ The syntax is `.window(session: <gap>)`, where `<gap>` is the maximum inactivity
 Create `session_contexts.vpl`:
 
 ```vpl
-// session_contexts.vpl
-// User session analytics with session windows in a dedicated context
+# session_contexts.vpl
+# User session analytics with session windows in a dedicated context
 
 context sessions_ctx
 
@@ -512,7 +512,7 @@ This means you don't need a "trailing event" to close the last session -- the sw
 Session windows pair well with cross-context pipelines. Here's a pattern where raw events are ingested in one context and session analytics run in another:
 
 ```vpl
-// session_pipeline.vpl
+# session_pipeline.vpl
 context ingest
 context sessions_ctx
 

@@ -40,8 +40,8 @@ You are monitoring stock ticks and want to detect every rising price pattern: a 
 Create a file called `rising_prices_detect.vpl`:
 
 ```vpl
-// rising_prices_detect.vpl
-// Detect individual rising price trends in stock ticks
+# rising_prices_detect.vpl
+# Detect individual rising price trends in stock ticks
 
 stream RisingPrices = StockTick
     pattern
@@ -107,8 +107,8 @@ Aggregation mode computes statistics over the set of matching trends without con
 Create a file called `rising_prices_count.vpl`:
 
 ```vpl
-// rising_prices_count.vpl
-// Count rising price trends without enumerating them
+# rising_prices_count.vpl
+# Count rising price trends without enumerating them
 
 stream RisingTrendCount = StockTick
     pattern
@@ -191,8 +191,8 @@ You can compute more than one aggregate in a single pass. The engine computes al
 Create a file called `rising_prices_stats.vpl`:
 
 ```vpl
-// rising_prices_stats.vpl
-// Compute multiple trend statistics simultaneously
+# rising_prices_stats.vpl
+# Compute multiple trend statistics simultaneously
 
 stream RisingTrendStats = StockTick
     pattern
@@ -241,10 +241,10 @@ When you have multiple streams with overlapping Kleene patterns, Varpulis automa
 You have two analytics streams monitoring the same stock ticks, each with a different starting condition but the same Kleene body:
 
 ```vpl
-// multi_query_trends.vpl
-// Two streams sharing the rising-price Kleene sub-pattern
+# multi_query_trends.vpl
+# Two streams sharing the rising-price Kleene sub-pattern
 
-// Stream 1: Rising trends starting from a low price
+# Stream 1: Rising trends starting from a low price
 stream LowStartRising = StockTick
     pattern
         StockTick[price < 50] as first
@@ -254,7 +254,7 @@ stream LowStartRising = StockTick
     .trend_aggregate(count: count_trends())
     emit log("Low-start rising: {count} trends for {symbol}")
 
-// Stream 2: Rising trends starting from a high price
+# Stream 2: Rising trends starting from a high price
 stream HighStartRising = StockTick
     pattern
         StockTick[price >= 50] as first
@@ -317,7 +317,7 @@ You need the **actual matched events** for downstream processing:
 - **Small match cardinality**: The number of matching trends is inherently small (e.g., a three-event sequence with tight constraints).
 
 ```vpl
-// Good use of detection mode: few matches expected
+# Good use of detection mode: few matches expected
 stream PriceSpikes = StockTick
     pattern
         StockTick as t1
@@ -335,7 +335,7 @@ You need **statistics over trends** without caring about individual matches:
 - **Kleene patterns with high cardinality**: Any pattern with `+` or `*` over a busy event stream.
 
 ```vpl
-// Good use of aggregation mode: exponential matches, only count needed
+# Good use of aggregation mode: exponential matches, only count needed
 stream TrendDashboard = StockTick
     pattern
         StockTick as first
@@ -356,7 +356,7 @@ You have **multiple queries with overlapping Kleene sub-patterns**:
 - **Multi-customer monitoring**: Same pattern partitioned differently for different customers.
 
 ```vpl
-// Ideal for sharing: N streams with the same Kleene body
+# Ideal for sharing: N streams with the same Kleene body
 stream Sector1 = StockTick
     pattern StockTick[sector == "tech"] as first
         -> all StockTick where price > first.price as rising
@@ -369,7 +369,7 @@ stream Sector2 = StockTick
     within 1m
     .trend_aggregate(count: count_trends())
 
-// ... more sectors -- Hamlet shares the Kleene computation across all of them
+# ... more sectors -- Hamlet shares the Kleene computation across all of them
 ```
 
 ---

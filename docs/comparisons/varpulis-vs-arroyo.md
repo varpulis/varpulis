@@ -107,7 +107,7 @@ connector KafkaOut = kafka(brokers: "kafka:9092", topic: "devices_agg")
 stream DeviceAgg = Reading
     .from(KafkaIn)
     .partition_by(device_id)
-    .window(tumbling: 1m)
+    .window(1m)
     .aggregate(
         s: sum(temperature),
         a: avg(temperature),
