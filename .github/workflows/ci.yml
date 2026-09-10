@@ -30,7 +30,7 @@ env:
 #     feature-matrix-check, unreachable-modules, +semver on PRs) runs on every
 #     push/PR — this is what you watch before merging.
 #   * Heavy suite (msrv, cross-platform, feature-flags matrix, wasm, coverage,
-#     doc, chaos, CDC/NATS E2E) is gated by `HEAVY` below to: the nightly
+#     doc, chaos, CDC/NATS/Kafka E2E) is gated by `HEAVY` below to: the nightly
 #     schedule, manual `workflow_dispatch`, and release tags (`refs/tags/*`).
 #     It does NOT run per-PR, so PR feedback is ~5 min instead of ~15.
 # Anchor for the heavy-job gate (kept as a comment so it stays in one place):
@@ -530,6 +530,58 @@ jobs:
         env:
           VARPULIS_REQUIRE_BROKERS: "1"
           VARPULIS_TEST_REDIS_URL: redis://127.0.0.1:6379
+
+  kafka-e2e:
+    name: Kafka Connector E2E
+    needs: [check]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # No job ran these before. Fifteen `#[ignore]`d Kafka tests existed and
+    # nothing invoked them with `--ignored`, so the suite standing behind the
+    # exactly-once two-phase-commit protocol — the one the July audit found
+    # losing data and double-emitting — had never executed in CI.
+    #
+    # Redpanda rather than a Kafka + ZooKeeper pair: one container, Kafka
+    # protocol compatible, and it starts in seconds.
+    services:
+      redpanda:
+        image: redpandadata/redpanda:latest
+        options: >-
+          --health-cmd "rpk cluster health -X brokers=localhost:9092 | grep -q 'Healthy:.*true'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+        ports:
+          - 9092:9092
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/free-disk-space
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: kafka-e2e
+      - name: Install connector system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev zlib1g-dev
+      # `--ignored` is the point: these tests are marked ignore so a plain
+      # `cargo test` does not need a broker. Under this job the broker is
+      # there, and `VARPULIS_REQUIRE_BROKERS=1` makes an unreachable one a
+      # failure rather than a skip that reports green.
+      - name: Kafka integration
+        run: cargo test -p varpulis-runtime --features kafka --test kafka_integration -- --ignored --test-threads=1 --nocapture
+        env:
+          VARPULIS_REQUIRE_BROKERS: "1"
+          KAFKA_BOOTSTRAP: localhost:9092
+      - name: Kafka exactly-once (two-phase commit)
+        run: cargo test -p varpulis-runtime --features kafka --test kafka_exactly_once_tests -- --ignored --test-threads=1 --nocapture
+        env:
+          VARPULIS_REQUIRE_BROKERS: "1"
+          KAFKA_BOOTSTRAP: localhost:9092
+      - name: Kafka sink throughput
+        run: cargo test -p varpulis-connector-kafka --test sink_throughput_smoke -- --ignored --test-threads=1 --nocapture
+        env:
+          VARPULIS_REQUIRE_BROKERS: "1"
+          VARPULIS_TEST_KAFKA_BROKER: localhost:9092
 
   mqtt-e2e:
     name: MQTT Connector E2E
