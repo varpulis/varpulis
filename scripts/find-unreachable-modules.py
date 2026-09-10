@@ -24,7 +24,10 @@ import sys
 import pathlib
 import re
 
-ROOT = pathlib.Path('/home/cpo/cep/crates')
+# Derived from this file's own location, not hardcoded: the first version of
+# this script carried an absolute path to the machine it was written on and
+# failed in CI on its first run with "No such file or directory".
+ROOT = pathlib.Path(__file__).resolve().parent.parent / 'crates'
 MOD = re.compile(r'^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;', re.M)
 
 
