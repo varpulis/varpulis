@@ -432,6 +432,37 @@ impl SinkConnector for PulsarSink {
 mod tests {
     use super::*;
 
+    // -----------------------------------------------------------------------
+    // Broker-gate policy (mirrored verbatim in the redis / mqtt / cdc
+    // connectors — test-only, so it is duplicated rather than pulling a new
+    // dependency into four published crates).
+    //
+    // A broker-backed test must NEVER report success because the broker was
+    // absent. Every CI job that provisions a broker sets
+    // `VARPULIS_REQUIRE_BROKERS=1`; under that flag a missing broker is a hard
+    // failure. Without the flag (a dev box with nothing running) the abstention
+    // is reported loudly — on stderr and, under GitHub Actions, in the job
+    // summary — so nobody mistakes it for a pass.
+    // -----------------------------------------------------------------------
+
+    /// Record an abstention. Panics when `VARPULIS_REQUIRE_BROKERS` is set.
+    #[track_caller]
+    fn report_skip(test: &str, reason: &str) {
+        assert!(
+            std::env::var_os("VARPULIS_REQUIRE_BROKERS").is_none(),
+            "VARPULIS_REQUIRE_BROKERS=1 but {test} could not reach its broker: {reason}. \
+             This test is the fail-before/pass-after gate for a merged fix — it must not \
+             pass by abstaining. Fix the broker fixture instead of relaxing the gate."
+        );
+        eprintln!("SKIPPED(no-broker) {test}: {reason}");
+        if let Ok(summary) = std::env::var("GITHUB_STEP_SUMMARY") {
+            use std::io::Write as _;
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(summary) {
+                let _ = writeln!(f, "- :warning: **SKIPPED (no broker)** `{test}` — {reason}");
+            }
+        }
+    }
+
     async fn probe_send_one(url: &str, topic: &str, phase: &str) -> bool {
         let mut sink = PulsarSink::new("probe-sink", PulsarConfig::new(url, topic));
         if sink.connect().await.is_err() {
@@ -446,23 +477,34 @@ mod tests {
     /// The Pulsar source must keep delivering after a broker restart, not go
     /// silently deaf (empirically the stream ends and the old code exited the
     /// task). Restarts the broker container mid-run and requires events to flow
-    /// again. Skips unless VARPULIS_TEST_PULSAR_URL is set (so it never runs in
-    /// normal CI, which has no broker).
+    /// again.
+    ///
+    /// Needs `VARPULIS_TEST_PULSAR_URL` pointing at a broker. With
+    /// `VARPULIS_REQUIRE_BROKERS=1` (the Pulsar CI job) an unset URL or an
+    /// unreachable broker fails the test instead of abstaining.
     #[tokio::test]
     async fn pulsar_source_reconnects_after_broker_restart() {
         use std::time::Duration;
+        const TEST: &str = "pulsar_source_reconnects_after_broker_restart";
         let Ok(url) = std::env::var("VARPULIS_TEST_PULSAR_URL") else {
-            eprintln!("[skip] set VARPULIS_TEST_PULSAR_URL to run the pulsar reconnect probe");
+            report_skip(TEST, "VARPULIS_TEST_PULSAR_URL is not set");
             return;
         };
         let container = std::env::var("VARPULIS_TEST_PULSAR_CONTAINER")
             .unwrap_or_else(|_| "varpulis-pulsar".to_string());
+        // The broker's admin HTTP port, used to wait out the restart. The
+        // docker-compose fixture publishes it on 8080; override for other
+        // layouts. (It was hardcoded to 8081, which matched no fixture in the
+        // repo, so the post-restart wait always fell through to its timeout.)
+        let admin_health = std::env::var("VARPULIS_TEST_PULSAR_ADMIN")
+            .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
+            + "/admin/v2/brokers/health";
         let topic = "persistent://public/default/varpulis-reconnect-probe";
 
         let (tx, mut rx) = mpsc::channel::<Event>(100);
         let mut source = PulsarSource::new("probe-src", PulsarConfig::new(&url, topic));
         if source.start(tx).await.is_err() {
-            eprintln!("[skip] pulsar source start failed");
+            report_skip(TEST, "pulsar source start failed");
             return;
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -481,19 +523,44 @@ mod tests {
             }
         }
         if !got_before {
-            eprintln!("[skip] pulsar not delivering (broker unreachable?)");
+            report_skip(
+                TEST,
+                "baseline delivery never happened (broker unreachable or topic unwritable)",
+            );
             return;
         }
         while rx.try_recv().is_ok() {}
 
         eprintln!("[probe] restarting pulsar broker '{container}'...");
-        let _ = std::process::Command::new("docker")
+        // The restart IS the thing under test. If it does not happen the
+        // reconnect path is never exercised, so a silent failure here would be
+        // a vacuous pass -- surface it.
+        match std::process::Command::new("docker")
             .args(["restart", &container])
-            .output();
+            .output()
+        {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => {
+                report_skip(
+                    TEST,
+                    &format!(
+                        "could not restart broker container {container}: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    ),
+                );
+                source.stop().await.ok();
+                return;
+            }
+            Err(e) => {
+                report_skip(TEST, &format!("docker unavailable to restart broker: {e}"));
+                source.stop().await.ok();
+                return;
+            }
+        }
         for _ in 0..30 {
             tokio::time::sleep(Duration::from_secs(2)).await;
             if std::process::Command::new("curl")
-                .args(["-sf", "http://localhost:8081/admin/v2/brokers/health"])
+                .args(["-sf", &admin_health])
                 .output()
                 .map(|o| o.status.success())
                 .unwrap_or(false)

@@ -7,9 +7,21 @@
 #       .on(StreamA.key == StreamB.key)
 #       .window(<duration>)
 #       .select(field1: StreamA.field, field2: StreamB.field)
+#       .emit(field1: field1, field2: field2)
 #
-# The join waits for matching events from both streams within the window.
-# When a match is found on the join key, the combined event is emitted.
+# The join buffers events from each side for the given window. When a new event
+# matches a buffered one on the join key, the combined row is produced.
+#
+# TWO THINGS THE JOIN NEEDS, both easy to forget:
+#
+#   1. .select() SHAPES the joined row; .emit() PUBLISHES it. A join that stops
+#      at .select() computes the row and emits nothing. (This example used to
+#      end at .select() and produced no output at all.)
+#
+#   2. The joined streams must actually produce events. A pass-through stream
+#      (`stream TempReadings = TemperatureReading`) forwards every event to the
+#      join. A *windowed* source stream only reaches the join when its window
+#      closes AND it ends in its own .emit(...) — see 05/10 for windows.
 #
 # Use cases:
 #   - Correlate sensor readings from different sources
@@ -26,30 +38,23 @@ event HumidityReading:
     zone: str
     value: float
 
-# First, create filtered streams for each sensor type
+# Pass-through streams: every reading is forwarded to the join buffer.
 stream TempReadings = TemperatureReading
-    .partition_by(zone)
-    .window(5s)
-    .aggregate(
-        zone: last(zone),
-        avg_temp: avg(value)
-    )
-
 stream HumidReadings = HumidityReading
-    .partition_by(zone)
-    .window(5s)
-    .aggregate(
-        zone: last(zone),
-        avg_humidity: avg(value)
-    )
 
-# Join temperature and humidity by zone
+# Join temperature and humidity by zone.
 stream ComfortIndex = join(TempReadings, HumidReadings)
     .on(TempReadings.zone == HumidReadings.zone)
     .window(1m)
     .select(
         zone: TempReadings.zone,
-        temperature: TempReadings.avg_temp,
-        humidity: HumidReadings.avg_humidity,
-        comfort: 100 - abs(TempReadings.avg_temp - 22) * 5
+        temperature: TempReadings.value,
+        humidity: HumidReadings.value,
+        comfort: 100 - abs(TempReadings.value - 22) * 5
+    )
+    .emit(
+        zone: zone,
+        temperature: temperature,
+        humidity: humidity,
+        comfort: comfort
     )

@@ -1,38 +1,104 @@
 name: VPL Check (Self-Test)
 
+# Runs on every push/PR, unfiltered on purpose.
+#
+# This workflow used to be path-filtered to `examples/**` and `demos/**`, so an
+# engine change could break every shipped example without ever triggering it.
+# It also pinned CLI v0.4.0 (Feb 2026) and invoked `varpulis check -f <file>`,
+# a flag that no longer exists — and passed `path: examples/`, which the
+# action's `find -path` matched against zero files. It therefore validated
+# nothing, with a stale binary, on the wrong trigger.
+#
+# Now: build the CLI from THIS commit, parse-check every shipped .vpl with it,
+# and then actually EXECUTE the examples and assert on their output.
 on:
   push:
-    paths:
-      - 'examples/**/*.vpl'
-      - 'demos/**/*.vpl'
-      - '.github/actions/varpulis-check/**'
+    branches: [main, develop]
   pull_request:
-    paths:
-      - 'examples/**/*.vpl'
-      - 'demos/**/*.vpl'
-      - '.github/actions/varpulis-check/**'
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: vpl-check-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
-  check-examples:
-    name: Validate example VPL files
+  build-cli:
+    name: Build CLI from source
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/free-disk-space
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: vpl-check-cli
+      - name: Build varpulis
+        run: cargo build --release -p varpulis-cli
+      - uses: actions/upload-artifact@v7
+        with:
+          name: varpulis-cli-vpl-check
+          path: target/release/varpulis
+          retention-days: 1
 
+  check-examples:
+    name: Parse-check example VPL files
+    needs: [build-cli]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: varpulis-cli-vpl-check
+          path: cli
+      - run: chmod +x cli/varpulis
       - name: Check examples
         uses: ./.github/actions/varpulis-check
         with:
           path: 'examples/'
-          version: '0.4.0'
+          binary: ${{ github.workspace }}/cli/varpulis
 
   check-demos:
-    name: Validate demo VPL files
+    name: Parse-check demo VPL files
+    needs: [build-cli]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
-
+      - uses: actions/download-artifact@v8
+        with:
+          name: varpulis-cli-vpl-check
+          path: cli
+      - run: chmod +x cli/varpulis
       - name: Check demos
         uses: ./.github/actions/varpulis-check
         with:
           path: 'demos/'
-          version: '0.4.0'
+          binary: ${{ github.workspace }}/cli/varpulis
+
+  run-examples:
+    name: Execute examples and assert output
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/free-disk-space
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: vpl-run-examples
+      # `varpulis check` only parses. These tests load the shipped VPL, feed it
+      # the shipped .evt, and assert the exact output — the only thing that can
+      # tell a working example from one that silently emits nothing.
+      - name: Examples E2E
+        run: cargo test -p varpulis-runtime --test examples_e2e -- --nocapture
+      # The equivalent gate for the security demo, kept on the same trigger so
+      # both sets of shipped artifacts move together.
+      - name: Security demo E2E
+        run: cargo test -p varpulis-runtime --test security_demo_e2e -- --nocapture

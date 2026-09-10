@@ -313,19 +313,41 @@ jobs:
     needs: [check, test]
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+    # NATS unlocks the coordinator-failover and network-partition chaos tests
+    # (tier 2 in scripts/run-chaos-tests.sh). Without it they abstain, and the
+    # runner refuses to count an abstention as a pass.
+    services:
+      nats:
+        image: nats:latest
+        ports:
+          - 4222:4222
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/free-disk-space
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: chaos
-      - name: Build release binary
-        run: cargo build --release -p varpulis-cli
+      # `raft` and `nats-transport` are what the coordinator/worker processes
+      # spawned by the chaos harness need in order to elect a leader and to
+      # register over NATS. Without them tier 2 cannot run at all.
+      - name: Build release binary (raft + NATS transport)
+        run: cargo build --release -p varpulis-cli --features raft,nats-transport
       - name: Run chaos tests with retry
         run: ./scripts/run-chaos-tests.sh 2
         env:
           VARPULIS_BIN: ${{ github.workspace }}/target/release/varpulis
+          # Compile every chaos module, including the ones gated behind
+          # `distributed-checkpoint` / `raft` — otherwise they are #[cfg]'d out
+          # of the test binary and silently never run.
+          CHAOS_FEATURES: distributed-checkpoint,raft
+          CHAOS_NATS: "1"
+          # CHAOS_DC stays off: the blocker is that varpulis-cli exposes no
+          # `distributed-checkpoint` feature, so the spawned worker has no
+          # barrier handler compiled in. Adding a Kafka container would not
+          # change that. See the tier-3 comment in the runner.
+          NO_COLOR: "1"
 
   # Web UI moved to https://github.com/varpulis/varpulis-web-ui
 
@@ -434,6 +456,157 @@ jobs:
           CDC_TEST_HOST: localhost
           CDC_TEST_PORT: 5432
 
+  # ---------------------------------------------------------------------
+  # Broker-backed connector gates.
+  #
+  # Each of these tests was written as the fail-before/pass-after gate for a
+  # merged connector fix, and each used to print "[skip]" and return green when
+  # no broker was present — which was always, because no CI job provided one.
+  # They now honour VARPULIS_REQUIRE_BROKERS=1: with the flag set, an
+  # unreachable broker FAILS instead of abstaining, so these jobs cannot go
+  # green without the fix actually being exercised.
+  # ---------------------------------------------------------------------------
+  redis-e2e:
+    name: Redis Connector E2E
+    needs: [check]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: redis-e2e
+      # Gates: the pub/sub source must reconnect + re-subscribe after the server
+      # drops its connection, and the sink must honour a dynamic .to(topic).
+      - name: Redis connector gates
+        run: cargo test -p varpulis-connector-redis --lib -- --nocapture --test-threads=1
+        env:
+          VARPULIS_REQUIRE_BROKERS: "1"
+          VARPULIS_TEST_REDIS_URL: redis://127.0.0.1:6379
+
+  mqtt-e2e:
+    name: MQTT Connector E2E
+    needs: [check]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: mqtt-e2e
+      # Not a `services:` container: the test restarts the broker by name to
+      # force a reconnect, so it must own a container called `varpulis-mosq`.
+      - name: Start mosquitto (container varpulis-mosq)
+        run: |
+          printf 'listener 1883 0.0.0.0\nallow_anonymous true\n' > /tmp/mosquitto.conf
+          docker run -d --name varpulis-mosq -p 1883:1883 \
+            -v /tmp/mosquitto.conf:/mosquitto/config/mosquitto.conf \
+            eclipse-mosquitto:2
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/127.0.0.1/1883) 2>/dev/null; then echo "broker up"; exit 0; fi
+            sleep 1
+          done
+          echo "::error::mosquitto did not come up"; docker logs varpulis-mosq; exit 1
+      - name: MQTT connector gates
+        run: cargo test -p varpulis-connector-mqtt --lib -- --nocapture --test-threads=1
+        env:
+          VARPULIS_REQUIRE_BROKERS: "1"
+      - name: Stop mosquitto
+        if: always()
+        run: docker rm -f varpulis-mosq || true
+
+  pulsar-e2e:
+    name: Pulsar Connector E2E
+    needs: [check]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/free-disk-space
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pulsar-e2e
+      - name: Install connector system dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      # Same reason as mosquitto: the reconnect gate restarts this container by
+      # name mid-test, so it cannot be a `services:` entry.
+      - name: Start Pulsar standalone (container varpulis-pulsar)
+        run: |
+          docker run -d --name varpulis-pulsar -p 6650:6650 -p 8080:8080 \
+            -e PULSAR_MEM="-Xms512m -Xmx1g" \
+            apachepulsar/pulsar:4.0.13 bin/pulsar standalone
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8080/admin/v2/brokers/health >/dev/null; then
+              echo "broker healthy"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::pulsar did not become healthy"; docker logs --tail 100 varpulis-pulsar; exit 1
+      - name: Pulsar connector gates
+        run: cargo test -p varpulis-connector-pulsar --lib -- --nocapture --test-threads=1
+        env:
+          VARPULIS_REQUIRE_BROKERS: "1"
+          VARPULIS_TEST_PULSAR_URL: pulsar://127.0.0.1:6650
+          VARPULIS_TEST_PULSAR_CONTAINER: varpulis-pulsar
+          VARPULIS_TEST_PULSAR_ADMIN: http://127.0.0.1:8080
+      - name: Stop Pulsar
+        if: always()
+        run: docker rm -f varpulis-pulsar || true
+
+  cdc-tls-e2e:
+    name: CDC TLS E2E
+    needs: [check]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cdc-tls-e2e
+      # A PostgreSQL whose pg_hba.conf has no plain `host` line, presenting a
+      # self-signed cert. That combination is what makes the three TLS gates
+      # real: `require` can only succeed via genuine TLS, and `verify-full` must
+      # reject the untrusted cert unless the cert is pinned as the CA.
+      - name: Start TLS-only PostgreSQL on 5433
+        run: |
+          bash tests/integration/pg-tls/generate-certs.sh
+          docker compose -f tests/integration/docker-compose.pg-tls.yml up -d
+          for i in $(seq 1 40); do
+            if docker exec varpulis-pg-tls pg_isready -h /var/run/postgresql -U postgres >/dev/null 2>&1; then
+              echo "postgres up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::TLS postgres did not come up"; docker logs --tail 100 varpulis-pg-tls; exit 1
+      - name: CDC TLS gates
+        run: cargo test -p varpulis-connector-cdc --lib tls_integration -- --nocapture --test-threads=1
+        env:
+          VARPULIS_REQUIRE_BROKERS: "1"
+          VARPULIS_TLS_PG_HOST: localhost
+          VARPULIS_TLS_PG_PORT: "5433"
+          VARPULIS_TLS_PG_CA: ${{ github.workspace }}/tests/integration/pg-tls/ca.crt
+      - name: Stop TLS PostgreSQL
+        if: always()
+        run: docker compose -f tests/integration/docker-compose.pg-tls.yml down -v || true
+
   nats-e2e:
     name: NATS E2E
     needs: [check]
@@ -457,3 +630,7 @@ jobs:
         run: cargo test -p varpulis-cluster --features nats-transport --test nats_cluster_e2e -- --nocapture
       - name: Multi-worker NATS E2E tests
         run: cargo test -p varpulis-cluster --features nats-transport --test nats_multi_worker_e2e -- --nocapture
+      # The C5 heartbeat-replication gate. It was written against a real broker
+      # and then never wired into any job, so it had never run in CI.
+      - name: NATS heartbeat replication gate
+        run: cargo test -p varpulis-cluster --features raft,nats-transport --test nats_heartbeat_replication -- --nocapture

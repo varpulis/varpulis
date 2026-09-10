@@ -10,9 +10,20 @@ inputs:
     required: false
     default: '**/*.vpl'
   version:
-    description: 'Varpulis CLI version to use (e.g. "0.4.0"). Defaults to latest.'
+    description: >-
+      Varpulis CLI version to use (e.g. "0.11.0"). Defaults to latest.
+      Ignored when `binary` is set. Requires >= 0.5.0: older CLIs took the
+      file as `-f <FILE>`, current ones take it positionally.
     required: false
     default: 'latest'
+  binary:
+    description: >-
+      Path to an already-built `varpulis` binary. When set, nothing is
+      downloaded — use this to validate VPL against the CLI from the current
+      commit rather than against a published release, which is the only way
+      the check moves when the engine does.
+    required: false
+    default: ''
   strict:
     description: 'Treat warnings as errors'
     required: false
@@ -23,6 +34,7 @@ runs:
   steps:
     - name: Determine version
       id: version
+      if: inputs.binary == ''
       shell: bash
       run: |
         if [ "${{ inputs.version }}" = "latest" ]; then
@@ -39,6 +51,7 @@ runs:
 
     - name: Detect platform
       id: platform
+      if: inputs.binary == ''
       shell: bash
       run: |
         OS="$(uname -s)"
@@ -56,6 +69,7 @@ runs:
         echo "binary=$BINARY" >> "$GITHUB_OUTPUT"
 
     - name: Download Varpulis CLI
+      if: inputs.binary == ''
       shell: bash
       run: |
         URL="https://github.com/varpulis/varpulis/releases/download/v${{ steps.version.outputs.version }}/${{ steps.platform.outputs.binary }}"
@@ -66,20 +80,60 @@ runs:
     - name: Validate VPL files
       shell: bash
       run: |
-        VARPULIS="${{ runner.temp }}/varpulis"
+        if [ -n "${{ inputs.binary }}" ]; then
+          VARPULIS="${{ inputs.binary }}"
+        else
+          VARPULIS="${{ runner.temp }}/varpulis"
+        fi
+        if [ ! -x "$VARPULIS" ]; then
+          echo "::error::varpulis binary not found or not executable: $VARPULIS"
+          exit 1
+        fi
+        echo "Using $($VARPULIS --version)"
+
+        # Self-check the invocation before trusting a green result: if
+        # `check <file>` is not a working command line, every subsequent
+        # "success" is really an argument-parse error being swallowed.
+        # (The action used to pass `-f <file>`, which stopped being valid
+        # after 0.4.0 — so it reported failures that had nothing to do with
+        # the VPL, and would report success for none of them.)
+        PROBE="$(mktemp -d)/probe.vpl"
+        printf 'event Ping:\n    id: int\n\nstream P = Ping\n' > "$PROBE"
+        if ! "$VARPULIS" check "$PROBE" >/dev/null 2>&1; then
+          echo '::error::"varpulis check <file>" failed on a known-good file - the action invocation does not match this CLI'
+          "$VARPULIS" check "$PROBE" || true
+          exit 1
+        fi
         PATTERN="${{ inputs.path }}"
         STRICT="${{ inputs.strict }}"
         EXIT_CODE=0
 
-        # Find matching files
-        FILES=$(find . -path './.git' -prune -o -name '*.vpl' -print | sort)
-        if [ "$PATTERN" != "**/*.vpl" ]; then
+        # Find matching files.
+        #
+        # A directory ("examples/", "demos/") is the natural thing to pass and
+        # is handled first. It used to fall through to the `-path` branch below
+        # as `-path ./examples/`, which matches nothing (find paths carry no
+        # trailing slash) — the workflow validated 0 files as a result. Even
+        # spelled as a glob, `-path './examples/**/*.vpl'` silently drops the
+        # 14 files sitting directly in examples/, because find's `-path` needs
+        # a literal `/` where the `**` sits. Directories are therefore resolved
+        # with `-name`, which sees every depth.
+        DIR="${PATTERN%/}"
+        if [ -d "$DIR" ]; then
+          FILES=$(find "$DIR" -name '*.vpl' -print | sort)
+        elif [ "$PATTERN" = "**/*.vpl" ]; then
+          FILES=$(find . -path './.git' -prune -o -name '*.vpl' -print | sort)
+        else
           FILES=$(find . -path './.git' -prune -o -path "./$PATTERN" -print | sort)
         fi
 
+        # A check that checked nothing is not a pass. The workflow used to
+        # pass `path: examples/`, which `find -path` matches against zero
+        # files (find paths carry no trailing slash), so the job reported
+        # success having validated 0 files.
         if [ -z "$FILES" ]; then
-          echo "::warning::No VPL files found matching pattern: $PATTERN"
-          exit 0
+          echo "::error::No VPL files matched pattern: $PATTERN (nothing was validated)"
+          exit 1
         fi
 
         COUNT=0
@@ -89,7 +143,7 @@ runs:
         for file in $FILES; do
           COUNT=$((COUNT + 1))
           # Run varpulis check and capture output
-          OUTPUT=$("$VARPULIS" check -f "$file" 2>&1) || {
+          OUTPUT=$("$VARPULIS" check "$file" 2>&1) || {
             ERRORS=$((ERRORS + 1))
             # Parse error output and emit GitHub annotations
             echo "$OUTPUT" | while IFS= read -r line; do

@@ -1,5 +1,10 @@
 # 19 — Join: Temperature + Humidity by zone
-# Expected: comfort index computed for zones with both readings
+# Expected: 4 comfort rows. Each new reading joins against everything already
+# buffered for the same zone inside the 1m window:
+#   office      22.0 x 45.0
+#   server_room 19.0 x 40.0
+#   office      23.0 x 45.0
+#   office      23.0 x 48.0
 
 @0s TemperatureReading { zone: "office", value: 22.0 }
 @1s HumidityReading { zone: "office", value: 45.0 }

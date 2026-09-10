@@ -1,26 +1,65 @@
-# 23 — Forecasting: Predict account takeover
-# Note: forecasting requires warmup (50 completed patterns) before
-# predictions activate. With few events, the pattern still matches
-# but forecast_probability may be 0 until warmup completes.
+# 23 — Forecasting: predict account takeover before the final transaction
+#
+# The PST learns from COMPLETED Login -> PasswordChange -> Transaction runs.
+# 8 such runs are replayed here. The .vpl asks for `warmup: 3`, so the first
+# three runs train the model in silence and the remaining runs each emit a
+# PREDICTED_TAKEOVER once the probability clears the 0.6 threshold.
+#
+# Expected: 6 alerts, probabilities climbing towards 1.0 as the PST sharpens.
 
-# Training data — repeat the pattern to warm up the PST
 BATCH 0
-Login { user_id: "user1", ip: "1.1.1.1" }
+Login { user_id: "user1", ip: "10.0.0.1" }
 BATCH 100
 PasswordChange { user_id: "user1" }
 BATCH 200
-Transaction { user_id: "user1", amount: 1000.0 }
+Transaction { user_id: "user1", amount: 1100.0 }
 
 BATCH 1000
-Login { user_id: "user2", ip: "2.2.2.2" }
+Login { user_id: "user2", ip: "10.0.0.2" }
 BATCH 1100
 PasswordChange { user_id: "user2" }
 BATCH 1200
-Transaction { user_id: "user2", amount: 2000.0 }
+Transaction { user_id: "user2", amount: 1200.0 }
 
 BATCH 2000
-Login { user_id: "user3", ip: "3.3.3.3" }
+Login { user_id: "user3", ip: "10.0.0.3" }
 BATCH 2100
 PasswordChange { user_id: "user3" }
 BATCH 2200
-Transaction { user_id: "user3", amount: 5000.0 }
+Transaction { user_id: "user3", amount: 1300.0 }
+
+BATCH 3000
+Login { user_id: "user4", ip: "10.0.0.4" }
+BATCH 3100
+PasswordChange { user_id: "user4" }
+BATCH 3200
+Transaction { user_id: "user4", amount: 1400.0 }
+
+BATCH 4000
+Login { user_id: "user5", ip: "10.0.0.5" }
+BATCH 4100
+PasswordChange { user_id: "user5" }
+BATCH 4200
+Transaction { user_id: "user5", amount: 1500.0 }
+
+BATCH 5000
+Login { user_id: "user6", ip: "10.0.0.6" }
+BATCH 5100
+PasswordChange { user_id: "user6" }
+BATCH 5200
+Transaction { user_id: "user6", amount: 1600.0 }
+
+BATCH 6000
+Login { user_id: "user7", ip: "10.0.0.7" }
+BATCH 6100
+PasswordChange { user_id: "user7" }
+BATCH 6200
+Transaction { user_id: "user7", amount: 1700.0 }
+
+BATCH 7000
+Login { user_id: "user8", ip: "10.0.0.8" }
+BATCH 7100
+PasswordChange { user_id: "user8" }
+BATCH 7200
+Transaction { user_id: "user8", amount: 1800.0 }
+

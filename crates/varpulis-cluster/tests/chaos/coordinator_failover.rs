@@ -330,7 +330,10 @@ impl MultiRaftCluster {
             "127.0.0.1",
         ]);
         if let Some(url) = nats_url {
-            cmd.args(["--nats-url", url]);
+            // The CLI flag is `--nats` (see crates/varpulis-cli/src/main.rs);
+            // `--nats-url` made every spawned process die in argument parsing,
+            // so the worker never registered and the test abstained.
+            cmd.args(["--nats", url]);
         }
         let process = cmd
             .stdout(Stdio::null())

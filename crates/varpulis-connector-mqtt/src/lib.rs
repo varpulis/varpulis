@@ -844,13 +844,40 @@ mod tests {
     // Real-broker reconnect gate
     //
     // Requires a mosquitto broker on 127.0.0.1:1883 (anonymous) plus a docker
-    // container named `varpulis-mosq` to restart. If the broker is unreachable
-    // the test skips gracefully (mirrors the cluster chaos tests) so CI without
-    // a broker stays green. Deterministic: it polls for delivery against bounded
-    // deadlines rather than sleeping-then-asserting.
+    // container named `varpulis-mosq` to restart. Deterministic: it polls for
+    // delivery against bounded deadlines rather than sleeping-then-asserting.
+    //
+    // Broker-gate policy (mirrored verbatim in the redis / pulsar / cdc
+    // connectors — test-only, so it is duplicated rather than pulling a new
+    // dependency into four published crates):
+    //
+    // A broker-backed test must NEVER report success because the broker was
+    // absent. Every CI job that provisions a broker sets
+    // `VARPULIS_REQUIRE_BROKERS=1`; under that flag a missing broker is a hard
+    // failure. Without the flag (a dev box with nothing running) the abstention
+    // is reported loudly — on stderr and, under GitHub Actions, in the job
+    // summary — so nobody mistakes it for a pass.
     // =========================================================================
 
     const BROKER_ADDR: &str = "127.0.0.1:1883";
+
+    /// Record an abstention. Panics when `VARPULIS_REQUIRE_BROKERS` is set.
+    #[track_caller]
+    fn report_skip(test: &str, reason: &str) {
+        assert!(
+            std::env::var_os("VARPULIS_REQUIRE_BROKERS").is_none(),
+            "VARPULIS_REQUIRE_BROKERS=1 but {test} could not reach its broker: {reason}. \
+             This test is the fail-before/pass-after gate for a merged fix — it must not \
+             pass by abstaining. Fix the broker fixture instead of relaxing the gate."
+        );
+        eprintln!("SKIPPED(no-broker) {test}: {reason}");
+        if let Ok(summary) = std::env::var("GITHUB_STEP_SUMMARY") {
+            use std::io::Write as _;
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(summary) {
+                let _ = writeln!(f, "- :warning: **SKIPPED (no broker)** `{test}` — {reason}");
+            }
+        }
+    }
 
     /// True if a TCP connection to the broker succeeds within 500ms.
     fn broker_reachable() -> bool {
@@ -913,11 +940,13 @@ mod tests {
     /// clean-session broker forgets the subscription. The source must re-issue
     /// SUBSCRIBE on ConnAck, otherwise it goes silently deaf while `health()`
     /// still reports connected. Fail-before/pass-after gate against a real
-    /// mosquitto broker.
+    /// mosquitto broker. With `VARPULIS_REQUIRE_BROKERS=1` (every broker CI
+    /// job) a missing broker or a failed `docker restart` fails the test.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn mqtt_source_resubscribes_after_broker_restart() {
+        const TEST: &str = "mqtt_source_resubscribes_after_broker_restart";
         if !broker_reachable() {
-            eprintln!("[skip] mosquitto not reachable on {BROKER_ADDR}");
+            report_skip(TEST, &format!("mosquitto not reachable on {BROKER_ADDR}"));
             return;
         }
 
@@ -961,15 +990,18 @@ mod tests {
         match restart {
             Ok(out) if out.status.success() => {}
             Ok(out) => {
-                eprintln!(
-                    "[skip] could not restart broker container varpulis-mosq: {}",
-                    String::from_utf8_lossy(&out.stderr)
+                report_skip(
+                    TEST,
+                    &format!(
+                        "could not restart broker container varpulis-mosq: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    ),
                 );
                 let _ = source.stop().await;
                 return;
             }
             Err(e) => {
-                eprintln!("[skip] docker unavailable to restart broker: {e}");
+                report_skip(TEST, &format!("docker unavailable to restart broker: {e}"));
                 let _ = source.stop().await;
                 return;
             }

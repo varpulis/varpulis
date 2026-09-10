@@ -12,6 +12,7 @@ jobs:
   audit:
     name: Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -19,9 +20,31 @@ jobs:
         run: cargo install cargo-audit --locked
       - run: cargo audit
 
+  # The release chain used to run audit -> build -> docker -> release with
+  # nothing waiting on a test run: a tag could ship binaries from a commit
+  # whose tests had never passed. CI does run on tags, but as a SEPARATE
+  # workflow that this one neither waits for nor observes — so the gate has to
+  # live here. Same suite as the CI `Test` job.
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/free-disk-space
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-test
+      - uses: taiki-e/install-action@nextest
+      - name: Install connector system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev protobuf-compiler zlib1g-dev
+      - run: cargo nextest run --workspace --profile ci
+      - run: cargo test --workspace --doc
+
   build:
     name: Build ${{ matrix.target }}
-    needs: audit
+    needs: [audit, test]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -200,11 +223,16 @@ jobs:
 
   release:
     name: Create Release
-    needs: [build, docker]
+    needs: [audit, test, build, docker]
     # Publish whatever built. A single failed target (or the docker job) must not
     # skip the release entirely — otherwise a missing binary silently blocks the
     # whole release, which is how v0.11.0 initially failed to publish.
-    if: ${{ !cancelled() }}
+    #
+    # BUT `!cancelled()` on its own also runs this job when `audit` or `test`
+    # FAILED (and `build` was therefore skipped), which would publish a release
+    # off a red commit — the exact hole this workflow is being fixed for. The
+    # gates are named explicitly so tolerance stays scoped to the build matrix.
+    if: ${{ !cancelled() && needs.audit.result == 'success' && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
