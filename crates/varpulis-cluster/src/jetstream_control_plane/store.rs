@@ -27,6 +27,15 @@ pub const ENV_URL: &str = "VARPULIS_CONTROL_PLANE_URL";
 pub const ENV_BUCKET: &str = "VARPULIS_CONTROL_PLANE_BUCKET";
 /// Environment variable selecting the entry TTL (seconds).
 pub const ENV_TTL_SECS: &str = "VARPULIS_CONTROL_PLANE_TTL_SECS";
+/// Environment variable selecting how many JetStream replicas hold the bucket.
+///
+/// This is the whole of the control plane's durability. The module doc says
+/// so: "Raft's quorum is replaced by JetStream's (`num_replicas`). A
+/// single-replica bucket on a single-node broker is a single point of failure
+/// in a way a three-node Raft group is not." The field existed and
+/// [`ControlPlaneConfig::from_env`] did not read it, so every deployment
+/// configured the documented way got one replica and no way to ask for more.
+pub const ENV_REPLICAS: &str = "VARPULIS_CONTROL_PLANE_REPLICAS";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -167,25 +176,58 @@ impl ControlPlaneConfig {
     /// signal: the JetStream control plane is off unless a URL is given, so
     /// linking the feature in does not change a deployment's behaviour.
     pub fn from_env() -> Option<Self> {
-        let url = std::env::var(ENV_URL).ok().filter(|u| !u.is_empty())?;
+        Self::from_vars(|k| std::env::var(k).ok())
+    }
+
+    /// The parsing behind [`from_env`](Self::from_env), against any lookup.
+    ///
+    /// Split out so it can be tested without mutating the process
+    /// environment — which this workspace forbids anyway, `set_var` being
+    /// `unsafe` since Rust 2024 and the lint denying `unsafe` blocks.
+    pub fn from_vars(get: impl Fn(&str) -> Option<String>) -> Option<Self> {
+        let url = get(ENV_URL).filter(|u| !u.is_empty())?;
         let mut cfg = Self {
             url,
             ..Default::default()
         };
-        if let Ok(b) = std::env::var(ENV_BUCKET) {
-            if !b.is_empty() {
-                cfg.bucket = b;
-            }
+        if let Some(b) = get(ENV_BUCKET).filter(|b| !b.is_empty()) {
+            cfg.bucket = b;
         }
-        if let Some(secs) = std::env::var(ENV_TTL_SECS)
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-        {
+        if let Some(secs) = get(ENV_TTL_SECS).and_then(|s| s.parse::<u64>().ok()) {
             cfg.ttl = Duration::from_secs(secs);
+        }
+        if let Some(n) = get(ENV_REPLICAS).and_then(|s| s.parse::<usize>().ok()) {
+            // JetStream caps a stream at 5 replicas and rejects 0. Clamping
+            // rather than erroring keeps a typo from refusing to start a
+            // coordinator.
+            cfg.num_replicas = n.clamp(1, 5);
         }
         Some(cfg)
     }
 }
+
+/// Both halves of a failed bucket open, so the operator sees the one that
+/// explains the failure.
+#[derive(Debug)]
+struct BucketOpenFailed {
+    bucket: String,
+    replicas: usize,
+    create: String,
+    bind: String,
+}
+
+impl std::fmt::Display for BucketOpenFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "could not create bucket '{}' with {} replica(s): {}; and it does \
+             not already exist: {}",
+            self.bucket, self.replicas, self.create, self.bind
+        )
+    }
+}
+
+impl std::error::Error for BucketOpenFailed {}
 
 // ---------------------------------------------------------------------------
 // The store
@@ -223,12 +265,31 @@ impl ControlPlane {
         };
         let store = match js.create_key_value(kv_cfg).await {
             Ok(s) => s,
-            // Already exists with different config (another coordinator won
-            // the race, or an operator pre-provisioned it): bind to it.
-            Err(_) => js
-                .get_key_value(&cfg.bucket)
-                .await
-                .map_err(|e| ControlPlaneError::transport("open_bucket", e))?,
+            // Already exists (another coordinator won the race, or an operator
+            // pre-provisioned it): bind to it.
+            Err(create_err) => match js.get_key_value(&cfg.bucket).await {
+                Ok(s) => s,
+                // Both failed, so the bucket does not exist and could not be
+                // made. Report why it could not be made, not why it was not
+                // found: the create error is the one that says what is wrong.
+                //
+                // The common case is asking for more replicas than the cluster
+                // has servers up. JetStream answers "no suitable peers for
+                // placement, peer offline", and the bind then answers "stream
+                // not found" — which was the only message an operator saw, and
+                // it points at the wrong problem entirely.
+                Err(bind_err) => {
+                    return Err(ControlPlaneError::transport(
+                        "open_bucket",
+                        BucketOpenFailed {
+                            bucket: cfg.bucket.clone(),
+                            replicas: cfg.num_replicas.max(1),
+                            create: create_err.to_string(),
+                            bind: bind_err.to_string(),
+                        },
+                    ))
+                }
+            },
         };
         Ok(Self {
             store,
@@ -239,6 +300,23 @@ impl ControlPlane {
     /// The bucket this control plane is bound to.
     pub fn bucket(&self) -> &str {
         &self.bucket
+    }
+
+    /// How many JetStream replicas actually hold this bucket.
+    ///
+    /// Read from the broker rather than from the configuration, because the
+    /// two can disagree: binding to a pre-existing bucket ignores the
+    /// requested `num_replicas` entirely, so a coordinator can believe it
+    /// asked for three and be running on one. This is the number that decides
+    /// whether the control plane survives losing a broker, so an operator
+    /// should be able to see it.
+    pub async fn replicas(&self) -> Result<usize> {
+        let status = self
+            .store
+            .status()
+            .await
+            .map_err(|e| ControlPlaneError::transport("bucket_status", e))?;
+        Ok(status.info.config.num_replicas)
     }
 
     /// Read a key, returning its value and the revision it was read at.
@@ -509,6 +587,57 @@ mod tests {
         if std::env::var(ENV_URL).is_err() {
             assert!(ControlPlaneConfig::from_env().is_none());
         }
+    }
+
+    /// Every knob this config exposes must be reachable from the environment.
+    ///
+    /// `num_replicas` was not, and it is the one that decides whether the
+    /// control plane survives losing a broker. A deployment configured the
+    /// documented way got one replica and had no way to ask for more, while
+    /// the module documentation described replication as the thing standing in
+    /// for Raft's quorum.
+    #[test]
+    fn from_env_reads_every_knob_including_replication() {
+        let vars = |k: &str| {
+            Some(
+                match k {
+                    ENV_URL => "nats://127.0.0.1:4222",
+                    ENV_BUCKET => "CUSTOM_BUCKET",
+                    ENV_TTL_SECS => "90",
+                    ENV_REPLICAS => "3",
+                    _ => return None,
+                }
+                .to_string(),
+            )
+        };
+        let cfg = ControlPlaneConfig::from_vars(vars).expect("a URL is set");
+        assert_eq!(cfg.url, "nats://127.0.0.1:4222");
+        assert_eq!(cfg.bucket, "CUSTOM_BUCKET");
+        assert_eq!(cfg.ttl, Duration::from_secs(90));
+        assert_eq!(cfg.num_replicas, 3, "replication must be settable");
+    }
+
+    /// JetStream rejects 0 replicas and caps a stream at 5. Clamping keeps a
+    /// typo from refusing to start a coordinator.
+    #[test]
+    fn a_replica_count_out_of_range_is_clamped_not_rejected() {
+        let with = |v: &'static str| {
+            ControlPlaneConfig::from_vars(move |k| {
+                Some(
+                    match k {
+                        ENV_URL => "nats://127.0.0.1:4222",
+                        ENV_REPLICAS => v,
+                        _ => return None,
+                    }
+                    .to_string(),
+                )
+            })
+            .expect("a URL is set")
+            .num_replicas
+        };
+        assert_eq!(with("0"), 1);
+        assert_eq!(with("99"), 5);
+        assert_eq!(with("not a number"), 1, "a typo falls back to the default");
     }
 
     #[test]
