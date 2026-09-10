@@ -38,6 +38,14 @@ impl Timestamp {
         self.0
     }
 
+    /// Rebuild a timestamp from a wall-clock instant.
+    ///
+    /// `Timestamp` is wall-clock, not monotonic, so a processing-time deadline
+    /// survives a checkpoint/restore round trip as an absolute instant.
+    pub fn from_datetime(dt: DateTime<Utc>) -> Self {
+        Self(dt)
+    }
+
     /// Returns nanoseconds since epoch (for snapshot export).
     pub fn as_nanos_since_epoch(&self) -> i64 {
         self.0.timestamp_nanos_opt().unwrap_or(0)

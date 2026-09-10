@@ -1281,12 +1281,15 @@ fn engine_max_runs_limit() {
 }
 
 #[test]
-fn engine_default_time_semantics_is_processing_time() {
+fn engine_default_time_semantics_is_event_time() {
+    // `.within()` bounds the gap between the events, not between their
+    // arrivals, so event time is the default. Processing time stays reachable
+    // through `with_processing_time()`.
     let pattern = PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
     let engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
     assert_eq!(
         engine.time_semantics(),
-        varpulis_runtime::sase::TimeSemantics::ProcessingTime
+        varpulis_runtime::sase::TimeSemantics::EventTime
     );
 }
 

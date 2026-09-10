@@ -1330,6 +1330,16 @@ pub struct RunCheckpoint {
     pub event_time_started_at_ms: Option<i64>,
     /// Event-time deadline (ms since epoch)
     pub event_time_deadline_ms: Option<i64>,
+    /// Wall-clock WITHIN deadline (ms since epoch) for runs under
+    /// processing-time semantics. `None` under event time, or when the
+    /// pattern carries no WITHIN. Absent from checkpoints written before the
+    /// field existed, which restore as `None` (the old, lossy behaviour).
+    #[serde(default)]
+    pub deadline_ms: Option<i64>,
+    /// Wall-clock start of the run (ms since epoch), so a restored run reports
+    /// its true match duration instead of restarting the clock.
+    #[serde(default)]
+    pub started_at_ms: Option<i64>,
     /// Partition key value
     pub partition_key: Option<SerializableValue>,
     /// Whether the run is invalidated

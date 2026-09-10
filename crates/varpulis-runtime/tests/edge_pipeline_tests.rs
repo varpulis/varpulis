@@ -167,11 +167,14 @@ async fn within_expired() {
     ";
 
     let results = run_scenario(program, events).await;
-    // With BATCH timing and within(5s), the 10s gap should expire the window.
-    // Whether it produces 0 or 1 depends on temporal enforcement.
-    assert!(
-        results.len() <= 1,
-        "Late response should produce at most 1 match"
+    // The BATCH directives put 10s of EVENT time between the two events, and
+    // `.within(5s)` is a bound on event time — not on how fast the test happens
+    // to feed the engine. `<= 1` used to pass here by abstaining: it held
+    // whether or not the bound was enforced at all.
+    assert_eq!(
+        results.len(),
+        0,
+        "a 10s event-time gap must not satisfy .within(5s)"
     );
 }
 

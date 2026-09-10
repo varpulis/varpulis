@@ -171,6 +171,17 @@ impl Run {
         }
     }
 
+    /// True when `event_ts` falls outside this run's event-time WITHIN window.
+    ///
+    /// Distinct from [`Run::is_timed_out_event_time`]: that answers "can this
+    /// run ever complete?" (watermark-driven, and the watermark deliberately
+    /// lags by `max_out_of_orderness`), while this answers "may *this* event
+    /// extend the run?" — which the run's own deadline settles on its own, with
+    /// no tolerance, because WITHIN is a bound on the events, not on arrivals.
+    pub fn event_time_excludes(&self, event_ts: DateTime<Utc>) -> bool {
+        self.event_time_deadline.is_some_and(|d| event_ts > d)
+    }
+
     /// Check if run has timed out based on event-time watermark
     pub fn is_timed_out_event_time(&self, watermark: DateTime<Utc>) -> bool {
         if let Some(deadline) = self.event_time_deadline {

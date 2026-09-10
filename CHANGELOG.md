@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`.within()` is now enforced against event time, not wall-clock arrival
+  time.** The SASE engine defaulted to processing-time semantics and the VPL
+  compiler never selected the event-time branch, so a run's WITHIN deadline was
+  `now() + timeout` and expiry was decided by `now()`. Replaying a log therefore
+  satisfied every temporal bound trivially — the whole file arrives inside a
+  millisecond — so `.within(1h)` matched a two-hour gap, and a slow live reader
+  could expire a window that no event had actually outrun. Every shipped
+  detection rule was affected. Set `VARPULIS_SASE_TIME=processing` to restore
+  the old wall-clock behaviour.
+- **A WITHIN bound is no longer widened by `.watermark(out_of_order: D)`.** Run
+  expiry is watermark-driven (and the watermark deliberately lags by `D`), but
+  whether a given event may *complete* a run is now decided by that event's own
+  timestamp against the run's deadline. Previously the lag turned into extra
+  WITHIN budget.
+- **A WITHIN bound on a pattern that starts through an AND branch or an epsilon
+  transition is no longer dropped.** Only one of the four run-creation paths in
+  `try_start_run_shared` applied the state's timeout; all four now do.
+- **A restored checkpoint keeps its processing-time WITHIN deadline.** Restore
+  hard-coded `deadline: None` and reset `started_at` to `now()`, so a restart
+  erased the bound and made every restored partial match immortal. Both are
+  wall-clock instants and are now persisted and restored verbatim
+  (`RunCheckpoint.deadline_ms` / `.started_at_ms`; older checkpoints without
+  the fields restore as before).
+- **`BATCH 0` in a `.evt` file now stamps its events at offset zero** instead of
+  leaving them at `Utc::now()` while later batches were stamped from the epoch —
+  which put a file's first event decades after its last.
+
 ## [0.11.0] - 2026-07-17
 
 Outcome of a full 11-scope codebase audit plus the distributed exactly-once

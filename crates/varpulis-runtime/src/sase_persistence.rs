@@ -49,6 +49,8 @@ impl RunCheckpointExt for Run {
             captured,
             event_time_started_at_ms: self.event_time_started_at.map(|t| t.timestamp_millis()),
             event_time_deadline_ms: self.event_time_deadline.map(|t| t.timestamp_millis()),
+            deadline_ms: self.deadline.map(|t| t.as_datetime().timestamp_millis()),
+            started_at_ms: Some(self.started_at.as_datetime().timestamp_millis()),
             partition_key: self.partition_key.as_ref().map(persistence::value_to_ser),
             invalidated: self.invalidated,
             pending_negation_count: self.pending_negations.len(),
@@ -89,8 +91,18 @@ impl RunCheckpointExt for Run {
             current_state: rc.current_state,
             stack,
             captured,
-            started_at: Timestamp::now(),
-            deadline: None,
+            // Both wall-clock fields are absolute instants, not monotonic
+            // offsets, so they survive a restart verbatim. Resetting them to
+            // `now()` restarted the WITHIN clock on every restore, which made
+            // a restored partial match immortal under processing time.
+            started_at: rc
+                .started_at_ms
+                .and_then(DateTime::from_timestamp_millis)
+                .map_or_else(Timestamp::now, Timestamp::from_datetime),
+            deadline: rc
+                .deadline_ms
+                .and_then(DateTime::from_timestamp_millis)
+                .map(Timestamp::from_datetime),
             event_time_started_at: rc
                 .event_time_started_at_ms
                 .and_then(DateTime::from_timestamp_millis),

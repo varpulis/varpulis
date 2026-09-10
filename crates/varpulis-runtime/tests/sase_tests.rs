@@ -1700,11 +1700,17 @@ fn test_multiple_concurrent_runs_same_partition() {
 }
 
 #[test]
-fn test_process_time_semantics_default() {
+fn test_event_time_semantics_default() {
     let pattern = PatternBuilder::event("A");
     let engine = SaseEngine::new(pattern).with_emission_mode(EmissionMode::Longest);
 
-    // Default should be ProcessingTime
+    // The default is event time: `.within()` bounds the distance between the
+    // events, not between their arrivals. Processing time is opt-in via
+    // `with_processing_time()` (and `VARPULIS_SASE_TIME=processing` at the
+    // VPL layer) for a live stream whose events carry no time of their own.
+    assert_eq!(engine.time_semantics(), TimeSemantics::EventTime);
+
+    let engine = SaseEngine::new(PatternBuilder::event("A")).with_processing_time();
     assert_eq!(engine.time_semantics(), TimeSemantics::ProcessingTime);
 }
 
