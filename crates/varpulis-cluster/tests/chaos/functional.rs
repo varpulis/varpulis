@@ -433,7 +433,15 @@ async fn test_replica_hash_partitioning() {
 
         // Inject multiple events with different source values and verify
         // deterministic routing: same source -> same routed_to each time.
-        let sources = ["alpha", "beta", "gamma", "delta"];
+        //
+        // Twenty keys, not four. The distribution assertion at the end of this
+        // test used to run on `["alpha", "beta", "gamma", "delta"]`, where even
+        // a perfectly uniform hash puts all four on one replica once every
+        // eight runs (2 * (1/2)^4). It failed on exactly that. A test that
+        // reports a 12% chance of a partitioning bug is not evidence either
+        // way; at twenty keys the same coincidence is one run in half a
+        // million, so a red here means the routing really is degenerate.
+        let sources: Vec<String> = (0..20).map(|i| format!("host-{i:02}")).collect();
         let mut route_map: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
 
@@ -450,7 +458,7 @@ async fn test_replica_hash_partitioning() {
                     .await;
 
                 if let Some(routed_to) = resp["routed_to"].as_str() {
-                    let key = source.to_string();
+                    let key = source.clone();
                     if let Some(prev) = route_map.get(&key) {
                         assert_eq!(
                             prev, routed_to,
@@ -463,6 +471,15 @@ async fn test_replica_hash_partitioning() {
                 }
             }
         }
+
+        // Every key must have been routed somewhere. An empty map would make
+        // the assertion below vacuous, which is how a routing test passes
+        // while routing nothing.
+        assert_eq!(
+            route_map.len(),
+            sources.len(),
+            "every partition key should have been routed and recorded"
+        );
 
         // Verify at least 2 distinct routes were used (partitioning is working).
         let unique_routes: std::collections::HashSet<&str> =
