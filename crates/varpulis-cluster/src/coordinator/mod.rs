@@ -343,9 +343,22 @@ impl Coordinator {
         let Some(ref handle) = self.raft_handle else {
             return;
         };
-
         let raft_state = handle.store_state.read().unwrap_or_else(|e| e.into_inner());
+        let snapshot = raft_state.clone();
+        drop(raft_state);
+        self.sync_from_control_state(&snapshot);
+    }
 
+    /// Synchronize local coordinator state from a shared control-plane state
+    /// value, whichever backend produced it.
+    ///
+    /// The Raft store publishes one of these after each apply
+    /// (`raft::store::SharedCoordinatorState`); the JetStream KV backend
+    /// produces the identical type from a bucket snapshot
+    /// (`jetstream_control_plane::materialize`). Keeping one merge function
+    /// means the two backends cannot drift in how they feed the coordinator,
+    /// and it is what makes them selectable rather than forked.
+    pub fn sync_from_control_state(&mut self, raft_state: &crate::control_state::CoordinatorState) {
         // Sync workers: merge Raft state with local workers.
         // Preserve last_heartbeat for workers that already exist locally
         // (they may be receiving heartbeats from directly-connected workers).
@@ -457,7 +470,7 @@ impl Coordinator {
         }
 
         tracing::debug!(
-            "Synced from Raft state: {} workers, {} groups, {} connectors",
+            "Synced from control-plane state: {} workers, {} groups, {} connectors",
             self.workers.len(),
             self.pipeline_groups.len(),
             self.connectors.len()
