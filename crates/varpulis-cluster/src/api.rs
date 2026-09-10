@@ -1164,6 +1164,21 @@ async fn handle_inject_event(
         crate::coordinator::Coordinator::execute_inject_event(&http_client, &target, &body).await
     };
 
+    // A worker that did not answer has told us something the heartbeat
+    // timeout would take up to `heartbeat_timeout` seconds to discover. Act on
+    // it: mark it unhealthy so the next sweep re-places its pipelines, instead
+    // of routing every event to it until the timeout expires.
+    //
+    // Safe against a transient blip, because this marks rather than
+    // deregisters: `heartbeat()` moves an unhealthy worker back to Ready the
+    // moment one arrives, which is at most one heartbeat interval away. A
+    // false positive therefore costs one interval; a true positive saves the
+    // whole timeout.
+    if let Err(ClusterError::WorkerUnreachable { worker_id, detail }) = &inject_result {
+        let mut coord = coordinator.write().await;
+        coord.mark_worker_unreachable(&WorkerId(worker_id.clone()), detail);
+    }
+
     match inject_result {
         Ok(resp) => reply_json_status(&resp, StatusCode::OK),
         Err(e) => cluster_error_response(e),
@@ -2790,6 +2805,7 @@ fn cluster_error_response(err: ClusterError) -> Response {
         }
         ClusterError::DeployFailed(_) => (StatusCode::INTERNAL_SERVER_ERROR, "deploy_failed"),
         ClusterError::RoutingFailed(_) => (StatusCode::BAD_GATEWAY, "routing_failed"),
+        ClusterError::WorkerUnreachable { .. } => (StatusCode::BAD_GATEWAY, "worker_unreachable"),
         ClusterError::ConnectorNotFound(_) => (StatusCode::NOT_FOUND, "connector_not_found"),
         ClusterError::ConnectorValidation(_) => (StatusCode::BAD_REQUEST, "connector_validation"),
         ClusterError::MigrationFailed(_) => (StatusCode::INTERNAL_SERVER_ERROR, "migration_failed"),
@@ -3036,7 +3052,7 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::worker::WorkerCapacity;
+    use crate::worker::{WorkerCapacity, WorkerStatus};
 
     fn setup_routes() -> (SharedCoordinator, Router) {
         let coord = shared_coordinator();
@@ -3500,6 +3516,85 @@ mod tests {
             reason.is_some_and(|r| !r.is_empty()),
             "the failed placement must carry why, got {:?}",
             body["placements"][0]
+        );
+    }
+
+    /// An inject to a worker that does not answer must teach the coordinator
+    /// something, not just fail.
+    ///
+    /// The health sweep can only infer death from silence, so it waits out
+    /// `heartbeat_timeout` — 15 seconds by default. Until then every event for
+    /// that worker's pipelines is routed to it and lost. The chaos soak made
+    /// this visible: killing a worker every 5 to 8 seconds against a 15-second
+    /// detection window produced 835 failed injects to 85 successful ones,
+    /// because the coordinator kept routing to workers it had watched die.
+    #[tokio::test]
+    async fn an_inject_to_an_unreachable_worker_marks_it_unhealthy() {
+        let (coord, router) = setup_routes();
+
+        // A worker registered at an address nothing is listening on, holding
+        // one deployed pipeline so injects resolve to it.
+        {
+            let mut c = coord.write().await;
+            c.register_worker(WorkerNode::new(
+                WorkerId("dead".into()),
+                "http://127.0.0.1:1".into(),
+                "key".into(),
+            ));
+        }
+
+        let req = post_json_req(
+            "/api/v1/cluster/pipeline-groups",
+            "admin-key",
+            &serde_json::json!({
+                "name": "g",
+                "pipelines": [{"name": "p1", "source": "stream A = X"}]
+            }),
+        );
+        let _ = send_request(&router, req).await;
+
+        // Force the placement onto the dead worker: the deploy above could not
+        // reach it either, so the group has no running placement to inject to.
+        let group_id = {
+            let mut c = coord.write().await;
+            let gid = c.pipeline_groups.keys().next().cloned().expect("group");
+            let group = c.pipeline_groups.get_mut(&gid).expect("group");
+            for dep in group.placements.values_mut() {
+                dep.status = crate::pipeline_group::PipelineDeploymentStatus::Running;
+                dep.pipeline_id = "pid".into();
+            }
+            // The failed deploy already marked it; put it back so this test
+            // measures what the *inject* does.
+            c.workers
+                .get_mut(&WorkerId("dead".into()))
+                .expect("worker")
+                .status = WorkerStatus::Ready;
+            gid
+        };
+
+        assert_eq!(
+            coord.read().await.workers[&WorkerId("dead".into())].status,
+            WorkerStatus::Ready,
+            "precondition: the worker starts healthy"
+        );
+
+        let req = post_json_req(
+            &format!("/api/v1/cluster/pipeline-groups/{group_id}/inject"),
+            "admin-key",
+            &serde_json::json!({"event_type": "X", "fields": {}}),
+        );
+        let resp = send_request(&router, req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+
+        let c = coord.read().await;
+        assert_eq!(
+            c.workers[&WorkerId("dead".into())].status,
+            WorkerStatus::Unhealthy,
+            "a worker that did not answer must be marked, not waited out"
+        );
+        assert!(
+            c.pending_rebalance,
+            "marking a worker unhealthy must schedule the re-placement of its pipelines"
         );
     }
 

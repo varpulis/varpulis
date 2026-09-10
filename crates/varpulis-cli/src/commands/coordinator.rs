@@ -429,14 +429,28 @@ pub async fn run_coordinator(
             // Clean up stale completed migrations (older than 1 hour)
             coord.cleanup_completed_migrations(std::time::Duration::from_hours(1));
 
-            // Reconcile stale placements: re-deploy pipelines to workers
-            // that restarted and lost their in-memory state.
+            // Reconcile placements on EVERY sweep, not only when a rebalance
+            // is pending.
+            //
+            // `reconcile_placements` is what drives the cluster back to "every
+            // running pipeline sits on an available worker". Gating it on
+            // `pending_rebalance` made it edge-triggered, and `rebalance()`
+            // clears that flag at the end of its own pass — so a placement
+            // that was not fixed on the one pass the flag happened to be set
+            // stayed wrong until something else set it again. In the chaos
+            // soak that meant pipelines stranded on dead workers and a cluster
+            // that never came back.
+            //
+            // It costs an in-memory scan when nothing has drifted, and only
+            // issues HTTP when something has.
+            let n = coord.reconcile_placements().await;
+            if n > 0 {
+                tracing::info!("Reconciled {n} pipeline placement(s)");
+            }
+
+            // Rebalancing across workers is the expensive, disruptive half and
+            // stays behind the flag.
             if coord.pending_rebalance {
-                let n = coord.reconcile_placements().await;
-                if n > 0 {
-                    tracing::info!("Reconciled {n} pipeline placement(s)");
-                }
-                // Then attempt rebalance across workers
                 match coord.rebalance().await {
                     Ok(ids) if !ids.is_empty() => {
                         tracing::info!("Auto-rebalance: {} migration(s) started", ids.len());

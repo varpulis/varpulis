@@ -245,18 +245,47 @@ async fn test_chaos_monkey() {
             "Expected at least some successful injects during the chaos run"
         );
 
-        // Zero-event-loss proxy: a fresh inject after the storm should succeed
-        // for both groups. If accepted events vanished into a dead cluster the
-        // post-chaos cluster would also reject these.
-        cluster
-            .inject_event(
-                &gid1,
-                serde_json::json!({
-                    "event_type": "Input1",
-                    "fields": { "post_chaos": "1" }
-                }),
-            )
-            .await;
+        // Recovery, not luck: the loop's last action can be a kill, and the
+        // coordinator cannot know a worker is gone until its heartbeat times
+        // out — 15 s by default. Firing one inject six seconds after a kill
+        // asserted that the cluster had already converged, which it had no way
+        // to have done, so this test failed on a property it never gave the
+        // cluster a chance to satisfy.
+        //
+        // Polling to a bound derived from that timeout asks the real question:
+        // does the cluster come back, and how long does it take. The bound is
+        // generous because a re-placement has to deploy the pipeline again.
+        let recovery_budget = Duration::from_secs(90);
+        let recovery_start = Instant::now();
+        let mut last_status = None;
+        loop {
+            match cluster
+                .try_inject_event(
+                    &gid1,
+                    serde_json::json!({
+                        "event_type": "Input1",
+                        "fields": { "post_chaos": "1" }
+                    }),
+                )
+                .await
+            {
+                Ok(_) => break,
+                Err(status) => {
+                    last_status = Some(status);
+                    assert!(
+                        recovery_start.elapsed() < recovery_budget,
+                        "cluster did not accept an event within {recovery_budget:?} of the \
+                         last failure; last inject returned {status}"
+                    );
+                    sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+        eprintln!(
+            "  [chaos] recovered in {:.1}s (last pre-recovery status {:?})",
+            recovery_start.elapsed().as_secs_f64(),
+            last_status
+        );
         cluster
             .inject_event(
                 &gid2,

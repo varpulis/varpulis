@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::connector_config::{self, ClusterConnector};
 use crate::health::{self, HealthSweepResult};
@@ -589,6 +589,41 @@ impl Coordinator {
             self.update_metrics_counts();
         }
         result
+    }
+
+    /// Mark a worker unhealthy because a request to it did not arrive.
+    ///
+    /// The health sweep can only infer death from silence, so it has to wait
+    /// out `heartbeat_timeout` — 15 seconds by default. A request that failed
+    /// at the transport is direct evidence, available now, and every event
+    /// routed to that worker in the meantime is lost for nothing.
+    ///
+    /// Deliberately marks rather than deregisters. `heartbeat` moves an
+    /// unhealthy worker back to `Ready` as soon as one arrives, so a transient
+    /// blip costs at most one heartbeat interval, while a real failure saves
+    /// the whole timeout. Returns whether this call changed the status, so a
+    /// caller can avoid logging the same worker on every retry.
+    pub fn mark_worker_unreachable(&mut self, id: &WorkerId, detail: &str) -> bool {
+        let Some(worker) = self.workers.get_mut(id) else {
+            return false;
+        };
+        if worker.status == WorkerStatus::Unhealthy {
+            return false;
+        }
+        // A draining worker is expected to stop answering; do not confuse a
+        // planned drain with a failure.
+        if worker.status == WorkerStatus::Draining {
+            return false;
+        }
+        warn!(
+            worker_id = %id,
+            detail,
+            "Worker did not answer a request; marking unhealthy without waiting for the heartbeat timeout"
+        );
+        worker.status = WorkerStatus::Unhealthy;
+        self.pending_rebalance = true;
+        self.update_metrics_counts();
+        true
     }
 
     // =========================================================================
