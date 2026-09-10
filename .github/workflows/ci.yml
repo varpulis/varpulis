@@ -27,8 +27,8 @@ env:
 
 # Tiered CI:
 #   * Fast gate (fmt, clippy, check, test, deny, audit, machete,
-#     feature-matrix-check, +semver on PRs) runs on every push/PR — this is
-#     what you watch before merging.
+#     feature-matrix-check, unreachable-modules, +semver on PRs) runs on every
+#     push/PR — this is what you watch before merging.
 #   * Heavy suite (msrv, cross-platform, feature-flags matrix, wasm, coverage,
 #     doc, chaos, CDC/NATS E2E) is gated by `HEAVY` below to: the nightly
 #     schedule, manual `workflow_dispatch`, and release tags (`refs/tags/*`).
@@ -202,6 +202,18 @@ jobs:
       - name: Install cargo-machete
         run: cargo install cargo-machete --locked
       - run: cargo machete
+
+  unreachable-modules:
+    name: Every Module Is Reachable
+    needs: [gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # On the fast path: it is a filesystem walk, and the thing it catches is
+    # invisible to every other job by construction. `cargo check` cannot report
+    # a file it never compiles.
+    steps:
+      - uses: actions/checkout@v6
+      - run: python3 scripts/find-unreachable-modules.py
 
   feature-matrix-check:
     name: Feature Matrix Is Honest
