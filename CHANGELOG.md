@@ -32,9 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wall-clock instants and are now persisted and restored verbatim
   (`RunCheckpoint.deadline_ms` / `.started_at_ms`; older checkpoints without
   the fields restore as before).
-- **`BATCH 0` in a `.evt` file now stamps its events at offset zero** instead of
-  leaving them at `Utc::now()` while later batches were stamped from the epoch —
-  which put a file's first event decades after its last.
+- **`BATCH 0` in an event file now stamps its events at offset zero** instead of
+  reading as "no timing given". A JSONL line under `BATCH 0` kept its
+  `Utc::now()` timestamp while later batches were stamped from the epoch, which
+  put a file's first event decades after its last.
 
 ## [0.11.0] - 2026-07-17
 

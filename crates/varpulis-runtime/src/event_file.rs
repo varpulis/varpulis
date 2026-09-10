@@ -94,9 +94,10 @@ impl EventFileParser {
         let mut current_batch_time: u64 = 0;
         // A `BATCH` directive is an explicit statement about event time, even
         // when the offset it names is 0. Testing `current_batch_time > 0`
-        // instead left the very first event of every `BATCH 0` file stamped
-        // with `Utc::now()` while its successors were stamped from the epoch,
-        // which put the file's first event ~56 years *after* its last.
+        // instead read `BATCH 0` as "no timing given", so a JSONL line under it
+        // kept the `Utc::now()` that `parse_jsonl_line` had assigned while its
+        // `BATCH n > 0` siblings were stamped from the epoch — putting the
+        // file's first event decades *after* its last.
         let mut batch_seen = false;
 
         for (line_num, line) in source.lines().enumerate() {

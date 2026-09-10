@@ -1495,9 +1495,15 @@ fn test_within_timeout_exact_boundary() {
     engine.process(&event_a);
     let results = engine.process(&event_b);
 
-    // At exactly 5 seconds, behavior depends on implementation (inclusive vs exclusive)
-    // This test documents the actual behavior
-    let _matched_at_boundary = results.len() == 1;
+    // The WITHIN boundary is inclusive: an event landing exactly on the
+    // deadline is still inside the window. This used to assert nothing at all
+    // (`let _matched = results.len() == 1;`), so it passed whichever way the
+    // engine behaved — and whether or not the bound was enforced.
+    assert_eq!(
+        results.len(),
+        1,
+        "an event exactly on the .within() deadline is inside the window"
+    );
 }
 
 #[test]

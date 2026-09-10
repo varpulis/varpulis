@@ -381,15 +381,23 @@ fn shipped_lateral_movement_rule_stops_firing_when_the_chain_spans_days() {
 // =========================================================================
 
 #[test]
-fn batch_zero_stamps_the_first_event_from_the_epoch() {
-    // `BATCH 0` is an explicit statement about event time. Treating only
-    // `BATCH n > 0` as explicit left a file's first event stamped with
-    // `Utc::now()` and the rest stamped from the epoch — putting event #1
-    // decades *after* event #2 and making event time unusable on .evt files.
-    let events = EventFileParser::parse(
-        "BATCH 0\nLogin { user_id: \"a\" }\n\nBATCH 60000\nLogin { user_id: \"b\" }\n",
-    )
-    .expect("parse");
+fn batch_zero_stamps_jsonl_events_from_the_epoch() {
+    // `BATCH 0` is an explicit statement about event time. Testing
+    // `current_batch_time > 0` instead read it as "no timing given", so a
+    // JSONL line carrying no embedded timestamp kept the `Utc::now()` that
+    // `parse_jsonl_line` had put there — landing decades *after* its
+    // `BATCH 60000` sibling, which is stamped from the epoch. Event time is
+    // meaningless on a file whose first event is newer than its last.
+    // (`.evt`-format lines were already stamped from the epoch by
+    // `parse_event_line`, so only the JSONL path exposes this.)
+    let source = concat!(
+        "BATCH 0\n",
+        r#"{"event_type": "Login", "data": {"user_id": "a"}}"#,
+        "\nBATCH 60000\n",
+        r#"{"event_type": "Login", "data": {"user_id": "b"}}"#,
+        "\n"
+    );
+    let events = EventFileParser::parse(source).expect("parse");
 
     assert_eq!(events.len(), 2);
     assert_eq!(
@@ -399,7 +407,11 @@ fn batch_zero_stamps_the_first_event_from_the_epoch() {
     );
     assert_eq!(
         events[1].event.timestamp,
-        DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(60_000)
+        DateTime::UNIX_EPOCH + chrono::Duration::seconds(60)
+    );
+    assert!(
+        events[0].event.timestamp < events[1].event.timestamp,
+        "a file's events must not run backwards in event time"
     );
 }
 
