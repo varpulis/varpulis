@@ -27,7 +27,8 @@ env:
 
 # Tiered CI:
 #   * Fast gate (fmt, clippy, check, test, deny, audit, machete,
-#     feature-matrix-check, unreachable-modules, +semver on PRs) runs on every
+#     feature-matrix-check, unreachable-modules, documented-env, +semver on
+#     PRs) runs on every
 #     push/PR — this is what you watch before merging.
 #   * Heavy suite (msrv, cross-platform, feature-flags matrix, wasm, coverage,
 #     doc, chaos, CDC/NATS/Kafka E2E) is gated by `HEAVY` below to: the nightly
@@ -202,6 +203,20 @@ jobs:
       - name: Install cargo-machete
         run: cargo install cargo-machete --locked
       - run: cargo machete
+
+  documented-env:
+    name: Documented Settings Are Read
+    needs: [gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # `VARPULIS_ENCRYPTION_PASSPHRASE` had a tutorial section of its own and no
+    # Rust code read it, so checkpoints were written in plaintext for anyone who
+    # followed the tutorial exactly. Documentation promising a control the
+    # binary does not implement is the worst version of that failure, because
+    # the reader has no way to tell.
+    steps:
+      - uses: actions/checkout@v6
+      - run: python3 scripts/check-documented-env.py
 
   unreachable-modules:
     name: Every Module Is Reachable
