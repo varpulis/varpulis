@@ -187,19 +187,17 @@ impl SlidingWindow {
         let event_time = event.timestamp;
         self.events.push_back(event);
 
-        // Remove old events outside window using binary search + drain
-        // This is O(log n + k) where k is expired events, vs O(k) pop_front loops
+        // Evict everything older than the cutoff.
+        //
+        // This used to drain the prefix up to the first in-window event, which
+        // is only correct if the deque is sorted by timestamp. `push_back`
+        // appends in ARRIVAL order, so a single out-of-order event sits behind
+        // a newer one: `position` then stops at the newer event, the late one
+        // is never reached, and eviction is poisoned for the life of the
+        // window — unbounded overcount and unbounded memory. The prefix scan
+        // bought nothing anyway, since `position` is itself linear.
         let cutoff = event_time - self.window_size;
-        let expired_count = self
-            .events
-            .iter()
-            .position(|e| e.timestamp >= cutoff)
-            .unwrap_or(self.events.len());
-
-        if expired_count > 0 {
-            // Drain all expired events in one operation
-            self.events.drain(0..expired_count);
-        }
+        self.events.retain(|e| e.timestamp >= cutoff);
 
         // Check if we should emit based on slide interval
         let should_emit = match self.last_emit {
@@ -256,16 +254,11 @@ impl SlidingWindow {
 
     /// Advance watermark — emit window if slide interval has passed relative to watermark.
     pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Option<Vec<SharedEvent>> {
-        // Remove expired events
+        // Remove expired events. `retain` rather than a prefix drain, for the
+        // same reason as in `add_shared`: the deque is in arrival order, not
+        // timestamp order.
         let cutoff = wm - self.window_size;
-        let expired_count = self
-            .events
-            .iter()
-            .position(|e| e.timestamp >= cutoff)
-            .unwrap_or(self.events.len());
-        if expired_count > 0 {
-            self.events.drain(0..expired_count);
-        }
+        self.events.retain(|e| e.timestamp >= cutoff);
 
         let should_emit = match self.last_emit {
             None => !self.events.is_empty(),

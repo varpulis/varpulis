@@ -30,7 +30,7 @@ static PARTITION_FIELD_KEY: std::sync::LazyLock<Arc<str>> =
 /// Reusable `Arc<str>` for the `AggregationResult` event-type name.
 /// Every fused-op fire creates a fresh `Event` typed
 /// `"AggregationResult"`; interning avoids the per-event `Arc::from`.
-static AGGREGATION_RESULT_TYPE: std::sync::LazyLock<Arc<str>> =
+pub(super) static AGGREGATION_RESULT_TYPE: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("AggregationResult"));
 
 /// Returns a reference to a shared empty variables map for read-only operations.

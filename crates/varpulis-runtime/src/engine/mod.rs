@@ -1445,12 +1445,37 @@ impl Engine {
     // =========================================================================
 
     /// Check if any registered stream uses `.to()` or `.enrich()` operations.
+    ///
+    /// This answers "are there sinks to connect", which is what
+    /// `varpulis run` asks. It is NOT the right question for choosing between
+    /// the synchronous and asynchronous dispatch paths — see
+    /// [`Self::requires_async_dispatch`].
     pub fn has_sink_operations(&self) -> bool {
         self.streams.values().any(|s| {
             s.operations
                 .iter()
                 .any(|op| matches!(op, RuntimeOp::To(_) | RuntimeOp::Enrich(_)))
         })
+    }
+
+    /// Whether this program must run on the asynchronous dispatch path.
+    ///
+    /// The CLI used to decide this with [`Self::has_sink_operations`], which
+    /// asks a different question. A join is not a sink, so a program whose only
+    /// join had no `.to()` took the synchronous path — where join sources are
+    /// not processed at all and every match is silently discarded. That is the
+    /// default path for `simulate`, `detect`, `analyze` and `repl`, so the
+    /// shipped join example emitted nothing when run with the command in its
+    /// own header.
+    pub fn requires_async_dispatch(&self) -> bool {
+        self.has_sink_operations() || self.has_join_sources()
+    }
+
+    /// Whether any registered stream is fed by a join.
+    pub fn has_join_sources(&self) -> bool {
+        self.streams
+            .values()
+            .any(|s| matches!(s.source, RuntimeSource::Join(_)))
     }
 
     /// Returns (events_in, events_out) counters for this engine.
@@ -2301,7 +2326,7 @@ impl Engine {
             return Ok(());
         };
         if self.last_applied_watermark.is_none_or(|last| wm > last) {
-            self.apply_watermark_to_windows_sync_inner(wm, false)?;
+            self.apply_watermark_to_windows_sync_inner(wm, false, false)?;
             self.last_applied_watermark = Some(wm);
         }
         Ok(())
@@ -2320,7 +2345,25 @@ impl Engine {
         if self.watermark_tracker.is_none() {
             return Ok(());
         }
-        self.apply_watermark_to_windows_inner(DateTime::<Utc>::MAX_UTC, true)
+        self.apply_watermark_to_windows_inner(DateTime::<Utc>::MAX_UTC, true, false)
+            .await
+    }
+
+    /// Drain every still-open window at the end of a bounded input.
+    ///
+    /// [`Self::flush_final_watermark`] graduates only watermark-driven windows,
+    /// and returns immediately when the program declares no `.watermark()`. For
+    /// a bounded source — an event file under `simulate`, a log under `detect`
+    /// — there is by definition no more data, so an arrival-driven window that
+    /// has not reached its boundary never will. Dropping its contents means the
+    /// final burst in a log produces no alert, which for a detection product is
+    /// precisely the burst that matters.
+    ///
+    /// Unbounded runs (`varpulis run`) must NOT call this: there, a window that
+    /// has not closed is simply still filling.
+    #[cfg(feature = "async-runtime")]
+    pub async fn flush_end_of_input(&mut self) -> Result<(), error::EngineError> {
+        self.apply_watermark_to_windows_inner(DateTime::<Utc>::MAX_UTC, false, true)
             .await
     }
 
@@ -2329,7 +2372,21 @@ impl Engine {
         if self.watermark_tracker.is_none() {
             return Ok(());
         }
-        self.apply_watermark_to_windows_sync_inner(chrono::DateTime::<chrono::Utc>::MAX_UTC, true)
+        self.apply_watermark_to_windows_sync_inner(
+            chrono::DateTime::<chrono::Utc>::MAX_UTC,
+            true,
+            false,
+        )
+    }
+
+    /// Sync sibling of [`Self::flush_end_of_input`], for the synchronous
+    /// dispatch path that `simulate`, `detect` and `analyze` take by default.
+    pub fn flush_end_of_input_sync(&mut self) -> Result<(), error::EngineError> {
+        self.apply_watermark_to_windows_sync_inner(
+            chrono::DateTime::<chrono::Utc>::MAX_UTC,
+            false,
+            true,
+        )
     }
 
     /// Set the side-output stream for a stream's late-data config.
