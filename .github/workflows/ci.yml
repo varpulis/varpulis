@@ -634,3 +634,21 @@ jobs:
       # and then never wired into any job, so it had never run in CI.
       - name: NATS heartbeat replication gate
         run: cargo test -p varpulis-cluster --features raft,nats-transport --test nats_heartbeat_replication -- --nocapture
+      # The JetStream gates need a JetStream-ENABLED server. The `nats:latest`
+      # service container above runs without `-js`, and a GitHub `services:`
+      # block cannot override the image command — so start a second broker
+      # explicitly on 4224. `VARPULIS_REQUIRE_BROKERS=1` makes an unreachable
+      # broker a hard failure: these gates must never pass by abstaining.
+      - name: Start JetStream-enabled NATS
+        run: docker run -d --name nats-js -p 4224:4222 nats:latest -js
+      - name: JetStream routing + heartbeat durability gates
+        run: cargo test -p varpulis-cluster --features nats-transport --test nats_jetstream_routing -- --nocapture --test-threads=1
+        env:
+          VARPULIS_REQUIRE_BROKERS: "1"
+          VARPULIS_TEST_NATS_JS_URL: nats://127.0.0.1:4224
+          # The service container above runs without `-js`; it is the
+          # core-only server the no-silent-fallback gate needs.
+          VARPULIS_TEST_NATS_CORE_URL: nats://127.0.0.1:4222
+      - name: Stop JetStream-enabled NATS
+        if: always()
+        run: docker rm -f nats-js || true

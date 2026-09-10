@@ -11,6 +11,8 @@ This directory contains Architecture Decision Records (ADRs) for the Varpulis CE
 | [003](003-coordinator-worker.md) | Coordinator/Worker Cluster Architecture | Accepted | 2026-02-17 |
 | [004](004-sase-plus-semantics.md) | SASE+ Semantics for Pattern Matching | Accepted | 2026-02-17 |
 | [005](005-hamlet-trend-aggregation.md) | Hamlet for Multi-Query Trend Aggregation | Accepted | 2026-02-17 |
+| [006](006-emission-modes.md) | Emission Modes (Each / Longest / Subsets) | Accepted | 2026-04-08 |
+| [007](007-jetstream-cluster-substrate.md) | JetStream as the Durable Substrate for Cluster Event Paths | Accepted | 2026-09-10 |
 
 ---
 
