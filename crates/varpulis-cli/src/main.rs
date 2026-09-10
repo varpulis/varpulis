@@ -728,11 +728,17 @@ async fn main() -> Result<()> {
                 .build()
                 .expect("Failed to create OTLP exporter");
 
-            let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
-                .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
-                .with_resource(opentelemetry_sdk::Resource::new(vec![
-                    opentelemetry::KeyValue::new("service.name", "varpulis"),
-                ]))
+            // opentelemetry_sdk 0.31: `trace::TracerProvider` is now
+            // `SdkTracerProvider`, `with_batch_exporter` no longer takes a
+            // runtime (the batch processor picks its own), and `Resource` is
+            // built rather than constructed from a vector.
+            let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                .with_batch_exporter(exporter)
+                .with_resource(
+                    opentelemetry_sdk::Resource::builder()
+                        .with_service_name("varpulis")
+                        .build(),
+                )
                 .build();
 
             let tracer = tracer_provider.tracer("varpulis");
