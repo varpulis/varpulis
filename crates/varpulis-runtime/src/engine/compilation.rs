@@ -451,6 +451,10 @@ impl Engine {
         );
         let watermark_driven =
             !kill_switch && ops.iter().any(|op| matches!(op, StreamOp::Watermark(_)));
+        // How this stream's SASE `.within()` bounds are measured. Event time is
+        // the default (see `SaseTimeSemantics`); `.watermark(out_of_order: ...)`
+        // only widens the tolerance.
+        let sase_time = SaseTimeSemantics::resolve(ops);
         let allowed_lateness = ops
             .iter()
             .find_map(|op| match op {
@@ -1405,6 +1409,7 @@ impl Engine {
             &mut runtime_ops,
             selection_mode_override,
             emission_mode_override,
+            sase_time,
         );
 
         // === Build PST Forecaster if .forecast() specified ===
@@ -1692,6 +1697,7 @@ impl Engine {
         runtime_ops: &mut Vec<RuntimeOp>,
         selection_mode: Option<varpulis_core::ast::SelectionMode>,
         emission_mode: Option<varpulis_core::ast::EmissionMode>,
+        time_semantics: SaseTimeSemantics,
     ) -> Option<SaseEngine> {
         let is_pattern_ref =
             matches!(source, StreamSource::Ident(name) if self.patterns.contains_key(name));
@@ -1736,7 +1742,7 @@ impl Engine {
                 global_within,
                 &stream_resolver,
             ) {
-                let mut engine = SaseEngine::new(pattern);
+                let mut engine = time_semantics.apply(SaseEngine::new(pattern));
 
                 // Wire up expression evaluator for Predicate::Expr support
                 engine.set_evaluator(std::sync::Arc::new(super::evaluator::RuntimeExprEvaluator));
@@ -1799,7 +1805,7 @@ impl Engine {
             if let Some(pattern) =
                 compiler::compile_sase_pattern_expr(&named_pattern.expr, within_duration)
             {
-                let mut engine = SaseEngine::new(pattern);
+                let mut engine = time_semantics.apply(SaseEngine::new(pattern));
 
                 // Wire up expression evaluator for Predicate::Expr support
                 engine.set_evaluator(std::sync::Arc::new(super::evaluator::RuntimeExprEvaluator));
@@ -2171,6 +2177,74 @@ fn build_concat_expr(parts: &[varpulis_core::ast::ConfigValue]) -> Expr {
         left: Box::new(acc),
         right: Box::new(part),
     })
+}
+
+/// How a stream's SASE `.within()` bounds are measured.
+///
+/// Event time is the default: `.within(1h)` means "an hour of the events", not
+/// "an hour of the reader's wall clock". Anything else makes every temporal
+/// bound a function of replay speed, which is the wrong answer for the one
+/// workflow -- replaying a log -- that the bounds exist for.
+///
+/// `VARPULIS_SASE_TIME=processing` restores the pre-fix wall-clock behaviour for
+/// a deployment that depended on it, mirroring the `VARPULIS_WATERMARK_WINDOWS`
+/// kill switch that guards the equivalent change to windows.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SaseTimeSemantics {
+    /// Set by the kill switch: measure WITHIN against arrival time instead.
+    processing_time: bool,
+    /// Out-of-orderness tolerance declared by `.watermark(out_of_order: ...)`.
+    /// Holds the watermark back so a run stays alive long enough for a
+    /// late-but-in-window event to complete it.
+    max_out_of_orderness: std::time::Duration,
+}
+
+impl SaseTimeSemantics {
+    /// Read the stream's operators (and the kill switch) to decide.
+    fn resolve(ops: &[StreamOp]) -> Self {
+        let processing_time = matches!(
+            std::env::var("VARPULIS_SASE_TIME").as_deref(),
+            Ok("processing")
+        );
+
+        let max_out_of_orderness = ops
+            .iter()
+            .find_map(|op| match op {
+                StreamOp::Watermark(args) => {
+                    args.iter()
+                        .find_map(|arg| match (arg.name.as_str(), &arg.value) {
+                            ("out_of_order", Expr::Duration(ns)) => {
+                                Some(std::time::Duration::from_nanos(*ns))
+                            }
+                            _ => None,
+                        })
+                }
+                _ => None,
+            })
+            .unwrap_or(std::time::Duration::ZERO);
+
+        Self {
+            processing_time,
+            max_out_of_orderness,
+        }
+    }
+
+    /// Configure a freshly-built engine.
+    fn apply(self, engine: SaseEngine) -> SaseEngine {
+        if self.processing_time {
+            warn!(
+                "VARPULIS_SASE_TIME=processing: .within() bounds are measured against \
+                 wall-clock arrival time, not event timestamps"
+            );
+            return engine.with_processing_time();
+        }
+        let engine = engine.with_event_time();
+        if self.max_out_of_orderness.is_zero() {
+            engine
+        } else {
+            engine.with_max_out_of_orderness(self.max_out_of_orderness)
+        }
+    }
 }
 
 /// Apply user-specified SASE+ selection and emission modes to a freshly-built

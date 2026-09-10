@@ -11,6 +11,12 @@
 # to the last required event. Events arriving after the window expires
 # will not complete the match.
 #
+# The window is measured in EVENT time: the gap between the events' own
+# timestamps, not between their arrivals. A log replayed in one second still
+# obeys .within(1h). Set VARPULIS_SASE_TIME=processing to measure against
+# wall-clock arrival instead — only sensible for a live stream whose events
+# carry no meaningful timestamp of their own.
+#
 # Run: varpulis simulate -p 15_temporal_constraints.vpl -e 15_temporal_constraints.evt -v -w 1
 
 # Event declaration is needed for the simulate command

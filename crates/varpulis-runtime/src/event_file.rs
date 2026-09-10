@@ -92,6 +92,13 @@ impl EventFileParser {
     pub fn parse(source: &str) -> Result<Vec<TimedEvent>, String> {
         let mut events = Vec::new();
         let mut current_batch_time: u64 = 0;
+        // A `BATCH` directive is an explicit statement about event time, even
+        // when the offset it names is 0. Testing `current_batch_time > 0`
+        // instead read `BATCH 0` as "no timing given", so a JSONL line under it
+        // kept the `Utc::now()` that `parse_jsonl_line` had assigned while its
+        // `BATCH n > 0` siblings were stamped from the epoch — putting the
+        // file's first event decades *after* its last.
+        let mut batch_seen = false;
 
         for (line_num, line) in source.lines().enumerate() {
             let line = line.trim();
@@ -108,6 +115,7 @@ impl EventFileParser {
                     current_batch_time = parts[1]
                         .parse()
                         .map_err(|_| format!("Invalid BATCH time at line {}", line_num + 1))?;
+                    batch_seen = true;
                 }
                 continue;
             }
@@ -117,7 +125,7 @@ impl EventFileParser {
                 let (t, e) = Self::parse_timing_prefix(line)?;
                 (t, e, true)
             } else {
-                (current_batch_time, line, current_batch_time > 0)
+                (current_batch_time, line, batch_seen)
             };
 
             // Parse event - try JSONL first, then .evt format

@@ -1318,7 +1318,16 @@ pub struct SaseCheckpoint {
 }
 
 /// Checkpoint for a single SASE+ run (partial match).
+///
+/// `#[non_exhaustive]`: this is a serialization DTO for engine-internal state
+/// and it gains fields whenever the engine learns to preserve more of a partial
+/// match across a restart — `deadline_ms` and `started_at_ms` below are the
+/// latest, added because a restored run used to lose its WITHIN bound entirely
+/// and become immortal. Exhaustive literal construction from outside the crate
+/// was never a contract worth keeping; sealing it now means this is the last
+/// time adding a field breaks a downstream build.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RunCheckpoint {
     /// Current NFA state index
     pub current_state: usize,
@@ -1330,6 +1339,16 @@ pub struct RunCheckpoint {
     pub event_time_started_at_ms: Option<i64>,
     /// Event-time deadline (ms since epoch)
     pub event_time_deadline_ms: Option<i64>,
+    /// Wall-clock WITHIN deadline (ms since epoch) for runs under
+    /// processing-time semantics. `None` under event time, or when the
+    /// pattern carries no WITHIN. Absent from checkpoints written before the
+    /// field existed, which restore as `None` (the old, lossy behaviour).
+    #[serde(default)]
+    pub deadline_ms: Option<i64>,
+    /// Wall-clock start of the run (ms since epoch), so a restored run reports
+    /// its true match duration instead of restarting the clock.
+    #[serde(default)]
+    pub started_at_ms: Option<i64>,
     /// Partition key value
     pub partition_key: Option<SerializableValue>,
     /// Whether the run is invalidated

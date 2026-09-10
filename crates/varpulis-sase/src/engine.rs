@@ -151,7 +151,11 @@ impl SaseEngine {
             partition_by: None,
             partitioned_runs: FxHashMap::default(),
             global_negations: Vec::new(),
-            time_semantics: TimeSemantics::ProcessingTime,
+            // WITHIN measures the distance between the events themselves, not
+            // the distance between their arrivals. Defaulting to event time is
+            // what makes `.within()` mean anything on a replayed log; opt back
+            // out with `with_processing_time()`.
+            time_semantics: TimeSemantics::EventTime,
             watermark: None,
             max_out_of_orderness: Duration::from_secs(0),
             max_timestamp: None,
@@ -217,8 +221,21 @@ impl SaseEngine {
     }
 
     /// Enable event-time semantics (watermark-based window completion).
+    ///
+    /// This is the default; the builder is kept so call sites can say so.
     pub fn with_event_time(mut self) -> Self {
         self.time_semantics = TimeSemantics::EventTime;
+        self
+    }
+
+    /// Measure WITHIN bounds against wall-clock arrival time instead of event
+    /// timestamps.
+    ///
+    /// Only correct for a live stream whose events carry no meaningful time of
+    /// their own. On replayed or backfilled data every temporal bound becomes
+    /// a function of how fast the reader happens to run, so this is opt-in.
+    pub fn with_processing_time(mut self) -> Self {
+        self.time_semantics = TimeSemantics::ProcessingTime;
         self
     }
 
@@ -996,6 +1013,18 @@ impl SaseEngine {
                     continue;
                 }
 
+                // WITHIN bounds the distance between the events, so an event
+                // whose own timestamp is past the run's deadline cannot extend
+                // it — even when the watermark still lags behind the deadline
+                // because of `max_out_of_orderness`. Skip rather than drop: a
+                // later-arriving, earlier-stamped event may still complete this
+                // run. Culling stays with the watermark, which is the only
+                // thing that can promise no such event is coming.
+                if runs[i].event_time_excludes(event.timestamp) {
+                    i += 1;
+                    continue;
+                }
+
                 match advance_run_shared(
                     &self.nfa,
                     self.strategy,
@@ -1048,6 +1077,18 @@ impl SaseEngine {
                 continue;
             }
 
+            // WITHIN bounds the distance between the events, so an event
+            // whose own timestamp is past the run's deadline cannot extend
+            // it — even when the watermark still lags behind the deadline
+            // because of `max_out_of_orderness`. Skip rather than drop: a
+            // later-arriving, earlier-stamped event may still complete this
+            // run. Culling stays with the watermark, which is the only
+            // thing that can promise no such event is coming.
+            if self.runs[i].event_time_excludes(event.timestamp) {
+                i += 1;
+                continue;
+            }
+
             match advance_run_shared(
                 &self.nfa,
                 self.strategy,
@@ -1086,6 +1127,34 @@ impl SaseEngine {
         completed
     }
 
+    /// Create a run parked on `state_id`, under the engine's time semantics and
+    /// carrying that state's WITHIN deadline (if any).
+    ///
+    /// Every run-creation path routes through here. Previously each of the four
+    /// call sites open-coded the `Run::new` / `Run::new_with_event_time` choice
+    /// and only one of them went on to apply `state.timeout`, so a WITHIN bound
+    /// on a pattern that starts through an epsilon transition or an AND branch
+    /// was silently dropped.
+    fn new_run_at(&self, state_id: usize, event: &SharedEvent) -> Run {
+        let mut run = match self.time_semantics {
+            TimeSemantics::ProcessingTime => Run::new(state_id),
+            TimeSemantics::EventTime => Run::new_with_event_time(state_id, event.timestamp),
+        };
+
+        if let Some(timeout) = self.nfa.states[state_id].timeout {
+            match self.time_semantics {
+                TimeSemantics::ProcessingTime => {
+                    run.deadline = Some(Timestamp::now() + timeout);
+                }
+                TimeSemantics::EventTime => {
+                    run = run.with_event_time_deadline(timeout);
+                }
+            }
+        }
+
+        run
+    }
+
     fn try_start_run_shared(&self, event: SharedEvent) -> Option<Run> {
         let start_state = &self.nfa.states[self.nfa.start_state];
         // PERF: Use static empty map instead of allocating on every call
@@ -1106,12 +1175,7 @@ impl SaseEngine {
                             });
 
                             if pred_matches {
-                                let mut run = match self.time_semantics {
-                                    TimeSemantics::ProcessingTime => Run::new(next_id),
-                                    TimeSemantics::EventTime => {
-                                        Run::new_with_event_time(next_id, event.timestamp)
-                                    }
-                                };
+                                let mut run = self.new_run_at(next_id, &event);
 
                                 // Initialize AND state and complete this branch
                                 let mut and_state = AndState::new();
@@ -1156,23 +1220,7 @@ impl SaseEngine {
                 )
             };
             if matches {
-                let mut run = match self.time_semantics {
-                    TimeSemantics::ProcessingTime => Run::new(next_id),
-                    TimeSemantics::EventTime => Run::new_with_event_time(next_id, event.timestamp),
-                };
-
-                // Set deadline if state has timeout
-                if let Some(timeout) = next_state.timeout {
-                    match self.time_semantics {
-                        TimeSemantics::ProcessingTime => {
-                            run.deadline = Some(Timestamp::now() + timeout);
-                        }
-                        TimeSemantics::EventTime => {
-                            // Set event-time deadline based on first event's timestamp
-                            run = run.with_event_time_deadline(timeout);
-                        }
-                    }
-                }
+                let mut run = self.new_run_at(next_id, &event);
 
                 // Capture event - use Arc::clone instead of cloning the event
                 run.push(Arc::clone(&event), next_state.alias.clone());
@@ -1202,12 +1250,7 @@ impl SaseEngine {
                                 });
 
                                 if pred_matches {
-                                    let mut run = match self.time_semantics {
-                                        TimeSemantics::ProcessingTime => Run::new(next_id),
-                                        TimeSemantics::EventTime => {
-                                            Run::new_with_event_time(next_id, event.timestamp)
-                                        }
-                                    };
+                                    let mut run = self.new_run_at(next_id, &event);
 
                                     let mut and_state = AndState::new();
                                     and_state.complete_branch(idx, Arc::clone(&event));
@@ -1233,12 +1276,7 @@ impl SaseEngine {
                     empty_captured,
                     self.evaluator.as_deref(),
                 ) {
-                    let mut run = match self.time_semantics {
-                        TimeSemantics::ProcessingTime => Run::new(next_id),
-                        TimeSemantics::EventTime => {
-                            Run::new_with_event_time(next_id, event.timestamp)
-                        }
-                    };
+                    let mut run = self.new_run_at(next_id, &event);
                     run.push(Arc::clone(&event), next_state.alias.clone());
                     return Some(run);
                 }
