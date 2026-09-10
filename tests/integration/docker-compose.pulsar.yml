@@ -1,6 +1,8 @@
 services:
   pulsar:
-    image: apachepulsar/pulsar:4.0
+    # `4.0` is not a published tag (Docker Hub publishes 4.0.x only); the
+    # unpinned form made this fixture unusable with "reference not found".
+    image: apachepulsar/pulsar:4.0.13
     hostname: pulsar
     container_name: varpulis-pulsar
     command: bin/pulsar standalone
@@ -17,7 +19,9 @@ services:
       start_period: 30s
 
   pulsar-setup:
-    image: apachepulsar/pulsar:4.0
+    # `4.0` is not a published tag (Docker Hub publishes 4.0.x only); the
+    # unpinned form made this fixture unusable with "reference not found".
+    image: apachepulsar/pulsar:4.0.13
     depends_on:
       pulsar:
         condition: service_healthy

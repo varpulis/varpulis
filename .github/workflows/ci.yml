@@ -550,7 +550,7 @@ jobs:
         run: |
           docker run -d --name varpulis-pulsar -p 6650:6650 -p 8080:8080 \
             -e PULSAR_MEM="-Xms512m -Xmx1g" \
-            apachepulsar/pulsar:4.0 bin/pulsar standalone
+            apachepulsar/pulsar:4.0.13 bin/pulsar standalone
           for i in $(seq 1 60); do
             if curl -sf http://127.0.0.1:8080/admin/v2/brokers/health >/dev/null; then
               echo "broker healthy"; exit 0
