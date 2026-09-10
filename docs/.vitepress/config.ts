@@ -244,6 +244,8 @@ export default defineConfig({
             { text: 'ADR-003: Coordinator/Worker', link: '/adr/003-coordinator-worker' },
             { text: 'ADR-004: SASE+ Semantics', link: '/adr/004-sase-plus-semantics' },
             { text: 'ADR-005: Hamlet Aggregation', link: '/adr/005-hamlet-trend-aggregation' },
+            { text: 'ADR-006: Emission Modes', link: '/adr/006-emission-modes' },
+            { text: 'ADR-007: JetStream Cluster Substrate', link: '/adr/007-jetstream-cluster-substrate' },
           ]
         },
       ],

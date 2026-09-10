@@ -1192,6 +1192,210 @@ mod barrier_tests {
 }
 
 // ---------------------------------------------------------------------------
+// Inter-pipeline route ingress
+// ---------------------------------------------------------------------------
+//
+// `routing::build_routing_table` maps a pipeline's outputs to NATS subjects and
+// its inputs to subscriptions. This is the consuming half: it binds each of a
+// pipeline's input subscriptions to a consumer and applies every event to the
+// engine.
+//
+// The ack discipline is the whole point. An event is acknowledged only *after*
+// `process_event` has returned — never on receipt. Acking on receipt is the
+// silent-loss pattern the audit found in the Redis Streams connector (`XACK`
+// before apply): the message is gone from the server the moment it arrives, so
+// a crash mid-apply loses it with nothing to replay. Acking after the apply
+// makes a crash redeliver instead: at-least-once, the same trade the house
+// reference (Vejas ADR-0002) states, with the corresponding requirement that
+// downstream side effects be idempotent.
+
+/// Wire format of an inter-pipeline routed event, matching what a pipeline's
+/// output route publishes and what the `inject` command accepts.
+#[cfg(feature = "nats-transport")]
+#[derive(Debug, serde::Deserialize)]
+pub struct RoutedEvent {
+    /// Event type, matched against the route's event-type pattern.
+    pub event_type: String,
+    /// Event fields.
+    #[serde(default)]
+    pub fields: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Build a runtime `Event` from a routed JSON payload.
+#[cfg(feature = "nats-transport")]
+fn event_from_routed(routed: RoutedEvent) -> varpulis_runtime::Event {
+    let mut event = varpulis_runtime::Event::new(routed.event_type);
+    for (k, v) in routed.fields {
+        let val: varpulis_core::Value = match v {
+            serde_json::Value::String(s) => s.into(),
+            serde_json::Value::Number(n) => {
+                if let Some(f) = n.as_f64() {
+                    varpulis_core::Value::Float(f)
+                } else {
+                    n.to_string().into()
+                }
+            }
+            serde_json::Value::Bool(b) => varpulis_core::Value::Bool(b),
+            other => other.to_string().into(),
+        };
+        event.data.insert(k.into(), val);
+    }
+    event
+}
+
+/// Consume one inter-pipeline route subject and apply every event to
+/// `pipeline_id`, acknowledging only after the apply.
+///
+/// On [`crate::nats_jetstream::Substrate::JetStream`] the consumer is durable:
+/// events published while this pipeline was restarting or migrating are
+/// delivered when it comes back, and an apply that fails is redelivered rather
+/// than dropped. On [`crate::nats_jetstream::Substrate::Core`] it is the
+/// historical plain subscription, and anything published while this process was
+/// not subscribed is gone — which is exactly why the JetStream substrate exists.
+///
+/// Runs until the consumer closes.
+#[cfg(feature = "nats-transport")]
+pub async fn run_route_ingress(
+    transport: crate::nats_jetstream::ClusterTransport,
+    pipeline_name: &str,
+    pipeline_id: &str,
+    subject: &str,
+    event_type_filter: &str,
+    api_key: &str,
+    tenant_manager: SharedTenantManager,
+) {
+    let mut consumer = match transport.consume_route(pipeline_name, subject).await {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Route ingress for {pipeline_name} on {subject} failed to start: {e}");
+            return;
+        }
+    };
+
+    info!(
+        "Route ingress: {pipeline_name} <- {subject} (filter '{event_type_filter}', \
+         substrate {}, durable {})",
+        transport.substrate().as_str(),
+        consumer.is_durable(),
+    );
+
+    while let Some(delivery) = consumer.next().await {
+        let routed: RoutedEvent = match delivery.json() {
+            Ok(r) => r,
+            Err(e) => {
+                // Deterministic poison: no number of redeliveries will make
+                // malformed JSON parse. Park it now rather than burning the
+                // whole `max_deliver` budget re-failing identically.
+                let reason = format!("malformed routed event: {e}");
+                if let Err(de) = delivery.dead_letter(&reason).await {
+                    error!("Failed to dead-letter malformed event on {subject}: {de}");
+                }
+                continue;
+            }
+        };
+
+        // The subject is the coarse filter; the route's event-type pattern is
+        // the fine one. A correctly delivered event that this route does not
+        // want is acked — it was not lost, it simply is not ours.
+        if !crate::routing::event_type_matches(&routed.event_type, event_type_filter) {
+            if let Err(e) = delivery.ack().await {
+                warn!("Failed to ack filtered event on {subject}: {e}");
+            }
+            continue;
+        }
+
+        let event_type = routed.event_type.clone();
+        let event = event_from_routed(routed);
+
+        // Apply to engine state.
+        let applied = {
+            let mut mgr = tenant_manager.write().await;
+            match mgr.get_tenant_by_api_key(api_key).cloned() {
+                None => Err("invalid API key".to_string()),
+                Some(tenant_id) => match mgr.get_tenant_mut(&tenant_id) {
+                    None => Err("tenant not found".to_string()),
+                    Some(tenant) => tenant
+                        .process_event(pipeline_id, event)
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| e.to_string()),
+                },
+            }
+        };
+
+        match applied {
+            // Applied to engine state — now, and only now, acknowledge.
+            Ok(()) => {
+                if let Err(e) = delivery.ack().await {
+                    warn!("Applied {event_type} but failed to ack on {subject}: {e}");
+                }
+            }
+            Err(reason) => {
+                if delivery.is_poison() {
+                    // Budget exhausted: park it with a death envelope and ack
+                    // only once the DLQ publish is confirmed. Dropped-and-traced
+                    // beats an infinite redelivery loop, and beats a silent drop.
+                    if let Err(de) = delivery.dead_letter(&reason).await {
+                        error!("Failed to dead-letter {event_type} on {subject}: {de}");
+                    }
+                } else {
+                    warn!("Apply of {event_type} on {subject} failed ({reason}); redelivering");
+                    if let Err(e) = delivery.nak().await {
+                        warn!("Failed to nak {event_type} on {subject}: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    info!("Route ingress for {pipeline_name} on {subject} stopped");
+}
+
+/// Spawn one [`run_route_ingress`] task per input subscription that
+/// `routing::build_routing_table` produced for `pipeline_name`.
+///
+/// Returns the join handles so the caller can abort them when the pipeline is
+/// undeployed or migrated.
+#[cfg(feature = "nats-transport")]
+pub fn spawn_route_ingress(
+    transport: &crate::nats_jetstream::ClusterTransport,
+    table: &crate::routing::RoutingTable,
+    pipeline_name: &str,
+    pipeline_id: &str,
+    api_key: &str,
+    tenant_manager: SharedTenantManager,
+) -> Vec<tokio::task::JoinHandle<()>> {
+    let Some(subscriptions) = table.input_subscriptions.get(pipeline_name) else {
+        return Vec::new();
+    };
+
+    subscriptions
+        .iter()
+        .map(|(subject, event_filter)| {
+            let transport = transport.clone();
+            let pipeline_name = pipeline_name.to_string();
+            let pipeline_id = pipeline_id.to_string();
+            let subject = subject.clone();
+            let event_filter = event_filter.clone();
+            let api_key = api_key.to_string();
+            let tm = tenant_manager.clone();
+            tokio::spawn(async move {
+                run_route_ingress(
+                    transport,
+                    &pipeline_name,
+                    &pipeline_id,
+                    &subject,
+                    &event_filter,
+                    &api_key,
+                    tm,
+                )
+                .await;
+            })
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Backward-compat tests (Task 3.3): worker built WITHOUT
 // `distributed-checkpoint` should ignore checkpoint commands gracefully
 // instead of returning the catch-all "unknown command" error.

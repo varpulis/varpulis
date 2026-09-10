@@ -72,6 +72,7 @@ pub mod metrics;
 pub mod migration;
 pub mod model_registry;
 pub mod nats_coordinator;
+pub mod nats_jetstream;
 pub mod nats_transport;
 pub mod nats_worker;
 pub mod pipeline_group;
@@ -101,6 +102,9 @@ pub use health::{
 };
 pub use metrics::ClusterPrometheusMetrics;
 pub use migration::{MigrationReason, MigrationStatus, MigrationTask};
+#[cfg(feature = "nats-transport")]
+pub use nats_jetstream::{ClusterTransport, Delivery, EventConsumer, JetStreamError};
+pub use nats_jetstream::{InvalidSubstrate, Substrate};
 pub use pipeline_group::{
     CrossRegionRouteSpec, DeployedPipelineGroup, GroupStatus, InterPipelineRoute,
     PartitionStrategy, PipelineDeployment, PipelineDeploymentStatus, PipelineGroupInfo,
@@ -464,16 +468,43 @@ async fn rest_heartbeat_loop(
 // NATS-based worker registration + heartbeat
 // ---------------------------------------------------------------------------
 
-/// Background task: worker registration and heartbeat over NATS.
+/// Background task: worker registration and heartbeat over NATS, on the
+/// historical core pub/sub substrate.
 ///
-/// Replaces the HTTP/WebSocket registration loop with NATS request/reply for
-/// registration and pub/sub for heartbeats.
+/// Kept for backwards compatibility. Use
+/// [`worker_nats_registration_loop_with`] to pick a substrate.
 #[cfg(feature = "nats-transport")]
 pub async fn worker_nats_registration_loop(
     nats_url: &str,
     worker_id: &str,
     api_key: &str,
     tenant_manager: Option<varpulis_runtime::SharedTenantManager>,
+) {
+    worker_nats_registration_loop_with(
+        nats_url,
+        worker_id,
+        api_key,
+        tenant_manager,
+        nats_jetstream::Substrate::Core,
+    )
+    .await;
+}
+
+/// Background task: worker registration and heartbeat over NATS.
+///
+/// Registration is NATS request/reply (core on every substrate — the reply is
+/// the acknowledgement, and this loop already retries with backoff).
+/// Heartbeats are published through
+/// [`nats_jetstream::ClusterTransport`]: on [`nats_jetstream::Substrate::JetStream`]
+/// the publish waits for the server's `PubAck`, so a heartbeat the stream did
+/// not store is a logged error rather than a silent gap in the liveness signal.
+#[cfg(feature = "nats-transport")]
+pub async fn worker_nats_registration_loop_with(
+    nats_url: &str,
+    worker_id: &str,
+    api_key: &str,
+    tenant_manager: Option<varpulis_runtime::SharedTenantManager>,
+    substrate: nats_jetstream::Substrate,
 ) {
     use tracing::{info, warn};
 
@@ -540,7 +571,29 @@ pub async fn worker_nats_registration_loop(
         .unwrap_or(HEARTBEAT_INTERVAL);
 
     let heartbeat_subject = nats_transport::subject_heartbeat(worker_id);
+
+    // A JetStream failure here is fatal for the heartbeat path and must be said
+    // out loud: silently continuing on core would give an operator who asked
+    // for durability the fire-and-forget behaviour they were replacing.
+    let transport =
+        match nats_jetstream::ClusterTransport::from_client(client.clone(), nats_url, substrate)
+            .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("Worker heartbeat transport unavailable: {}", e);
+                return;
+            }
+        };
+    info!(
+        "Worker {} publishing heartbeats on {} (substrate: {})",
+        worker_id,
+        heartbeat_subject,
+        substrate.as_str()
+    );
+
     let mut ticker = tokio::time::interval(interval);
+    let mut seq: u64 = 0;
 
     loop {
         ticker.tick().await;
@@ -548,7 +601,16 @@ pub async fn worker_nats_registration_loop(
         let (pipelines_running, pipeline_metrics) = collect_worker_metrics(&tenant_manager).await;
         let hb = build_heartbeat(pipelines_running, pipeline_metrics);
 
-        if let Err(e) = nats_transport::nats_publish(&client, &heartbeat_subject, &hb).await {
+        // A per-worker monotonic id feeds the stream's duplicate window, so a
+        // retried publish of the same heartbeat is collapsed server-side
+        // instead of being counted twice.
+        seq = seq.wrapping_add(1);
+        let msg_id = format!("{worker_id}-hb-{seq}");
+
+        if let Err(e) = transport
+            .publish_event(&heartbeat_subject, &hb, Some(&msg_id))
+            .await
+        {
             warn!("Failed to publish heartbeat: {}", e);
         }
     }

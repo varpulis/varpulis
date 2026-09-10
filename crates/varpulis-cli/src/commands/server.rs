@@ -857,13 +857,32 @@ pub async fn run_server(
                 "Registering with coordinator via NATS ({}) as worker '{}'",
                 nats_url, worker_id
             );
+            // Delivery substrate for heartbeats. Defaults to core pub/sub so an
+            // existing deployment on a plain nats-server is unaffected; set
+            // VARPULIS_NATS_SUBSTRATE=jetstream for at-least-once heartbeats
+            // that survive a coordinator restart.
+            let substrate = match varpulis_cluster::Substrate::from_env() {
+                Ok(s) => s,
+                Err(e) => {
+                    anyhow::bail!("{e}");
+                }
+            };
+            info!("NATS substrate: {}", substrate.as_str());
             let nats_url = nats_url.clone();
-            let wid = worker_id.clone();
-            let wkey = worker_api_key.clone();
+            // Moved, not cloned: the HTTP registration path below is the `else`
+            // arm, so nothing else reads these on this branch.
+            let wid = worker_id;
+            let wkey = worker_api_key;
             let tm = tenant_manager_for_heartbeat.clone();
             tokio::spawn(async move {
-                varpulis_cluster::worker_nats_registration_loop(&nats_url, &wid, &wkey, Some(tm))
-                    .await;
+                varpulis_cluster::worker_nats_registration_loop_with(
+                    &nats_url,
+                    &wid,
+                    &wkey,
+                    Some(tm),
+                    substrate,
+                )
+                .await;
             });
         } else {
             info!(

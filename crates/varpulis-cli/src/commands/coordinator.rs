@@ -273,12 +273,26 @@ pub async fn run_coordinator(
             .await
             .map_err(|e| anyhow::anyhow!("Failed to connect to NATS: {}", e))?;
         info!("Coordinator connected to NATS at {}", nurl);
+        // Delivery substrate for worker heartbeats. Defaults to core pub/sub so
+        // an existing deployment on a plain nats-server is unaffected; set
+        // VARPULIS_NATS_SUBSTRATE=jetstream so a heartbeat published while this
+        // coordinator is restarting is still there when it comes back.
+        let substrate =
+            varpulis_cluster::Substrate::from_env().map_err(|e| anyhow::anyhow!("{e}"))?;
+        info!("Coordinator NATS substrate: {}", substrate.as_str());
+        // Durable identity for the heartbeat consumer: stable across restarts,
+        // and distinct per coordinator so two coordinators each see every
+        // heartbeat rather than load-balancing them.
+        let coordinator_durable_id =
+            std::env::var("VARPULIS_COORDINATOR_ID").unwrap_or_else(|_| "coordinator".to_string());
         let coord_for_nats = coordinator.clone();
         let handler_client = nats_client.clone();
         tokio::spawn(async move {
-            varpulis_cluster::nats_coordinator::run_coordinator_nats_handler(
+            varpulis_cluster::nats_coordinator::run_coordinator_nats_handler_with(
                 handler_client,
                 coord_for_nats,
+                substrate,
+                &coordinator_durable_id,
             )
             .await;
         });
