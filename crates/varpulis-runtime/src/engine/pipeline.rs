@@ -941,6 +941,17 @@ fn execute_op_common(
                             );
                         }
 
+                        // A different truncation, and one that used to happen
+                        // in silence: the enumeration stopped at its result cap
+                        // with combinations still unexplored, so these matches
+                        // are the first N of an unknown number rather than all
+                        // of them. Absent when the enumeration completed.
+                        if match_result.enumeration_truncated {
+                            seq_event
+                                .data
+                                .insert("_enumeration_truncated".into(), Value::Bool(true));
+                        }
+
                         // match_rate: events per second (based on event timestamps)
                         let duration_secs = event_duration_ms as f64 / 1000.0;
                         if duration_secs > 0.0 {
