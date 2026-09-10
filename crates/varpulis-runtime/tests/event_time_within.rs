@@ -71,6 +71,18 @@ fn parse_events(source: &str) -> Vec<Event> {
         .collect()
 }
 
+fn login(user: &str, ts: DateTime<Utc>) -> Event {
+    let mut e = stamped("Login", ts);
+    e.data.insert("user".into(), Value::str(user));
+    e
+}
+
+fn purchase(user: &str, ts: DateTime<Utc>) -> Event {
+    let mut e = stamped("Purchase", ts);
+    e.data.insert("user".into(), Value::str(user));
+    e
+}
+
 /// `SEQ(Login, Transaction) WITHIN timeout`.
 fn login_then_transaction(timeout: Duration) -> SasePattern {
     SasePattern::Within(
@@ -200,6 +212,74 @@ fn out_of_orderness_still_lets_a_late_but_in_window_event_complete() {
         results.len(),
         1,
         "an out-of-order event inside the window must still complete the run"
+    );
+}
+
+// =========================================================================
+// `.watermark(out_of_order: ...)` must reach the SASE engine
+// =========================================================================
+
+#[test]
+fn watermark_out_of_order_reaches_the_sase_engine() {
+    // `.watermark(out_of_order: D)` configured per-source watermark tracking
+    // and windowing, but never touched the SASE engine, so a pattern's runs
+    // were culled the instant the newest event's timestamp passed their
+    // deadline — with no tolerance for out-of-order arrival.
+    //
+    // Here the second Login drags the max timestamp to 10:02:30, past the
+    // first Login's 10:01:00 deadline. Without the 2m tolerance the u1 run is
+    // culled and the out-of-order Purchase (10:00:30, comfortably inside the
+    // 1-minute window) finds nothing left to complete.
+    let vpl = r"
+        stream OutOfOrderPurchase = Login as l
+            -> Purchase where user == l.user as p
+            .watermark(out_of_order: 2m)
+            .within(1m)
+            .emit(user: l.user)
+    ";
+
+    let alerts = run_vpl(
+        vpl,
+        vec![
+            login("u1", at(10, 0, 0)),
+            login("u2", at(10, 2, 30)),
+            purchase("u1", at(10, 0, 30)),
+        ],
+    );
+
+    assert_eq!(
+        alerts.len(),
+        1,
+        "the u1 run must survive its own out-of-order Purchase, got {alerts:?}"
+    );
+    assert_eq!(alerts[0].data.get("user"), Some(&Value::str("u1")));
+}
+
+#[test]
+fn without_watermark_the_bound_has_no_out_of_order_tolerance() {
+    // The counterpart, and the guard against over-correction: with no
+    // `.watermark()` declared, the watermark is the newest timestamp seen and
+    // the u1 run is legitimately gone by the time its Purchase shows up.
+    let vpl = r"
+        stream StrictPurchase = Login as l
+            -> Purchase where user == l.user as p
+            .within(1m)
+            .emit(user: l.user)
+    ";
+
+    let alerts = run_vpl(
+        vpl,
+        vec![
+            login("u1", at(10, 0, 0)),
+            login("u2", at(10, 2, 30)),
+            purchase("u1", at(10, 0, 30)),
+        ],
+    );
+
+    assert_eq!(
+        alerts.len(),
+        0,
+        "with zero tolerance the watermark has already passed the deadline, got {alerts:?}"
     );
 }
 
