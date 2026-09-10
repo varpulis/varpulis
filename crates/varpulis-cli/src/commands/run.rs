@@ -152,11 +152,12 @@ pub async fn run_program(
     // and the 2PC barrier persists a fresh checkpoint before committing sinks.
     if let Some(ref cp_dir) = checkpoint_dir {
         std::fs::create_dir_all(cp_dir)?;
-        let store: std::sync::Arc<dyn varpulis_runtime::persistence::StateStore> =
-            std::sync::Arc::new(
-                varpulis_runtime::persistence::FileStore::open(cp_dir)
-                    .map_err(|e| anyhow::anyhow!("Checkpoint store error: {e}"))?,
-            );
+        let file_store = varpulis_runtime::persistence::FileStore::open(cp_dir)
+            .map_err(|e| anyhow::anyhow!("Checkpoint store error: {e}"))?;
+        // Encryption at rest, which was documented and never applied. Fails
+        // rather than falling back to plaintext when a key is configured and
+        // cannot be honoured.
+        let store = varpulis_cli::state_encryption::wrap_if_configured(file_store, "checkpoints")?;
         let config = varpulis_runtime::persistence::CheckpointConfig {
             interval: std::time::Duration::from_secs(checkpoint_interval),
             max_checkpoints: 3,

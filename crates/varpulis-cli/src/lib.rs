@@ -22,6 +22,7 @@ pub mod output;
 pub mod playground;
 pub mod rate_limit;
 pub mod security;
+pub mod state_encryption;
 #[cfg(feature = "saas")]
 pub mod tenant_context;
 pub mod users;

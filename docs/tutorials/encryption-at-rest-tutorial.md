@@ -113,14 +113,22 @@ export VARPULIS_ENCRYPTION_PASSPHRASE="my-secure-passphrase-here"
 
 When `VARPULIS_ENCRYPTION_PASSPHRASE` is set (and `VARPULIS_ENCRYPTION_KEY` is not), Varpulis automatically derives a 256-bit key using Argon2id with:
 
-- **Memory**: 64 MB
+- **Memory**: 64 MiB
 - **Iterations**: 3
-- **Parallelism**: 4 threads
-- **Salt**: Derived from the passphrase (deterministic for the same passphrase)
+- **Parallelism**: 4 lanes
+- **Salt**: a fixed application constant, not per-deployment
 
 Argon2id is the recommended password hashing algorithm per OWASP guidelines. It provides resistance against both GPU and side-channel attacks.
 
-**Trade-off:** Passphrase derivation adds ~200ms startup time due to the Argon2id computation. For latency-sensitive deployments, pre-derive the key and use `VARPULIS_ENCRYPTION_KEY` directly.
+**The salt is fixed, and that is a real weakness.** The key has to be reproducible across restarts from the passphrase alone, so there is nowhere to keep a per-deployment random salt that would not sit next to the data it protects. The consequence is that the same passphrase yields the same key on every Varpulis deployment, so a precomputed table against a weak passphrase is not defeated by the salt. Where this matters, generate a random key and use `VARPULIS_ENCRYPTION_KEY`:
+
+```bash
+export VARPULIS_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+```
+
+**Trade-off:** Passphrase derivation costs a few hundred milliseconds at startup, once. For latency-sensitive deployments, pre-derive the key and use `VARPULIS_ENCRYPTION_KEY` directly.
+
+**The binary must be built with the feature.** `cargo build --release --features encryption`. Without it, a binary that sees either variable set now refuses to start rather than writing plaintext while you believe otherwise.
 
 ---
 

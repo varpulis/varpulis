@@ -428,8 +428,10 @@ pub async fn run_server(
     // REST API routes (multi-tenant pipeline management)
     let tenant_manager = if let Some(ref state_dir) = state_dir {
         std::fs::create_dir_all(state_dir)?;
-        let store: Arc<dyn varpulis_runtime::StateStore> =
-            Arc::new(varpulis_runtime::FileStore::open(state_dir)?);
+        let store = varpulis_cli::state_encryption::wrap_if_configured(
+            varpulis_runtime::FileStore::open(state_dir)?,
+            "tenant state",
+        )?;
         info!("State persistence enabled: {}", state_dir.display());
         varpulis_runtime::shared_tenant_manager_with_store(store)
     } else {
