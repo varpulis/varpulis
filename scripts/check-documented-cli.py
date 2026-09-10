@@ -55,7 +55,13 @@ def accepts(binary: str, path: list[str]) -> tuple[set[str], bool, set[str]]:
 
 
 def invocations():
-    """(file, line, argv) for every `varpulis ...` line in a fenced block."""
+    """(file, line, argv) for every `varpulis ...` command the docs show.
+
+    Both fenced blocks and inline code spans. The README named
+    `varpulis security init` in prose — the subcommand is `security-init` —
+    and a fenced-blocks-only scan walked straight past it. A reader copies an
+    inline command as readily as a fenced one.
+    """
     for md in sorted((ROOT / "docs").rglob("*.md")) + [ROOT / "README.md"]:
         if not md.is_file() or ".vitepress" in md.parts or "node_modules" in md.parts:
             continue
@@ -83,6 +89,19 @@ def invocations():
                 except ValueError:
                     continue
                 yield md.relative_to(ROOT), start + offset + 1, argv[1:]
+
+        # Inline `code spans`, outside fenced blocks.
+        without_fences = re.sub(r"^```.*?^```", "", text, flags=re.S | re.M)
+        for m in re.finditer(r"`(varpulis\s[^`\n]+)`", without_fences):
+            line = text[: text.find(m.group(0))].count("\n") + 1
+            try:
+                argv = shlex.split(m.group(1))
+            except ValueError:
+                continue
+            # Prose often shows a fragment ("`varpulis check` on each file"),
+            # so only flag what is unambiguously wrong: an unknown subcommand
+            # or an unknown flag. Positionals are too easily a placeholder.
+            yield md.relative_to(ROOT), line, argv[1:]
 
 
 def main() -> int:
