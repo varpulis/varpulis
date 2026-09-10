@@ -53,111 +53,109 @@ async fn test_timer_with_initial_delay() {
     assert_eq!(timer_event_type, "Timer_delayed");
 }
 
-#[tokio::test]
+/// Timers must be tested on tokio's virtual clock, not the wall clock.
+///
+/// These tests used to race a real 100 ms budget against real 10 ms and 20 ms
+/// timers. On a loaded CI runner the timers get starved, `interval`'s default
+/// burst catch-up delivers ticks unevenly, and the counts invert — which is
+/// how `test_timer_manager` turned the nightly suite red. `start_paused`
+/// makes time virtual: the runtime advances to the next timer deadline
+/// whenever it has nothing else to do, so tick counts become exact and the
+/// tests run in microseconds regardless of machine load.
+#[tokio::test(start_paused = true)]
 async fn test_timer_generates_events() {
-    // Create a fast timer for testing (10ms interval)
     let (event_tx, mut event_rx) = mpsc::channel::<Event>(100);
 
-    // Spawn a timer directly using spawn_timer
     let handle = varpulis_runtime::timer::spawn_timer(
-        10_000_000, // 10ms in nanoseconds
+        10_000_000, // 10 ms
         None,
         "Timer_test".to_string(),
         event_tx,
     );
 
-    // Wait for a few timer events
-    let mut received_count = 0;
-    let timeout = tokio::time::timeout(Duration::from_millis(100), async {
-        while let Some(event) = event_rx.recv().await {
-            assert_eq!(&*event.event_type, "Timer_test");
-            assert!(event.data.contains_key("timestamp"));
-            received_count += 1;
-            if received_count >= 3 {
-                break;
-            }
-        }
-    })
-    .await;
+    // The first tick is consumed by the implementation, so ticks land at
+    // 10, 20, 30 ms. Three receives are exactly three ticks.
+    for _ in 0..3 {
+        let event = event_rx
+            .recv()
+            .await
+            .expect("timer must keep producing events");
+        assert_eq!(&*event.event_type, "Timer_test");
+        assert!(
+            event.data.contains_key("timestamp"),
+            "timer events must carry a timestamp"
+        );
+    }
 
-    // Abort the timer
     handle.abort();
-
-    // We should have received at least some events (may be less if timing is tight)
-    assert!(
-        timeout.is_ok() || received_count >= 1,
-        "Timer should generate events"
-    );
 }
 
-#[tokio::test]
+/// A 10 ms timer must fire exactly twice as often as a 20 ms one.
+///
+/// On the virtual clock this is an equality, not a heuristic: by t=60 ms the
+/// fast timer has ticked at 10..60 and the slow one at 20, 40, 60, so nine
+/// events total, six and three. The previous version asserted only
+/// `a >= b` after a real 100 ms race and still managed to fail on macOS.
+#[tokio::test(start_paused = true)]
 async fn test_timer_manager() {
     let (event_tx, mut event_rx) = mpsc::channel::<Event>(100);
 
     let mut manager = TimerManager::new();
-
-    // Spawn two timers
     manager.spawn_timers(
         vec![
-            (10_000_000, None, "Timer_A".to_string()), // 10ms
-            (20_000_000, None, "Timer_B".to_string()), // 20ms
+            (10_000_000, None, "Timer_A".to_string()), // 10 ms
+            (20_000_000, None, "Timer_B".to_string()), // 20 ms
         ],
         event_tx,
     );
 
-    // Wait for some events
     let mut timer_a_count = 0;
     let mut timer_b_count = 0;
 
-    let _ = tokio::time::timeout(Duration::from_millis(100), async {
-        while let Some(event) = event_rx.recv().await {
-            match &*event.event_type {
-                "Timer_A" => timer_a_count += 1,
-                "Timer_B" => timer_b_count += 1,
-                _ => {}
-            }
-            if timer_a_count >= 3 && timer_b_count >= 2 {
-                break;
-            }
+    // Exactly the events due in the first 60 virtual milliseconds.
+    for _ in 0..9 {
+        let event = event_rx.recv().await.expect("timers must keep producing");
+        match &*event.event_type {
+            "Timer_A" => timer_a_count += 1,
+            "Timer_B" => timer_b_count += 1,
+            other => panic!("unexpected timer event type: {other}"),
         }
-    })
-    .await;
+    }
 
-    // Stop all timers
     manager.stop_all();
 
-    // Timer A should fire more often than Timer B (2x frequency)
-    assert!(
-        timer_a_count >= timer_b_count,
-        "Timer A (10ms) should fire more often than Timer B (20ms)"
-    );
+    assert_eq!(timer_a_count, 6, "10 ms timer over 60 ms");
+    assert_eq!(timer_b_count, 3, "20 ms timer over 60 ms");
 }
 
-#[tokio::test]
+/// The initial delay must actually hold the first event back.
+///
+/// On the virtual clock the two waits below are exact: nothing can arrive
+/// before 20 ms, and the first tick lands at 30 ms (delay plus one interval).
+#[tokio::test(start_paused = true)]
 async fn test_timer_with_initial_delay_spawning() {
     let (event_tx, mut event_rx) = mpsc::channel::<Event>(100);
 
-    // Spawn a timer with a short initial delay (20ms) and fast interval (10ms)
     let handle = varpulis_runtime::timer::spawn_timer(
-        10_000_000,       // 10ms interval
-        Some(20_000_000), // 20ms initial delay
+        10_000_000,       // 10 ms interval
+        Some(20_000_000), // 20 ms initial delay
         "Timer_delayed".to_string(),
         event_tx,
     );
 
-    // Try to receive immediately - should get nothing due to initial delay
-    let immediate_result = tokio::time::timeout(Duration::from_millis(10), event_rx.recv()).await;
+    // Nothing may arrive within the initial delay.
+    let early = tokio::time::timeout(Duration::from_millis(19), event_rx.recv()).await;
     assert!(
-        immediate_result.is_err(),
-        "Should not receive events before initial delay"
+        early.is_err(),
+        "no event may arrive before the initial delay elapses"
     );
 
-    // Wait for initial delay + interval to pass
-    let delayed_result = tokio::time::timeout(Duration::from_millis(50), event_rx.recv()).await;
-    assert!(
-        delayed_result.is_ok(),
-        "Should receive event after initial delay"
-    );
+    // The first tick is one interval after the delay.
+    let first = tokio::time::timeout(Duration::from_millis(50), event_rx.recv())
+        .await
+        .expect("an event must arrive after the initial delay")
+        .expect("the timer channel must stay open");
+    assert_eq!(&*first.event_type, "Timer_delayed");
 
     handle.abort();
 }
