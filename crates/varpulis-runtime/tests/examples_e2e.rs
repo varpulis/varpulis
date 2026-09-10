@@ -80,15 +80,29 @@ async fn run_example(vpl_rel: &str, evt_rel: &str) -> Vec<Event> {
     engine
         .load(&program)
         .unwrap_or_else(|e| panic!("{vpl_rel}: engine load failed: {e:?}"));
-    engine
-        .process_batch_sync(events)
-        .unwrap_or_else(|e| panic!("{vpl_rel}: processing failed: {e:?}"));
+    // Choose the dispatch path the CLI would choose. `simulate`, `detect` and
+    // `analyze` all ask `requires_async_dispatch()`: the sync path does not
+    // implement join sources and now refuses them loudly rather than returning
+    // an empty result, so a harness that hardcoded `process_batch_sync` would
+    // report every join example as broken.
+    if engine.requires_async_dispatch() {
+        engine
+            .process_batch(events)
+            .await
+            .unwrap_or_else(|e| panic!("{vpl_rel}: processing failed: {e:?}"));
+    } else {
+        engine
+            .process_batch_sync(events)
+            .unwrap_or_else(|e| panic!("{vpl_rel}: processing failed: {e:?}"));
+    }
 
-    // End-of-input drain: graduate still-open event-time windows.
+    // End-of-input drain: the input is bounded, so every still-open window is
+    // as complete as it will ever be — including the fused columnar aggregates,
+    // which `flush_final_watermark` does not touch.
     engine
-        .flush_final_watermark()
+        .flush_end_of_input()
         .await
-        .unwrap_or_else(|e| panic!("{vpl_rel}: watermark drain failed: {e:?}"));
+        .unwrap_or_else(|e| panic!("{vpl_rel}: end-of-input drain failed: {e:?}"));
     if engine.has_session_windows() {
         engine
             .flush_expired_sessions()
@@ -123,6 +137,11 @@ const EXAMPLE_CASES: &[(&str, &str, usize)] = &[
         "examples/transaction_monitoring.vpl",
         "examples/transaction_monitoring.evt",
         5,
+    ),
+    (
+        "examples/vpl-by-example/19_join.vpl",
+        "examples/vpl-by-example/19_join.evt",
+        4,
     ),
     (
         "examples/vpl-by-example/01_hello_world.vpl",
@@ -277,13 +296,15 @@ const EXAMPLE_CASES: &[(&str, &str, usize)] = &[
 /// These assert the BROKEN count. When the engine is fixed the assertion trips,
 /// which is the point — the entry then moves into [`EXAMPLE_CASES`] with its
 /// intended count. Nothing here is a licence to leave an example unexercised.
-const KNOWN_FAILING_EXAMPLES: &[(&str, &str, usize, usize, &str)] = &[(
-    "examples/vpl-by-example/19_join.vpl",
-    "examples/vpl-by-example/19_join.evt",
-    0,
-    4,
-    "ENGINE: the synchronous dispatch path bails out of joins.      crates/varpulis-runtime/src/engine/dispatch.rs,      `process_stream_with_functions_sync`: `if matches!(stream.source,      RuntimeSource::Join(_)) { return ...empty... }` (// join requires async in      some paths). `varpulis simulate -w 1` takes that path whenever the program      has no `.to()` sink, so a join example can never emit. The VPL itself is      correct: run the same file against a build whose sync path handles joins      and it emits the 4 rows below.",
-)];
+const KNOWN_FAILING_EXAMPLES: &[(&str, &str, usize, usize, &str)] = &[
+    // Empty, and it should stay that way.
+    //
+    // `19_join` lived here: the synchronous dispatch path bailed out of joins,
+    // so `simulate -w 1` — which takes that path whenever the program has no
+    // `.to()` sink — could never emit one. Fixed in #218, which is exactly the
+    // event this table exists to force: the guard below went red, and the entry
+    // moved into `EXAMPLE_CASES` with its intended count of 4.
+];
 
 #[tokio::test]
 async fn known_failing_examples_still_fail() {
@@ -567,36 +588,43 @@ async fn forecasting_example_predicts_before_the_pattern_completes() {
 mod known_failing {
     use super::*;
 
-    /// KNOWN FAILING (varpulis-runtime, observed on v0.11.0): the synchronous
-    /// dispatch path drops joins, so 19_join emits nothing through
-    /// `varpulis simulate -w 1`.
+    /// `19_join` was a known-failing case until #218: the synchronous dispatch
+    /// path returned an empty result for join sources, so `simulate -w 1` —
+    /// the default whenever a program has no `.to()` sink — emitted nothing.
     ///
-    /// The example itself was ALSO broken and has been repaired: it ended at
-    /// `.select()` with no `.emit()` (a join computes the row but publishes
-    /// nothing without one), and its two source streams were windowed
-    /// aggregates with no `.emit()` over an input too short for their 5s
-    /// windows to close. With those fixed it produces the 4 rows asserted
-    /// below on a build whose sync path handles joins.
-    ///
-    /// What remains is the engine bail-out at
-    /// `engine/dispatch.rs::process_stream_with_functions_sync` —
-    /// `if matches!(stream.source, RuntimeSource::Join(_)) { return empty }`.
-    /// Not fixed here: engine semantics are owned elsewhere.
+    /// Now it must produce a full comfort index: both zones, every field
+    /// populated. Counting rows is not enough; a join that drops one side
+    /// still counts.
     #[tokio::test]
-    async fn sync_dispatch_drops_joins() {
+    async fn join_example_produces_a_complete_comfort_index() {
         let out = run_example(
             "examples/vpl-by-example/19_join.vpl",
             "examples/vpl-by-example/19_join.evt",
         )
         .await;
-        assert!(
-            out.is_empty(),
-            "KNOWN-FAILING CASE FIXED: the sync dispatch path now emits joins \
-             ({} event(s)). Move 19_join from KNOWN_FAILING_EXAMPLES into \
-             EXAMPLE_CASES with its intended count of 4, and replace this test \
-             with the positive assertions (zone/temperature/humidity/comfort on \
-             every row, and both zones represented).",
-            out.len()
+
+        assert_eq!(out.len(), 4, "expected four joined rows, got {out:?}");
+
+        let mut zones = BTreeSet::new();
+        for row in &out {
+            for field in ["zone", "temperature", "humidity", "comfort"] {
+                assert!(
+                    row.data.contains_key(field),
+                    "a joined row is missing `{field}`, so one side of the join \
+                     did not contribute: {row:?}"
+                );
+            }
+            if let Some(Value::Str(z)) = row.data.get("zone") {
+                zones.insert(z.to_string());
+            }
+        }
+
+        assert_eq!(
+            zones,
+            ["office".to_string(), "server_room".to_string()]
+                .into_iter()
+                .collect::<BTreeSet<_>>(),
+            "both zones must be represented; a join keyed wrongly collapses them"
         );
     }
 
