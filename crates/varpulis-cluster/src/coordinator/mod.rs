@@ -183,6 +183,12 @@ pub struct Coordinator {
     /// Optional Raft consensus handle (enabled with `raft` feature).
     #[cfg(feature = "raft")]
     pub raft_handle: Option<RaftHandle>,
+    /// JetStream KV control plane, when `VARPULIS_CONTROL_PLANE_URL` selects
+    /// it. Replaces Raft as the destination for replicated writes: `replicate`
+    /// sends a command to exactly one of the two, never both, because two
+    /// copies of the control state that drift are worse than either alone.
+    #[cfg(feature = "jetstream-control-plane")]
+    pub control_plane: Option<crate::jetstream_control_plane::Applier>,
     /// Prometheus metrics for cluster operations.
     pub cluster_metrics: ClusterPrometheusMetrics,
     /// Model registry (name -> metadata).
@@ -263,6 +269,8 @@ impl Coordinator {
             ha_role: HaRole::default(),
             #[cfg(feature = "raft")]
             raft_handle: None,
+            #[cfg(feature = "jetstream-control-plane")]
+            control_plane: None,
             cluster_metrics: ClusterPrometheusMetrics::new(),
             model_registry: HashMap::new(),
             llm_config: None,
@@ -289,24 +297,47 @@ impl Coordinator {
         coord
     }
 
-    /// Replicate a command through Raft consensus.
+    /// Replicate a control-plane command.
     ///
-    /// In standalone mode (no Raft), this is a no-op.
-    /// In Raft mode, forwards to the leader. Returns `NotLeader` if this node
-    /// is not the leader.
-    #[cfg(feature = "raft")]
+    /// One destination, chosen once:
+    ///
+    /// * the JetStream KV control plane, when `VARPULIS_CONTROL_PLANE_URL`
+    ///   configured one, or
+    /// * Raft, when it is enabled, or
+    /// * nowhere, in standalone mode, where the local state is the only copy.
+    ///
+    /// Never both. Two copies of the control state that drift apart are worse
+    /// than either alone, and nothing reconciles them.
+    ///
+    /// Every replicated write in the cluster goes through here. It used to be
+    /// bypassed by fifteen direct `handle.raft.client_write(...)` calls in
+    /// `api.rs`, which is why the backend could not be swapped in one place.
     #[tracing::instrument(skip(self))]
-    pub async fn raft_replicate(
+    pub async fn replicate(
         &self,
-        cmd: crate::raft::ClusterCommand,
+        cmd: crate::control_state::ClusterCommand,
     ) -> Result<(), ClusterError> {
+        #[cfg(feature = "jetstream-control-plane")]
+        if let Some(ref applier) = self.control_plane {
+            applier.apply(cmd).await.map_err(|e| {
+                ClusterError::InvalidOperation(format!("control plane write failed: {e}"))
+            })?;
+            return Ok(());
+        }
+
+        #[cfg(feature = "raft")]
         if let Some(ref handle) = self.raft_handle {
             handle.raft.client_write(cmd).await.map_err(|e| {
                 // Extract leader address for ForwardToLeader errors
                 let leader_info = format!("{}", e);
                 ClusterError::NotLeader(leader_info)
             })?;
+            return Ok(());
         }
+
+        // Standalone: the in-memory state this call already mutated is the
+        // only copy there is.
+        let _ = cmd;
         Ok(())
     }
 

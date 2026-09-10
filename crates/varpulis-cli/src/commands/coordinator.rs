@@ -175,24 +175,23 @@ pub async fn run_coordinator(
     }
     println!("Heartbeat: {heartbeat_interval_secs}s interval, {heartbeat_timeout_secs}s timeout");
 
-    // `VARPULIS_CONTROL_PLANE_URL` selects the JetStream KV control plane, and
-    // nothing reads it yet: `ControlPlaneConfig::from_env` has no caller
-    // outside its own test, so the module is complete, tested against a real
-    // three-node cluster, and wired to nothing.
-    //
-    // An operator who sets the variable to move off Raft would otherwise get
-    // Raft, or standalone, and find out during an incident. Say it at startup
-    // instead — on stderr, so it survives a piped stdout.
-    // Empty counts as unset, matching `ControlPlaneConfig::from_env`, which
-    // filters an empty URL out. `var_os` alone would treat `VAR=` as set and
-    // warn about a variable the config layer would ignore.
+    // `VARPULIS_CONTROL_PLANE_URL` selects the JetStream KV control plane. It
+    // is read here and the plane is opened below, next to the Raft handle, so
+    // a failure to open stops startup rather than silently leaving the
+    // operator on the backend they were trying to leave.
+    #[cfg(feature = "jetstream-control-plane")]
+    let control_plane_config =
+        varpulis_cluster::jetstream_control_plane::ControlPlaneConfig::from_env();
+
+    // Built without the feature, a set variable would otherwise do nothing at
+    // all, which is the failure this whole wiring exists to remove.
+    #[cfg(not(feature = "jetstream-control-plane"))]
     if std::env::var("VARPULIS_CONTROL_PLANE_URL").is_ok_and(|u| !u.is_empty()) {
-        eprintln!(
-            "WARNING: VARPULIS_CONTROL_PLANE_URL is set and this coordinator is \
-             ignoring it.\n         The JetStream KV control plane is implemented \
-             and tested but not yet\n         wired into the coordinator, so \
-             coordination is still Raft or standalone.\n         Unset the \
-             variable to silence this."
+        anyhow::bail!(
+            "VARPULIS_CONTROL_PLANE_URL is set but this binary was built without \
+             the `jetstream-control-plane` feature, so coordination would \
+             silently stay on Raft or standalone. Rebuild with \
+             `--features jetstream-control-plane`, or unset the variable."
         );
     }
     if let Some(ref sp) = scaling_policy {
@@ -363,6 +362,42 @@ pub async fn run_coordinator(
         #[cfg(feature = "nats-transport")]
         {
             coord.nats_client = coordinator_nats_client;
+        }
+
+        // Open the JetStream KV control plane when one is configured. Every
+        // replicated write then goes there instead of to Raft — `replicate`
+        // picks one destination, never both.
+        #[cfg(feature = "jetstream-control-plane")]
+        if let Some(cfg) = control_plane_config {
+            use varpulis_cluster::jetstream_control_plane::{Applier, ControlPlane};
+            match ControlPlane::connect(&cfg).await {
+                Ok(cp) => {
+                    let replicas = cp.replicas().await.unwrap_or(cfg.num_replicas);
+                    if replicas < 3 {
+                        eprintln!(
+                            "WARNING: the control-plane bucket has {replicas} replica(s). \
+                             It is the only copy of the cluster's control state; a \
+                             deployment replacing Raft with it should set \
+                             VARPULIS_CONTROL_PLANE_REPLICAS=3 against a NATS cluster."
+                        );
+                    }
+                    println!(
+                        "Control:   JetStream KV bucket '{}' ({} replica(s))",
+                        cp.bucket(),
+                        replicas
+                    );
+                    coord.control_plane = Some(Applier::new(cp));
+                }
+                Err(e) => {
+                    // Refusing rather than falling back: an operator who
+                    // configured the control plane and silently got Raft would
+                    // find out during an incident.
+                    return Err(anyhow::anyhow!(
+                        "VARPULIS_CONTROL_PLANE_URL is set but the control plane \
+                         could not be opened: {e}"
+                    ));
+                }
+            }
         }
     }
 

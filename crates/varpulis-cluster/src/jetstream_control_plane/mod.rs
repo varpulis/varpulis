@@ -169,27 +169,34 @@
 //! * **Leadership is a lease, not an election.** See [`leader`] for the
 //!   uncertainty window and why every write is CAS-guarded regardless.
 //!
-//! # 5. Selecting this backend — NOT YET WIRED
+//! # 5. Selecting this backend
 //!
-//! **No coordinator reads this configuration.**
-//! [`store::ControlPlaneConfig::from_env`] has no caller outside its own test.
-//! Everything below this module is implemented and tested, including against
-//! a real three-node NATS cluster with a replicated bucket, and nothing in a
-//! running coordinator calls it. Setting `VARPULIS_CONTROL_PLANE_URL` today
-//! coordinates through Raft or standalone exactly as before; the coordinator
-//! prints a warning at startup saying so, rather than letting an operator
-//! discover it during an incident.
-//!
-//! What remains, in order: open the control plane at coordinator startup;
-//! run [`leader::LeaderLease`] in place of Raft's election; route the twelve
-//! `client_write` call sites through [`apply::Applier`]; run
-//! [`reconcile::Reconciler`] from the health loop. Only then can `raft/` be
-//! removed.
-//!
-//! When it is wired, the selection contract is that it stays off unless
-//! `VARPULIS_CONTROL_PLANE_URL` is set, so building with the
+//! Off unless `VARPULIS_CONTROL_PLANE_URL` is set, so building with the
 //! `jetstream-control-plane` feature changes no deployment's behaviour on its
-//! own.
+//! own. When it is set, the coordinator opens the bucket at startup and
+//! refuses to start if it cannot — an operator who configured the control
+//! plane and silently got Raft would find out during an incident.
+//!
+//! **What goes through it today.** Every replicated write. All fifteen
+//! `client_write` call sites now funnel through
+//! [`crate::coordinator::Coordinator::replicate`], which picks exactly one
+//! destination — this control plane, or Raft, or nowhere in standalone mode —
+//! and never both, because two copies of the control state that drift apart
+//! are worse than either alone.
+//!
+//! Heartbeats included, and that is not optional: a record here carries a TTL
+//! and stays alive by being rewritten, so a heartbeat that replicated nowhere
+//! would take every worker out of the control state thirty seconds after it
+//! registered. Verified against a three-node cluster: a live worker's record
+//! survives twice the TTL, and a `kill -9`'d worker's is gone inside 40 s,
+//! which is crash failover with a bounded window and no external detector.
+//!
+//! **What does not, yet.** Leadership is still Raft's election or standalone;
+//! [`leader::LeaderLease`] is implemented and not called. So is
+//! [`reconcile::Reconciler`]. Until both are wired, `raft/` cannot be removed,
+//! and a multi-coordinator deployment still needs Raft to decide who writes —
+//! though every write it makes is CAS-guarded here regardless, which is what
+//! makes the intermediate state safe rather than merely untested.
 
 pub mod apply;
 pub mod fence;

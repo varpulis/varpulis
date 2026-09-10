@@ -101,6 +101,9 @@ persistent = ["raft", "varpulis-cluster/persistent"]
 # so the worker never answers a checkpoint barrier. The tests were written,
 # listed in the runner, and unreachable.
 distributed-checkpoint = ["varpulis-cluster/distributed-checkpoint"]
+# The JetStream KV control plane. Off unless VARPULIS_CONTROL_PLANE_URL is
+# also set, so linking it in changes no deployment's behaviour on its own.
+jetstream-control-plane = ["varpulis-cluster/jetstream-control-plane"]
 saas = ["varpulis-db", "lettre"]
 oidc = ["openidconnect"]
 # Both halves. This turned on connector-payload encryption only, so a binary

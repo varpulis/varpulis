@@ -156,13 +156,13 @@ impl CheckpointRaftReplicator for NoopRaftReplicator {
 /// [`crate::raft::VarpulisRaft::client_write`].
 ///
 /// Only available when both the `raft` and `distributed-checkpoint` features
-/// are enabled. Each call writes a [`crate::raft::ClusterCommand::CheckpointCompleted`]
-/// or [`crate::raft::ClusterCommand::CheckpointAborted`] entry that the
+/// are enabled. Each call writes a [`crate::control_state::ClusterCommand::CheckpointCompleted`]
+/// or [`crate::control_state::ClusterCommand::CheckpointAborted`] entry that the
 /// state machine applies into [`crate::raft::state_machine::CoordinatorState::latest_checkpoints`].
 ///
 /// Non-leader writes return a `ReplicateError` whose message carries the
 /// `ForwardToLeader` payload — callers should typically resolve a leader and
-/// retry, mirroring the pattern used by [`crate::coordinator::Coordinator::raft_replicate`].
+/// retry, mirroring the pattern used by [`crate::coordinator::Coordinator::replicate`].
 #[cfg(feature = "raft")]
 #[derive(Clone)]
 pub struct RaftCheckpointReplicator {
@@ -192,7 +192,7 @@ impl CheckpointRaftReplicator for RaftCheckpointReplicator {
         group_id: &str,
         checkpoint_id: CheckpointId,
     ) -> Result<(), ReplicateError> {
-        let cmd = crate::raft::ClusterCommand::CheckpointCompleted {
+        let cmd = crate::control_state::ClusterCommand::CheckpointCompleted {
             group_id: group_id.to_string(),
             checkpoint_id,
         };
@@ -209,7 +209,7 @@ impl CheckpointRaftReplicator for RaftCheckpointReplicator {
         checkpoint_id: CheckpointId,
         reason: &str,
     ) -> Result<(), ReplicateError> {
-        let cmd = crate::raft::ClusterCommand::CheckpointAborted {
+        let cmd = crate::control_state::ClusterCommand::CheckpointAborted {
             group_id: group_id.to_string(),
             checkpoint_id,
             reason: reason.to_string(),
