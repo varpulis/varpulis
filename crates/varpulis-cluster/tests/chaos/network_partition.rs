@@ -966,7 +966,10 @@ mod integration {
     pub(super) async fn run_partition_test() {
         let nats = nats_url();
         if !tcp_reachable(&nats_tcp_target(&nats)).await {
-            eprintln!("  [skip] test_network_partition_real_nats: NATS not reachable at {nats}");
+            crate::abstain(
+                "test_network_partition_real_nats",
+                &format!("NATS not reachable at {nats}"),
+            );
             return;
         }
 
@@ -977,9 +980,10 @@ mod integration {
 
         // Both workers must register first so the partition is meaningful.
         if !cluster.wait_for_workers(2).await {
-            eprintln!(
-                "  [skip] test_network_partition_real_nats: workers failed to register \
-                 (binary may lack `nats-transport`/`distributed-checkpoint` features)"
+            crate::abstain(
+                "test_network_partition_real_nats",
+                "workers failed to register (binary may lack \
+                 `nats-transport`/`distributed-checkpoint` features)",
             );
             return;
         }

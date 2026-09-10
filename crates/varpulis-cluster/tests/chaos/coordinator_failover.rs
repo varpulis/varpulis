@@ -434,9 +434,10 @@ async fn test_coordinator_failover_leader_election() {
     let mut cluster = match MultiRaftCluster::start().await {
         Some(c) => c,
         None => {
-            eprintln!(
-                "  [skip] test_coordinator_failover_leader_election: Raft feature not enabled \
-                 in the varpulis binary (build with --features raft)"
+            crate::abstain(
+                "test_coordinator_failover_leader_election",
+                "Raft feature not enabled in the varpulis binary \
+                 (build with --features raft)",
             );
             return;
         }
@@ -532,8 +533,9 @@ async fn test_coordinator_failover_leader_election() {
 async fn test_coordinator_failover_workers_self_abort() {
     let nats = nats_url();
     if !tcp_reachable(&nats_tcp_target(&nats)).await {
-        eprintln!(
-            "  [skip] test_coordinator_failover_workers_self_abort: NATS not reachable at {nats}"
+        crate::abstain(
+            "test_coordinator_failover_workers_self_abort",
+            &format!("NATS not reachable at {nats}"),
         );
         return;
     }
@@ -541,8 +543,9 @@ async fn test_coordinator_failover_workers_self_abort() {
     let nats_client = match async_nats::connect(&nats).await {
         Ok(c) => c,
         Err(e) => {
-            eprintln!(
-                "  [skip] test_coordinator_failover_workers_self_abort: NATS connect failed: {e}"
+            crate::abstain(
+                "test_coordinator_failover_workers_self_abort",
+                &format!("NATS connect failed: {e}"),
             );
             return;
         }
@@ -551,8 +554,9 @@ async fn test_coordinator_failover_workers_self_abort() {
     let mut cluster = match MultiRaftCluster::start().await {
         Some(c) => c,
         None => {
-            eprintln!(
-                "  [skip] test_coordinator_failover_workers_self_abort: Raft feature not enabled"
+            crate::abstain(
+                "test_coordinator_failover_workers_self_abort",
+                "Raft feature not enabled",
             );
             return;
         }

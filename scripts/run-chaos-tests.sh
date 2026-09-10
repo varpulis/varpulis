@@ -17,9 +17,10 @@
 #                   VARPULIS_BIN was built with `--features raft,nats-transport`.
 #                   Runs tier 2; under the flag a "[skip]" is a hard failure.
 #   CHAOS_DC=1      declare a VARPULIS_BIN that speaks the distributed
-#                   checkpoint protocol (plus Kafka on 9092 in a container
-#                   named varpulis-kafka, NATS, and docker). Runs tier 3, same
-#                   no-abstaining rule. Not satisfiable today — see tier 3.
+#                   checkpoint protocol (built with --features
+#                   distributed-checkpoint,nats-transport,raft), plus Kafka on
+#                   9092 in a container named varpulis-kafka, NATS, and docker.
+#                   Runs tier 3, same no-abstaining rule.
 #   VARPULIS_BIN    path to the varpulis binary the harness spawns.
 #
 # Exit codes:
@@ -230,7 +231,13 @@ run_one() {
             printf "  %-62s " "  (retry $attempt/$MAX_RETRIES)"
         fi
 
-        if cargo test "${CARGO_TEST_ARGS[@]}" -- --ignored --test-threads=1 --nocapture \
+        # When this tier's infrastructure was declared present, arm the
+        # test-level gate too. `abstain()` in the chaos harness then panics
+        # rather than returning, so the abstention is caught by libtest even
+        # if this script's own grep is ever changed or bypassed. Two
+        # independent mechanisms for one rule: an abstention is never a pass.
+        if VARPULIS_REQUIRE_BROKERS="$( [[ "$infra_declared" == "1" ]] && echo 1 || true )" \
+            cargo test "${CARGO_TEST_ARGS[@]}" -- --ignored --test-threads=1 --nocapture \
             --exact "$test_name" >"$outfile" 2>&1; then
             out="$(cat "$outfile")"
 
@@ -320,12 +327,16 @@ if [[ "$CHAOS_DC" == "1" ]]; then
     done
 else
     echo "--- Tier 3: distributed checkpoint (${#CHAOS_DC_TESTS[@]} tests) — NOT RUN ---"
-    echo "  BLOCKED: varpulis-cli exposes no 'distributed-checkpoint' feature"
-    echo "  (crates/varpulis-cli/Cargo.toml [features]), so the coordinator/worker"
-    echo "  processes these tests spawn are built without nats_worker.rs's"
-    echo "  handle_checkpoint_barrier and can never ack a barrier."
-    echo "  Kafka + NATS containers alone are NOT sufficient; a CLI feature"
-    echo "  passthrough is. See the tier-3 comment in this script."
+    echo "  Needs: VARPULIS_BIN built with --features distributed-checkpoint,"
+    echo "  nats-transport,raft; Kafka on 9092 in a container named"
+    echo "  varpulis-kafka; NATS on 4222; and docker on PATH."
+    echo "  Set CHAOS_DC=1 once all four hold; the tests then fail instead"
+    echo "  of skipping."
+    echo ""
+    echo "  (The CLI feature passthrough that used to block this tier"
+    echo "  outright now exists — without it the spawned worker had no"
+    echo "  handle_checkpoint_barrier compiled in and could never ack a"
+    echo "  barrier, so no amount of infrastructure would have helped.)"
     for test_name in "${CHAOS_DC_TESTS[@]}"; do
         echo "  - $test_name"
         NOT_RUN_TESTS+=("$test_name")
