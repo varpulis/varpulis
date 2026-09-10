@@ -1313,8 +1313,12 @@ pub fn eval_expr_with_functions(
                     }
                     _ => None,
                 },
-                BinOp::Eq => Some(Value::Bool(left_val == right_val)),
-                BinOp::NotEq => Some(Value::Bool(left_val != right_val)),
+                // `vpl_eq`, not `==`: VPL's equality widens int/float exactly
+                // as `<`/`>`/`<=`/`>=` below already do, and exactly as the
+                // SASE+ predicate evaluator does, so the same predicate means
+                // the same thing in `.where()` and in a `->` sequence step.
+                BinOp::Eq => Some(Value::Bool(left_val.vpl_eq(&right_val))),
+                BinOp::NotEq => Some(Value::Bool(!left_val.vpl_eq(&right_val))),
                 BinOp::Lt => match (&left_val, &right_val) {
                     (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a < b)),
                     (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a < b)),
@@ -1887,8 +1891,10 @@ pub fn eval_binary_op(
             (Value::Duration(l), Value::Duration(r)) => Some(Value::Bool(l <= r)),
             _ => None,
         },
-        BinOp::Eq => Some(Value::Bool(left == right)),
-        BinOp::NotEq => Some(Value::Bool(left != right)),
+        // See the note on `Value::vpl_eq`: int/float widen, as they do for
+        // every other comparison in this same match.
+        BinOp::Eq => Some(Value::Bool(left.vpl_eq(right))),
+        BinOp::NotEq => Some(Value::Bool(!left.vpl_eq(right))),
         BinOp::And => {
             let l = left.as_bool().unwrap_or(false);
             let r = right.as_bool().unwrap_or(false);

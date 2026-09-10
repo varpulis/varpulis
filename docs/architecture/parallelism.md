@@ -65,7 +65,12 @@ stream OrderProcessing = Orders
     .emit(order_id: id, total: price * quantity)
 ```
 
-> **Note:** `.concurrent()`, `.process()`, and `.on_error()` are reserved syntax but not yet implemented. Use contexts and `.partition_by()` for parallelism.
+> **Note:** `.concurrent()` and `.on_error()` are reserved syntax that is **not
+> implemented**, and the engine now says so instead of accepting it: loading a
+> program that uses `.concurrent()` fails with
+> `.concurrent() is not yet implemented — use .partition_by() with \`--workers N\`,
+> or a \`context\` block, for parallelism`, and `varpulis check` reports E090.
+> Use contexts and `.partition_by()` for parallelism.
 
 ### Automatic Supervision (Planned)
 

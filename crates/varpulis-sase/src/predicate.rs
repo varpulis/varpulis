@@ -103,17 +103,16 @@ pub(crate) fn compare_values(left: &Value, right: &Value, op: CompareOp) -> bool
     }
 }
 
+/// Equality for SASE+ predicates.
+///
+/// Delegates to [`Value::vpl_eq`] so a `->` sequence step and a `.where()`
+/// clause cannot disagree about the same predicate. This used to be a private
+/// re-implementation that coerced int/float (where the expression evaluator did
+/// not) and returned `false` for every non-scalar type (where the expression
+/// evaluator compared them structurally) — two engines, two answers, for
+/// predicates that appear in shipped detections in both forms.
 fn values_equal(left: &Value, right: &Value) -> bool {
-    match (left, right) {
-        (Value::Int(a), Value::Int(b)) => a == b,
-        (Value::Float(a), Value::Float(b)) => (a - b).abs() < f64::EPSILON,
-        (Value::Int(a), Value::Float(b)) | (Value::Float(b), Value::Int(a)) => {
-            (*a as f64 - b).abs() < f64::EPSILON
-        }
-        (Value::Str(a), Value::Str(b)) => a == b,
-        (Value::Bool(a), Value::Bool(b)) => a == b,
-        _ => false,
-    }
+    left.vpl_eq(right)
 }
 
 fn values_compare(left: &Value, right: &Value) -> Option<std::cmp::Ordering> {

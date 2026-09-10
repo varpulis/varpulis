@@ -286,9 +286,6 @@ pub enum RuntimeOp {
     Distinct(DistinctState),
     /// Pass at most N events, then stop the stream
     Limit(LimitState),
-    /// Parallel processing: partition events across a Rayon thread pool (async-runtime only)
-    #[cfg(feature = "async-runtime")]
-    Concurrent(ConcurrentConfig),
 }
 
 impl RuntimeOp {
@@ -325,22 +322,8 @@ impl RuntimeOp {
             Self::Alert(_) => "Alert",
             Self::Distinct(_) => "Distinct",
             Self::Limit(_) => "Limit",
-            #[cfg(feature = "async-runtime")]
-            Self::Concurrent(_) => "Concurrent",
         }
     }
-}
-
-/// Configuration for `.concurrent()` parallel processing.
-///
-/// Production-ready, opt-in via `.concurrent()` in VPL.  Creates a rayon
-/// thread pool that partitions events across workers by key or round-robin.
-/// Only available with async-runtime (requires rayon).
-#[cfg(feature = "async-runtime")]
-pub struct ConcurrentConfig {
-    pub workers: usize,
-    pub partition_key: Option<String>,
-    pub thread_pool: std::sync::Arc<rayon::ThreadPool>,
 }
 
 /// Configuration for trend aggregation via Hamlet engine
@@ -942,13 +925,31 @@ pub enum WindowType {
     PartitionedBinnedSliding(PartitionedBinnedSlidingWindow),
 }
 
+/// Where one `.emit()` item's value comes from.
+///
+/// The two used to be collapsed into a single `String`, with the runtime
+/// guessing: look the name up as a field, and if it is missing, emit the name
+/// itself as a string. So `.emit(severity: "critical")` on an event carrying a
+/// field called `critical` emitted that field's value, and `.emit(k: k)` where
+/// `k` was absent emitted the literal `"k"`. Which of the two you got depended
+/// on the event's shape at runtime, and adding an unrelated arithmetic item to
+/// the same `.emit()` moved the whole thing onto the expression path and
+/// changed the answer again.
+#[derive(Debug, Clone)]
+pub enum EmitSource {
+    /// `.emit(out: field)` — copy the named field. Absent field, absent output.
+    Field(String),
+    /// `.emit(out: "text")` — a literal, never a field lookup.
+    Literal(varpulis_core::Value),
+}
+
 /// Configuration for simple emit operation
 #[allow(dead_code)]
 pub struct EmitConfig {
-    /// (output_name, source_field or literal). Output names are pre-interned
-    /// `Arc<str>` so the per-event emit loop clones a pointer instead of
-    /// re-allocating the key for every emitted event.
-    pub fields: Vec<(std::sync::Arc<str>, String)>,
+    /// (output_name, source). Output names are pre-interned `Arc<str>` so the
+    /// per-event emit loop clones a pointer instead of re-allocating the key
+    /// for every emitted event.
+    pub fields: Vec<(std::sync::Arc<str>, EmitSource)>,
     pub target_context: Option<String>,
 }
 

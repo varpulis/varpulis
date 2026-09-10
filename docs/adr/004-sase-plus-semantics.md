@@ -37,6 +37,8 @@ For Kleene states (`A+`, `A*`), the NFA uses a self-loop transition. The `varpul
 
 When a run reaches an accept state after a Kleene closure, `enumerate_with_filter` traverses the ZDD to produce all valid subsets of Kleene events that satisfy any postponed predicates (see below). This converts the 2^n representation into actual match instances, bounded by `MAX_ENUMERATION_RESULTS = 10_000` and `MAX_KLEENE_EVENTS = 20` to prevent runaway memory consumption.
 
+Reaching `MAX_KLEENE_EVENTS` is reported rather than absorbed: the validator warns (W003) on any unbounded closure, the first drop in a run is logged, and the resulting match carries `_kleene_truncated` with the number of events dropped. A bound that silently changes the answer is indistinguishable from a wrong answer.
+
 The ZDD representation is the key insight: 100 Kleene events produce ~100 ZDD nodes rather than 2^100 explicit subsets. The subsets are materialized lazily only at enumeration time, and only those passing the filter are emitted.
 
 ### Extension 2: Predicate classification (SIGMOD 2014 §5.2)

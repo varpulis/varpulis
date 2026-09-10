@@ -114,9 +114,11 @@ Chargeback { account: "user-501", amount: 80.00, region: "us-east", reason: "dup
 }
 
 #[test]
-fn test_iot_concurrent_demo_anomaly() {
+fn test_iot_demo_anomaly() {
+    // Was `.concurrent(workers: 4, partition_key: "sensor_id")`. That operator
+    // never processed anything in parallel and is now refused at compile time;
+    // the filter and projection this test actually asserts are unchanged.
     let source = r#"stream SensorAlerts = SensorReading
-    .concurrent(workers: 4, partition_key: "sensor_id")
     .where(temperature > 85 or humidity > 95 or pressure < 950)
     .emit(
         alert_type: "sensor_anomaly",
@@ -145,9 +147,8 @@ SensorReading { sensor_id: "s3", zone: "paint", temperature: 27, humidity: 58, p
 }
 
 #[test]
-fn test_iot_concurrent_demo_normal_no_alert() {
+fn test_iot_demo_normal_no_alert() {
     let source = r#"stream SensorAlerts = SensorReading
-    .concurrent(workers: 4, partition_key: "sensor_id")
     .where(temperature > 85 or humidity > 95 or pressure < 950)
     .emit(
         alert_type: "sensor_anomaly",

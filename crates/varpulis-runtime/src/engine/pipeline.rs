@@ -762,12 +762,24 @@ fn execute_op_common(
                     event.timestamp,
                 );
                 for (out_name, source) in &config.fields {
-                    if let Some(value) = event.get(source) {
-                        new_event.data.insert(Arc::clone(out_name), value.clone());
-                    } else {
-                        new_event
-                            .data
-                            .insert(Arc::clone(out_name), Value::Str(source.as_str().into()));
+                    match source {
+                        // A literal is a literal. It is never looked up as a
+                        // field, so `.emit(severity: "critical")` cannot be
+                        // replaced by the value of a field named `critical`.
+                        crate::engine::types::EmitSource::Literal(v) => {
+                            new_event.data.insert(Arc::clone(out_name), v.clone());
+                        }
+                        // A field reference that finds nothing emits nothing.
+                        // It used to fall back to the *name* as a string, so
+                        // `.emit(k: k)` on an event without `k` fabricated the
+                        // literal `"k"` — a value the program never mentioned.
+                        // This now matches `EmitExpr`, which already skipped
+                        // fields it could not evaluate.
+                        crate::engine::types::EmitSource::Field(name) => {
+                            if let Some(value) = event.get(name) {
+                                new_event.data.insert(Arc::clone(out_name), value.clone());
+                            }
+                        }
                     }
                 }
                 emitted.push(Arc::new(new_event));
@@ -915,6 +927,19 @@ fn execute_op_common(
                         seq_event
                             .data
                             .insert("match_count".into(), Value::Int(match_count));
+
+                        // A Kleene closure that hit its event cap dropped
+                        // matching events on the floor. Say so on the match
+                        // itself: `count(alias)` and `_count_{alias}` below are
+                        // then visibly a floor, not the truth. Absent — as it is
+                        // for every match that was not truncated — nothing
+                        // changes.
+                        if match_result.kleene_truncated > 0 {
+                            seq_event.data.insert(
+                                "_kleene_truncated".into(),
+                                Value::Int(i64::from(match_result.kleene_truncated)),
+                            );
+                        }
 
                         // match_rate: events per second (based on event timestamps)
                         let duration_secs = event_duration_ms as f64 / 1000.0;
@@ -1464,65 +1489,6 @@ fn execute_op_common(
             let remaining = state.max.saturating_sub(state.count);
             current_events.truncate(remaining);
             state.count += current_events.len();
-        }
-
-        #[cfg(feature = "async-runtime")]
-        RuntimeOp::Concurrent(config) => {
-            // Parallel processing: partition events across rayon thread pool,
-            // process through remaining ops independently, then merge results.
-            // Since we consume events here and return, the caller's loop continues
-            // with the merged output.
-            if current_events.len() <= 1 {
-                // No benefit from parallelism with 0-1 events
-                return Ok(());
-            }
-
-            let pool = &config.thread_pool;
-            let events = std::mem::take(current_events);
-
-            // Partition events
-            let partitions: Vec<Vec<SharedEvent>> = if let Some(ref key) = config.partition_key {
-                // Hash-based partitioning to preserve per-key ordering
-                let mut buckets: Vec<Vec<SharedEvent>> =
-                    (0..config.workers).map(|_| Vec::new()).collect();
-                for event in events {
-                    let hash = event.get(key).map_or(0, |v| {
-                        use std::hash::{Hash, Hasher};
-                        let mut h = std::collections::hash_map::DefaultHasher::new();
-                        format!("{v}").hash(&mut h);
-                        h.finish() as usize
-                    });
-                    buckets[hash % config.workers].push(event);
-                }
-                buckets
-            } else {
-                // Round-robin partitioning
-                let chunk_size = events.len().div_ceil(config.workers);
-                events
-                    .chunks(chunk_size.max(1))
-                    .map(|c| c.to_vec())
-                    .collect()
-            };
-
-            // Process partitions in parallel on the rayon pool
-            let results: Vec<Vec<SharedEvent>> = pool.install(|| {
-                use rayon::prelude::*;
-                partitions
-                    .into_par_iter()
-                    .map(|partition| {
-                        // Each partition just passes through — the actual filtering/mapping
-                        // happens in subsequent ops which will process the merged result.
-                        partition
-                    })
-                    .collect()
-            });
-
-            // Merge results back
-            let mut merged = Vec::new();
-            for part in results {
-                merged.extend(part);
-            }
-            *current_events = merged;
         }
     }
 

@@ -16,7 +16,11 @@ pub type SharedEvent = Arc<Event>;
 /// Safety cap on events accumulated in a single Kleene closure.
 /// With n events the ZDD enumerates up to 2^n - 1 combinations.
 /// 20 events → ~1 M combinations (safe); 30 → ~1 B (OOM risk).
-pub const MAX_KLEENE_EVENTS: u32 = 20;
+///
+/// Defined in `varpulis-core` next to the validator warning that tells rule
+/// authors about it (`W003`), so the documented cap and the enforced cap are
+/// the same number by construction.
+pub const MAX_KLEENE_EVENTS: u32 = varpulis_core::validate::MAX_KLEENE_EVENTS;
 
 /// Safety cap on results emitted by `enumerate_with_filter`.
 /// Prevents unbounded memory growth when the deferred predicate
@@ -175,6 +179,13 @@ pub struct MatchResult {
     pub stack: Vec<StackEntry>,
     /// Match duration
     pub duration: Duration,
+    /// How many events matched this match's Kleene closure but were dropped
+    /// because the closure had already reached [`MAX_KLEENE_EVENTS`].
+    ///
+    /// Zero for every match that was not truncated. When non-zero the runtime
+    /// stamps `_kleene_truncated` onto the emitted event, so a count derived
+    /// from the closure is visibly a floor rather than the truth.
+    pub kleene_truncated: u32,
 }
 
 /// SASE+ Pattern Matching Engine

@@ -15,6 +15,18 @@ use scope::SymbolTable;
 use crate::ast::Program;
 use crate::span::Span;
 
+/// Safety cap on the events a single Kleene closure accumulates.
+///
+/// With n events the pattern engine's ZDD enumerates up to 2^n - 1
+/// combinations: 20 events is ~1 M (safe), 30 is ~1 B (OOM). Events past the
+/// cap are dropped from the run, so any count derived from the closure
+/// plateaus.
+///
+/// Declared here, next to the validator that warns about it, and consumed by
+/// `varpulis-sase`, so the number a rule author is told and the number the
+/// engine enforces cannot drift apart.
+pub const MAX_KLEENE_EVENTS: u32 = 20;
+
 /// Severity of a diagnostic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {

@@ -687,6 +687,7 @@ impl SaseEngine {
                 captured: run.captured.clone(),
                 stack: run.stack.clone(),
                 duration: run.started_at.elapsed(),
+                kleene_truncated: run.kleene_capture.as_ref().map_or(0, |kc| kc.truncated),
             });
         }
         None
@@ -1443,17 +1444,57 @@ impl SaseEngine {
                 }
             }
 
-            // Also check partitioned runs
-            for runs in self.partitioned_runs.values_mut() {
-                for run in runs.iter_mut() {
-                    let should_invalidate = match &negation.predicate {
-                        Some(pred) => {
-                            eval_predicate(pred, event, &run.captured, self.evaluator.as_deref())
+            // Also check partitioned runs — but only the partition this event
+            // belongs to.
+            //
+            // This loop used to run over `partitioned_runs.values_mut()` with no
+            // key filter, unlike the correctly-keyed `process_partition_shared`.
+            // With `.partition_by(device)`, one device acknowledging its own
+            // alarm invalidated every *other* device's pending match. The
+            // predicate-qualified form `.not(X where ...)` masked it, because
+            // the predicate usually re-states the correlation by hand; the bare
+            // `.not(X)` form had nothing to save it.
+            //
+            // The key is derived exactly as the routing path derives it,
+            // including `unwrap_or_default()` for an event that does not carry
+            // the partition field, so a negation event lands in the same
+            // partition an ordinary event of that shape would.
+            if let Some(ref partition_field) = self.partition_by {
+                let key = event
+                    .get(partition_field.as_str())
+                    .map(|v| v.to_partition_key().into_owned())
+                    .unwrap_or_default();
+                if let Some(runs) = self.partitioned_runs.get_mut(&key) {
+                    for run in runs.iter_mut() {
+                        let should_invalidate = match &negation.predicate {
+                            Some(pred) => eval_predicate(
+                                pred,
+                                event,
+                                &run.captured,
+                                self.evaluator.as_deref(),
+                            ),
+                            None => true,
+                        };
+                        if should_invalidate {
+                            run.invalidated = true;
                         }
-                        None => true,
-                    };
-                    if should_invalidate {
-                        run.invalidated = true;
+                    }
+                }
+            } else {
+                for runs in self.partitioned_runs.values_mut() {
+                    for run in runs.iter_mut() {
+                        let should_invalidate = match &negation.predicate {
+                            Some(pred) => eval_predicate(
+                                pred,
+                                event,
+                                &run.captured,
+                                self.evaluator.as_deref(),
+                            ),
+                            None => true,
+                        };
+                        if should_invalidate {
+                            run.invalidated = true;
+                        }
                     }
                 }
             }

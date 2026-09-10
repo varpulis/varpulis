@@ -15,6 +15,9 @@ varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
 varpulis-zdd = { version = "0.11.0", path = "../varpulis-zdd" }
 chrono = { workspace = true }
 rustc-hash = { workspace = true }
+# Used only to report a Kleene closure hitting its event cap — at most one
+# line per run. Silence there was a correctness bug, not a performance win.
+tracing = { workspace = true }
 
 [features]
 iai-bench = []

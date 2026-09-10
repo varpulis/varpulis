@@ -83,6 +83,33 @@ impl PartialEq for Value {
 }
 
 impl Value {
+    /// Equality as VPL's `==` and `!=` operators define it: identical to
+    /// [`PartialEq`] except that an `int` and a `float` compare by numeric
+    /// value.
+    ///
+    /// [`PartialEq`] deliberately keeps `Int(445) != Float(445.0)`, because
+    /// `Value` is also `Hash` and is used as a map key (`distinct`,
+    /// `count_distinct`, partition and group keys) where `Eq`/`Hash` must agree
+    /// on type. VPL's `==` has no such obligation, and every *other* VPL
+    /// comparison — `<`, `<=`, `>`, `>=` — already widens `int` to `float`.
+    /// Leaving `==` alone made `DestinationPort == 445` miss a float-typed
+    /// port, and made `.having(total == 100)` unsatisfiable because every
+    /// numeric aggregate returns a `Float`.
+    ///
+    /// The SASE+ predicate evaluator and the expression evaluator both route
+    /// `==` through here, so a predicate means the same thing inside a `->`
+    /// sequence step as it does in `.where()`.
+    #[inline]
+    #[must_use]
+    pub fn vpl_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Int(a), Self::Float(b)) | (Self::Float(b), Self::Int(a)) => {
+                float_eq(*a as f64, *b)
+            }
+            _ => self == other,
+        }
+    }
+
     /// Creates a new Array value from a Vec.
     #[inline]
     pub fn array(v: Vec<Self>) -> Self {

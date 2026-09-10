@@ -9272,7 +9272,6 @@ dependencies = [
  "prometheus",
  "proptest",
  "rand 0.10.0",
- "rayon",
  "reqwest",
  "rmp-serde",
  "rocksdb",
@@ -9310,6 +9309,7 @@ dependencies = [
  "chrono",
  "iai-callgrind",
  "rustc-hash",
+ "tracing",
  "varpulis-core",
  "varpulis-zdd",
 ]

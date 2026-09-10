@@ -85,6 +85,9 @@ pub(crate) fn enumerate_with_filter(
         Some(kc) => kc,
         None => return results,
     };
+    // Every enumerated subset comes out of the same (possibly truncated)
+    // capture, so they all carry the same truncation count.
+    let truncated = kc.truncated;
 
     let pred = match &kc.deferred_predicate {
         Some(p) => p.clone(),
@@ -105,6 +108,7 @@ pub(crate) fn enumerate_with_filter(
                     captured,
                     stack,
                     duration: run.started_at.elapsed(),
+                    kleene_truncated: truncated,
                 });
                 if results.len() >= max_results {
                     break;
@@ -132,6 +136,7 @@ pub(crate) fn enumerate_with_filter(
                 captured,
                 stack,
                 duration: run.started_at.elapsed(),
+                kleene_truncated: truncated,
             });
             if results.len() >= max_results {
                 break;

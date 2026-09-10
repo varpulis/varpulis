@@ -39,7 +39,6 @@ tokio = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 prometheus = { workspace = true, optional = true }
 async-trait = { version = "0.1", optional = true }
-rayon = { version = "1.10", optional = true }
 futures = { version = "0.3", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 core_affinity = { version = "0.8", optional = true }
@@ -91,7 +90,7 @@ default = ["async-runtime", "arrow"]
 # Full async runtime with tokio, connectors, metrics, and all async infrastructure.
 # Disable this (use --no-default-features) for WASM or pure-sync builds.
 async-runtime = [
-    "tokio", "reqwest", "prometheus", "async-trait", "rayon", "futures",
+    "tokio", "reqwest", "prometheus", "async-trait", "futures",
     "uuid", "core_affinity",
     "varpulis-connectors", "varpulis-enrichment",
 ]

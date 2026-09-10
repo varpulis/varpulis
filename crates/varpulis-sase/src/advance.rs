@@ -39,6 +39,13 @@ use super::types::{EmissionMode, MatchResult, SelectionStrategy, SharedEvent};
 use crate::clock::Timestamp;
 use crate::ExprEvaluator;
 
+/// Number of events this run's Kleene closure matched but had to drop at the
+/// cap. Zero when the closure never filled up (the overwhelming majority) and
+/// when there is no closure at all.
+fn kleene_truncated_count(run: &Run) -> u32 {
+    run.kleene_capture.as_ref().map_or(0, |kc| kc.truncated)
+}
+
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) enum RunAdvanceResult {
@@ -121,6 +128,7 @@ fn complete_run(
         // emit the single final match normally.
         EmissionMode::Each if has_kleene_capture => RunAdvanceResult::Drained,
         EmissionMode::Each => RunAdvanceResult::Complete(MatchResult {
+            kleene_truncated: kleene_truncated_count(run),
             captured: std::mem::take(&mut run.captured),
             stack: std::mem::take(&mut run.stack),
             duration: run.started_at.elapsed(),
@@ -131,12 +139,14 @@ fn complete_run(
             enumerate_with_filter(run, limits.max_results, evaluator),
         ),
         EmissionMode::Subsets => RunAdvanceResult::Complete(MatchResult {
+            kleene_truncated: kleene_truncated_count(run),
             captured: std::mem::take(&mut run.captured),
             stack: std::mem::take(&mut run.stack),
             duration: run.started_at.elapsed(),
         }),
         // Longest mode: single emit with the last/longest captured sequence.
         EmissionMode::Longest => RunAdvanceResult::Complete(MatchResult {
+            kleene_truncated: kleene_truncated_count(run),
             captured: std::mem::take(&mut run.captured),
             stack: std::mem::take(&mut run.stack),
             duration: run.started_at.elapsed(),
@@ -225,9 +235,21 @@ pub(crate) fn advance_run_shared(
             }
         };
     if kleene_matches {
-        // Safety: check Kleene cap before accumulating (prevents 2^n blowup)
-        if let Some(ref kc) = run.kleene_capture {
+        // Safety: check Kleene cap before accumulating (prevents 2^n blowup).
+        // Record the drop — see `KleeneCapture::truncated`. Silence here is what
+        // turned a bounded closure into a wrong answer.
+        if let Some(ref mut kc) = run.kleene_capture {
             if kc.next_var >= limits.max_events {
+                kc.truncated = kc.truncated.saturating_add(1);
+                if kc.truncated == 1 {
+                    tracing::warn!(
+                        cap = limits.max_events,
+                        alias = current_state.alias.as_deref().unwrap_or("<unnamed>"),
+                        "Kleene closure reached its event cap; further matching events are \
+                         dropped from this run and the emitted match carries \
+                         `_kleene_truncated` with the number dropped"
+                    );
+                }
                 return RunAdvanceResult::Continue;
             }
         }
@@ -263,6 +285,7 @@ pub(crate) fn advance_run_shared(
         match mode {
             EmissionMode::Each => {
                 return RunAdvanceResult::CompleteAndContinue(MatchResult {
+                    kleene_truncated: kleene_truncated_count(run),
                     captured: run.captured.clone(),
                     stack: run.stack.clone(),
                     duration: run.started_at.elapsed(),
@@ -388,6 +411,16 @@ pub(crate) fn advance_run_shared(
                 }
                 if let Some(ref mut kc) = run.kleene_capture {
                     if kc.next_var >= limits.max_events {
+                        kc.truncated = kc.truncated.saturating_add(1);
+                        if kc.truncated == 1 {
+                            tracing::warn!(
+                                cap = limits.max_events,
+                                alias = next_state.alias.as_deref().unwrap_or("<unnamed>"),
+                                "Kleene closure reached its event cap; further matching events \
+                                 are dropped from this run and the emitted match carries \
+                                 `_kleene_truncated` with the number dropped"
+                            );
+                        }
                         return RunAdvanceResult::Continue;
                     }
                     if kc.needs_zdd {
@@ -401,6 +434,7 @@ pub(crate) fn advance_run_shared(
                 match mode {
                     EmissionMode::Each => {
                         return RunAdvanceResult::CompleteAndContinue(MatchResult {
+                            kleene_truncated: kleene_truncated_count(run),
                             captured: run.captured.clone(),
                             stack: run.stack.clone(),
                             duration: run.started_at.elapsed(),

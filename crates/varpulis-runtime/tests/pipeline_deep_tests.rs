@@ -536,11 +536,15 @@ async fn emit_expr_sync_computed_fields() {
 }
 
 // ===========================================================================
-// 15. Emit simple with missing field falls back to literal
+// 15. Emit simple: a literal is a literal, a missing field emits nothing
 // ===========================================================================
 
 #[tokio::test]
-async fn emit_simple_sync_missing_field_literal() {
+async fn emit_simple_sync_missing_field_is_omitted() {
+    // The sync twin of `emit_missing_field_is_omitted_not_fabricated`. Both
+    // used to assert that an unresolved field reference is emitted as its own
+    // name — the behaviour that let `.emit(severity: "critical")` be replaced
+    // by the value of a field called `critical`.
     let code = r#"
         stream S = Tick
             .emit(status: "active", missing: nonexistent_field)
@@ -550,11 +554,13 @@ async fn emit_simple_sync_missing_field_literal() {
     assert_eq!(out.len(), 1);
     assert_eq!(
         out[0].data.get("status"),
-        Some(&Value::Str("active".into()))
+        Some(&Value::Str("active".into())),
+        "a quoted literal is a literal"
     );
     assert_eq!(
         out[0].data.get("missing"),
-        Some(&Value::Str("nonexistent_field".into()))
+        None,
+        "an unresolved field reference must not fabricate its own name as a value"
     );
 }
 

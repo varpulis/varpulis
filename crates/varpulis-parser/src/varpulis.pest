@@ -557,5 +557,11 @@ context_keyword = {
 }
 
 // Named rule so pest includes it in into_inner() (anonymous literals are dropped)
-not_keyword = { "not" }
+//
+// The trailing guard is load-bearing: without it `not` matches the first three
+// characters of any identifier that starts with them, so `.where(not_after < now())`
+// parsed as `not (_after < now())` and `.emit(a: notional)` as `not ional` —
+// a different program, accepted silently, computing a different answer.
+// Keywords must not eat the head of an identifier.
+not_keyword = @{ "not" ~ !(ASCII_ALPHANUMERIC | "_") }
 sase_not_keyword = { "NOT" }

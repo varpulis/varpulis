@@ -82,10 +82,14 @@ them from being mistaken for incomplete implementations during audits.
 |---------|--------|------------|--------|
 | Checkpointing | Production | Pass a `StateStore` to `Engine`; call `checkpoint_tick()` periodically | `persistence.rs` |
 | Contexts | Production | Declare `context` blocks in VPL; engine auto-creates OS threads | `context.rs` |
-| `.concurrent()` | Production | Add `.concurrent()` to a stream; creates a rayon thread pool | `engine/compilation.rs` |
 | Worker Pool | Production | Instantiate `WorkerPool` with a config and dispatch events to it | `worker_pool.rs` |
 | Hamlet Aggregation | Production | Use `.trend_aggregate()` in VPL after a sequence pattern | `hamlet/` |
 | PST Forecasting | Production | Use `.forecast()` in VPL after a sequence pattern | `pst/` |
+
+`.concurrent()` used to be listed here as Production. It was not implemented:
+it built a rayon thread pool per stream at load time and then passed events
+straight through. It is now rejected at compile time — see
+[parallelism.md](parallelism.md) for what to use instead.
 
 **Why opt-in?** These features add runtime cost (threads, memory, I/O) that
 would be wasted in simple pipelines. A filter-only pipeline should not pay for
