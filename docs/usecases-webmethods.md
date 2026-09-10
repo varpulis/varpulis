@@ -65,15 +65,25 @@ event OrderEnriched:
 event OrderConfirmed:
     orderId: str
 
+connector SlaAlerts = kafka(brokers: "ops-kafka:9092", topic: "sla-alerts")
+
 # Enrichment lag: flag if enrichment takes more than 5 minutes
 # (early warning — distinct from the end-to-end SLA)
-stream EnrichmentLag = OrderReceived as recv
-    -> NOT OrderEnriched .where(orderId == recv.orderId)
-    .within(5m)
-    .partition_by(recv.orderId)
+#
+# A negated step goes in a `pattern` declaration, and takes `where` and
+# `within` without a leading dot — the stream then consumes the pattern.
+pattern EnrichmentLag =
+    OrderReceived as recv
+    -> NOT OrderEnriched where orderId == recv.orderId
+    within 5m
+    partition by orderId
+
+connector SlaWarnings = kafka(brokers: "ops-kafka:9092", topic: "sla-warnings")
+
+stream EnrichmentLagAlerts = EnrichmentLag
     .emit(order: recv.orderId, partner: recv.partner,
           warning: "enrichment exceeds 5m")
-    .to(kafka(brokers: "ops-kafka:9092", topic: "sla-warnings"))
+    .to(SlaWarnings)
 
 # End-to-end SLA: full flow must complete within 30 minutes
 stream SlaBreachRisk = OrderReceived as recv
@@ -85,7 +95,7 @@ stream SlaBreachRisk = OrderReceived as recv
     .where(forecast_probability < 0.5)
     .emit(order: recv.orderId, partner: recv.partner,
           breach_prob: forecast_probability, eta: forecast_time)
-    .to(kafka(brokers: "ops-kafka:9092", topic: "sla-alerts"))
+    .to(SlaAlerts)
 ```
 
 VPL supports a single `.within()` per stream (global, anchored to the first
@@ -122,34 +132,45 @@ event EdiDoc:
     partnerId: str
     controlNumber: str
 
+connector EdiAlerts = http(url: "https://ops.internal/edi-alerts", method: "POST")
+
 # Pattern 1: Missing functional acknowledgment
 # PO sent, no 997 within 4 hours → contractual penalty risk
-stream MissingAck = EdiDoc as po .where(po.docType == "850")
-    -> NOT EdiDoc .where(docType == "997" AND partnerId == po.partnerId)
-    .within(4h)
-    .partition_by(po.partnerId)
+pattern MissingAck =
+    EdiDoc where docType == "850" as po
+    -> NOT EdiDoc where docType == "997" and partnerId == po.partnerId
+    within 4h
+    partition by partnerId
+
+stream MissingAckAlerts = MissingAck
     .emit(partner: po.partnerId, po_control: po.controlNumber,
           violation: "997 not received within 4h")
-    .to(http(url: "https://ops.internal/edi-alerts", method: "POST"))
+    .to(EdiAlerts)
 
 # Pattern 2: Stale PO — confirmation sent but ASN never follows
-stream StaleConfirmation = EdiDoc as conf .where(conf.docType == "855")
-    -> NOT EdiDoc .where(docType == "856" AND partnerId == conf.partnerId)
-    .within(48h)
-    .partition_by(conf.partnerId)
+pattern StaleConfirmation =
+    EdiDoc where docType == "855" as conf
+    -> NOT EdiDoc where docType == "856" and partnerId == conf.partnerId
+    within 48h
+    partition by partnerId
+
+stream StaleConfirmationAlerts = StaleConfirmation
     .emit(partner: conf.partnerId,
           violation: "ASN not received within 48h of PO confirmation")
 
 # Pattern 3: Full happy-path enforcement
 # Entire PO→Confirmation→ASN→Invoice flow must complete within 7 days.
-# The .within(7d) window starts from the first matched event (the 850 PO).
-# The NOT fires if the invoice hasn't arrived before the 7d window expires.
-stream IncompleteFlow = EdiDoc as po .where(po.docType == "850")
-    -> EdiDoc as conf .where(conf.docType == "855" AND conf.partnerId == po.partnerId)
-    -> EdiDoc as asn .where(asn.docType == "856" AND asn.partnerId == po.partnerId)
-    -> NOT EdiDoc .where(docType == "810" AND partnerId == po.partnerId)
-    .within(7d)
-    .partition_by(po.partnerId)
+# The `within 7d` window starts from the first matched event (the 850 PO).
+# The NOT fires if the invoice hasn't arrived before that window expires.
+pattern IncompleteFlow =
+    EdiDoc where docType == "850" as po
+    -> EdiDoc where docType == "855" and partnerId == po.partnerId as conf
+    -> EdiDoc where docType == "856" and partnerId == po.partnerId as asn
+    -> NOT EdiDoc where docType == "810" and partnerId == po.partnerId
+    within 7d
+    partition by partnerId
+
+stream IncompleteFlowAlerts = IncompleteFlow
     .emit(partner: po.partnerId, po_control: po.controlNumber,
           violation: "Invoice not received within 7 days of PO")
 ```
@@ -192,6 +213,8 @@ event ServiceError:
     errorCode: str
     targetSystem: str
 
+connector CircuitBreak = http(url: "https://ops.internal/circuit-break", method: "POST")
+
 # 5+ distinct services failing against the same target within 2 minutes.
 # Uses arrow syntax with `all` for unbounded error accumulation.
 # count() returns the number of matched events in the closure.
@@ -203,7 +226,7 @@ stream ErrorCascade = ErrorBurst
     .where(count(errors) >= 4)
     .emit(target: first.targetSystem,
           affected: count(errors) + 1)
-    .to(http(url: "https://ops.internal/circuit-break", method: "POST"))
+    .to(CircuitBreak)
 ```
 
 The HTTP sink triggers a circuit breaker that pauses all flows targeting that
@@ -241,14 +264,19 @@ event QaSignoff:
 event ShipmentInitiated:
     batchId: str
 
+connector ComplianceViolations = kafka(brokers: "audit-kafka:9092", topic: "compliance-violations")
+
 # GxP violation: QA sign-off not received within 2 hours of batch release
-stream GxpViolation = BatchRelease as br
-    -> NOT QaSignoff .where(batchId == br.batchId)
-    .within(2h)
-    .partition_by(br.batchId)
+pattern GxpViolation =
+    BatchRelease as br
+    -> NOT QaSignoff where batchId == br.batchId
+    within 2h
+    partition by batchId
+
+stream GxpViolationAlerts = GxpViolation
     .emit(batch: br.batchId, product: br.product,
           violation: "QA sign-off missed within 2h window")
-    .to(kafka(brokers: "audit-kafka:9092", topic: "compliance-violations"))
+    .to(ComplianceViolations)
 
 # Happy-path tracking: full compliant release flow
 stream ValidRelease = BatchRelease as br
@@ -288,6 +316,9 @@ event ApiCall:
     statusCode: int
     apiKey: str
 
+connector Blacklist = http(url: "https://apigw.internal/blacklist", method: "POST")
+connector Throttle = http(url: "https://apigw.internal/throttle", method: "POST")
+
 # Credential stuffing: 10+ failed logins from same IP within 5 minutes
 # Uses arrow syntax with `all` for unbounded attempt accumulation
 pattern StuffingPattern = ApiCall where endpoint == "/auth/login" and statusCode == 401 as first
@@ -299,7 +330,7 @@ stream CredentialStuffing = StuffingPattern
     .emit(source_ip: first.clientIp,
           attempt_count: count(attempts) + 1,
           action: "block_ip")
-    .to(http(url: "https://apigw.internal/blacklist", method: "POST"))
+    .to(Blacklist)
 
 # API enumeration: high-frequency probing on a path prefix
 pattern EnumPattern = ApiCall where starts_with(endpoint, "/api/users/") as first
@@ -311,7 +342,7 @@ stream ApiEnumeration = EnumPattern
     .emit(source_ip: first.clientIp,
           probe_count: count(probes) + 1,
           action: "throttle")
-    .to(http(url: "https://apigw.internal/throttle", method: "POST"))
+    .to(Throttle)
 ```
 
 `starts_with()` is a built-in string function — no glob or regex needed for

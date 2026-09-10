@@ -536,8 +536,14 @@ fn within_duration_with_watermark_advance() {
 
     // Advance watermark past the deadline
     let future = Utc.with_ymd_and_hms(2026, 2, 14, 12, 0, 30).unwrap();
-    engine.advance_watermark(future);
+    let completed = engine.advance_watermark(future);
 
+    // No negated step here, so the deadline expires the run rather than
+    // completing it. The two outcomes are different and worth keeping apart.
+    assert!(
+        completed.is_empty(),
+        "a pattern with no negated step must not complete on a deadline"
+    );
     assert_eq!(
         engine.stats().active_runs,
         0,

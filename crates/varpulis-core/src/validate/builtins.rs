@@ -287,13 +287,33 @@ static KAFKA_PARAMS: &[ConnectorParamDef] = &[
     },
 ];
 
-static HTTP_PARAMS: &[ConnectorParamDef] = &[ConnectorParamDef {
-    name: "base_url",
-    param_type: ParamType::Str,
-    required: false,
-    description: "HTTP base URL for the endpoint",
-    context: ParamContext::Both,
-}];
+// `url`, not `base_url`. The sink factory reads `url` and refuses to build
+// without it ("HTTP connector 'X' has no URL configured"), so the previous
+// list warned about the parameter that works and blessed the one that does
+// not — steering a reader from a working configuration to a broken one.
+static HTTP_PARAMS: &[ConnectorParamDef] = &[
+    ConnectorParamDef {
+        name: "url",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Endpoint URL to POST to (sink) or serve on (source)",
+        context: ParamContext::Both,
+    },
+    ConnectorParamDef {
+        name: "method",
+        param_type: ParamType::Str,
+        required: false,
+        description: "HTTP method for the sink (default POST)",
+        context: ParamContext::Sink,
+    },
+    ConnectorParamDef {
+        name: "path",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Path for the single-event source endpoint",
+        context: ParamContext::Source,
+    },
+];
 
 static CONSOLE_PARAMS: &[ConnectorParamDef] = &[ConnectorParamDef {
     name: "topic",

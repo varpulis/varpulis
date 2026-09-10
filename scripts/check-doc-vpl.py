@@ -21,29 +21,21 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# Complete programs that do NOT check, each kept here with the reason. These
-# are documented capabilities the engine does not have, so they cannot be
-# fixed by editing syntax — the document has to change, or the engine does.
+# Complete programs that do NOT check, each kept here with the reason.
 #
 # The list can only shrink: a block named here that starts passing fails this
-# script, so a fix cannot leave a stale exemption behind.
+# script, so a fix cannot leave a stale exemption behind. It went from eight
+# entries to one — five webMethods blocks needed absence-with-timeout, which
+# now works, and two comparison blocks used `left_join` as an operator when it
+# is a stream source.
 KNOWN_BROKEN = {
-    "docs/comparisons/varpulis-vs-arroyo.md:149":
-        "documents `.left_join(X as q, on: ..., within: ...)`, which is not a "
-        "stream operation; the real form is `join(A, B).on(...).window(...)`",
-    "docs/comparisons/varpulis-vs-proton.md:123":
-        "same `.left_join` as the Arroyo comparison",
     "docs/siem-evasion-lab-05-OUTLINE.md:89":
-        "documents `EventType+ where ...` for a Kleene closure; the real form "
-        "is `-> all EventType where ... as alias`",
-    "docs/usecases-webmethods.md:57":
-        "absence-with-timeout: `.not()` is a cancellation operator and cannot "
-        "express 'A happened and B never did' (examples/vpl-by-example/"
-        "14_negation.vpl says so explicitly)",
-    "docs/usecases-webmethods.md:119": "absence-with-timeout, as above",
-    "docs/usecases-webmethods.md:189": "absence-with-timeout, as above",
-    "docs/usecases-webmethods.md:232": "absence-with-timeout, as above",
-    "docs/usecases-webmethods.md:284": "absence-with-timeout, as above",
+        "the document marks this block as an unvalidated sketch in its own "
+        "prose — 'the example above is illustrative, not yet syntactically "
+        "validated' — and asks the drafter to check the Kleene previous-event "
+        "reference against varpulis-sase before publishing. It is an outline "
+        "for an unwritten article, so the pedagogy is the drafter's call, not "
+        "a syntax fix.",
 }
 
 

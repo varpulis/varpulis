@@ -67,6 +67,42 @@ pub(crate) enum RunAdvanceResult {
 
 // Free functions to avoid borrow checker issues
 
+/// Enter any negated step that immediately follows the run's current state.
+///
+/// A negated step is entered by *arriving at it*, not by consuming an event —
+/// "B did not follow" is decided by time passing, and time passing produces no
+/// event to advance on. The constraint used to be registered inside the
+/// transition loop, which only runs when the next event arrives, so a run
+/// waiting for an absence sat at the preceding state with no pending negation
+/// and was discarded by the deadline sweep. The absence could never be
+/// observed, because observing it required the very event whose non-arrival
+/// was the point.
+///
+/// Returns true when a negation was entered.
+pub(crate) fn enter_negation_if_next(nfa: &Nfa, run: &mut Run) -> bool {
+    let transitions = nfa.states[run.current_state].transitions.clone();
+    for next_id in transitions {
+        let next_state = &nfa.states[next_id];
+        if next_state.state_type != StateType::Negation {
+            continue;
+        }
+        let Some(ref neg_info) = next_state.negation_info else {
+            continue;
+        };
+        run.pending_negations
+            .push(super::negation::NegationConstraint {
+                forbidden_type: neg_info.forbidden_type.clone(),
+                predicate: neg_info.predicate.clone(),
+                deadline: run.deadline,
+                event_time_deadline: run.event_time_deadline,
+                next_state: neg_info.continue_state,
+            });
+        run.current_state = next_id;
+        return true;
+    }
+    false
+}
+
 #[allow(dead_code)]
 pub(crate) fn advance_run(
     nfa: &Nfa,
@@ -400,6 +436,11 @@ pub(crate) fn advance_run_shared(
                 return complete_run(run, limits, evaluator, mode);
             }
 
+            // Arrive at a negated step now rather than on the next event.
+            if enter_negation_if_next(nfa, run) {
+                return RunAdvanceResult::Continue;
+            }
+
             if next_state.state_type == StateType::Kleene && next_state.self_loop {
                 // Always accumulate so Subsets mode can enumerate at completion
                 if run.kleene_capture.is_none() {
@@ -473,6 +514,7 @@ pub(crate) fn advance_run_shared(
                     return complete_run(run, limits, evaluator, mode);
                 }
 
+                enter_negation_if_next(nfa, run);
                 return RunAdvanceResult::Continue;
             }
         }

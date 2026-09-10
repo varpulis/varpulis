@@ -534,11 +534,29 @@ fn compile_sase_pattern_item(item: &varpulis_core::ast::SasePatternItem) -> Sase
         });
     }
 
+    // The parser marks `-> NOT B` by prefixing the event type with `!`
+    // (pest_parser.rs: `event_type = format!("!{event_type}")`). Reading that
+    // marker is what turns the item into a negation; without it the `!` stayed
+    // part of the name, so the state waited for an event type literally called
+    // "!B", no event ever had it, and the pattern silently never completed.
+    let negated = item.event_type.starts_with('!');
+    let event_type = item
+        .event_type
+        .strip_prefix('!')
+        .unwrap_or(&item.event_type)
+        .to_string();
+
     let base = SasePattern::Event {
-        event_type: item.event_type.clone(),
+        event_type,
         predicate,
         alias: item.alias.clone(),
     };
+
+    if negated {
+        // A negated item takes no Kleene operator — "not B, repeated" has no
+        // meaning the engine could act on, and the grammar does not offer it.
+        return SasePattern::Not(Box::new(base));
+    }
 
     match &item.kleene {
         Some(varpulis_core::ast::KleeneOp::Plus) => SasePattern::KleenePlus(Box::new(base)),
