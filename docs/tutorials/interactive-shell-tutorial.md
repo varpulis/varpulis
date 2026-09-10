@@ -174,13 +174,14 @@ This loads the VPL file and starts generating 500 synthetic fraud-scenario event
 
 ## TUI Mode
 
-For a split-pane visual experience:
+The split-pane terminal UI is what `varpulis interactive` opens by default.
+Pass `--no-tui` for a plain line-oriented shell instead.
 
 ```bash
-varpulis interactive --tui
+varpulis interactive
 ```
 
-This opens a full terminal UI with four panes:
+Four panes:
 
 - **Top-left**: Pipeline topology graph (stream dependency visualization)
 - **Top-right**: Scrolling event log with trace entries (PASS/BLOCK indicators)
@@ -199,7 +200,7 @@ Key bindings:
 Combine with `--file` and `--trace` for a pre-loaded, traced session:
 
 ```bash
-varpulis interactive --tui --file temperature_monitor.vpl --trace
+varpulis interactive --file temperature_monitor.vpl --trace
 ```
 
 ## JSON-Line Mode (for Agents)

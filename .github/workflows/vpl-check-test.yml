@@ -38,8 +38,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: vpl-check-cli
+      # `repl` because the documentation uses `varpulis repl`, and a binary
+      # without it reports that subcommand as missing. Any other feature-gated
+      # subcommand the docs pick up needs adding here too — the alternative is
+      # an exemption list in the checker, which would also excuse a subcommand
+      # that was genuinely removed.
       - name: Build varpulis
-        run: cargo build --release -p varpulis-cli
+        run: cargo build --release -p varpulis-cli --features repl
       - uses: actions/upload-artifact@v7
         with:
           name: varpulis-cli-vpl-check
@@ -100,6 +105,29 @@ jobs:
       # a new user pasted did not parse.
       - name: Check documented VPL
         run: python3 scripts/check-doc-vpl.py "$GITHUB_WORKSPACE/cli/varpulis"
+
+  check-cli-docs:
+    name: Documented Commands Parse
+    needs: [build-cli]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: varpulis-cli-vpl-check
+          path: cli
+      - run: chmod +x cli/varpulis
+      # `docs/examples/hvac-building.md` documented
+      # `varpulis run <file> --source ... --output ...`; `run` takes
+      # `-f/--file` and neither of those flags exists. Other pages used the
+      # correct form, so a reader could pick either and only one worked.
+      #
+      # The binary this checks is built from the current commit by `build-cli`,
+      # so a flag renamed in the code reddens the documentation that still
+      # names the old one.
+      - name: Check documented command lines
+        run: python3 scripts/check-documented-cli.py "$GITHUB_WORKSPACE/cli/varpulis"
 
   run-examples:
     name: Execute examples and assert output

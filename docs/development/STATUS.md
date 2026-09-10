@@ -1,8 +1,12 @@
 # Varpulis Project Status
 
-**Last updated**: March 9, 2026
-**Version**: 0.9.0
-**Production readiness**: 10/10 (see [AUDIT_REPORT.md](AUDIT_REPORT.md))
+**Last updated**: March 9, 2026 — this page has not been revised since, and
+the version below is two minor releases behind. Treat it as a March snapshot.
+**Version at the time**: 0.9.0 (current: 0.11.0)
+**Production readiness, as assessed in March**: 10/10 (see
+[AUDIT_REPORT.md](AUDIT_REPORT.md)). A September 2026 audit found defects that
+assessment did not cover, including encryption at rest that was documented and
+never applied; the score should not be read as current.
 
 ---
 

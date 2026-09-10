@@ -273,7 +273,7 @@ Bye!
 For a split-pane visual experience with topology, events, and metrics:
 
 ```bash
-varpulis interactive --tui --file temperature_monitor.vpl --trace
+varpulis interactive --file temperature_monitor.vpl --trace
 ```
 
 This opens a full terminal UI with 4 panes:
@@ -345,8 +345,8 @@ Now that you have Varpulis running:
 
 | Command | Purpose |
 |---------|---------|
-| `varpulis interactive` | Interactive shell (type VPL + events live) |
-| `varpulis interactive --tui` | Split-pane terminal UI |
+| `varpulis interactive` | Split-pane terminal UI: type VPL + events live |
+| `varpulis interactive --no-tui` | The same shell, plain line-oriented |
 | `varpulis interactive --json` | JSON-line protocol (for agents) |
 | `varpulis check file.vpl` | Validate syntax |
 | `varpulis simulate -p file.vpl -e events.evt` | Run simulation |

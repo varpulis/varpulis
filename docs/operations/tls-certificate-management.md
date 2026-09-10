@@ -99,7 +99,7 @@ varpulis coordinator \
 ```
 
 ```bash
-varpulis worker \
+varpulis server \
   --tls-cert /etc/varpulis/tls/server-cert.pem \
   --tls-key /etc/varpulis/tls/server-key.pem
 ```
@@ -124,7 +124,7 @@ Clients must then present a certificate signed by that CA when connecting.
 When Varpulis connects to external systems (Kafka brokers, MQTT brokers) that require client certificate authentication, use the client certificate flags:
 
 ```bash
-varpulis worker \
+varpulis server \
   --tls-cert /etc/varpulis/tls/server-cert.pem \
   --tls-key /etc/varpulis/tls/server-key.pem \
   --tls-client-cert /etc/varpulis/tls/client-cert.pem \

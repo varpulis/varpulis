@@ -71,7 +71,12 @@ pub fn run_shell(
         session.handle_command(SessionCommand::SetTrace { enabled: true });
     }
 
-    output::success("Varpulis Interactive Shell v0.9.0");
+    // From the crate, not a literal: this said v0.9.0 on a 0.11.0 build,
+    // having been typed once and never revisited.
+    output::success(&format!(
+        "Varpulis Interactive Shell v{}",
+        env!("CARGO_PKG_VERSION")
+    ));
     println!("Type VPL declarations (event, stream, ...) or event literals to inject.");
     println!("Type :help for commands, :quit to exit.\n");
 
