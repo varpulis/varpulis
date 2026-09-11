@@ -9,7 +9,7 @@
 //! It deliberately knows nothing about *how* the commands are agreed on.
 //! Two backends drive the same commands against the same state:
 //!
-//! * [`crate::raft`] (feature `raft`) — openraft replicates a totally-ordered
+//! * `crate::raft` (feature `raft`) — openraft replicates a totally-ordered
 //!   log of [`ClusterCommand`]s and applies them on every coordinator.
 //! * `crate::jetstream_control_plane` (feature `jetstream-control-plane`) —
 //!   each command is mapped to a compare-and-swap on a single JetStream KV
@@ -48,7 +48,7 @@ pub struct CoordinatorState {
     pub worker_pipeline_metrics: HashMap<String, Vec<crate::worker::PipelineMetrics>>,
     /// Latest durable distributed checkpoint id per pipeline group.
     ///
-    /// Populated from [`ClusterCommand::CheckpointCompleted`]. On coordinator
+    /// Populated from `ClusterCommand::CheckpointCompleted`. On coordinator
     /// recovery, the value here points to the most recent assembled snapshot
     /// in the shared state store (`{prefix}/{group}/{id}.json`).
     #[serde(default)]

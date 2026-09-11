@@ -1828,7 +1828,7 @@ impl Engine {
     /// The control plane's lease renewal is a compare-and-set on the worker's
     /// key; when it fails, this worker has been fenced out and must stop. It
     /// sets this flag, and every ingestion entry point then refuses with
-    /// [`EngineError::Fenced`].
+    /// [`error::EngineError::Fenced`].
     ///
     /// Without this the fence exists only in the control plane: a returning
     /// zombie is refused a *write to the control plane* while still happily
