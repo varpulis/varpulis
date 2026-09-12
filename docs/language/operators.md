@@ -163,6 +163,44 @@ stream Combinations = Login as start
     .emit(steps: count(steps), partial: _enumeration_truncated)
 ```
 
+### Absence: `-> NOT B`
+
+A negated step matches when its event does **not** arrive before the pattern's
+`within` deadline. "A happened, and B did not follow."
+
+It lives in a `pattern` declaration, and takes `where` and `within` without a
+leading dot:
+
+```varpulis
+event Order:
+    id: str
+event Ack:
+    id: str
+
+pattern Unacked =
+    Order as o
+    -> NOT Ack where id == o.id
+    within 4h
+    partition by id
+
+stream Alerts = Unacked
+    .emit(order: o.id, violation: "no acknowledgement within 4h")
+```
+
+This is not `.not()`. `.not()` is a stream operator that **cancels** a run in
+flight when the forbidden event arrives — "A then C, unless B came in between".
+It cannot fire on an absence, because with no event to trigger it there is
+nothing for the engine to emit. `-> NOT B` is the opposite: the deadline
+passing is what produces the match.
+
+**The alert arrives with the next event, not on a wall clock.** The deadline is
+checked against the watermark, and the watermark moves when an event arrives —
+any event of a type the pattern references. On a stream that keeps flowing this
+is a few seconds of lag; on a stream that goes completely silent after the
+trigger, the alert does not fire at all, because nothing tells the engine that
+time has passed. If you need the alert on a dead stream, emit a periodic
+heartbeat event of a type the pattern references.
+
 ### Monotonic pattern shortcuts
 
 | Operator | Description | Example |

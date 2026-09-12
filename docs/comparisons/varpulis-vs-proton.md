@@ -130,9 +130,20 @@ event Quote:
     bid: float
     ask: float
 
-stream EnrichedTrade = Trade as t
-    .left_join(Quote as q, on: t.symbol == q.symbol, within: 5s)
-    .emit(symbol: t.symbol, trade_price: t.price, bid: q.bid, ask: q.ask)
+stream Trades = Trade
+stream Quotes = Quote
+
+# `left_join` is a stream source, not an operator: it takes the two streams
+# and correlates them, keeping every Trade whether or not a Quote matched.
+stream EnrichedTrade = left_join(Trades, Quotes)
+    .on(Trades.symbol == Quotes.symbol)
+    .window(5s)
+    .select(
+        symbol: Trades.symbol,
+        trade_price: Trades.price,
+        bid: Quotes.bid,
+        ask: Quotes.ask
+    )
 ```
 
 This is the one workload where **Proton has the ergonomic edge**. Its `ASOF JOIN`, `date_diff_within`, and `LATEST JOIN` primitives — inherited from the ClickHouse heritage — are purpose-built for "enrich A with most-recent-B" patterns. Varpulis can do the join, but the temporal-window-style left join is one operator where Proton's SQL is flat-out cleaner.

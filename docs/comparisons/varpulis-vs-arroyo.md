@@ -156,9 +156,20 @@ event Quote:
     bid: float
     ask: float
 
-stream EnrichedTrade = Trade as t
-    .left_join(Quote as q, on: t.symbol == q.symbol, within: 5s)
-    .emit(symbol: t.symbol, trade_price: t.price, bid: q.bid, ask: q.ask)
+stream Trades = Trade
+stream Quotes = Quote
+
+# `left_join` is a stream source, not an operator: it takes the two streams
+# and correlates them, keeping every Trade whether or not a Quote matched.
+stream EnrichedTrade = left_join(Trades, Quotes)
+    .on(Trades.symbol == Quotes.symbol)
+    .window(5s)
+    .select(
+        symbol: Trades.symbol,
+        trade_price: Trades.price,
+        bid: Quotes.bid,
+        ask: Quotes.ask
+    )
 ```
 
 Both engines handle this, but **Arroyo's documented restriction is that windowed joins require identical window definitions on both sides** — you cannot directly express "the most-recent quote up to and including this trade's timestamp" with a windowed join. The closest workaround is an updating join with a TTL, which produces a changelog stream and has different semantics. Varpulis's `left_join ... within` matches each Trade with the Quote that fell inside the lookback window without forcing both streams into the same tumble.

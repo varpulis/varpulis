@@ -137,6 +137,24 @@ fn retain_and_evict_empty_partitions<F: Fn(&Run) -> bool>(
     });
 }
 
+/// Build the match a run produces when a deadline completes it.
+///
+/// Drains `captured` and `stack`, so a run cannot emit twice: the retain that
+/// follows drops it, and if it somehow survived it would carry nothing.
+///
+/// No Kleene bookkeeping, because a negated step takes no Kleene operator —
+/// "not B, repeated" is not a thing the grammar offers or the engine could act
+/// on.
+fn match_from_completed_run(run: &mut Run) -> MatchResult {
+    MatchResult {
+        captured: std::mem::take(&mut run.captured),
+        stack: std::mem::take(&mut run.stack),
+        duration: run.started_at.elapsed(),
+        kleene_truncated: 0,
+        enumeration_truncated: false,
+    }
+}
+
 impl SaseEngine {
     /// Create a new engine that matches the given pattern.
     pub fn new(pattern: SasePattern) -> Self {
@@ -316,12 +334,19 @@ impl SaseEngine {
 
     /// Manually advance the watermark (useful for testing or external control)
     /// NEG-01: This also confirms any pending negations whose deadline has passed
-    pub fn advance_watermark(&mut self, new_watermark: DateTime<Utc>) {
+    /// Advance the watermark, returning any matches that time completed.
+    ///
+    /// A negated step finishes when its deadline passes without the forbidden
+    /// event, so the only thing that can deliver such a match is time moving —
+    /// there is no event to hang it off. This used to return `()`, which left
+    /// the completion with nowhere to go.
+    #[must_use = "advancing the watermark can complete a negated pattern; \
+                  dropping the result loses those matches"]
+    pub fn advance_watermark(&mut self, new_watermark: DateTime<Utc>) -> Vec<MatchResult> {
         self.watermark = Some(new_watermark);
-        // NEG-01: Confirm negations based on watermark first
-        self.confirm_negations_event_time(new_watermark);
-        // Cleanup runs that have exceeded their event-time deadline
-        self.cleanup_by_watermark();
+        // Cleanup confirms negations itself and returns what they completed,
+        // before dropping the runs whose deadline has passed.
+        self.cleanup_by_watermark()
     }
 
     /// Add a global negation condition that invalidates active runs
@@ -472,9 +497,11 @@ impl SaseEngine {
             }
         }
 
-        // Clean up timed-out runs
+        // Clean up timed-out runs. A deadline can *complete* a negated step
+        // as well as expire a run, so what it returns is carried into this
+        // call's output rather than dropped.
         let runs_before_cleanup = self.total_run_count();
-        self.cleanup_timeouts();
+        let timeout_matches = self.cleanup_timeouts();
         let expired_count = runs_before_cleanup.saturating_sub(self.total_run_count());
         for _ in 0..expired_count {
             self.metrics.record_run_expired();
@@ -491,7 +518,7 @@ impl SaseEngine {
         // Check if any state is interested in this event (for "ignored" metric)
         let has_interest = self.has_interest(&shared_event.event_type);
 
-        let mut completed = Vec::new();
+        let mut completed = timeout_matches;
 
         // Process runs
         if let Some(ref partition_field) = self.partition_by.clone() {
@@ -581,13 +608,13 @@ impl SaseEngine {
             self.update_watermark(&event);
         }
 
-        // Clean up timed-out runs
-        self.cleanup_timeouts();
+        // Clean up timed-out runs (a deadline can complete a negated step)
+        let timeout_matches = self.cleanup_timeouts();
 
         // Check global negations
         self.check_global_negations(&event);
 
-        let mut completed = Vec::new();
+        let mut completed = timeout_matches;
         let mode = self.resolved_emission_mode();
 
         // PERF(Opt7): Borrow partition_by instead of cloning per event
@@ -703,8 +730,9 @@ impl SaseEngine {
             self.update_watermark(&event);
         }
 
-        // Clean up timed-out runs (uses watermark in EventTime mode)
-        self.cleanup_timeouts();
+        // Clean up timed-out runs (uses watermark in EventTime mode). A
+        // deadline can complete a negated step, so keep what it returns.
+        completed.extend(self.cleanup_timeouts());
 
         // Check global negations - invalidate runs that match
         self.check_global_negations(&event);
@@ -1157,7 +1185,22 @@ impl SaseEngine {
         run
     }
 
+    /// Start a run for `event`, entering a negated step straight away if the
+    /// pattern's next item is one.
+    ///
+    /// The entry is here rather than at each of the four `return Some(run)`
+    /// points inside, so a new one cannot be added that forgets it.
     fn try_start_run_shared(&self, event: SharedEvent) -> Option<Run> {
+        let mut run = self.try_start_run_inner(event)?;
+        // "A, and then NOT B" must begin waiting for B's absence the moment A
+        // matches. Waiting for the next event to notice would mean the absence
+        // is only observable when something else arrives, which is precisely
+        // what an absence does not guarantee.
+        super::advance::enter_negation_if_next(&self.nfa, &mut run);
+        Some(run)
+    }
+
+    fn try_start_run_inner(&self, event: SharedEvent) -> Option<Run> {
         let start_state = &self.nfa.states[self.nfa.start_state];
         // PERF: Use static empty map instead of allocating on every call
         let empty_captured = &*EMPTY_CAPTURED;
@@ -1288,7 +1331,9 @@ impl SaseEngine {
         None
     }
 
-    fn cleanup_timeouts(&mut self) {
+    /// Drop runs whose deadline has passed, and return the matches that
+    /// deadline *completed* — a negated step whose forbidden event never came.
+    fn cleanup_timeouts(&mut self) -> Vec<MatchResult> {
         // PERF(Opt5): For ProcessingTime, skip cleanup if we ran recently — the per-run
         // is_timed_out() checks in process_partition_shared/process_runs_shared still
         // catch expired runs. For EventTime, always run since watermark can jump
@@ -1296,40 +1341,50 @@ impl SaseEngine {
         if self.time_semantics == TimeSemantics::ProcessingTime
             && self.last_cleanup.elapsed() < self.cleanup_interval
         {
-            return;
+            return Vec::new();
         }
         self.last_cleanup = Timestamp::now();
 
         match self.time_semantics {
             TimeSemantics::ProcessingTime => {
                 // NEG-01: Confirm negations based on processing time
-                self.confirm_negations_processing_time();
+                let completed = self.confirm_negations_processing_time();
                 // Use wall-clock time for timeout check
                 self.runs.retain(|r| !r.is_timed_out() && !r.invalidated);
                 retain_and_evict_empty_partitions(&mut self.partitioned_runs, |r| {
                     !r.is_timed_out() && !r.invalidated
                 });
+                completed
             }
             TimeSemantics::EventTime => {
                 // Use watermark for timeout check
-                self.cleanup_by_watermark();
+                self.cleanup_by_watermark()
             }
         }
     }
 
     /// NEG-01: Confirm negations based on processing time (deadline passed)
-    fn confirm_negations_processing_time(&mut self) {
+    fn confirm_negations_processing_time(&mut self) -> Vec<MatchResult> {
+        let mut out = Vec::new();
         for run in &mut self.runs {
-            Self::confirm_run_negations_processing_time_static(run, &self.nfa);
+            out.extend(Self::confirm_run_negations_processing_time_static(
+                run, &self.nfa,
+            ));
         }
         for runs in self.partitioned_runs.values_mut() {
             for run in runs.iter_mut() {
-                Self::confirm_run_negations_processing_time_static(run, &self.nfa);
+                out.extend(Self::confirm_run_negations_processing_time_static(
+                    run, &self.nfa,
+                ));
             }
         }
+        out
     }
 
-    fn confirm_run_negations_processing_time_static(run: &mut Run, nfa: &Nfa) {
+    fn confirm_run_negations_processing_time_static(
+        run: &mut Run,
+        nfa: &Nfa,
+    ) -> Option<MatchResult> {
         // Check each pending negation
         let mut confirmed_indices = Vec::new();
         for (idx, neg) in run.pending_negations.iter().enumerate() {
@@ -1339,24 +1394,30 @@ impl SaseEngine {
         }
 
         // Process confirmations in reverse order to maintain indices
+        let mut completed = None;
         for (idx, next_state) in confirmed_indices.into_iter().rev() {
             run.pending_negations.remove(idx);
             // Transition to the continue state
             run.current_state = next_state;
 
-            // Check if next state is accept
-            let state = &nfa.states[next_state];
-            if state.state_type == StateType::Accept {
-                // Will be handled by the main processing loop
+            if nfa.states[next_state].state_type == StateType::Accept {
+                completed = Some(match_from_completed_run(run));
             }
         }
+        completed
     }
 
     /// Cleanup runs based on watermark (for event-time processing)
-    fn cleanup_by_watermark(&mut self) {
+    fn cleanup_by_watermark(&mut self) -> Vec<MatchResult> {
+        let mut completed = Vec::new();
         if let Some(watermark) = self.watermark {
-            // NEG-01: Confirm negations based on watermark
-            self.confirm_negations_event_time(watermark);
+            // NEG-01: Confirm negations based on watermark.
+            //
+            // Collected before the retain below, which drops every run whose
+            // deadline has passed. A run completed by that same deadline is
+            // exactly such a run, so confirming and then discarding would
+            // throw away the match the confirmation just produced.
+            completed = self.confirm_negations_event_time(watermark);
 
             self.runs
                 .retain(|r| !r.is_timed_out_event_time(watermark) && !r.invalidated);
@@ -1364,21 +1425,32 @@ impl SaseEngine {
                 !r.is_timed_out_event_time(watermark) && !r.invalidated
             });
         }
+        completed
     }
 
     /// NEG-01: Confirm negations based on event-time watermark
-    fn confirm_negations_event_time(&mut self, watermark: DateTime<Utc>) {
+    fn confirm_negations_event_time(&mut self, watermark: DateTime<Utc>) -> Vec<MatchResult> {
+        let mut out = Vec::new();
         for run in &mut self.runs {
-            Self::confirm_run_negations_event_time_static(run, &self.nfa, watermark);
+            out.extend(Self::confirm_run_negations_event_time_static(
+                run, &self.nfa, watermark,
+            ));
         }
         for runs in self.partitioned_runs.values_mut() {
             for run in runs.iter_mut() {
-                Self::confirm_run_negations_event_time_static(run, &self.nfa, watermark);
+                out.extend(Self::confirm_run_negations_event_time_static(
+                    run, &self.nfa, watermark,
+                ));
             }
         }
+        out
     }
 
-    fn confirm_run_negations_event_time_static(run: &mut Run, nfa: &Nfa, watermark: DateTime<Utc>) {
+    fn confirm_run_negations_event_time_static(
+        run: &mut Run,
+        nfa: &Nfa,
+        watermark: DateTime<Utc>,
+    ) -> Option<MatchResult> {
         let mut confirmed_indices = Vec::new();
         for (idx, neg) in run.pending_negations.iter().enumerate() {
             if neg.is_confirmed_event_time(watermark) {
@@ -1386,15 +1458,24 @@ impl SaseEngine {
             }
         }
 
+        let mut completed = None;
         for (idx, next_state) in confirmed_indices.into_iter().rev() {
             run.pending_negations.remove(idx);
             run.current_state = next_state;
 
-            let state = &nfa.states[next_state];
-            if state.state_type == StateType::Accept {
-                // Will be handled by the main processing loop
+            // Landing on Accept means the pattern completed *because time
+            // passed*, which is the whole point of a negated step: "A
+            // happened, and B did not follow within D".
+            //
+            // This used to read `// Will be handled by the main processing
+            // loop`, and it was not: that loop advances runs on an incoming
+            // event, and an absence produces none. The match was built, moved
+            // to Accept, and dropped by the retain that follows.
+            if nfa.states[next_state].state_type == StateType::Accept {
+                completed = Some(match_from_completed_run(run));
             }
         }
+        completed
     }
 
     /// Update watermark based on incoming event timestamp
