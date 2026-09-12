@@ -355,6 +355,21 @@ jobs:
           key: wasm
       - name: Check WASM build
         run: cargo check -p varpulis-wasm --target wasm32-unknown-unknown
+      # varpulis-engine-wasm is the crate that actually compiles the engine to
+      # wasm: it takes varpulis-runtime with `default-features = false,
+      # features = ["wasm"]`. A workspace build never produces that
+      # configuration — feature unification hands it the async-enabled runtime
+      # that some other member asked for — so it has to be built on its own,
+      # which is what `-p` does here. varpulis-wasm above depends on
+      # varpulis-core and varpulis-parser only, and so checks none of this.
+      - name: Check the engine compiled to WASM
+        run: cargo check -p varpulis-engine-wasm --target wasm32-unknown-unknown
+      # The same runtime configuration on the host target, where a compile
+      # error is legible without a wasm toolchain in the way. This is also the
+      # configuration `crates/varpulis-runtime/fuzz` builds against, so a break
+      # here is a break in the nightly fuzz run.
+      - name: Check varpulis-runtime without default features
+        run: cargo check -p varpulis-runtime --no-default-features
 
   chaos-tests:
     name: Chaos Tests

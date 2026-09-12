@@ -156,6 +156,12 @@ pub struct Engine {
     /// `load()` while `enable_checkpointing` runs afterwards. Without this,
     /// the fused columnar ops carry state that checkpoint/restore does not
     /// capture, silently breaking exactly-once on the default (arrow) build.
+    ///
+    /// Every read of this flag sits behind `#[cfg(feature = "arrow")]`, so
+    /// without `arrow` it is genuinely write-only — the allow is scoped to
+    /// exactly that configuration so the warning still fires if the reads
+    /// ever disappear from an arrow build.
+    #[cfg_attr(not(feature = "arrow"), allow(dead_code))]
     pub(super) checkpoint_planned: bool,
     /// Async checkpoint manager for non-blocking persistence (Chandy-Lamport mode)
     #[cfg(feature = "async-runtime")]

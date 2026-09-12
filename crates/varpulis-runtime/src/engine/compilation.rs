@@ -12,7 +12,6 @@ use rustc_hash::FxHashMap;
 use tracing::{debug, info, warn};
 use varpulis_core::ast::{Expr, StreamOp, StreamSource};
 
-#[cfg(feature = "async-runtime")]
 use super::types::{
     AlertConfig, DistinctState, EmitConfig, EmitExprConfig, EmitSource, EnrichConfig,
     FieldAggregateInfo, ForecastConfig, LimitState, LogConfig, MergeSource,
