@@ -205,6 +205,20 @@ pub async fn run_coordinator(
         println!("HA:        enabled (id={id})");
     }
 
+    // Identity this coordinator competes for leadership under. In Kubernetes
+    // HOSTNAME is the pod name, which is exactly the identity wanted; off
+    // Kubernetes, host:port is unique per coordinator on a machine and stable
+    // across a restart. `--coordinator-id` overrides both.
+    //
+    // It has to be *stable* across a restart and *distinct* between peers: two
+    // coordinators sharing an id would each accept the other's lease renewal
+    // as their own, which is the one way to get two writers past the CAS.
+    #[cfg(feature = "jetstream-control-plane")]
+    let coordinator_identity = _coordinator_id.clone().unwrap_or_else(|| {
+        let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "coordinator".to_string());
+        format!("{host}:{port}")
+    });
+
     // Build rate limiter for API routes
     let coordinator_rate_limiter = if rate_limit_rps > 0 {
         println!("Rate limit: {rate_limit_rps} req/s per client (mutating endpoints)");
@@ -369,7 +383,7 @@ pub async fn run_coordinator(
         // picks one destination, never both.
         #[cfg(feature = "jetstream-control-plane")]
         if let Some(cfg) = control_plane_config {
-            use varpulis_cluster::jetstream_control_plane::{Applier, ControlPlane};
+            use varpulis_cluster::jetstream_control_plane::{Applier, ControlPlane, LeaderLease};
             match ControlPlane::connect(&cfg).await {
                 Ok(cp) => {
                     let replicas = cp.replicas().await.unwrap_or(cfg.num_replicas);
@@ -386,6 +400,31 @@ pub async fn run_coordinator(
                         cp.bucket(),
                         replicas
                     );
+                    // Leadership. Without this the coordinator's `ha_role`
+                    // stays at its `Standalone` default, whose `is_writer()`
+                    // is true, so every coordinator in the deployment sweeps
+                    // health, drives failovers and reconciles placements at
+                    // the same time.
+                    //
+                    // The lease TTL is the bucket's `max_age`: the record
+                    // ages out on exactly the clock that decides whether a
+                    // standby's `create` succeeds, so the two cannot
+                    // disagree. The sweep renews it once per interval, which
+                    // therefore has to be comfortably shorter than the TTL —
+                    // otherwise the leader's own record expires between its
+                    // renewals and leadership flaps every cycle.
+                    if heartbeat_interval_secs * 2 >= cfg.ttl.as_secs() {
+                        eprintln!(
+                            "WARNING: the coordinator lease renews once per health sweep ({heartbeat_interval_secs}s) against a {}s control-plane TTL. Leadership will flap. Lower --heartbeat-interval, or raise VARPULIS_CONTROL_PLANE_TTL_SECS so the interval is well under half the TTL.",
+                            cfg.ttl.as_secs()
+                        );
+                    }
+                    println!("Leader:    lease on 'control/leader' as '{coordinator_identity}'");
+                    coord.leader_lease = Some(LeaderLease::new(
+                        cp.clone(),
+                        coordinator_identity.clone(),
+                        cfg.ttl,
+                    ));
                     coord.control_plane = Some(Applier::new(cp));
                 }
                 Err(e) => {
@@ -409,6 +448,14 @@ pub async fn run_coordinator(
         loop {
             interval.tick().await;
             let mut coord = health_coordinator.write().await;
+
+            // Decide who writes. Exactly one of these is configured: the
+            // control plane's lease when VARPULIS_CONTROL_PLANE_URL selected
+            // it, Raft's metrics when the raft feature is on, and neither in
+            // standalone mode — where `ha_role` stays `Standalone` and this
+            // single coordinator is correctly the writer.
+            #[cfg(feature = "jetstream-control-plane")]
+            coord.update_control_plane_role().await;
 
             // Update Raft role if enabled
             #[cfg(feature = "raft")]
