@@ -234,5 +234,5 @@ async fn handle_heartbeat_message(subject: &str, payload: &[u8], coordinator: &S
     // `sync_from_raft`, which could then false-mark it `Unhealthy` (audit C5).
     // No-op when `raft` is off (single-coordinator liveness needs no replication).
     #[cfg(feature = "raft")]
-    crate::api::replicate_heartbeat_to_raft(coord, worker_id, &hb).await;
+    crate::api::replicate_heartbeat(coord, worker_id, &hb).await;
 }

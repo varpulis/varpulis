@@ -284,11 +284,11 @@ impl Coordinator {
         #[cfg(feature = "raft")]
         for wid in &updated_workers {
             if let Some(w) = self.workers.get(wid) {
-                let cmd = crate::raft::ClusterCommand::WorkerPipelinesUpdated {
+                let cmd = crate::control_state::ClusterCommand::WorkerPipelinesUpdated {
                     id: wid.0.clone(),
                     assigned_pipelines: w.assigned_pipelines.clone(),
                 };
-                if let Err(e) = self.raft_replicate(cmd).await {
+                if let Err(e) = self.replicate(cmd).await {
                     warn!("Failed to replicate reconciled pipelines for {wid} to Raft: {e}");
                 }
             }

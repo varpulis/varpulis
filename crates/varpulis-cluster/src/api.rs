@@ -663,17 +663,14 @@ async fn handle_register_worker(
     let mut coord = coordinator.write().await;
 
     // Replicate through Raft if enabled (we're the leader here)
-    #[cfg(feature = "raft")]
-    if let Some(ref handle) = coord.raft_handle {
-        let cmd = crate::raft::ClusterCommand::RegisterWorker {
-            id: body.worker_id.clone(),
-            address: body.address.clone(),
-            api_key: body.api_key.clone(),
-            capacity: body.capacity.clone(),
-        };
-        if let Err(e) = handle.raft.client_write(cmd).await {
-            return cluster_error_response(ClusterError::NotLeader(e.to_string()));
-        }
+    let cmd = crate::control_state::ClusterCommand::RegisterWorker {
+        id: body.worker_id.clone(),
+        address: body.address.clone(),
+        api_key: body.api_key.clone(),
+        capacity: body.capacity.clone(),
+    };
+    if let Err(e) = coord.replicate(cmd).await {
+        return cluster_error_response(ClusterError::NotLeader(e.to_string()));
     }
 
     let node = WorkerNode {
@@ -711,8 +708,14 @@ async fn handle_register_worker(
 /// Raft identically regardless of transport (audit C5). Consumes the write
 /// guard so the follower branch can release the coordinator lock before its
 /// HTTP round-trip. Replication failures are logged, not fatal.
-#[cfg(feature = "raft")]
-pub(crate) async fn replicate_heartbeat_to_raft(
+/// Replicate a heartbeat's metrics to whichever control backend is configured.
+///
+/// Not optional under the JetStream control plane: a worker record there
+/// carries a TTL and is kept alive by being rewritten, so a heartbeat that
+/// replicates nowhere means every worker vanishes from the control state
+/// thirty seconds after it registers. This function used to be gated on
+/// `raft`, so exactly that happened.
+pub(crate) async fn replicate_heartbeat(
     coord: tokio::sync::RwLockWriteGuard<'_, Coordinator>,
     worker_id: &str,
     body: &HeartbeatRequest,
@@ -725,18 +728,28 @@ pub(crate) async fn replicate_heartbeat_to_raft(
         .get(&WorkerId(worker_id.to_string()))
         .map(|w| w.heartbeat_seq)
         .unwrap_or(0);
-    let cmd = crate::raft::ClusterCommand::WorkerMetricsUpdated {
+    let cmd = crate::control_state::ClusterCommand::WorkerMetricsUpdated {
         id: worker_id.to_string(),
         events_processed: body.events_processed,
         pipelines_running: body.pipelines_running,
         pipeline_metrics: body.pipeline_metrics.clone(),
         heartbeat_seq,
     };
+    // `is_raft_leader` is true in standalone mode and under the control plane,
+    // where there is no election to lose.
+    #[cfg(not(feature = "raft"))]
+    {
+        if let Err(e) = coord.replicate(cmd).await {
+            tracing::debug!("Failed to replicate heartbeat metrics: {e}");
+        }
+    }
+
+    #[cfg(feature = "raft")]
     if coord.is_raft_leader() {
-        // Leader: write directly to the Raft log.
-        if let Some(ref handle) = coord.raft_handle {
-            if let Err(e) = handle.raft.client_write(cmd).await {
-                tracing::debug!("Failed to replicate heartbeat metrics to Raft: {e}");
+        // Leader: replicate directly.
+        {
+            if let Err(e) = coord.replicate(cmd).await {
+                tracing::debug!("Failed to replicate heartbeat metrics: {e}");
             }
         }
     } else if let Some(leader_addr) = coord.raft_leader_addr() {
@@ -770,9 +783,10 @@ async fn handle_heartbeat(
     // Replicate the heartbeat metrics + monotonic liveness counter through Raft
     // so all coordinators (including the leader that serves
     // /api/v1/cluster/workers) see up-to-date events_processed,
-    // pipelines_running, and heartbeat_seq. No-op when `raft` is off.
-    #[cfg(feature = "raft")]
-    replicate_heartbeat_to_raft(coord, &worker_id, &body).await;
+    // pipelines_running, and heartbeat_seq. A no-op in standalone mode; under
+    // the JetStream control plane it is also what keeps the worker's record
+    // from ageing out of the bucket, so it must not be gated on `raft`.
+    replicate_heartbeat(coord, &worker_id, &body).await;
     reply_with_status(
         Json(&HeartbeatResponse { acknowledged: true }),
         StatusCode::OK,
@@ -853,14 +867,11 @@ async fn handle_delete_worker(
     let mut coord = coordinator.write().await;
 
     // Replicate through Raft if enabled
-    #[cfg(feature = "raft")]
-    if let Some(ref handle) = coord.raft_handle {
-        let cmd = crate::raft::ClusterCommand::DeregisterWorker {
-            id: worker_id.clone(),
-        };
-        if let Err(e) = handle.raft.client_write(cmd).await {
-            return cluster_error_response(ClusterError::NotLeader(e.to_string()));
-        }
+    let cmd = crate::control_state::ClusterCommand::DeregisterWorker {
+        id: worker_id.clone(),
+    };
+    if let Err(e) = coord.replicate(cmd).await {
+        return cluster_error_response(ClusterError::NotLeader(e.to_string()));
     }
 
     match coord.deregister_worker(&WorkerId(worker_id)) {
@@ -928,23 +939,20 @@ async fn handle_deploy_group(
     match coord.commit_deploy_group(plan, results) {
         Ok(group_id) => {
             // Replicate the deployment result through Raft
-            #[cfg(feature = "raft")]
-            if let Some(ref handle) = coord.raft_handle {
-                if let Some(group) = coord.pipeline_groups.get(&group_id) {
-                    let group_json = serde_json::to_value(group).unwrap_or_default();
-                    let cmd = crate::raft::ClusterCommand::GroupDeployed {
-                        name: group_id.clone(),
-                        group: group_json,
-                    };
-                    if let Err(e) = handle.raft.client_write(cmd).await {
-                        tracing::error!("Raft replication failed for deploy_group: {e}");
-                        return reply_with_status(
-                            Json(&serde_json::json!({
-                                "error": format!("Operation applied locally but Raft replication failed: {e}")
-                            })),
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                        );
-                    }
+            if let Some(group) = coord.pipeline_groups.get(&group_id) {
+                let group_json = serde_json::to_value(group).unwrap_or_default();
+                let cmd = crate::control_state::ClusterCommand::GroupDeployed {
+                    name: group_id.clone(),
+                    group: group_json,
+                };
+                if let Err(e) = coord.replicate(cmd).await {
+                    tracing::error!("Raft replication failed for deploy_group: {e}");
+                    return reply_with_status(
+                        Json(&serde_json::json!({
+                            "error": format!("Operation applied locally but Raft replication failed: {e}")
+                        })),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    );
                 }
             }
 
@@ -1090,20 +1098,17 @@ async fn handle_delete_group(
     coord.commit_teardown_group(&plan);
 
     // Replicate the group removal through Raft
-    #[cfg(feature = "raft")]
-    if let Some(ref handle) = coord.raft_handle {
-        let cmd = crate::raft::ClusterCommand::GroupRemoved {
-            name: group_id.clone(),
-        };
-        if let Err(e) = handle.raft.client_write(cmd).await {
-            tracing::error!("Raft replication failed for teardown_group: {e}");
-            return reply_with_status(
-                Json(&serde_json::json!({
-                    "error": format!("Operation applied locally but Raft replication failed: {e}")
-                })),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            );
-        }
+    let cmd = crate::control_state::ClusterCommand::GroupRemoved {
+        name: group_id.clone(),
+    };
+    if let Err(e) = coord.replicate(cmd).await {
+        tracing::error!("Raft replication failed for teardown_group: {e}");
+        return reply_with_status(
+            Json(&serde_json::json!({
+                "error": format!("Operation applied locally but Raft replication failed: {e}")
+            })),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
     }
 
     reply_with_status(
@@ -1888,16 +1893,13 @@ async fn handle_upload_model(
     let mut coord = coordinator.write().await;
 
     // Replicate via Raft if available
-    #[cfg(feature = "raft")]
-    if let Some(ref handle) = coord.raft_handle {
-        let cmd = crate::raft::ClusterCommand::ModelRegistered {
-            name: name.clone(),
-            entry: entry.clone(),
-        };
-        if let Err(e) = handle.raft.client_write(cmd).await {
-            let resp = serde_json::json!({ "error": format!("Raft replication failed: {}", e) });
-            return reply_with_status(Json(&resp), StatusCode::INTERNAL_SERVER_ERROR);
-        }
+    let cmd = crate::control_state::ClusterCommand::ModelRegistered {
+        name: name.clone(),
+        entry: entry.clone(),
+    };
+    if let Err(e) = coord.replicate(cmd).await {
+        let resp = serde_json::json!({ "error": format!("Raft replication failed: {}", e) });
+        return reply_with_status(Json(&resp), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     coord.model_registry.insert(name, entry.clone());
@@ -1928,13 +1930,10 @@ async fn handle_delete_model(
         return reply_json_status(&resp, StatusCode::NOT_FOUND);
     }
 
-    #[cfg(feature = "raft")]
-    if let Some(ref handle) = coord.raft_handle {
-        let cmd = crate::raft::ClusterCommand::ModelRemoved { name: name.clone() };
-        if let Err(e) = handle.raft.client_write(cmd).await {
-            let resp = serde_json::json!({ "error": format!("Raft replication failed: {}", e) });
-            return reply_with_status(Json(&resp), StatusCode::INTERNAL_SERVER_ERROR);
-        }
+    let cmd = crate::control_state::ClusterCommand::ModelRemoved { name: name.clone() };
+    if let Err(e) = coord.replicate(cmd).await {
+        let resp = serde_json::json!({ "error": format!("Raft replication failed: {}", e) });
+        return reply_with_status(Json(&resp), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     coord.model_registry.remove(&name);
@@ -2127,18 +2126,17 @@ async fn handle_rebalance(State(state): State<AppState>, _auth: RbacOperator) ->
 
     match coord.rebalance().await {
         Ok(migration_ids) => {
-            // Replicate updated group states through Raft
-            #[cfg(feature = "raft")]
+            // Replicate updated group states
             if !migration_ids.is_empty() {
-                if let Some(ref handle) = coord.raft_handle {
+                {
                     for (name, group) in &coord.pipeline_groups {
                         let group_json = serde_json::to_value(group).unwrap_or_default();
-                        let cmd = crate::raft::ClusterCommand::GroupUpdated {
+                        let cmd = crate::control_state::ClusterCommand::GroupUpdated {
                             name: name.clone(),
                             group: group_json,
                         };
-                        if let Err(e) = handle.raft.client_write(cmd).await {
-                            tracing::error!("Raft replication failed for rebalance: {e}");
+                        if let Err(e) = coord.replicate(cmd).await {
+                            tracing::error!("Replication failed for rebalance: {e}");
                             return reply_with_status(
                                 Json(&serde_json::json!({
                                     "error": format!("Operation applied locally but Raft replication failed: {e}")
@@ -2364,23 +2362,20 @@ async fn handle_manual_migrate(
             let migration_id = coord.commit_migrate_pipeline(&plan, &new_pipeline_id, true, None);
 
             // Replicate updated group state through Raft
-            #[cfg(feature = "raft")]
-            if let Some(ref handle) = coord.raft_handle {
-                if let Some(group) = coord.pipeline_groups.get(&group_id) {
-                    let group_json = serde_json::to_value(group).unwrap_or_default();
-                    let cmd = crate::raft::ClusterCommand::GroupUpdated {
-                        name: group_id.clone(),
-                        group: group_json,
-                    };
-                    if let Err(e) = handle.raft.client_write(cmd).await {
-                        tracing::error!("Raft replication failed for migrate_pipeline: {e}");
-                        return reply_with_status(
-                            Json(&serde_json::json!({
-                                "error": format!("Operation applied locally but Raft replication failed: {e}")
-                            })),
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                        );
-                    }
+            if let Some(group) = coord.pipeline_groups.get(&group_id) {
+                let group_json = serde_json::to_value(group).unwrap_or_default();
+                let cmd = crate::control_state::ClusterCommand::GroupUpdated {
+                    name: group_id.clone(),
+                    group: group_json,
+                };
+                if let Err(e) = coord.replicate(cmd).await {
+                    tracing::error!("Raft replication failed for migrate_pipeline: {e}");
+                    return reply_with_status(
+                        Json(&serde_json::json!({
+                            "error": format!("Operation applied locally but Raft replication failed: {e}")
+                        })),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    );
                 }
             }
 
@@ -2483,15 +2478,12 @@ async fn handle_create_connector(
     let mut coord = coordinator.write().await;
 
     // Replicate through Raft if enabled
-    #[cfg(feature = "raft")]
-    if let Some(ref handle) = coord.raft_handle {
-        let cmd = crate::raft::ClusterCommand::ConnectorCreated {
-            name: body.name.clone(),
-            connector: body.clone(),
-        };
-        if let Err(e) = handle.raft.client_write(cmd).await {
-            return cluster_error_response(ClusterError::NotLeader(e.to_string()));
-        }
+    let cmd = crate::control_state::ClusterCommand::ConnectorCreated {
+        name: body.name.clone(),
+        connector: body.clone(),
+    };
+    if let Err(e) = coord.replicate(cmd).await {
+        return cluster_error_response(ClusterError::NotLeader(e.to_string()));
     }
 
     match coord.create_connector(body) {
@@ -2520,15 +2512,12 @@ async fn handle_update_connector(
 
     let mut coord = coordinator.write().await;
 
-    #[cfg(feature = "raft")]
-    if let Some(ref handle) = coord.raft_handle {
-        let cmd = crate::raft::ClusterCommand::ConnectorUpdated {
-            name: name.clone(),
-            connector: body.clone(),
-        };
-        if let Err(e) = handle.raft.client_write(cmd).await {
-            return cluster_error_response(ClusterError::NotLeader(e.to_string()));
-        }
+    let cmd = crate::control_state::ClusterCommand::ConnectorUpdated {
+        name: name.clone(),
+        connector: body.clone(),
+    };
+    if let Err(e) = coord.replicate(cmd).await {
+        return cluster_error_response(ClusterError::NotLeader(e.to_string()));
     }
 
     match coord.update_connector(&name, body) {
@@ -2556,12 +2545,9 @@ async fn handle_delete_connector(
 
     let mut coord = coordinator.write().await;
 
-    #[cfg(feature = "raft")]
-    if let Some(ref handle) = coord.raft_handle {
-        let cmd = crate::raft::ClusterCommand::ConnectorRemoved { name: name.clone() };
-        if let Err(e) = handle.raft.client_write(cmd).await {
-            return cluster_error_response(ClusterError::NotLeader(e.to_string()));
-        }
+    let cmd = crate::control_state::ClusterCommand::ConnectorRemoved { name: name.clone() };
+    if let Err(e) = coord.replicate(cmd).await {
+        return cluster_error_response(ClusterError::NotLeader(e.to_string()));
     }
 
     match coord.delete_connector(&name) {
