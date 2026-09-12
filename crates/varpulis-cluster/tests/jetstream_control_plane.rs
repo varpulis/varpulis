@@ -774,6 +774,94 @@ async fn exactly_one_coordinator_holds_the_lease_and_a_stalled_one_stands_down()
     assert_eq!(c1.tick().await, LeaderState::Leader);
 }
 
+/// The lease is only worth having if the coordinator consults it.
+///
+/// `Coordinator::ha_role` defaults to `Standalone`, and `Standalone::is_writer()`
+/// is `true`. So before `update_control_plane_role` existed, a coordinator
+/// built without the `raft` feature never changed role for the whole process
+/// lifetime, and *every* coordinator in a JetStream deployment passed
+/// `require_writer`: all of them swept health, drove failovers and reconciled
+/// placements at once, against each other.
+///
+/// This is the gate for that. It asserts on `Coordinator`, not on `LeaderLease`,
+/// because the lease was already correct — it was simply not called.
+#[tokio::test]
+async fn only_the_lease_holding_coordinator_is_a_writer() {
+    const TEST: &str = "only_the_lease_holding_coordinator_is_a_writer";
+    let Some(cp) = open("coordrole").await else {
+        return;
+    };
+    cp.delete(&ControlKey::Leader).await.ok();
+
+    let ttl = Duration::from_secs(30);
+    let mut a = varpulis_cluster::Coordinator::new();
+    let mut b = varpulis_cluster::Coordinator::new();
+
+    // Both start as Standalone, which is a writer — the pre-fix state, and
+    // the reason this test exists.
+    assert!(a.require_writer().is_ok());
+    assert!(b.require_writer().is_ok());
+
+    a.leader_lease = Some(LeaderLease::new(cp.clone(), "coord-a", ttl));
+    b.leader_lease = Some(LeaderLease::new(cp.clone(), "coord-b", ttl));
+
+    a.update_control_plane_role().await;
+    b.update_control_plane_role().await;
+
+    let writers = [&a, &b]
+        .iter()
+        .filter(|c| c.require_writer().is_ok())
+        .count();
+    assert_eq!(
+        writers, 1,
+        "{TEST}: exactly one coordinator may write, got {writers}"
+    );
+    assert!(
+        a.require_writer().is_ok(),
+        "{TEST}: a acquired first, so a leads"
+    );
+
+    // The follower names the leader, so an API caller is told where to go
+    // rather than just being refused.
+    match b.require_writer() {
+        Err(varpulis_cluster::ClusterError::NotLeader(who)) => {
+            assert_eq!(who, "coord-a", "{TEST}: the follower must name the holder");
+        }
+        other => panic!("{TEST}: expected NotLeader, got {other:?}"),
+    }
+
+    // Graceful handover: the holder resigns on its way out, so the standby
+    // takes over on its next sweep instead of waiting out the TTL.
+    //
+    // `b` is ticked first on purpose. A resigned lease holds nothing, so its
+    // own next tick would `create` and win the empty key straight back — which
+    // is right for a coordinator that resigned and kept running, and wrong as
+    // a model of one that resigned because it is shutting down. Ticking the
+    // standby first is the shutdown case, and it is the one the TTL and the
+    // `resign()` call both exist for.
+    if let Some(lease) = a.leader_lease.as_mut() {
+        lease.resign().await;
+    }
+    b.update_control_plane_role().await;
+    assert!(
+        b.require_writer().is_ok(),
+        "{TEST}: after the holder resigns, the standby must take over"
+    );
+
+    // And the resigned one demotes itself on its own next sweep rather than
+    // continuing to believe it writes.
+    a.update_control_plane_role().await;
+    match a.require_writer() {
+        Err(varpulis_cluster::ClusterError::NotLeader(who)) => {
+            assert_eq!(
+                who, "coord-b",
+                "{TEST}: the ex-leader must name the new holder"
+            );
+        }
+        other => panic!("{TEST}: the resigned coordinator must not still write, got {other:?}"),
+    }
+}
+
 // ===========================================================================
 // 4. Reconciliation loop, end to end
 // ===========================================================================

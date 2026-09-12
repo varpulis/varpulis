@@ -754,3 +754,32 @@ jobs:
       - name: Stop JetStream-enabled NATS
         if: always()
         run: docker rm -f nats-js || true
+      # The control-plane suite had no job at all: 19 tests written against a
+      # real broker, none of them ever run in CI. They are the gates for
+      # leadership, fencing, replication and the migration reconciler — i.e.
+      # for everything that replaces Raft.
+      #
+      # A single `-js` server runs the logic but proves nothing about
+      # durability: the bucket lives in one process. The suite is therefore run
+      # on the three-node cluster `scripts/nats-cluster.sh` builds, with
+      # VARPULIS_CONTROL_PLANE_REPLICAS=3, which is the configuration a
+      # deployment that has replaced Raft actually has. The same script is what
+      # a developer runs locally, so CI and the desk agree.
+      - name: Install nats-server
+        run: |
+          curl -sfL "https://github.com/nats-io/nats-server/releases/download/v2.10.24/nats-server-v2.10.24-linux-amd64.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin --wildcards '*/nats-server'
+          nats-server --version
+      - name: Start three-node JetStream cluster
+        run: bash scripts/nats-cluster.sh start
+      - name: Control-plane gates on a replicated bucket
+        run: |
+          cargo test -p varpulis-cluster --features jetstream-control-plane \
+            --test jetstream_control_plane -- --nocapture --test-threads=1
+        env:
+          VARPULIS_REQUIRE_BROKERS: "1"
+          VARPULIS_TEST_NATS_URL: nats://127.0.0.1:4231
+          VARPULIS_CONTROL_PLANE_REPLICAS: "3"
+      - name: Stop three-node JetStream cluster
+        if: always()
+        run: bash scripts/nats-cluster.sh stop || true
