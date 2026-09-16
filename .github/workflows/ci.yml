@@ -337,6 +337,12 @@ jobs:
       # Scoped to the declaring crates, because this is the expensive half and
       # `--all-targets` is the half that matters: it compiles tests, benches
       # and examples, which is exactly what had rotted under `saas`.
+      #
+      # `matrix.feature` is a comma-separated list, not always a single name:
+      # the generator also emits an entry per feature *combination* that some
+      # `cfg(all(...))` requires. One feature at a time cannot reach that code
+      # — with only half the combination on, the item is compiled out and
+      # clippy lints nothing there and reports success.
       - run: cargo clippy ${{ matrix.packages }} --all-targets --features ${{ matrix.feature }} -- -D warnings
 
   wasm:
