@@ -191,12 +191,19 @@
 //! survives twice the TTL, and a `kill -9`'d worker's is gone inside 40 s,
 //! which is crash failover with a bounded window and no external detector.
 //!
-//! **What does not, yet.** Leadership is still Raft's election or standalone;
-//! [`leader::LeaderLease`] is implemented and not called. So is
-//! [`reconcile::Reconciler`]. Until both are wired, `raft/` cannot be removed,
-//! and a multi-coordinator deployment still needs Raft to decide who writes —
-//! though every write it makes is CAS-guarded here regardless, which is what
-//! makes the intermediate state safe rather than merely untested.
+//! **Leadership.** [`leader::LeaderLease`] now decides it whenever the control
+//! plane is configured: the coordinator's health sweep ticks it and sets
+//! `ha_role` from the result, exactly as it does from Raft's metrics on a Raft
+//! deployment. Before that, a coordinator built without the `raft` feature
+//! left `ha_role` at its `Standalone` default forever — and `Standalone` is a
+//! writer, so every coordinator swept, failed over and reconciled placements
+//! at once. The lease makes that one coordinator; the per-write CAS makes it
+//! safe even during the window where a partitioned ex-leader still believes.
+//!
+//! **What does not, yet.** [`reconcile::Reconciler`] is implemented and not
+//! called — migrations still run through [`crate::migration::MigrationTask`]
+//! in the coordinator's own state rather than through the phase machine here.
+//! Until it is wired, `raft/` cannot be removed.
 
 pub mod apply;
 pub mod fence;

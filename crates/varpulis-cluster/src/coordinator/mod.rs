@@ -189,6 +189,17 @@ pub struct Coordinator {
     /// copies of the control state that drift are worse than either alone.
     #[cfg(feature = "jetstream-control-plane")]
     pub control_plane: Option<crate::jetstream_control_plane::Applier>,
+    /// This coordinator's hold on `control/leader`, when the control plane is
+    /// in use. Ticked by the health sweep; it is what sets [`Coordinator::ha_role`]
+    /// on a JetStream deployment, the way [`Coordinator::update_raft_role`]
+    /// does on a Raft one.
+    ///
+    /// Without it `ha_role` stayed at its `Standalone` default, whose
+    /// `is_writer()` is `true` — so every coordinator in the cluster ran the
+    /// health sweep, the failovers and the placement reconciliation at the
+    /// same time, against each other.
+    #[cfg(feature = "jetstream-control-plane")]
+    pub leader_lease: Option<crate::jetstream_control_plane::LeaderLease>,
     /// Prometheus metrics for cluster operations.
     pub cluster_metrics: ClusterPrometheusMetrics,
     /// Model registry (name -> metadata).
@@ -271,6 +282,8 @@ impl Coordinator {
             raft_handle: None,
             #[cfg(feature = "jetstream-control-plane")]
             control_plane: None,
+            #[cfg(feature = "jetstream-control-plane")]
+            leader_lease: None,
             cluster_metrics: ClusterPrometheusMetrics::new(),
             model_registry: HashMap::new(),
             llm_config: None,
@@ -506,6 +519,44 @@ impl Coordinator {
             self.pipeline_groups.len(),
             self.connectors.len()
         );
+    }
+
+    /// Update the HA role from the control plane's leader lease.
+    ///
+    /// This is the JetStream counterpart of [`Coordinator::update_raft_role`],
+    /// and the health sweep calls whichever of the two is configured. Until it
+    /// existed, a coordinator built without the `raft` feature left `ha_role`
+    /// at its `Standalone` default for the whole process lifetime — and
+    /// `Standalone::is_writer()` is `true`, so *every* coordinator in a
+    /// JetStream deployment swept health, drove failovers and reconciled
+    /// placements simultaneously.
+    ///
+    /// The lease's `tick` is a compare-and-swap, so losing the race or losing
+    /// the connection both stand this coordinator down; see
+    /// [`crate::jetstream_control_plane::leader`] for why `is_leader()` is
+    /// advisory for scheduling and the per-write CAS is what provides safety.
+    ///
+    /// A follower pays one extra KV read per sweep to learn who holds the
+    /// lease, which is only used to tell an API caller where to go.
+    #[cfg(feature = "jetstream-control-plane")]
+    pub async fn update_control_plane_role(&mut self) {
+        use crate::jetstream_control_plane::LeaderState;
+
+        let Some(ref mut lease) = self.leader_lease else {
+            return;
+        };
+
+        let state = lease.tick().await;
+        self.ha_role = match state {
+            LeaderState::Leader => HaRole::Leader,
+            LeaderState::Follower => {
+                let leader_id = lease
+                    .current_holder()
+                    .await
+                    .unwrap_or_else(|| "unknown".to_string());
+                HaRole::Follower { leader_id }
+            }
+        };
     }
 
     /// Update the HA role based on current Raft metrics.
