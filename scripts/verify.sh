@@ -172,6 +172,12 @@ fi
 # author's machine has usually already done, and spending shared CI minutes on
 # every PR to catch a mistake the author can catch for free is the wrong trade.
 # The nightly job stays as the backstop.
+#
+# CI's four single-gate jobs call this script with the other steps skipped, and
+# they set SKIP_DOC=1 too — they have a Documentation job of their own, and
+# three of them (Format, Audit, Deny) do not install the system dependencies a
+# workspace build needs, so a doc build there fails on `protoc` rather than on
+# anything it was asked to check.
 doc_step() {
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 }

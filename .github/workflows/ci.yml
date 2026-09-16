@@ -137,6 +137,9 @@ jobs:
           SKIP_CLIPPY: "1"
           SKIP_AUDIT: "1"
           SKIP_DENY: "1"
+          # CI has a Documentation job of its own; this step is for the
+          # author's machine, where the pre-push hook runs the whole suite.
+          SKIP_DOC: "1"
 
   clippy:
     name: Clippy
@@ -157,6 +160,9 @@ jobs:
           SKIP_FMT: "1"
           SKIP_AUDIT: "1"
           SKIP_DENY: "1"
+          # CI has a Documentation job of its own; this step is for the
+          # author's machine, where the pre-push hook runs the whole suite.
+          SKIP_DOC: "1"
 
   deny:
     name: Deny (licenses & advisories)
@@ -174,6 +180,9 @@ jobs:
           SKIP_FMT: "1"
           SKIP_CLIPPY: "1"
           SKIP_AUDIT: "1"
+          # CI has a Documentation job of its own; this step is for the
+          # author's machine, where the pre-push hook runs the whole suite.
+          SKIP_DOC: "1"
 
   audit:
     name: Audit
@@ -191,6 +200,9 @@ jobs:
           SKIP_FMT: "1"
           SKIP_CLIPPY: "1"
           SKIP_DENY: "1"
+          # CI has a Documentation job of its own; this step is for the
+          # author's machine, where the pre-push hook runs the whole suite.
+          SKIP_DOC: "1"
 
   machete:
     name: Unused Dependencies
