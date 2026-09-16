@@ -177,12 +177,11 @@
 //! refuses to start if it cannot — an operator who configured the control
 //! plane and silently got Raft would find out during an incident.
 //!
-//! **What goes through it today.** Every replicated write. All fifteen
-//! `client_write` call sites now funnel through
+//! **What goes through it today.** Every replicated write. All sixteen
+//! former `client_write` call sites funnel through
 //! [`crate::coordinator::Coordinator::replicate`], which picks exactly one
-//! destination — this control plane, or Raft, or nowhere in standalone mode —
-//! and never both, because two copies of the control state that drift apart
-//! are worse than either alone.
+//! destination — this control plane, or nowhere in standalone mode. Routing
+//! them through one function is what made Raft removable at all.
 //!
 //! Heartbeats included, and that is not optional: a record here carries a TTL
 //! and stays alive by being rewritten, so a heartbeat that replicated nowhere

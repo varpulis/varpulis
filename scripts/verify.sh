@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# scripts/verify.sh — local verification suite (fmt + clippy + audit + deny)
+# scripts/verify.sh — local verification suite (fmt + clippy + audit + deny + doc)
 #
 # Mirrors the gates that CI runs so a clean local pass should keep CI green.
 # Idempotent: safe to re-run; no state outside cargo's target dir is touched.
@@ -12,6 +12,7 @@
 #     SKIP_DENY=1  ./scripts/verify.sh
 #     SKIP_FMT=1   ./scripts/verify.sh
 #     SKIP_CLIPPY=1 ./scripts/verify.sh
+#     SKIP_DOC=1   ./scripts/verify.sh
 #
 
 set -Eeuo pipefail  # -E so the ERR trap fires inside run_step functions
@@ -157,6 +158,27 @@ if [[ "${SKIP_CLIPPY:-0}" != "1" ]]; then
     run_step "cargo clippy (workspace + 3 connectors, -D warnings)" clippy_step
 else
     echo "${YELLOW}  · skipping clippy (SKIP_CLIPPY=1)${RESET}"
+fi
+
+# ----- 5. cargo doc (intra-doc links) ---------------------------------------
+#
+# The Documentation job is nightly-only, so a broken intra-doc link lands on
+# main and sits there until the next scheduled run. That has happened twice,
+# both times the same way: a doc comment linking to an item behind a non-default
+# feature, which cannot resolve on the default-feature build rustdoc does. Both
+# were caught by the nightly rather than before the push.
+#
+# It belongs here rather than on the PR gate: the check costs a compile the
+# author's machine has usually already done, and spending shared CI minutes on
+# every PR to catch a mistake the author can catch for free is the wrong trade.
+# The nightly job stays as the backstop.
+doc_step() {
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+}
+if [[ "${SKIP_DOC:-0}" != "1" ]]; then
+    run_step "cargo doc --workspace --no-deps (-D warnings)" doc_step
+else
+    echo "${YELLOW}  · skipping doc (SKIP_DOC=1)${RESET}"
 fi
 
 # ----- summary --------------------------------------------------------------
