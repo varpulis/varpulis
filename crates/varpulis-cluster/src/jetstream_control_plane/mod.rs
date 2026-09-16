@@ -200,10 +200,24 @@
 //! at once. The lease makes that one coordinator; the per-write CAS makes it
 //! safe even during the window where a partitioned ex-leader still believes.
 //!
-//! **What does not, yet.** [`reconcile::Reconciler`] is implemented and not
-//! called — migrations still run through [`crate::migration::MigrationTask`]
-//! in the coordinator's own state rather than through the phase machine here.
-//! Until it is wired, `raft/` cannot be removed.
+//! **Migrations.** [`reconcile::Reconciler`] now runs: the coordinator writes
+//! a [`reconcile::MigrationRecord`] *before* it starts executing a migration,
+//! and its health sweep ticks the reconciler, which advances each record on
+//! observed evidence, fences the source at cut-over, and fails a record that
+//! passes its deadline.
+//!
+//! What that buys is resumability. The old path ran the whole migration inside
+//! one HTTP request and wrote a `MigrationTask` only *after* it ended, so a
+//! coordinator that died mid-flight left nothing behind — the pipeline could
+//! be deployed on the target and still assigned on the source, with no
+//! surviving coordinator aware a migration had been in flight.
+//!
+//! **What does not, yet.** The deploy itself is still issued by the
+//! coordinator that planned the migration, over HTTP, rather than being an
+//! [`reconcile::Effect`] the reconciler performs — the addresses, API keys and
+//! VPL source it needs are not in a [`apply::WorkerRecord`]. So a surviving
+//! coordinator can observe, advance and *terminate* an abandoned migration,
+//! but cannot yet re-issue its deploy. `raft/` stays until it can.
 
 pub mod apply;
 pub mod fence;
@@ -217,8 +231,8 @@ pub use fence::{fence_out, FenceGuard, FencedCommand, LeaseError, WorkerLease, S
 pub use keys::ControlKey;
 pub use leader::{LeaderLease, LeaderRecord, LeaderState};
 pub use reconcile::{
-    step, Decision, Effect, Evidence, MigrationPhase, MigrationRecord, Reconciler, TickReport,
-    WorkerObservation,
+    now_ms, step, Decision, Effect, Evidence, MigrationPhase, MigrationRecord, Reconciler,
+    TickReport, WorkerObservation, DEFAULT_LINGER, DEFAULT_MIGRATION_DEADLINE,
 };
 pub use store::{
     ControlPlane, ControlPlaneConfig, ControlPlaneError, Expect, Snapshot, Versioned,

@@ -551,6 +551,25 @@ pub async fn run_coordinator(
                 tracing::info!("Reconciled {n} pipeline placement(s)");
             }
 
+            // Drive in-flight migrations one step. Level-triggered: it
+            // re-derives each record's phase from the observed world, so a
+            // migration abandoned by a coordinator that died mid-flight is
+            // picked up here, advanced on evidence, and failed on its
+            // deadline rather than pinning the pipeline forever.
+            #[cfg(feature = "jetstream-control-plane")]
+            if let Some(report) = coord.reconcile_migrations().await {
+                if report.advanced > 0 || report.effects > 0 || report.retired > 0 {
+                    tracing::info!(
+                        examined = report.examined,
+                        advanced = report.advanced,
+                        effects = report.effects,
+                        retired = report.retired,
+                        contended = report.contended,
+                        "Migration reconciliation"
+                    );
+                }
+            }
+
             // Rebalancing across workers is the expensive, disruptive half and
             // stays behind the flag.
             if coord.pending_rebalance {

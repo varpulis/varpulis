@@ -171,6 +171,19 @@ pub enum Decision {
     Retire,
 }
 
+/// Wall-clock milliseconds since the Unix epoch.
+///
+/// [`step`] is pure and takes `now_ms` as an argument precisely so it can be
+/// tested without a clock; this is the one place the real clock is read, so a
+/// driver, a deadline and a test cannot end up disagreeing about what "now"
+/// means.
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 /// Default time a migration may take before it is abandoned.
 pub const DEFAULT_MIGRATION_DEADLINE: Duration = Duration::from_mins(2);
 /// Default time a terminal record is kept for observability.
