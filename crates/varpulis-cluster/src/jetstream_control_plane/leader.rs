@@ -36,11 +36,31 @@ use serde::{Deserialize, Serialize};
 use super::keys::ControlKey;
 use super::store::{ControlPlane, Expect};
 
+/// Overrides the base URL this coordinator publishes for follower forwarding.
+///
+/// Needed because `--bind` is a *listen* address: `0.0.0.0` is not somewhere a
+/// peer can send a request. Behind a Kubernetes Service, an ingress, or any
+/// NAT, the process cannot infer its reachable URL at all, so an operator sets
+/// it here. Unset, the coordinator derives one from `--bind` and `--port`,
+/// substituting `$HOSTNAME` for a wildcard bind.
+pub const ENV_ADVERTISE_ADDR: &str = "VARPULIS_COORDINATOR_ADVERTISE_ADDR";
+
 /// The value stored at `control/leader`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LeaderRecord {
     /// Identity of the holding coordinator.
     pub id: String,
+    /// Base URL a follower forwards writes to, e.g. `http://coord-1:8080`.
+    ///
+    /// The id alone is not enough. Raft's follower forwarding resolved a
+    /// `NodeId` through a peer-address map built from `--raft-peers`; there is
+    /// no such map here, and there should not be one — the leader is the only
+    /// party that knows its own externally reachable address, and it is
+    /// already writing a record. Empty means the holder did not publish one,
+    /// and a follower then refuses the write with `NotLeader` rather than
+    /// guessing a URL.
+    #[serde(default)]
+    pub address: String,
     /// Monotone count of renewals, for observability only.
     #[serde(default)]
     pub term: u64,
@@ -60,6 +80,8 @@ pub enum LeaderState {
 pub struct LeaderLease {
     cp: ControlPlane,
     id: String,
+    /// Published in the record so followers can forward to this coordinator.
+    address: String,
     ttl: Duration,
     /// `Some(revision)` while this coordinator holds the lease.
     held: Option<u64>,
@@ -73,11 +95,22 @@ impl LeaderLease {
         Self {
             cp,
             id: id.into(),
+            address: String::new(),
             ttl,
             held: None,
             last_renewed: None,
             term: 0,
         }
+    }
+
+    /// Publish the base URL followers should forward writes to.
+    ///
+    /// Without it the record carries an empty address and followers refuse
+    /// writes with `NotLeader` instead of forwarding — correct, but a
+    /// downgrade from what Raft mode did, so the coordinator always sets it.
+    pub fn with_address(mut self, address: impl Into<String>) -> Self {
+        self.address = address.into();
+        self
     }
 
     /// This coordinator's identity.
@@ -113,6 +146,7 @@ impl LeaderLease {
             None => {
                 let record = LeaderRecord {
                     id: self.id.clone(),
+                    address: self.address.clone(),
                     term: self.term + 1,
                 };
                 match self
@@ -137,6 +171,7 @@ impl LeaderLease {
             Some(rev) => {
                 let record = LeaderRecord {
                     id: self.id.clone(),
+                    address: self.address.clone(),
                     term: self.term,
                 };
                 match self
@@ -170,12 +205,27 @@ impl LeaderLease {
 
     /// Who holds the lease right now, as far as the bucket is concerned.
     pub async fn current_holder(&self) -> Option<String> {
+        self.current_leader_record().await.map(|r| r.id)
+    }
+
+    /// Where to forward a write, as far as the bucket is concerned.
+    ///
+    /// `None` when nobody holds the lease *or* the holder published no
+    /// address — the caller must refuse rather than invent a destination.
+    pub async fn current_leader_address(&self) -> Option<String> {
+        self.current_leader_record()
+            .await
+            .map(|r| r.address)
+            .filter(|a| !a.is_empty())
+    }
+
+    async fn current_leader_record(&self) -> Option<LeaderRecord> {
         self.cp
             .get::<LeaderRecord>(&ControlKey::Leader)
             .await
             .ok()
             .flatten()
-            .map(|v| v.value.id)
+            .map(|v| v.value)
     }
 
     /// Give up leadership immediately (graceful shutdown), so a standby takes
@@ -197,6 +247,7 @@ mod tests {
     fn leader_record_round_trips() {
         let r = LeaderRecord {
             id: "coord-1".into(),
+            address: "http://coord-1:8080".into(),
             term: 3,
         };
         let back: LeaderRecord = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
@@ -204,8 +255,12 @@ mod tests {
     }
 
     #[test]
-    fn term_defaults_for_records_written_by_an_older_build() {
+    fn term_and_address_default_for_records_written_by_an_older_build() {
+        // A bucket outlives a rolling upgrade: a record minted by a build
+        // without `address` must still deserialise, and must read as "no
+        // address published" rather than failing the follower's read.
         let r: LeaderRecord = serde_json::from_str(r#"{"id":"coord-1"}"#).unwrap();
         assert_eq!(r.term, 0);
+        assert_eq!(r.address, "");
     }
 }

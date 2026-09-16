@@ -212,12 +212,21 @@
 //! be deployed on the target and still assigned on the source, with no
 //! surviving coordinator aware a migration had been in flight.
 //!
+//! **Follower parity.** A follower forwards writes to the holder the way Raft
+//! mode did, by reading the holder's own published base URL out of the lease
+//! record — there is no peer-address map here and there should not be one. And
+//! every coordinator materialises cluster state from the bucket each sweep,
+//! the counterpart of `sync_from_raft`, through the same backend-agnostic
+//! merge, so a follower answers read-only calls from replicated state rather
+//! than from whatever it happened to see directly.
+//!
 //! **What does not, yet.** The deploy itself is still issued by the
 //! coordinator that planned the migration, over HTTP, rather than being an
-//! [`reconcile::Effect`] the reconciler performs — the addresses, API keys and
-//! VPL source it needs are not in a [`apply::WorkerRecord`]. So a surviving
-//! coordinator can observe, advance and *terminate* an abandoned migration,
-//! but cannot yet re-issue its deploy. `raft/` stays until it can.
+//! [`reconcile::Effect`] the reconciler performs — the VPL source it needs is
+//! not in the control plane. So a surviving coordinator can observe, advance
+//! and *terminate* an abandoned migration, but cannot re-issue its deploy.
+//! That is a gap in this backend, not a reason to keep Raft: Raft never
+//! re-issued a deploy either.
 
 pub mod apply;
 pub mod fence;
@@ -229,7 +238,7 @@ pub mod store;
 pub use apply::{materialize, Applier, ConnectorSecretPolicy, WorkerRecord};
 pub use fence::{fence_out, FenceGuard, FencedCommand, LeaseError, WorkerLease, STATUS_FENCED};
 pub use keys::ControlKey;
-pub use leader::{LeaderLease, LeaderRecord, LeaderState};
+pub use leader::{LeaderLease, LeaderRecord, LeaderState, ENV_ADVERTISE_ADDR};
 pub use reconcile::{
     now_ms, step, Decision, Effect, Evidence, MigrationPhase, MigrationRecord, Reconciler,
     TickReport, WorkerObservation, DEFAULT_LINGER, DEFAULT_MIGRATION_DEADLINE,
