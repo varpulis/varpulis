@@ -48,6 +48,9 @@ pub struct VarpulisParser;
 /// A hard timeout protects callers (CLI, LSP, fuzz targets) from hangs.
 /// 10 seconds is orders of magnitude more than any real VPL program needs
 /// (typical parse time is <5 ms for a 1000-line file).
+///
+/// Native only: the wasm32 `parse` below has no thread to time out.
+#[cfg(not(target_arch = "wasm32"))]
 const PARSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Parse a VPL source string into a Program AST.

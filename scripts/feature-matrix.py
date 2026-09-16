@@ -28,7 +28,7 @@ SKIP = {
     "bench": "criterion harness toggle, no code of its own",
     "iai-bench": "iai-callgrind harness toggle, needs valgrind on the runner",
     # Covered more directly by a dedicated job than by a host-target build.
-    "wasm": "built for real by the WASM Build job on wasm32-unknown-unknown",
+    "wasm": "built on wasm32 by the WASM Build job, via varpulis-engine-wasm",
     # On by default, so every ordinary check/test/clippy job already has it on.
     # Listed rather than auto-detected: a feature leaving `default` should
     # force a visible edit here, not silently drop out of CI.
