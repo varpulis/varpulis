@@ -10,6 +10,7 @@
 #   scripts/nats-cluster.sh start          # ports 4231/4232/4233
 #   scripts/nats-cluster.sh kill 1         # stop one node, quorum survives
 #   scripts/nats-cluster.sh start-one 1    # bring it back
+#   scripts/nats-cluster.sh purge          # drop VTEST_* buckets the suite left
 #   scripts/nats-cluster.sh status
 #   scripts/nats-cluster.sh stop
 #
@@ -81,6 +82,25 @@ stop)
         rm -f "$DIR/n$i.pid"
     done
     echo "stopped"
+    ;;
+purge)
+    # The control-plane suite creates a bucket per test, named VTEST_*, and
+    # never deletes them: each `cargo test` run leaves a dozen behind. On a
+    # cluster kept running across a working session they accumulate into the
+    # hundreds, and a three-node JetStream juggling that many replicated
+    # streams gets slow and then flaky — which reads exactly like a flaky test
+    # suite and is not one. Run this between sessions, or `stop` and `start`,
+    # which is cheaper because it wipes the store outright.
+    command -v nats >/dev/null || {
+        echo "error: the 'nats' CLI is required for purge. Use 'stop' then" >&2
+        echo "       'start' instead, which recreates the store empty." >&2
+        exit 1
+    }
+    n=0
+    for b in $(nats --server "nats://127.0.0.1:$(client_port 1)" kv ls -n 2>/dev/null | grep '^VTEST_'); do
+        nats --server "nats://127.0.0.1:$(client_port 1)" kv del -f "$b" >/dev/null 2>&1 && n=$((n + 1))
+    done
+    echo "purged $n VTEST_* bucket(s)"
     ;;
 status)
     for i in 1 2 3; do

@@ -29,8 +29,10 @@ All cluster subjects use the `varpulis.cluster` prefix. NATS uses `.` as a separ
 | `varpulis.cluster.cmd.{worker_id}.{cmd}` | Coordinator -> Worker | Request/Reply | Pipeline commands |
 | `varpulis.cluster.cmd.{worker_id}.>` | (subscription) | Wildcard | Worker subscribes to all its commands |
 | `varpulis.cluster.pipeline.{group}.{from}.{to}` | Worker -> Worker | Pub/Sub | Inter-pipeline event routing |
-| `varpulis.cluster.raft.{node_id}.{rpc}` | Node -> Node | Request/Reply | Raft consensus RPCs |
-| `varpulis.cluster.raft.{node_id}.>` | (subscription) | Wildcard | Node subscribes to all its RPCs |
+
+Coordinator consensus uses no subjects of its own: it is compare-and-swap on
+keys in a JetStream KV bucket, not an RPC protocol between coordinators. The
+`varpulis.cluster.raft.*` subjects this table used to list are gone with Raft.
 
 ### Communication Patterns
 

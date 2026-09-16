@@ -251,68 +251,20 @@ pub async fn run_coordinator(
     };
 
     // -----------------------------------------------------------------------
-    // Raft consensus bootstrap (when feature enabled + --raft flag set)
+    // Raft is gone. The flags remain so an operator running an old command
+    // line gets told what to do instead of silently getting a standalone
+    // coordinator that believes it is in a cluster.
     // -----------------------------------------------------------------------
-    #[cfg(feature = "raft")]
-    let (raft_handle, raft_peer_addrs_map) = {
-        let handle: Option<varpulis_cluster::raft::RaftBootstrapResult>;
-        let peer_map: std::collections::BTreeMap<u64, String>;
-
-        if _raft_enabled {
-            let node_id = _raft_node_id
-                .ok_or_else(|| anyhow::anyhow!("--raft-node-id is required when --raft is set"))?;
-
-            let peers_str = _raft_peers
-                .ok_or_else(|| anyhow::anyhow!("--raft-peers is required when --raft is set"))?;
-
-            let peer_addrs: Vec<String> =
-                peers_str.split(',').map(|s| s.trim().to_string()).collect();
-
-            // Build NodeId -> address map for leader forwarding
-            peer_map = peer_addrs
-                .iter()
-                .enumerate()
-                .map(|(i, addr)| ((i + 1) as u64, addr.clone()))
-                .collect();
-
-            println!("Raft:      node_id={}, peers={}", node_id, peers_str);
-
-            let result = if let Some(ref data_dir) = _raft_data_dir {
-                println!("Raft:      persistent storage at {}", data_dir);
-                #[cfg(feature = "persistent")]
-                {
-                    varpulis_cluster::raft::bootstrap_persistent(
-                        node_id,
-                        &peer_addrs,
-                        rbac.any_admin_key(),
-                        data_dir,
-                    )
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Raft bootstrap failed: {e}"))?
-                }
-                #[cfg(not(feature = "persistent"))]
-                {
-                    anyhow::bail!(
-                        "--raft-data-dir requires the 'persistent' feature (build with --features persistent)"
-                    );
-                }
-            } else {
-                varpulis_cluster::raft::bootstrap(node_id, &peer_addrs, rbac.any_admin_key())
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Raft bootstrap failed: {e}"))?
-            };
-
-            println!("Raft:      initialized (node {})", node_id);
-            handle = Some(result);
-        } else {
-            handle = None;
-            peer_map = std::collections::BTreeMap::new();
-        }
-        (handle, peer_map)
-    };
-
-    #[cfg(not(feature = "raft"))]
-    let _ = (_raft_enabled, _raft_node_id, _raft_peers, _raft_data_dir);
+    if _raft_enabled || _raft_node_id.is_some() || _raft_peers.is_some() || _raft_data_dir.is_some()
+    {
+        anyhow::bail!(
+            "--raft and its companion flags have been removed. Coordinator consensus is now \
+             the JetStream KV control plane: set VARPULIS_CONTROL_PLANE_URL to a NATS cluster \
+             (and VARPULIS_CONTROL_PLANE_REPLICAS=3 against a three-node one). Leadership is a \
+             lease on one key and every replicated write is a compare-and-swap, so there is no \
+             node id, no peer list and no local log directory to configure."
+        );
+    }
 
     println!();
 
@@ -379,17 +331,6 @@ pub async fn run_coordinator(
                 provider,
             });
             println!("AI Chat:   {llm_model} ({llm_provider})");
-        }
-
-        // Attach Raft handle to coordinator
-        #[cfg(feature = "raft")]
-        if let Some(ref rh) = raft_handle {
-            coord.raft_handle = Some(varpulis_cluster::coordinator::RaftHandle {
-                raft: rh.raft.clone(),
-                store_state: rh.shared_state.clone(),
-                peer_addrs: raft_peer_addrs_map.clone(),
-                admin_key: rbac.any_admin_key(),
-            });
         }
 
         // Store the outbound NATS client so the deploy/teardown/inject REST
@@ -476,11 +417,13 @@ pub async fn run_coordinator(
             // standalone mode — where `ha_role` stays `Standalone` and this
             // single coordinator is correctly the writer.
             #[cfg(feature = "jetstream-control-plane")]
-            coord.update_control_plane_role().await;
-
-            // Update Raft role if enabled
-            #[cfg(feature = "raft")]
-            coord.update_raft_role();
+            {
+                coord.update_control_plane_role().await;
+                // One gauge, and it is the one that matters: summed across a
+                // deployment, > 1 is a split brain and 0 is no leader.
+                let is_leader = coord.leader_lease.is_some() && coord.ha_role.is_writer();
+                coord.cluster_metrics.set_leader(is_leader);
+            }
 
             // Materialise state from the control-plane bucket on EVERY
             // coordinator, exactly as `sync_from_raft` below does for Raft:
@@ -489,29 +432,6 @@ pub async fn run_coordinator(
             // connected to a different coordinator.
             #[cfg(feature = "jetstream-control-plane")]
             coord.sync_from_control_plane().await;
-
-            // Update Raft Prometheus metrics
-            #[cfg(feature = "raft")]
-            if let Some(ref handle) = coord.raft_handle {
-                let metrics = handle.raft.metrics().borrow().clone();
-                let role = if metrics.current_leader == Some(metrics.id) {
-                    2.0 // leader
-                } else {
-                    0.0 // follower
-                };
-                coord.cluster_metrics.update_raft_metrics(
-                    role,
-                    metrics.current_term as f64,
-                    metrics.last_applied.map(|l| l.index as f64).unwrap_or(0.0),
-                );
-            }
-
-            // Sync from Raft on ALL nodes: followers get updated state,
-            // leader refreshes heartbeat timestamps for remote workers
-            // (heartbeat proxy — prevents false unhealthy for workers
-            // connected to other coordinators via WS).
-            #[cfg(feature = "raft")]
-            coord.sync_from_raft();
 
             // Only the leader (or standalone) runs health sweeps and failover
             if !coord.ha_role.is_writer() {
@@ -528,17 +448,21 @@ pub async fn run_coordinator(
                     tracing::warn!("Worker {} marked unhealthy -- triggering failover", wid);
                 }
 
-                // Propagate unhealthy status to Raft for cross-coordinator visibility
-                #[cfg(feature = "raft")]
-                if let Some(ref handle) = coord.raft_handle {
-                    for wid in &failed_workers {
-                        let cmd = varpulis_cluster::raft::ClusterCommand::WorkerStatusChanged {
+                // Propagate unhealthy status for cross-coordinator visibility.
+                //
+                // This was a sixteenth direct `raft.client_write` that the
+                // pass routing every replicated write through `replicate`
+                // missed, because it lives in the CLI rather than in `api.rs`.
+                // It now goes through the same door as the rest: the control
+                // plane when one is configured, nowhere in standalone mode.
+                for wid in &failed_workers {
+                    let cmd =
+                        varpulis_cluster::control_state::ClusterCommand::WorkerStatusChanged {
                             id: wid.0.clone(),
                             status: "unhealthy".to_string(),
                         };
-                        if let Err(e) = handle.raft.client_write(cmd).await {
-                            tracing::warn!("Failed to propagate {} unhealthy to Raft: {e}", wid);
-                        }
+                    if let Err(e) = coord.replicate(cmd).await {
+                        tracing::warn!("failed to replicate {wid} unhealthy: {e}");
                     }
                 }
 
@@ -787,8 +711,8 @@ pub async fn run_coordinator(
         .map_err(|e| anyhow::anyhow!("Invalid bind address '{bind}': {e}"))?;
     info!("Coordinator listening on {}:{}", bind, port);
 
-    // Macro to start axum with or without TLS (avoids duplicating the TLS branching
-    // across the raft/non-raft cfg blocks).
+    // Macro to start axum with or without TLS (avoids duplicating the TLS
+    // branching across the two serve paths).
     macro_rules! serve_coordinator {
         ($app:expr) => {{
             let addr = std::net::SocketAddr::new(bind_addr, port);
@@ -829,39 +753,6 @@ pub async fn run_coordinator(
         }};
     }
 
-    #[cfg(feature = "raft")]
-    {
-        if let Some(ref rh) = raft_handle {
-            let api_routes = varpulis_cluster::api::cluster_routes_with_raft(
-                coordinator,
-                rbac,
-                rh.raft.clone(),
-                coordinator_rate_limiter,
-                cors_origins,
-            );
-            let app = coord_local_routes
-                .merge(coord_pg_routes)
-                .merge(oauth_r)
-                .merge(audit_r)
-                .merge(api_routes);
-            serve_coordinator!(app);
-        } else {
-            let api_routes = varpulis_cluster::cluster_routes(
-                coordinator,
-                rbac,
-                coordinator_rate_limiter,
-                cors_origins,
-            );
-            let app = coord_local_routes
-                .merge(coord_pg_routes)
-                .merge(oauth_r)
-                .merge(audit_r)
-                .merge(api_routes);
-            serve_coordinator!(app);
-        }
-    }
-
-    #[cfg(not(feature = "raft"))]
     {
         let api_routes = varpulis_cluster::cluster_routes(
             coordinator,

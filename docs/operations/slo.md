@@ -66,7 +66,7 @@ These numbers establish what "normal" looks like and inform the objective thresh
 Availability measures whether the service is reachable and can process requests. Varpulis
 has two availability surfaces:
 
-**Coordinator availability** — the Raft-leader coordinator must be reachable for pipeline
+**Coordinator availability** — the lease-holding coordinator must be reachable for pipeline
 deployments and cluster management operations. Its HTTP API at port 9100 is the probe target.
 
 **Worker availability** — each worker node must be heartbeating successfully and carrying
@@ -165,17 +165,21 @@ dlq_rate_sli =
 
 Recovery SLIs measure how quickly the cluster self-heals after a failure event.
 
-**Leader failover time** — after the current Raft leader becomes unavailable, how many
-seconds until a new leader is elected and coordinator API requests succeed again. Chaos
-tests exercise this path (see `tests/e2e-raft/`).
+**Leader failover time** — after the lease holder becomes unavailable, how many seconds
+until a survivor takes the lease and coordinator writes succeed again. The chaos suite
+exercises exactly this path by `SIGKILL`ing the holder
+(`tests/chaos/coordinator_failover.rs`).
 
-SLI proxy (Raft role stabilisation):
+The bound is *stated*, not discovered: a killed holder cannot resign, so its record ages
+out on `VARPULIS_CONTROL_PLANE_TTL_SECS` (default 30s) and the next acquire succeeds on
+the following health sweep. A clean shutdown resigns and hands over immediately.
+
+SLI proxy:
 
 ```
 leader_failover_proxy =
-  time from last varpulis_cluster_raft_role{role="leader"} == 1
-  to next varpulis_cluster_raft_role{role="leader"} == 1
-  (measured by changes(varpulis_cluster_raft_role[window]))
+  duration of sum(varpulis_cluster_is_leader) == 0
+  (transitions counted by increase(varpulis_cluster_leadership_changes_total[window]))
 ```
 
 **Pipeline migration time** — after a worker goes unhealthy, how many seconds until its
@@ -226,12 +230,17 @@ run states. The alert threshold in `alerts.yml` fires at 100ms for exactly this 
 
 ### Rationale for availability targets
 
-99.9% coordinator uptime permits ~43 minutes of downtime per month. Because Raft provides
-automatic leader re-election (tested in chaos scenarios), sustained outages should be rare.
+99.9% coordinator uptime permits ~43 minutes of downtime per month. Because a standby takes
+the lease automatically (tested in chaos scenarios), sustained outages should be rare — but
+note where the single point of failure now is: the control-plane bucket. On a single broker
+it is one, in a way a three-node Raft group was not; run a NATS cluster and set
+`VARPULIS_CONTROL_PLANE_REPLICAS=3`.
+
 The 0.1% unplanned budget covers:
 
-- Rolling upgrades (coordinator restart ~30s, covered by Raft failover)
-- Unexpected leader election storms (mitigated by `VarpulisRaftLeaderChurn` alert)
+- Rolling upgrades (coordinator restart ~30s; a clean shutdown resigns the lease, so
+  handover is immediate rather than TTL-bound)
+- Leadership churn (mitigated by the `VarpulisLeadershipChurn` alert)
 - Infrastructure maintenance windows
 
 99.5% worker pool availability permits ~3.6 hours of reduced worker capacity per month.
@@ -257,9 +266,8 @@ Workers can be added or replaced without stopping pipelines (migrations handle r
 | `varpulis_dlq_events_total` | Counter | — | Events written to dead letter queue |
 | `varpulis_connector_healthy` | Gauge | `connector`, `connector_type` | 1=healthy, 0=unhealthy |
 | `varpulis_cluster_workers_total` | Gauge | `status` | Workers by status (ready/unhealthy/draining) |
-| `varpulis_cluster_raft_role` | Gauge | — | 0=Follower, 1=Candidate, 2=Leader |
-| `varpulis_cluster_raft_term` | Gauge | — | Current Raft consensus term |
-| `varpulis_cluster_raft_commit_index` | Gauge | — | Last committed log entry index |
+| `varpulis_cluster_is_leader` | Gauge | — | 1 when this coordinator holds the control-plane lease |
+| `varpulis_cluster_leadership_changes_total` | Gauge | — | Times this coordinator took or lost the lease |
 | `varpulis_cluster_pipeline_groups_total` | Gauge | — | Pipeline groups registered |
 | `varpulis_cluster_deployments_total` | Counter | — | Cumulative pipeline deployments |
 | `varpulis_cluster_deploy_duration_seconds` | Histogram | `result` | Pipeline deployment latency |
@@ -409,18 +417,21 @@ the leader became unavailable. Use the following proxy to detect failover events
 duration:
 
 ```promql
-# Time series of Raft role changes (1 when leader, 0 otherwise)
-varpulis_cluster_raft_role == 2
+# Which coordinator holds the lease (1 on exactly one instance)
+varpulis_cluster_is_leader == 1
 
-# Number of leader elections in a rolling 15-minute window
-changes(varpulis_cluster_raft_role[15m])
+# Handovers in a rolling 15-minute window, across the deployment
+sum(increase(varpulis_cluster_leadership_changes_total[15m]))
 ```
 
 For post-incident measurement, query the gap in leader continuity:
 
 ```promql
-# Periods with no leader elected (all nodes are follower or candidate)
-sum(varpulis_cluster_raft_role == 2) == 0
+# Periods with no holder at all — writes are refused throughout
+sum(varpulis_cluster_is_leader) == 0
+
+# And the failure that matters more: two holders at once
+sum(varpulis_cluster_is_leader) > 1
 ```
 
 #### SLO 9 — Pipeline Migration p99

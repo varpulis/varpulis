@@ -51,7 +51,7 @@ cd ~/varpulis-demo/repo/deploy/demo && ./deploy-pull.sh
 ## Architecture
 
 ```
-Internet → Caddy (TLS) → Coordinators ×3 (Raft consensus)
+Internet → Caddy (TLS) → Coordinators ×3 (JetStream KV lease)
                          → Workers ×4 (event processing)
                          → Web UI (Vue SPA)
                          → Kafka (output topics)

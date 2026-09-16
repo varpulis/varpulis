@@ -79,7 +79,7 @@ kubectl config use-context "k3d-$CLUSTER_NAME"
 if [[ "$SKIP_BUILD" == "false" ]]; then
     info "Building varpulis binary (release, saas features)..."
     cd "$PROJECT_ROOT"
-    cargo build -p varpulis-cli --release --features "kafka,raft,persistent,saas"
+    cargo build -p varpulis-cli --release --features "kafka,jetstream-control-plane,saas"
     ok "Binary built"
 
     info "Building varpulis-saas-local Docker image..."

@@ -74,6 +74,44 @@ Deprecated endpoints do not return errors; they continue to function normally un
 
 ---
 
+### Unreleased
+
+#### Changed
+
+- **Raft removed.** Coordinator consensus is the JetStream KV control plane:
+  leadership is a lease on a single key and every replicated write is a
+  compare-and-swap. The `raft` and `persistent` Cargo features, the
+  `--raft*` CLI flags and the openraft dependency are gone. A coordinator
+  started with `--raft` now refuses to start with an explanatory error rather
+  than silently running standalone.
+
+#### New Endpoints
+
+| Method | Path | Min Role | Description |
+|--------|------|----------|-------------|
+| `GET` | `/api/v1/cluster/consensus` | Viewer | Which coordinator holds the control-plane lease, and through which backend. |
+
+#### Changed Endpoints
+
+| Method | Path | Change |
+|--------|------|--------|
+| `GET` | `/api/v1/cluster/raft` | **Deprecated**, and its response shape changed. It is now an alias of `/api/v1/cluster/consensus` and returns `{backend, is_leader, leader, role}`. The old `{enabled, this_node_id, leader_id, term, commit_index, nodes}` fields described openraft's log, which no longer exists; reporting zeros under those names would have read as a healthy cluster at term 0. It also now requires the Viewer role, where it was previously unauthenticated. |
+
+#### Changed Metrics
+
+| Metric | Change |
+|--------|--------|
+| `varpulis_cluster_raft_role` | **Removed**, replaced by `varpulis_cluster_is_leader` (1 when this coordinator holds the lease). |
+| `varpulis_cluster_raft_term` | **Removed.** There is no term; leadership is a KV revision. |
+| `varpulis_cluster_raft_commit_index` | **Removed.** There is no log. |
+| `varpulis_cluster_leadership_changes_total` | **New.** Times this coordinator took or lost the lease. |
+
+Alert rules built on the removed gauges must be rewritten; see
+`docs/operations/alerting.md` for the replacements (`VarpulisSplitBrain`,
+`VarpulisNoLeader`, `VarpulisLeadershipChurn`).
+
+---
+
 ### v0.3.0 (2026-02-17)
 
 #### Security
@@ -209,7 +247,7 @@ Deprecated endpoints do not return errors; they continue to function normally un
 | `GET` | `/api/v1/cluster/prometheus` | (none) | Prometheus scrape endpoint. Returns metrics in Prometheus text format. Unauthenticated — restrict via network policy. |
 | `GET` | `/api/v1/cluster/scaling` | Viewer | Get scaling recommendations based on current load. |
 | `GET` | `/api/v1/cluster/summary` | Viewer | Get a cluster health and capacity summary. |
-| `GET` | `/api/v1/cluster/raft` | (none) | Get the Raft consensus state (leader, term, log index). Unauthenticated for monitoring compatibility. |
+| `GET` | `/api/v1/cluster/raft` | (none) | Get the Raft consensus state (leader, term, log index). Unauthenticated for monitoring compatibility. *(Deprecated and reshaped in Unreleased; see above.)* |
 
 **Cluster API — Models and Chat:**
 

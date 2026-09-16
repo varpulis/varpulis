@@ -93,8 +93,6 @@ nats = ["varpulis-runtime/nats"]
 nats-transport = ["varpulis-cluster/nats-transport"]
 onnx = ["varpulis-runtime/onnx"]
 k8s = ["varpulis-cluster/k8s"]
-raft = ["varpulis-cluster/raft"]
-persistent = ["raft", "varpulis-cluster/persistent"]
 # Without this the chaos suite's five distributed-checkpoint tests could not
 # run at all: they spawn the real `varpulis` binary as coordinator and worker,
 # and a binary built without the feature has no barrier handler compiled in,

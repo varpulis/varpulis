@@ -3,20 +3,20 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-echo "=== E2E Horizontal Scaling + Raft Coordinator HA Test ==="
+echo "=== E2E Horizontal Scaling + Coordinator HA Test ==="
 echo
 
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
-echo "=== Building Varpulis Docker image (with raft feature) ==="
+echo "=== Building Varpulis Docker image (with jetstream-control-plane) ==="
 docker compose build
 echo
 
 # ---------------------------------------------------------------------------
 # Start infrastructure + coordinators + workers
 # ---------------------------------------------------------------------------
-echo "=== Starting cluster (3 Raft coordinators, 4 workers) ==="
+echo "=== Starting cluster (3 coordinators on one control plane, 4 workers) ==="
 docker compose up -d mosquitto coordinator-1 coordinator-2 coordinator-3 \
     worker-1 worker-2 worker-3 worker-4
 echo
@@ -39,27 +39,32 @@ for N in 1 2 3; do
     done
 done
 
-# Wait for Raft leader election
-echo "=== Waiting for Raft leader election ==="
+# Wait for one coordinator to take the control-plane lease.
+echo "=== Waiting for a coordinator to take the lease ==="
 for i in $(seq 1 60); do
-    LEADER=$(docker compose exec -T coordinator-1 curl -sf http://localhost:9100/raft/metrics 2>/dev/null \
-        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('current_leader',''))" 2>/dev/null || echo "")
-    if [ -n "$LEADER" ] && [ "$LEADER" != "null" ] && [ "$LEADER" != "None" ]; then
-        echo "  Raft leader elected: node $LEADER"
+    LEADER=$(docker compose exec -T coordinator-1 \
+        curl -sf -H "x-api-key: ${VARPULIS_API_KEY:-dev-key}" \
+        http://localhost:9100/api/v1/cluster/consensus 2>/dev/null \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('leader') or '')" 2>/dev/null || echo "")
+    if [ -n "$LEADER" ]; then
+        echo "  lease held by: $LEADER"
         break
     fi
     if [ "$i" -eq 60 ]; then
-        echo "  WARNING: Raft leader not detected after 60s"
+        echo "  WARNING: no coordinator took the lease within 60s"
         for N in 1 2 3; do
-            echo "  coordinator-${N} raft metrics:"
-            docker compose exec -T "coordinator-${N}" curl -sf http://localhost:9100/raft/metrics 2>/dev/null || echo "  (unreachable)"
+            echo "  coordinator-${N} consensus:"
+            docker compose exec -T "coordinator-${N}" \
+                curl -sf -H "x-api-key: ${VARPULIS_API_KEY:-dev-key}" \
+                http://localhost:9100/api/v1/cluster/consensus 2>/dev/null || echo "  (unreachable)"
         done
     fi
     sleep 1
 done
 
-# Wait for all 4 workers to be visible via Raft sync (check on coordinator-1)
-echo "=== Waiting for workers to register (Raft-replicated) ==="
+# Wait for all 4 workers to be visible from coordinator-1, which sees them
+# through the control plane rather than because they registered with it.
+echo "=== Waiting for workers to register (control-plane replicated) ==="
 for i in $(seq 1 60); do
     READY=$(docker compose exec -T coordinator-1 \
         curl -sf "http://localhost:9100/api/v1/cluster/workers" 2>/dev/null \

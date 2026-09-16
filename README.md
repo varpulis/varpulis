@@ -159,7 +159,7 @@ Each connector is an independent crate. The default binary includes all; build w
 <summary><strong>Operations</strong></summary>
 
 - Single binary, Docker, Kubernetes (Helm chart included)
-- Coordinator/worker cluster with Raft consensus
+- Coordinator/worker cluster with JetStream KV consensus (leases + compare-and-swap)
 - Multi-tenant SaaS mode with RBAC and SSO/OIDC
 - Prometheus metrics, OpenTelemetry tracing, Grafana dashboards
 - RocksDB state persistence with optional AES-256-GCM encryption

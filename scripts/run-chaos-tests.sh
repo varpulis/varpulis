@@ -9,16 +9,18 @@
 #
 # Environment:
 #   CHAOS_FEATURES  cargo features for the chaos test binary
-#                   (default: distributed-checkpoint,raft). Without these the
+#                   (default: distributed-checkpoint,jetstream-control-plane). Without these the
 #                   coordinator-failover / distributed-checkpoint /
 #                   multi-replica / network-partition modules are #[cfg]'d out
 #                   of the binary entirely and cannot run at all.
 #   CHAOS_NATS=1    declare that a NATS broker is reachable on 4222 AND that
-#                   VARPULIS_BIN was built with `--features raft,nats-transport`.
+#                   VARPULIS_BIN was built with
+#                   `--features jetstream-control-plane,nats-transport`.
 #                   Runs tier 2; under the flag a "[skip]" is a hard failure.
 #   CHAOS_DC=1      declare a VARPULIS_BIN that speaks the distributed
 #                   checkpoint protocol (built with --features
-#                   distributed-checkpoint,nats-transport,raft), plus Kafka on
+#                   distributed-checkpoint,nats-transport,jetstream-control-plane),
+#                   plus Kafka on
 #                   9092 in a container named varpulis-kafka, NATS, and docker.
 #                   Runs tier 3, same no-abstaining rule.
 #   VARPULIS_BIN    path to the varpulis binary the harness spawns.
@@ -44,7 +46,7 @@ set -euo pipefail
 MAX_RETRIES="${1:-2}"
 VARPULIS_BIN="${VARPULIS_BIN:-}"
 # `-` not `:-`: an explicitly empty CHAOS_FEATURES means "no features".
-CHAOS_FEATURES="${CHAOS_FEATURES-distributed-checkpoint,raft}"
+CHAOS_FEATURES="${CHAOS_FEATURES-distributed-checkpoint,jetstream-control-plane}"
 CHAOS_NATS="${CHAOS_NATS:-0}"
 CHAOS_DC="${CHAOS_DC:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -92,11 +94,12 @@ CHAOS_TESTS=(
 
 # ---------------------------------------------------------------------------
 # Tier 2 — needs a NATS broker on 4222 and a VARPULIS_BIN built with
-# `--features raft,nats-transport`. Both are cheap for CI to provide (a
+# `--features jetstream-control-plane,nats-transport`, and a
+# JetStream-enabled broker (`nats-server -js`). Both are cheap for CI (a
 # `nats:latest` service container and two cargo feature flags), so CI sets
 # CHAOS_NATS=1 and these run for real.
 #
-#   coordinator_failover::…leader_election  raft in the binary (no broker)
+#   coordinator_failover::…leader_election  control plane + JetStream broker
 #   network_partition::…real_nats           nats-transport + NATS
 # ---------------------------------------------------------------------------
 CHAOS_NATS_TESTS=(
@@ -111,14 +114,14 @@ CHAOS_NATS_TESTS=(
 #
 # THE BLOCKER, precisely: `distributed-checkpoint` is a feature of
 # `varpulis-cluster` only. `crates/varpulis-cli/Cargo.toml` [features] exposes
-# kafka / nats / nats-transport / onnx / k8s / raft / persistent / saas / oidc /
+# kafka / nats / nats-transport / onnx / k8s / jetstream-control-plane / saas / oidc /
 # … and NO `distributed-checkpoint` passthrough. So the coordinator and worker
 # processes these tests spawn are built without it, and
 # `nats_worker.rs::handle_checkpoint_barrier` — which is
 # #[cfg(all(feature = "nats-transport", feature = "distributed-checkpoint"))] —
 # simply does not exist in the binary. A worker therefore never acks a barrier.
 # Verified empirically: with NATS up and a binary built
-# `--features raft,nats-transport`, test_coordinator_failover_workers_self_abort
+# `--features jetstream-control-plane,nats-transport`, test_coordinator_failover_workers_self_abort
 # fails on "worker must publish an ack within 3s".
 #
 # What is missing is a one-line CLI feature passthrough (a CLI/engine change,
@@ -305,13 +308,14 @@ done
 
 echo ""
 if [[ "$CHAOS_NATS" == "1" ]]; then
-    echo "--- Tier 2: NATS + raft (${#CHAOS_NATS_TESTS[@]} tests) ---"
+    echo "--- Tier 2: NATS + control plane (${#CHAOS_NATS_TESTS[@]} tests) ---"
     for test_name in "${CHAOS_NATS_TESTS[@]}"; do
         run_one "$test_name" "1" || true
     done
 else
-    echo "--- Tier 2: NATS + raft (${#CHAOS_NATS_TESTS[@]} tests) — NOT RUN ---"
-    echo "  Needs NATS on 4222 and VARPULIS_BIN built with --features raft,nats-transport."
+    echo "--- Tier 2: NATS + control plane (${#CHAOS_NATS_TESTS[@]} tests) — NOT RUN ---"
+    echo "  Needs JetStream-enabled NATS on 4222 (nats-server -js) and VARPULIS_BIN"
+    echo "  built with --features jetstream-control-plane,nats-transport."
     echo "  Set CHAOS_NATS=1 once both hold; they then fail instead of skipping."
     for test_name in "${CHAOS_NATS_TESTS[@]}"; do
         echo "  - $test_name"
@@ -328,7 +332,7 @@ if [[ "$CHAOS_DC" == "1" ]]; then
 else
     echo "--- Tier 3: distributed checkpoint (${#CHAOS_DC_TESTS[@]} tests) — NOT RUN ---"
     echo "  Needs: VARPULIS_BIN built with --features distributed-checkpoint,"
-    echo "  nats-transport,raft; Kafka on 9092 in a container named"
+    echo "  nats-transport,jetstream-control-plane; Kafka on 9092 in a container named"
     echo "  varpulis-kafka; NATS on 4222; and docker on PATH."
     echo "  Set CHAOS_DC=1 once all four hold; the tests then fail instead"
     echo "  of skipping."

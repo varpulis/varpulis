@@ -1,4 +1,4 @@
-//! Deterministic simulation tests for Raft state machine convergence.
+//! Deterministic convergence tests for the coordinator's control state.
 //!
 //! These tests verify that:
 //! - All replicas converge to the same state after applying the same commands
@@ -6,11 +6,15 @@
 //! - State snapshots serialize and deserialize faithfully
 //! - Complex lifecycle sequences produce correct final state
 //!
-//! Requires the `raft` feature: `cargo test -p varpulis-cluster --features raft`
-#![cfg(feature = "raft")]
+//! They were written as `raft_simulation_tests.rs` and gated on the `raft`
+//! feature, which no CI job built with — so nine tests of the state machine
+//! that *both* backends share never ran. They reach `apply_command` through
+//! `control_state` now, where it actually lives; `raft` only ever re-exported
+//! it. No feature gate, so they run in the default `cargo test`.
 
-use varpulis_cluster::raft::state_machine::{apply_command, CoordinatorState};
-use varpulis_cluster::raft::{ClusterCommand, ClusterResponse};
+use varpulis_cluster::control_state::{
+    apply_command, ClusterCommand, ClusterResponse, CoordinatorState,
+};
 use varpulis_cluster::worker::WorkerCapacity;
 
 fn make_register(id: &str, cores: usize) -> ClusterCommand {

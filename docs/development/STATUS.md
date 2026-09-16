@@ -48,8 +48,8 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 - **S3/Kinesis**: Stub, feature-gated
 
 ### Distributed Architecture
-- Coordinator/Worker model with Raft consensus (openraft 0.9)
-- RocksDB persistence for Raft log and state machine
+- Coordinator/Worker model with a JetStream KV control plane (leadership lease + compare-and-swap writes)
+- Control state lives in the KV bucket; coordinators hold no durable state of their own
 - K8s Lease-based leader election (HA)
 - Pipeline group management, worker drain, live migration
 - State replication (full snapshot + delta)
@@ -98,9 +98,9 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 
 ### Testing
 - 3,776 test functions across 62 integration test files
-- Chaos test harness (process spawning, Raft failover, state recovery) — currently `#[ignore]`d (needs Kafka/NATS infra), not yet part of the CI gate
+- Chaos test harness (process spawning, coordinator failover, state recovery) — `#[ignore]`d, run by the nightly Chaos Tests job with a JetStream broker
 - E2E browser tests (Playwright)
-- Docker-based Raft HA and scaling tests
+- Docker-based HA and scaling tests
 - PST convergence validation (mathematical correctness)
 - 7 Criterion benchmark suites
 - 13-job CI pipeline (check, test, fmt, clippy, deny, audit, feature-flags, chaos, web-ui, coverage)

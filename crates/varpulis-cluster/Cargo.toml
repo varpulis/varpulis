@@ -48,13 +48,12 @@ optional = true
 default = []
 k8s = ["kube", "k8s-openapi", "futures-util"]
 onnx = ["varpulis-runtime/onnx"]
-raft = ["openraft"]
-persistent = ["raft", "rocksdb"]
 nats-transport = ["async-nats", "futures-util"]
-# JetStream KV control plane (step 3a of collapsing raft + k8s-lease HA +
-# core-NATS onto JetStream). Adds NO new dependency — async-nats already ships
-# `jetstream::kv`. Off by default, and inert unless
-# `VARPULIS_CONTROL_PLANE_URL` is set. Does not disable or replace `raft`.
+# JetStream KV control plane. This is the coordinator's consensus: leadership
+# is a lease on one KV key and every replicated write is a compare-and-swap,
+# which is what replaced openraft. Adds NO dependency of its own — async-nats
+# already ships `jetstream::kv`. Off by default, and inert unless
+# `VARPULIS_CONTROL_PLANE_URL` is set; without it a coordinator is standalone.
 jetstream-control-plane = ["async-nats", "futures-util"]
 federation = ["nats-transport"]
 otel = ["opentelemetry", "tracing-opentelemetry"]
@@ -70,15 +69,6 @@ optional = true
 [dependencies.k8s-openapi]
 version = "0.27"
 features = ["v1_33"]
-optional = true
-
-[dependencies.openraft]
-version = "0.9"
-features = ["serde"]
-optional = true
-
-[dependencies.rocksdb]
-version = "0.24"
 optional = true
 
 [dev-dependencies]

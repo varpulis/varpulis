@@ -56,7 +56,7 @@
 
 ## Phase 5: Advanced Features ✅ COMPLETED
 
-- [x] Distributed mode (Raft consensus, NATS transport, coordinator/worker)
+- [x] Distributed mode (JetStream KV consensus, NATS transport, coordinator/worker)
 - [x] Hot reload of configurations (`POST /api/v1/pipelines/:id/reload`)
 - [x] Additional connectors (NATS, Kinesis, S3, Elasticsearch)
 - [x] PST-based pattern forecasting (`.forecast()` operator)

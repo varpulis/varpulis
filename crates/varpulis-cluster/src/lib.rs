@@ -37,7 +37,7 @@
 //!    in-process `barrier_commit_2pc` path in
 //!    `crates/varpulis-cli/src/commands/run.rs`. No cluster overhead.
 //! 2. **Cluster builds without the feature compile and run unchanged.**
-//!    The `coordinator`, `nats_worker`, `migration`, and `raft` modules
+//!    The `coordinator`, `nats_worker` and `migration` modules
 //!    expose the same public API; only the optional
 //!    `coordinator::distributed_checkpoint`, the
 //!    `checkpoint_protocol` module, and the worker-side
@@ -79,8 +79,6 @@ pub mod nats_jetstream;
 pub mod nats_transport;
 pub mod nats_worker;
 pub mod pipeline_group;
-#[cfg(feature = "raft")]
-pub mod raft;
 pub mod rate_limit;
 pub mod rbac;
 pub mod routing;

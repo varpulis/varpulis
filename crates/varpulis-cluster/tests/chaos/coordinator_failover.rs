@@ -5,9 +5,11 @@
 //! run and verify exactly-once semantics survive, this test kills the
 //! *coordinator* and verifies:
 //!
-//!   1. Leader election: a 3-node Raft coordinator quorum re-elects a new
-//!      leader within bounded time after the current leader is SIGKILL'd
-//!      mid-checkpoint cycle.
+//!   1. Leadership takeover: with three coordinators on one JetStream KV
+//!      control plane, a survivor takes the lease within bounded time after
+//!      the holder is SIGKILL'd mid-checkpoint cycle. A killed holder cannot
+//!      resign, so the bound is the bucket's TTL plus one sweep — stated, and
+//!      asserted, rather than assumed.
 //!   2. Workers self-abort timed-out checkpoints: a barrier delivered to a
 //!      worker without a follow-up `complete`/`abort` (because the
 //!      coordinator died) does not deadlock the worker — the per-checkpoint
@@ -18,10 +20,11 @@
 //!
 //! The leader-election property is the foundation of "new leader resumes
 //! checkpointing" — without re-election the cluster has no leader to
-//! re-trigger any in-flight or future checkpoint cycle. The Raft state
-//! machine already replicates `CheckpointCompleted` / `CheckpointAborted`
-//! through Raft (Task 1.4), so once a new leader stabilises it observes the
-//! same `latest_checkpoints` map the dead leader had committed.
+//! re-trigger any in-flight or future checkpoint cycle. The command set
+//! carries `CheckpointCompleted` / `CheckpointAborted`, so once a new holder
+//! stabilises it reads the same `latest_checkpoints` map out of the bucket.
+//! (Nothing sends those commands yet — see the note on
+//! `CheckpointRaftReplicator` — so that inheritance is currently vacuous.)
 //!
 //! The worker-self-abort property is the safety net for the *kill mid-
 //! barrier* race: if the coordinator dies after publishing the barrier but
@@ -35,18 +38,18 @@
 //! ## Prerequisites
 //!
 //! - `varpulis` binary built with `nats-transport + distributed-checkpoint
-//!   + raft` features (set `VARPULIS_BIN` to point at it):
+//!   + jetstream-control-plane` features (set `VARPULIS_BIN` to point at it):
 //!   ```sh
 //!   cargo build --release \
 //!     -p varpulis-cli \
-//!     --features 'nats-transport raft'
+//!     --features 'nats-transport jetstream-control-plane'
 //!   export VARPULIS_BIN=$PWD/target/release/varpulis
 //!   ```
 //!   Note: the `distributed-checkpoint` feature is owned by `varpulis-
 //!   cluster`. If the CLI doesn't yet expose a passthrough, the worker-
 //!   self-abort test [skip]s rather than running half-armed.
 //! - NATS broker on `localhost:4222` for the worker self-abort sub-test
-//!   only (the leader-election sub-test is pure Raft and has no infra
+//!   only (the takeover sub-test needs only the control plane and has no other infra
 //!   dependency).
 //!
 //! ## Running
@@ -54,18 +57,24 @@
 //! ```sh
 //! cargo test --release \
 //!     --test chaos \
-//!     --features 'distributed-checkpoint raft' \
+//!     --features 'distributed-checkpoint jetstream-control-plane' \
 //!     test_coordinator_failover \
 //!     -- --ignored --nocapture
 //! ```
 //!
 //! ## Skip behaviour
 //!
-//! Each test probes its prerequisites (Raft enabled in the binary, NATS
-//! reachable) and emits a `[skip]` log line when missing — so CI without
-//! infra is non-fatal. Tests are `#[ignore]`d to require explicit opt-in.
+//! Each test probes its prerequisites (a control plane compiled in, a
+//! JetStream-enabled NATS reachable) and abstains when they are missing.
+//! An abstention is a *failure* under `VARPULIS_REQUIRE_BROKERS=1`, which is
+//! what every job that provisions a broker sets. Tests are `#[ignore]`d to
+//! require explicit opt-in.
 
-#![cfg(all(unix, feature = "distributed-checkpoint", feature = "raft"))]
+#![cfg(all(
+    unix,
+    feature = "distributed-checkpoint",
+    feature = "jetstream-control-plane"
+))]
 #![allow(clippy::too_many_lines)]
 
 use std::process::{Child, Command, Stdio};
@@ -80,25 +89,33 @@ use super::{allocate_ports, find_binary, WorkerProcess, API_KEY};
 // Configuration
 // ---------------------------------------------------------------------------
 
-/// Number of Raft coordinator nodes in the test quorum.
+/// Number of coordinator processes in the test cluster.
 const NUM_COORDINATORS: usize = 3;
 
-/// How long to wait for the *initial* leader election after spawning the
-/// quorum. Raft's election timeout in this codebase is 1500-3000ms with a
-/// 500ms heartbeat (see `raft::mod::bootstrap_with_storage`). 10s is
-/// comfortably above the upper bound.
-const INITIAL_ELECTION_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long to wait for the *initial* leadership acquisition after spawning
+/// the cluster. Whichever coordinator's first sweep lands first wins the
+/// create-if-absent, so this is bounded by the sweep interval, not by an
+/// election.
+const INITIAL_ELECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// How long to wait for a *re-election* after killing the leader. The
-/// surviving nodes must (a) detect the missing heartbeats (>= election
-/// timeout) and (b) win an election. 15s gives slack for split-vote
-/// retries on a busy CI runner.
-const REELECTION_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long to wait for a *takeover* after killing the holder. A killed
+/// coordinator cannot resign, so the survivors wait out the record's TTL
+/// before their `create` succeeds: bounded by `CONTROL_PLANE_TTL` plus one
+/// sweep, with slack for a busy CI runner.
+const REELECTION_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Bucket TTL for the test cluster, and therefore the crash-failover bound.
+/// Short, because the test spends it waiting.
+const CONTROL_PLANE_TTL_SECS: u64 = 10;
+
+/// Sweep interval for the test coordinators. Must be well under half the TTL
+/// or leadership flaps; see the warning `run_coordinator` prints.
+const HEARTBEAT_INTERVAL_SECS: u64 = 2;
 
 /// Per-coordinator startup grace period before issuing the first probe.
 const COORDINATOR_BOOT_DELAY: Duration = Duration::from_secs(1);
 
-/// Polling cadence while waiting for raft state changes.
+/// Polling cadence while waiting for leadership to move.
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Worker self-abort barrier timeout. Short so the watchdog fires inside
@@ -130,52 +147,58 @@ async fn tcp_reachable(addr: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-coordinator Raft cluster harness
+// Multi-coordinator control-plane cluster harness
 // ---------------------------------------------------------------------------
 
-/// A single coordinator process in a Raft quorum.
-struct RaftCoordinator {
+/// A single coordinator process in the cluster.
+struct CoordinatorProcess {
     process: Child,
     port: u16,
-    node_id: u64,
+    /// What this coordinator advertises, and therefore what `/consensus`
+    /// reports when it holds the lease. Also its identity in the test: two
+    /// coordinators on different ports cannot collide.
+    address: String,
 }
 
-/// Three-coordinator Raft quorum with optional workers attached. Each
-/// coordinator process is spawned with `--raft`, `--raft-node-id N`, and
-/// the same `--raft-peers` list. Node 1 is the only one that calls
-/// `raft.initialize()` on its own; the rest discover membership through
-/// replication.
-struct MultiRaftCluster {
-    coordinators: Vec<RaftCoordinator>,
+/// Three coordinator processes sharing one JetStream KV control plane.
+///
+/// Each is spawned with `VARPULIS_CONTROL_PLANE_URL` pointing at the same
+/// broker and bucket. There is no node id, no peer list and no membership to
+/// discover: leadership is `create`-if-absent on one key, and whichever
+/// coordinator's first health sweep lands first holds it. A killed holder
+/// cannot resign, so the record ages out on the bucket's TTL and a survivor's
+/// next `create` succeeds — crash failover with a bound the test can state.
+struct MultiCoordinatorCluster {
+    coordinators: Vec<CoordinatorProcess>,
     workers: Vec<WorkerProcess>,
     api_key: String,
     http_client: reqwest::Client,
+    bucket: String,
 }
 
-impl MultiRaftCluster {
-    /// Spawn `NUM_COORDINATORS` coordinator processes with Raft enabled,
-    /// then wait for an initial leader to be elected.
+impl MultiCoordinatorCluster {
+    /// Spawn `NUM_COORDINATORS` coordinators on one control plane, then wait
+    /// for one of them to take the lease.
     ///
-    /// Returns `None` if the binary doesn't actually have the `raft`
-    /// feature compiled in (detected by the `/raft` endpoint returning
-    /// `enabled: false` after `INITIAL_ELECTION_TIMEOUT` of polling).
+    /// Returns `None` when the binary has no `jetstream-control-plane`
+    /// feature, or when the broker is unreachable — the caller treats either
+    /// as a `[skip]`, and the chaos runner turns a skip into a failure when
+    /// `VARPULIS_REQUIRE_BROKERS` says a broker was promised.
     async fn start() -> Option<Self> {
         let bin = find_binary();
-        // Allocate NUM_COORDINATORS ports up front so we can build the
-        // peer list before any process starts.
         let base_port = allocate_ports(NUM_COORDINATORS as u16);
         let ports: Vec<u16> = (0..NUM_COORDINATORS as u16)
             .map(|i| base_port + i)
             .collect();
-        let peers = ports
-            .iter()
-            .map(|p| format!("http://127.0.0.1:{p}"))
-            .collect::<Vec<_>>()
-            .join(",");
+
+        // One bucket per run: these processes are real and a leftover record
+        // from a previous run would hand leadership to a corpse.
+        let bucket = format!("VCHAOS_FAILOVER_{}", std::process::id());
 
         let mut coordinators = Vec::with_capacity(NUM_COORDINATORS);
-        for (i, &port) in ports.iter().enumerate() {
-            let node_id = (i as u64) + 1;
+        for &port in &ports {
+            let id = format!("coord-{port}");
+            let address = format!("http://127.0.0.1:{port}");
             let process = Command::new(&bin)
                 .args([
                     "coordinator",
@@ -185,23 +208,32 @@ impl MultiRaftCluster {
                     "127.0.0.1",
                     "--api-key",
                     API_KEY,
-                    "--raft",
-                    "--raft-node-id",
-                    &node_id.to_string(),
-                    "--raft-peers",
-                    &peers,
+                    "--coordinator-id",
+                    &id,
+                    "--heartbeat-interval",
+                    &HEARTBEAT_INTERVAL_SECS.to_string(),
                 ])
+                .env("VARPULIS_CONTROL_PLANE_URL", nats_url())
+                .env("VARPULIS_CONTROL_PLANE_BUCKET", &bucket)
+                .env(
+                    "VARPULIS_CONTROL_PLANE_TTL_SECS",
+                    CONTROL_PLANE_TTL_SECS.to_string(),
+                )
+                .env("VARPULIS_COORDINATOR_ADVERTISE_ADDR", &address)
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
-                .unwrap_or_else(|e| panic!("Failed to spawn coordinator {node_id}: {e}"));
-            coordinators.push(RaftCoordinator {
+                .unwrap_or_else(|e| panic!("Failed to spawn coordinator on {port}: {e}"));
+            coordinators.push(CoordinatorProcess {
                 process,
                 port,
-                node_id,
+                address,
             });
         }
 
+        // Say which bucket, so a failing run on CI can be inspected rather
+        // than guessed at.
+        eprintln!("  control-plane bucket = {bucket} on {}", nats_url());
         sleep(COORDINATOR_BOOT_DELAY).await;
 
         let http_client = reqwest::Client::builder()
@@ -214,11 +246,9 @@ impl MultiRaftCluster {
             workers: Vec::new(),
             api_key: API_KEY.to_string(),
             http_client,
+            bucket,
         };
 
-        // Poll for an initial leader. If we don't see one within the
-        // timeout, assume the binary doesn't have raft compiled in and
-        // bail out. The caller treats that as a [skip].
         match cluster
             .poll_until_leader(INITIAL_ELECTION_TIMEOUT, /*forbid=*/ None)
             .await
@@ -237,12 +267,12 @@ impl MultiRaftCluster {
         format!("http://127.0.0.1:{port}/api/v1/cluster{path}")
     }
 
-    /// Fetch `/raft` from coordinator `idx`. Returns `None` if the request
-    /// failed (process down, port not yet bound, etc.).
-    async fn raft_status(&self, idx: usize) -> Option<Json> {
+    /// Fetch `/consensus` from coordinator `idx`. `None` when the request
+    /// failed (process down, port not yet bound).
+    async fn consensus_status(&self, idx: usize) -> Option<Json> {
         let resp = self
             .http_client
-            .get(self.api_url(idx, "/raft"))
+            .get(self.api_url(idx, "/consensus"))
             .header("x-api-key", &self.api_key)
             .send()
             .await
@@ -253,33 +283,33 @@ impl MultiRaftCluster {
         resp.json::<Json>().await.ok()
     }
 
-    /// Poll every live coordinator's `/raft` endpoint until at least one
-    /// reports a non-null `leader_id`. Returns the elected leader's
-    /// `node_id` (the value of `leader_id`).
+    /// Poll every live coordinator's `/consensus` endpoint until one of them
+    /// names a holder. Returns the holder's advertised address.
     ///
-    /// `forbid` lets the caller require that the elected leader differ
-    /// from a specific node id (used after killing a leader to require a
-    /// fresh election).
+    /// `forbid` lets the caller require the holder differ from a given
+    /// address — used after killing the holder to require a real takeover
+    /// rather than a stale read.
     ///
-    /// Returns `None` on timeout.
+    /// Returns `None` on timeout, or immediately when the binary reports a
+    /// `standalone` backend (no control plane compiled in or configured).
     async fn poll_until_leader(
         &self,
         timeout: Duration,
-        forbid: Option<u64>,
+        forbid: Option<&str>,
     ) -> Option<LeaderInfo> {
         let deadline = Instant::now() + timeout;
         loop {
             for idx in 0..self.coordinators.len() {
-                if let Some(status) = self.raft_status(idx).await {
-                    let enabled = status["enabled"].as_bool().unwrap_or(false);
-                    if !enabled {
-                        // Raft feature isn't compiled in -- no point retrying.
+                if let Some(status) = self.consensus_status(idx).await {
+                    if status["backend"].as_str() != Some("jetstream-control-plane") {
+                        // No control plane in this binary — retrying cannot help.
                         return None;
                     }
-                    if let Some(leader_id) = status["leader_id"].as_u64() {
-                        let term = status["term"].as_u64().unwrap_or(0);
-                        if forbid != Some(leader_id) {
-                            return Some(LeaderInfo { leader_id, term });
+                    if let Some(leader) = status["leader"].as_str() {
+                        if forbid != Some(leader) {
+                            return Some(LeaderInfo {
+                                leader: leader.to_string(),
+                            });
                         }
                     }
                 }
@@ -291,19 +321,19 @@ impl MultiRaftCluster {
         }
     }
 
-    /// Find the cluster index of the coordinator whose `node_id` matches.
-    fn find_index_for(&self, node_id: u64) -> Option<usize> {
-        self.coordinators.iter().position(|c| c.node_id == node_id)
+    /// Find the cluster index of the coordinator at that advertised address.
+    fn find_index_for(&self, address: &str) -> Option<usize> {
+        self.coordinators.iter().position(|c| c.address == address)
     }
 
     /// SIGKILL the coordinator at the given cluster index and remove it
     /// from the live list (so subsequent polls only target survivors).
-    fn kill_coordinator(&mut self, idx: usize) -> u64 {
+    fn kill_coordinator(&mut self, idx: usize) -> String {
         let mut victim = self.coordinators.remove(idx);
-        let node_id = victim.node_id;
+        let address = victim.address.clone();
         let _ = victim.process.kill();
         let _ = victim.process.wait();
-        node_id
+        address
     }
 
     /// Spawn an extra worker process pointing at coordinator index `idx`
@@ -348,7 +378,7 @@ impl MultiRaftCluster {
         });
 
         // Best-effort wait for the worker to register on the leader. We
-        // poll /workers; on a healthy quorum this also exercises Raft
+        // poll /workers; on a healthy cluster this also exercises follower
         // replication of RegisterWorker (so any survivor can see it).
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -397,8 +427,11 @@ impl MultiRaftCluster {
     }
 }
 
-impl Drop for MultiRaftCluster {
+impl Drop for MultiCoordinatorCluster {
     fn drop(&mut self) {
+        // The bucket is per-run and the processes are about to die; say which
+        // one, so a bucket left behind by a panicking run can be found.
+        eprintln!("  tearing down control-plane bucket {}", self.bucket);
         for w in &mut self.workers {
             let _ = w.process.kill();
             let _ = w.process.wait();
@@ -410,10 +443,14 @@ impl Drop for MultiRaftCluster {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+/// Who holds the coordinator lease, by advertised address.
+///
+/// There is no term: the lease is a KV revision, and the revision is the
+/// store's business, not the caller's. What a caller can observe — and all it
+/// needs — is *which* coordinator is currently allowed to write.
+#[derive(Debug, Clone)]
 struct LeaderInfo {
-    leader_id: u64,
-    term: u64,
+    leader: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -421,7 +458,7 @@ struct LeaderInfo {
 // ---------------------------------------------------------------------------
 
 /// Verifies the foundational property of "new leader resumes checkpointing":
-/// after killing the current Raft leader, the surviving 2-node quorum elects
+/// after killing the current lease holder, one of the two survivors takes
 /// a fresh leader on a higher term within `REELECTION_TIMEOUT`.
 ///
 /// This is sufficient to demonstrate the *coordinator side* of the failover
@@ -431,71 +468,63 @@ struct LeaderInfo {
 #[tokio::test]
 #[ignore]
 async fn test_coordinator_failover_leader_election() {
-    let mut cluster = match MultiRaftCluster::start().await {
+    let mut cluster = match MultiCoordinatorCluster::start().await {
         Some(c) => c,
         None => {
             crate::abstain(
                 "test_coordinator_failover_leader_election",
-                "Raft feature not enabled in the varpulis binary \
-                 (build with --features raft)",
+                "no JetStream control plane: build with --features \
+                 jetstream-control-plane and point NATS_URL at a \
+                 JetStream-enabled broker",
             );
             return;
         }
     };
 
-    // Capture the initial leader.
+    // Capture the initial holder.
     let initial = cluster
         .poll_until_leader(INITIAL_ELECTION_TIMEOUT, None)
         .await
-        .expect("initial leader election must succeed");
-    eprintln!(
-        "  initial leader = node {} on term {}",
-        initial.leader_id, initial.term
-    );
+        .expect("a coordinator must take the lease");
+    eprintln!("  initial holder = {}", initial.leader);
 
-    // SIGKILL the leader.
+    // SIGKILL it. A killed holder cannot resign, so the record it holds stays
+    // in the bucket until the TTL ages it out — which is exactly the failure
+    // mode the TTL exists for, and the one Raft needed an election timeout
+    // for.
     let leader_idx = cluster
-        .find_index_for(initial.leader_id)
-        .expect("leader node id present in cluster");
-    let killed_node = cluster.kill_coordinator(leader_idx);
-    eprintln!("  killed coordinator node {killed_node}");
+        .find_index_for(&initial.leader)
+        .expect("the holder must be one of our coordinators");
+    let killed = cluster.kill_coordinator(leader_idx);
+    eprintln!("  killed the holder at {killed}");
     assert_eq!(cluster.live_count(), NUM_COORDINATORS - 1);
 
-    // Wait for re-election. The new leader must NOT be the dead node and
-    // must run on a strictly higher term.
+    // Wait for a survivor to take over. It must not be the dead one.
     let elected = cluster
-        .poll_until_leader(REELECTION_TIMEOUT, Some(killed_node))
+        .poll_until_leader(REELECTION_TIMEOUT, Some(&killed))
         .await
         .unwrap_or_else(|| {
             panic!(
-                "new leader was not elected within {REELECTION_TIMEOUT:?} \
-                 after killing node {killed_node}"
+                "no survivor took the lease within {REELECTION_TIMEOUT:?} after \
+                 killing the holder at {killed}. The bound is the bucket TTL \
+                 ({CONTROL_PLANE_TTL_SECS}s) plus one sweep \
+                 ({HEARTBEAT_INTERVAL_SECS}s)."
             );
         });
-    eprintln!(
-        "  new leader = node {} on term {} (was {} on term {})",
-        elected.leader_id, elected.term, initial.leader_id, initial.term
-    );
+    eprintln!("  new holder = {} (was {})", elected.leader, initial.leader);
 
     assert_ne!(
-        elected.leader_id, killed_node,
-        "new leader must not be the killed node"
-    );
-    assert!(
-        elected.term > initial.term,
-        "new leader's term must be strictly higher than the killed leader's term \
-         (got new={}, old={})",
-        elected.term,
-        initial.term
+        elected.leader, killed,
+        "the killed coordinator must not still be reported as the holder"
     );
 
-    // Cross-check: every surviving coordinator agrees on the new leader.
-    // (Followers might lag a hop on the term, so we only require leader_id
-    // to match across alive nodes.)
+    // Cross-check: every survivor names the same holder. They read it from
+    // the same key, so disagreement means one of them is serving a stale
+    // read rather than the bucket.
     let mut agreement = 0usize;
     for idx in 0..cluster.live_count() {
-        if let Some(status) = cluster.raft_status(idx).await {
-            if status["leader_id"].as_u64() == Some(elected.leader_id) {
+        if let Some(status) = cluster.consensus_status(idx).await {
+            if status["leader"].as_str() == Some(elected.leader.as_str()) {
                 agreement += 1;
             }
         }
@@ -503,9 +532,24 @@ async fn test_coordinator_failover_leader_election() {
     assert_eq!(
         agreement,
         cluster.live_count(),
-        "all {} surviving coordinators must agree on the new leader (only {} agreed)",
+        "all {} surviving coordinators must name the same holder (only {} did)",
         cluster.live_count(),
         agreement
+    );
+
+    // Exactly one of them believes it may write. That is the property the
+    // whole control plane exists for, and the one a split brain breaks.
+    let mut writers = 0usize;
+    for idx in 0..cluster.live_count() {
+        if let Some(status) = cluster.consensus_status(idx).await {
+            if status["is_leader"].as_bool() == Some(true) {
+                writers += 1;
+            }
+        }
+    }
+    assert_eq!(
+        writers, 1,
+        "exactly one surviving coordinator may believe it writes, got {writers}"
     );
 }
 
@@ -551,12 +595,12 @@ async fn test_coordinator_failover_workers_self_abort() {
         }
     };
 
-    let mut cluster = match MultiRaftCluster::start().await {
+    let mut cluster = match MultiCoordinatorCluster::start().await {
         Some(c) => c,
         None => {
             crate::abstain(
                 "test_coordinator_failover_workers_self_abort",
-                "Raft feature not enabled",
+                "no JetStream control plane",
             );
             return;
         }
@@ -568,16 +612,16 @@ async fn test_coordinator_failover_workers_self_abort() {
     let leader_info = cluster
         .poll_until_leader(INITIAL_ELECTION_TIMEOUT, None)
         .await
-        .expect("leader election must succeed before adding worker");
+        .expect("a coordinator must take the lease before adding a worker");
     let leader_idx = cluster
-        .find_index_for(leader_info.leader_id)
-        .expect("leader node id present");
+        .find_index_for(&leader_info.leader)
+        .expect("the holder must be one of our coordinators");
     let worker_id = cluster
         .add_worker_pointing_at(leader_idx, Some(&nats))
         .await;
     eprintln!(
-        "  spawned worker {worker_id} attached to leader node {}",
-        leader_info.leader_id
+        "  spawned worker {worker_id} attached to the holder at {}",
+        leader_info.leader
     );
 
     // Subscribe to the ack subject for our synthetic group BEFORE
@@ -677,10 +721,21 @@ mod harness_tests {
 
     #[test]
     fn timeouts_are_sensibly_ordered() {
-        // Re-election timeout must allow at least one election cycle (max
-        // election timeout 3000ms in raft::bootstrap_with_storage) plus
-        // detection lag. 15s is comfortably above that.
-        assert!(REELECTION_TIMEOUT >= Duration::from_secs(10));
+        // Crash takeover waits out the record's TTL — a killed holder cannot
+        // resign — plus a sweep to notice, plus slack for a busy runner.
+        assert!(
+            REELECTION_TIMEOUT
+                >= Duration::from_secs(CONTROL_PLANE_TTL_SECS + HEARTBEAT_INTERVAL_SECS) * 2,
+            "the takeover bound must comfortably exceed TTL + one sweep"
+        );
+        // And the sweep must stay well under half the TTL, or the holder's own
+        // record expires between its renewals and leadership flaps. Both are
+        // consts, so this is a compile-time check written as one — clippy is
+        // right that the assertion is constant, and that is the point of it.
+        const _: () = assert!(
+            HEARTBEAT_INTERVAL_SECS * 2 < CONTROL_PLANE_TTL_SECS,
+            "sweep interval must be under half the TTL"
+        );
         // Worker watchdog timeout must be small enough that the test can
         // wait > 3x within a few seconds.
         assert!(WATCHDOG_BARRIER_TIMEOUT < Duration::from_secs(1));
@@ -688,7 +743,7 @@ mod harness_tests {
 
     #[test]
     fn three_coordinators_form_quorum_after_one_kill() {
-        // Sanity: a 3-node Raft cluster tolerates 1 fault, leaving a
+        // Sanity: killing one of three leaves a
         // 2-node majority. Encoded as a runtime check rather than a
         // tautology so a future bump to NUM_COORDINATORS = 5 still gets
         // exercised.

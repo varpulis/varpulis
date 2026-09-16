@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Raft.** Coordinator consensus is the JetStream KV control plane:
+  leadership is a lease on one key, and every replicated write is a
+  compare-and-swap against that store. The `raft` and `persistent` Cargo
+  features, the `varpulis-cluster::raft` module, the `--raft*` CLI flags and
+  the openraft dependency are gone — about 4,600 lines, and with them the
+  yanked `validit` that `cargo audit` reported on every run.
+
+  **Operators must act.** A coordinator started with `--raft` now refuses to
+  start with an error naming what to set instead; it does not silently fall
+  back to standalone. Set `VARPULIS_CONTROL_PLANE_URL` to a NATS cluster and
+  `VARPULIS_CONTROL_PLANE_REPLICAS=3`, and give each coordinator a stable
+  distinct `--coordinator-id` (defaults to `$HOSTNAME:$port`) and a reachable
+  `VARPULIS_COORDINATOR_ADVERTISE_ADDR`. See `docs/operations/runbook.md` §1.3.
+
+  Three Prometheus gauges go with it — `varpulis_cluster_raft_role`, `_term`,
+  `_commit_index` — replaced by `varpulis_cluster_is_leader` and
+  `varpulis_cluster_leadership_changes_total`. Alert rules built on the old
+  names must be rewritten; `deploy/prometheus/alerts.yml` and
+  `docs/operations/alerting.md` carry the replacements. `GET
+  /api/v1/cluster/raft` is deprecated, now requires the Viewer role, and
+  returns the new `/api/v1/cluster/consensus` shape rather than zeros under
+  field names that described a log which no longer exists.
+
+  The failure bound changes character rather than magnitude: a coordinator
+  killed outright cannot resign, so its lease ages out on
+  `VARPULIS_CONTROL_PLANE_TTL_SECS` (default 30s) before a standby acquires —
+  where Raft used an election timeout. A clean shutdown resigns and hands over
+  at once. And the single point of failure moves: the KV bucket is now the
+  only copy of the control state, which on a single broker is a weakness a
+  three-node Raft group did not have.
+
+### Fixed
+
+- **The NATS heartbeat path never replicated on a JetStream deployment.**
+  `replicate_heartbeat` was un-gated from `raft` when every replicated write
+  moved behind `Coordinator::replicate`, but its call site in
+  `nats_coordinator::handle_heartbeat_message` was not. A worker homed on a
+  non-leader coordinator therefore had its liveness invisible to every other
+  coordinator, which could then false-mark it `Unhealthy` — audit finding C5,
+  still open on that path. It went unnoticed because the only test asserting
+  it was itself gated on `raft`, and no job built that test with the feature.
+
 ### Changed
 
 - **`RunCheckpoint` is now `#[non_exhaustive]`.** It gains two fields

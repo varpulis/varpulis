@@ -11,12 +11,22 @@ services:
     networks:
       - varpulis-e2e
 
+  # Coordinator consensus: leadership lease + compare-and-swap writes on a
+  # JetStream KV bucket. One broker here (this is a scaling test, not a
+  # control-plane durability test); a real deployment runs a NATS cluster with
+  # VARPULIS_CONTROL_PLANE_REPLICAS=3.
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data"]
+    networks:
+      - varpulis-e2e
+
   coordinator-1:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: raft
+        FEATURES: jetstream-control-plane
     command:
       - "coordinator"
       - "--port"
@@ -27,20 +37,21 @@ services:
       - "3"
       - "--heartbeat-timeout"
       - "10"
-      - "--raft"
-      - "--raft-node-id"
-      - "1"
-      - "--raft-peers"
-      - "http://coordinator-1:9100,http://coordinator-2:9100,http://coordinator-3:9100"
+      - "--coordinator-id"
+      - "coordinator-1"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9100/health"]
       interval: 5s
       timeout: 5s
       start_period: 15s
       retries: 5
+    environment:
+      - VARPULIS_CONTROL_PLANE_URL=nats://nats:4222
     depends_on:
       mosquitto:
         condition: service_healthy
+      nats:
+        condition: service_started
     networks:
       - varpulis-e2e
 
@@ -49,7 +60,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: raft
+        FEATURES: jetstream-control-plane
     command:
       - "coordinator"
       - "--port"
@@ -60,20 +71,21 @@ services:
       - "3"
       - "--heartbeat-timeout"
       - "10"
-      - "--raft"
-      - "--raft-node-id"
-      - "2"
-      - "--raft-peers"
-      - "http://coordinator-1:9100,http://coordinator-2:9100,http://coordinator-3:9100"
+      - "--coordinator-id"
+      - "coordinator-2"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9100/health"]
       interval: 5s
       timeout: 5s
       start_period: 15s
       retries: 5
+    environment:
+      - VARPULIS_CONTROL_PLANE_URL=nats://nats:4222
     depends_on:
       mosquitto:
         condition: service_healthy
+      nats:
+        condition: service_started
     networks:
       - varpulis-e2e
 
@@ -82,7 +94,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: raft
+        FEATURES: jetstream-control-plane
     command:
       - "coordinator"
       - "--port"
@@ -93,20 +105,21 @@ services:
       - "3"
       - "--heartbeat-timeout"
       - "10"
-      - "--raft"
-      - "--raft-node-id"
-      - "3"
-      - "--raft-peers"
-      - "http://coordinator-1:9100,http://coordinator-2:9100,http://coordinator-3:9100"
+      - "--coordinator-id"
+      - "coordinator-3"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9100/health"]
       interval: 5s
       timeout: 5s
       start_period: 15s
       retries: 5
+    environment:
+      - VARPULIS_CONTROL_PLANE_URL=nats://nats:4222
     depends_on:
       mosquitto:
         condition: service_healthy
+      nats:
+        condition: service_started
     networks:
       - varpulis-e2e
 
@@ -115,7 +128,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: raft
+        FEATURES: jetstream-control-plane
     command:
       - "server"
       - "--port"
@@ -147,7 +160,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: raft
+        FEATURES: jetstream-control-plane
     command:
       - "server"
       - "--port"
@@ -179,7 +192,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: raft
+        FEATURES: jetstream-control-plane
     command:
       - "server"
       - "--port"
@@ -211,7 +224,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: raft
+        FEATURES: jetstream-control-plane
     command:
       - "server"
       - "--port"

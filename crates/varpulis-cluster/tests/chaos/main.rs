@@ -5,7 +5,10 @@
 //! the cluster REST API. No mocking — every test hits real processes communicating
 //! over TCP on localhost.
 
-#[cfg(all(feature = "distributed-checkpoint", feature = "raft"))]
+#[cfg(all(
+    feature = "distributed-checkpoint",
+    feature = "jetstream-control-plane"
+))]
 pub mod coordinator_failover;
 #[cfg(feature = "distributed-checkpoint")]
 pub mod distributed_checkpoint;

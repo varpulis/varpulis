@@ -23,7 +23,7 @@ The following components are in scope for security reports:
 - **REST API endpoints** -- authentication bypass, authorization flaws, injection
 - **Connectors** (MQTT, Kafka, database, Redis, S3, Kinesis, Elasticsearch) -- credential leakage, connection hijacking
 - **Authentication and RBAC** -- privilege escalation, API key handling flaws
-- **Cluster communication** -- Raft protocol manipulation, worker impersonation, mTLS bypass
+- **Cluster communication** -- control-plane manipulation (lease theft, forged compare-and-swap), worker impersonation, mTLS bypass
 - **Web UI** -- XSS, CSRF, session management issues
 
 ## Out of Scope

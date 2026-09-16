@@ -2,7 +2,7 @@
 # Uses a locally compiled binary instead of building inside Docker.
 #
 # Usage:
-#   cargo build -p varpulis-cli --release --features "kafka,raft,persistent,saas"
+#   cargo build -p varpulis-cli --release --features "kafka,jetstream-control-plane,saas"
 #   docker build -t ghcr.io/varpulis/varpulis:main -f deploy/docker/Dockerfile.prebuilt .
 #
 # Build time: ~10 seconds (vs ~15 min for full compile)
