@@ -281,18 +281,6 @@ impl Coordinator {
 
         // Propagate updated assigned_pipelines to Raft so sync_from_raft
         // doesn't overwrite them with stale empty values.
-        #[cfg(feature = "raft")]
-        for wid in &updated_workers {
-            if let Some(w) = self.workers.get(wid) {
-                let cmd = crate::control_state::ClusterCommand::WorkerPipelinesUpdated {
-                    id: wid.0.clone(),
-                    assigned_pipelines: w.assigned_pipelines.clone(),
-                };
-                if let Err(e) = self.replicate(cmd).await {
-                    warn!("Failed to replicate reconciled pipelines for {wid} to Raft: {e}");
-                }
-            }
-        }
 
         moved + redeployed
     }

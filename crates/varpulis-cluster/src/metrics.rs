@@ -22,12 +22,19 @@ pub struct ClusterPrometheusMetrics {
     pub health_sweep_duration_seconds: HistogramVec,
     /// Deploy duration in seconds.
     pub deploy_duration_seconds: HistogramVec,
-    /// Raft role (0=follower, 1=candidate, 2=leader).
-    pub raft_role: Gauge,
-    /// Current Raft term.
-    pub raft_term: Gauge,
-    /// Current Raft commit index.
-    pub raft_commit_index: Gauge,
+    /// 1 when this coordinator holds the control-plane lease, 0 otherwise.
+    ///
+    /// This replaced three Raft gauges — role, term and commit index — that
+    /// described openraft's log. There is no log: leadership is a lease on one
+    /// KV key, so the only leadership fact that exists is whether this
+    /// coordinator currently holds it. Summed across a deployment it is also
+    /// the alert that matters: > 1 is a split brain, 0 is no leader.
+    pub is_leader: Gauge,
+    /// Monotone count of times this coordinator took or lost the lease.
+    ///
+    /// Churn here is the symptom of a sweep interval too close to the bucket
+    /// TTL — the holder's record expiring between its own renewals.
+    pub leadership_changes_total: Gauge,
 }
 
 impl ClusterPrometheusMetrics {
@@ -94,20 +101,17 @@ impl ClusterPrometheusMetrics {
         )
         .expect("failed to create deploy_duration_seconds histogram");
 
-        let raft_role = Gauge::new(
-            "varpulis_cluster_raft_role",
-            "Raft role (0=follower, 1=candidate, 2=leader)",
+        let is_leader = Gauge::new(
+            "varpulis_cluster_is_leader",
+            "1 when this coordinator holds the control-plane lease, 0 otherwise",
         )
-        .expect("failed to create raft_role gauge");
+        .expect("failed to create is_leader gauge");
 
-        let raft_term = Gauge::new("varpulis_cluster_raft_term", "Current Raft term")
-            .expect("failed to create raft_term gauge");
-
-        let raft_commit_index = Gauge::new(
-            "varpulis_cluster_raft_commit_index",
-            "Current Raft commit index",
+        let leadership_changes_total = Gauge::new(
+            "varpulis_cluster_leadership_changes_total",
+            "Times this coordinator took or lost the control-plane lease",
         )
-        .expect("failed to create raft_commit_index gauge");
+        .expect("failed to create leadership_changes_total gauge");
 
         registry
             .register(Box::new(workers_total.clone()))
@@ -131,14 +135,11 @@ impl ClusterPrometheusMetrics {
             .register(Box::new(deploy_duration_seconds.clone()))
             .expect("failed to register deploy_duration_seconds");
         registry
-            .register(Box::new(raft_role.clone()))
-            .expect("failed to register raft_role");
+            .register(Box::new(is_leader.clone()))
+            .expect("failed to register is_leader");
         registry
-            .register(Box::new(raft_term.clone()))
-            .expect("failed to register raft_term");
-        registry
-            .register(Box::new(raft_commit_index.clone()))
-            .expect("failed to register raft_commit_index");
+            .register(Box::new(leadership_changes_total.clone()))
+            .expect("failed to register leadership_changes_total");
 
         Self {
             registry: Arc::new(registry),
@@ -149,9 +150,8 @@ impl ClusterPrometheusMetrics {
             migration_duration_seconds,
             health_sweep_duration_seconds,
             deploy_duration_seconds,
-            raft_role,
-            raft_term,
-            raft_commit_index,
+            is_leader,
+            leadership_changes_total,
         }
     }
 
@@ -190,13 +190,17 @@ impl ClusterPrometheusMetrics {
             .observe(duration_secs);
     }
 
-    /// Update Raft consensus metrics.
+    /// Record whether this coordinator currently holds the lease.
     ///
-    /// `role`: 0=follower, 1=candidate, 2=leader
-    pub fn update_raft_metrics(&self, role: f64, term: f64, commit_index: f64) {
-        self.raft_role.set(role);
-        self.raft_term.set(term);
-        self.raft_commit_index.set(commit_index);
+    /// Counts a transition when the value changes, so leadership churn is
+    /// visible without differentiating a gauge that spends most of its life
+    /// flat.
+    pub fn set_leader(&self, is_leader: bool) {
+        let now = if is_leader { 1.0 } else { 0.0 };
+        if (self.is_leader.get() - now).abs() > f64::EPSILON {
+            self.leadership_changes_total.inc();
+        }
+        self.is_leader.set(now);
     }
 
     /// Record a deploy operation.

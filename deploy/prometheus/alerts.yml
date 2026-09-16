@@ -134,33 +134,49 @@ groups:
             stalled. Investigate worker processes and network connectivity.
           runbook: "docs/operations/alerting.md#varpulisnoreadyworkers"
 
-      # -- Raft Leader Election Churn --
-      - alert: VarpulisRaftLeaderChurn
-        expr: changes(varpulis_cluster_raft_role[15m]) > 4
-        for: 5m
+      # -- Two coordinators believe they lead --
+      - alert: VarpulisSplitBrain
+        expr: sum(varpulis_cluster_is_leader) > 1
+        for: 1m
         labels:
-          severity: warning
+          severity: critical
         annotations:
-          summary: "Frequent Raft leader elections detected"
+          summary: "More than one coordinator holds the control-plane lease"
           description: >
-            The Raft role has changed {{ $value }} times in 15 minutes.
-            Frequent elections indicate network instability, clock skew,
-            or an undersized cluster.
-          runbook: "docs/operations/alerting.md#varpulisraftleaderchurn"
+            {{ $value }} coordinators report holding the lease. The lease is a
+            compare-and-swap on one key, so this should not outlast a stale
+            holder's next refused renewal. A minute of it usually means two
+            coordinators share a --coordinator-id, which is the one way past
+            the CAS.
+          runbook: "docs/operations/alerting.md#varpulissplitbrain"
 
-      # -- Raft Term Advancing Rapidly --
-      - alert: VarpulisRaftTermAdvancing
-        expr: increase(varpulis_cluster_raft_term[10m]) > 5
+      # -- Nobody holds the lease --
+      - alert: VarpulisNoLeader
+        expr: sum(varpulis_cluster_is_leader) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No coordinator holds the control-plane lease"
+          description: >
+            Reads still work; writes are refused. Expected for one TTL after a
+            holder is killed. Two minutes means the coordinators cannot reach
+            the control plane — check the NATS cluster, not the coordinators.
+          runbook: "docs/operations/alerting.md#varpulisnoleader"
+
+      # -- Leadership moving repeatedly --
+      - alert: VarpulisLeadershipChurn
+        expr: sum(increase(varpulis_cluster_leadership_changes_total[15m])) > 4
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Raft term advancing rapidly"
+          summary: "Coordinator leadership is churning"
           description: >
-            The Raft term has increased by {{ $value }} in 10 minutes.
-            This often correlates with split-brain scenarios or repeated
-            election failures.
-          runbook: "docs/operations/alerting.md#varpulisrafttermadvancing"
+            Leadership changed {{ $value }} times in 15 minutes. The usual
+            cause is a health-sweep interval too close to the bucket TTL: the
+            holder's own record ages out between its renewals.
+          runbook: "docs/operations/alerting.md#varpulisleadershipchurn"
 
       # -- Migration Failures --
       - alert: VarpulisMigrationFailures

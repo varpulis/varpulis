@@ -4,7 +4,7 @@
 # Only Caddy exposes ports 80/443 to the host.
 #
 # Architecture:
-#   3 coordinators (Raft consensus + RocksDB persistence)
+#   3 coordinators (JetStream KV control plane: leadership lease + CAS writes)
 #   4 workers (split across coordinators)
 #   Caddy load-balances API across all coordinators
 #
@@ -121,13 +121,41 @@ services:
     networks:
       - varpulis-demo
 
-  # ─── Coordinator 1 (Raft node 1) ──────────────────────────
+  # ─── NATS + JetStream (coordinator control plane) ─────────
+  #
+  # This is the coordinators' consensus. Leadership is a lease on one KV key
+  # and every replicated write is a compare-and-swap, which is what replaced
+  # the three-node Raft group the coordinators used to form among themselves.
+  #
+  # One broker here means one copy of the control state: adequate for a demo,
+  # and a single point of failure in a way a three-node Raft group was not.
+  # A production deployment runs a NATS cluster and sets
+  # VARPULIS_CONTROL_PLANE_REPLICAS=3.
+  nats:
+    image: nats:2.10-alpine
+    container_name: demo-nats
+    command: ["-js", "-sd", "/data"]
+    expose:
+      - "4222"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "nats-server", "--help"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Coordinator 1 ──────────────────────────
   coordinator-1:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: "kafka,raft,persistent,saas"
+        FEATURES: "kafka,jetstream-control-plane,saas"
     container_name: demo-coordinator-1
     command:
       - "coordinator"
@@ -137,17 +165,18 @@ services:
       - "9100"
       - "--api-key"
       - "${VARPULIS_API_KEY}"
-      - "--raft"
-      - "--raft-node-id"
-      - "1"
-      - "--raft-peers"
-      - "http://coordinator-1:9100,http://coordinator-2:9100,http://coordinator-3:9100"
-      - "--raft-data-dir"
-      - "/app/state"
+      - "--coordinator-id"
+      - "coordinator-1"
     expose:
       - "9100"
     environment:
       - RUST_LOG=${RUST_LOG:-info}
+      # Coordinator consensus: leadership is a lease on one JetStream KV
+      # key and every replicated write is a compare-and-swap. Three replicas
+      # so the bucket survives losing a broker, which is what the Raft group
+      # it replaced was there for.
+      - VARPULIS_CONTROL_PLANE_URL=nats://nats:4222
+      - VARPULIS_CONTROL_PLANE_REPLICAS=1
       - VARPULIS_LLM_ENDPOINT=${VARPULIS_LLM_ENDPOINT:-http://ollama:11434/v1}
       - VARPULIS_LLM_MODEL=${VARPULIS_LLM_MODEL:-qwen2.5:7b}
       - VARPULIS_LLM_API_KEY=${VARPULIS_LLM_API_KEY:-}
@@ -163,6 +192,9 @@ services:
       - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-}
       - FRONTEND_URL=${FRONTEND_URL:-https://demo.varpulis-cep.com}
       - SERVER_URL=${SERVER_URL:-https://demo.varpulis-cep.com}
+    depends_on:
+      nats:
+        condition: service_started
     volumes:
       - coord1-data:/app/state
     healthcheck:
@@ -175,13 +207,13 @@ services:
     networks:
       - varpulis-demo
 
-  # ─── Coordinator 2 (Raft node 2) ──────────────────────────
+  # ─── Coordinator 2 ──────────────────────────
   coordinator-2:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: "kafka,raft,persistent,saas"
+        FEATURES: "kafka,jetstream-control-plane,saas"
     container_name: demo-coordinator-2
     command:
       - "coordinator"
@@ -191,17 +223,18 @@ services:
       - "9100"
       - "--api-key"
       - "${VARPULIS_API_KEY}"
-      - "--raft"
-      - "--raft-node-id"
-      - "2"
-      - "--raft-peers"
-      - "http://coordinator-1:9100,http://coordinator-2:9100,http://coordinator-3:9100"
-      - "--raft-data-dir"
-      - "/app/state"
+      - "--coordinator-id"
+      - "coordinator-2"
     expose:
       - "9100"
     environment:
       - RUST_LOG=${RUST_LOG:-info}
+      # Coordinator consensus: leadership is a lease on one JetStream KV
+      # key and every replicated write is a compare-and-swap. Three replicas
+      # so the bucket survives losing a broker, which is what the Raft group
+      # it replaced was there for.
+      - VARPULIS_CONTROL_PLANE_URL=nats://nats:4222
+      - VARPULIS_CONTROL_PLANE_REPLICAS=1
       - VARPULIS_LLM_ENDPOINT=${VARPULIS_LLM_ENDPOINT:-http://ollama:11434/v1}
       - VARPULIS_LLM_MODEL=${VARPULIS_LLM_MODEL:-qwen2.5:7b}
       - VARPULIS_LLM_API_KEY=${VARPULIS_LLM_API_KEY:-}
@@ -217,6 +250,9 @@ services:
       - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-}
       - FRONTEND_URL=${FRONTEND_URL:-https://demo.varpulis-cep.com}
       - SERVER_URL=${SERVER_URL:-https://demo.varpulis-cep.com}
+    depends_on:
+      nats:
+        condition: service_started
     volumes:
       - coord2-data:/app/state
     healthcheck:
@@ -229,13 +265,13 @@ services:
     networks:
       - varpulis-demo
 
-  # ─── Coordinator 3 (Raft node 3) ──────────────────────────
+  # ─── Coordinator 3 ──────────────────────────
   coordinator-3:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: "kafka,raft,persistent,saas"
+        FEATURES: "kafka,jetstream-control-plane,saas"
     container_name: demo-coordinator-3
     command:
       - "coordinator"
@@ -245,17 +281,18 @@ services:
       - "9100"
       - "--api-key"
       - "${VARPULIS_API_KEY}"
-      - "--raft"
-      - "--raft-node-id"
-      - "3"
-      - "--raft-peers"
-      - "http://coordinator-1:9100,http://coordinator-2:9100,http://coordinator-3:9100"
-      - "--raft-data-dir"
-      - "/app/state"
+      - "--coordinator-id"
+      - "coordinator-3"
     expose:
       - "9100"
     environment:
       - RUST_LOG=${RUST_LOG:-info}
+      # Coordinator consensus: leadership is a lease on one JetStream KV
+      # key and every replicated write is a compare-and-swap. Three replicas
+      # so the bucket survives losing a broker, which is what the Raft group
+      # it replaced was there for.
+      - VARPULIS_CONTROL_PLANE_URL=nats://nats:4222
+      - VARPULIS_CONTROL_PLANE_REPLICAS=1
       - VARPULIS_LLM_ENDPOINT=${VARPULIS_LLM_ENDPOINT:-http://ollama:11434/v1}
       - VARPULIS_LLM_MODEL=${VARPULIS_LLM_MODEL:-qwen2.5:7b}
       - VARPULIS_LLM_API_KEY=${VARPULIS_LLM_API_KEY:-}
@@ -271,6 +308,9 @@ services:
       - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-}
       - FRONTEND_URL=${FRONTEND_URL:-https://demo.varpulis-cep.com}
       - SERVER_URL=${SERVER_URL:-https://demo.varpulis-cep.com}
+    depends_on:
+      nats:
+        condition: service_started
     volumes:
       - coord3-data:/app/state
     healthcheck:
@@ -365,7 +405,7 @@ services:
 
   # ─── Worker 2 ──────────────────────────────────────────────
   # All workers register with coordinator-1 so metrics are
-  # aggregated in one place. Raft replicates state across all
+  # aggregated in one place. The control plane replicates state across all
   # coordinators, but heartbeat metrics are in-memory only.
   worker-2:
     build:
@@ -648,6 +688,7 @@ services:
 volumes:
   caddy-data:
   caddy-config:
+  nats-data:
   coord1-data:
   coord2-data:
   coord3-data:

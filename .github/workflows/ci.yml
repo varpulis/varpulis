@@ -377,14 +377,6 @@ jobs:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # NATS unlocks the coordinator-failover and network-partition chaos tests
-    # (tier 2 in scripts/run-chaos-tests.sh). Without it they abstain, and the
-    # runner refuses to count an abstention as a pass.
-    services:
-      nats:
-        image: nats:latest
-        ports:
-          - 4222:4222
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/free-disk-space
@@ -392,20 +384,38 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: chaos
-      # `raft` and `nats-transport` are what the coordinator/worker processes
-      # spawned by the chaos harness need in order to elect a leader and to
-      # register over NATS. Without them tier 2 cannot run at all.
-      - name: Build release binary (raft + NATS transport + checkpoint barriers)
-        run: cargo build --release -p varpulis-cli --features raft,nats-transport,distributed-checkpoint
+      # NATS unlocks the coordinator-failover and network-partition chaos
+      # tests (tier 2 in scripts/run-chaos-tests.sh). Without it they abstain,
+      # and the runner refuses to count an abstention as a pass.
+      #
+      # It must be JetStream-enabled: coordinator leadership is now a lease on
+      # a KV key, so the failover test needs `-js`. A `services:` block cannot
+      # override the image command, hence `docker run`. A `-js` server also
+      # serves core NATS, so one broker covers the transport tests too.
+      - name: Start JetStream-enabled NATS
+        run: |
+          docker run -d --name chaos-nats -p 4222:4222 nats:latest -js
+          for _ in $(seq 30); do
+            (echo > /dev/tcp/127.0.0.1/4222) >/dev/null 2>&1 && break
+            sleep 1
+          done
+      # `jetstream-control-plane` and `nats-transport` are what the
+      # coordinator/worker processes spawned by the chaos harness need in
+      # order to take leadership and to register over NATS. Without them
+      # tier 2 cannot run at all.
+      - name: Build release binary (control plane + NATS transport + checkpoint barriers)
+        run: cargo build --release -p varpulis-cli --features jetstream-control-plane,nats-transport,distributed-checkpoint
       - name: Run chaos tests with retry
         run: ./scripts/run-chaos-tests.sh 2
         env:
           VARPULIS_BIN: ${{ github.workspace }}/target/release/varpulis
           # Compile every chaos module, including the ones gated behind
-          # `distributed-checkpoint` / `raft` — otherwise they are #[cfg]'d out
-          # of the test binary and silently never run.
-          CHAOS_FEATURES: distributed-checkpoint,raft
+          # `distributed-checkpoint` / `jetstream-control-plane` — otherwise
+          # they are #[cfg]'d out of the test binary and silently never run.
+          CHAOS_FEATURES: distributed-checkpoint,jetstream-control-plane
           CHAOS_NATS: "1"
+          # This job provisions a broker, so an abstention is a failure.
+          VARPULIS_REQUIRE_BROKERS: "1"
           # CHAOS_DC stays off, but the reason has changed. The binary now
           # carries the barrier handler, so the remaining gap is only
           # infrastructure: tier 3 wants Kafka reachable on 9092 in a
@@ -413,6 +423,9 @@ jobs:
           # name to kill it mid-run. Adding it is a services + docker change,
           # not a compile-time one.
           NO_COLOR: "1"
+      - name: Stop JetStream-enabled NATS
+        if: always()
+        run: docker rm -f chaos-nats || true
 
   # Web UI moved to https://github.com/varpulis/varpulis-web-ui
 
@@ -749,8 +762,6 @@ jobs:
         run: cargo test -p varpulis-cluster --features nats-transport --test nats_multi_worker_e2e -- --nocapture
       # The C5 heartbeat-replication gate. It was written against a real broker
       # and then never wired into any job, so it had never run in CI.
-      - name: NATS heartbeat replication gate
-        run: cargo test -p varpulis-cluster --features raft,nats-transport --test nats_heartbeat_replication -- --nocapture
       # The JetStream gates need a JetStream-ENABLED server. The `nats:latest`
       # service container above runs without `-js`, and a GitHub `services:`
       # block cannot override the image command — so start a second broker
@@ -791,6 +802,20 @@ jobs:
         run: |
           cargo test -p varpulis-cluster --features jetstream-control-plane \
             --test jetstream_control_plane -- --nocapture --test-threads=1
+        env:
+          VARPULIS_REQUIRE_BROKERS: "1"
+          VARPULIS_TEST_NATS_URL: nats://127.0.0.1:4231
+          VARPULIS_CONTROL_PLANE_REPLICAS: "3"
+      # The C5 gate. It read the replicated `heartbeat_seq` back out of an
+      # in-process single-node openraft; with Raft gone it reads it out of the
+      # KV bucket, so it belongs here with the other control-plane gates
+      # rather than next to the core-NATS ones — and against the replicated
+      # bucket, which is what a real deployment has.
+      - name: NATS heartbeat replication gate
+        run: |
+          cargo test -p varpulis-cluster \
+            --features jetstream-control-plane,nats-transport \
+            --test nats_heartbeat_replication -- --nocapture
         env:
           VARPULIS_REQUIRE_BROKERS: "1"
           VARPULIS_TEST_NATS_URL: nats://127.0.0.1:4231

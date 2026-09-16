@@ -12,7 +12,9 @@
       "icon": "external link",
       "includeVars": false,
       "keepTime": true,
-      "tags": ["varpulis"],
+      "tags": [
+        "varpulis"
+      ],
       "targetBlank": true,
       "title": "Engine Metrics",
       "type": "dashboards"
@@ -21,56 +23,67 @@
   "liveNow": false,
   "panels": [
     {
-      "title": "Raft Consensus",
+      "title": "Coordinator Leadership",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "collapsed": false,
       "panels": []
     },
     {
-      "title": "Raft Role",
-      "description": "0=Follower, 1=Candidate, 2=Leader",
+      "title": "Coordinators Holding the Lease",
+      "description": "Should be exactly 1. 0 = writes refused; >1 = split brain.",
       "type": "stat",
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
       "targets": [
         {
-          "expr": "varpulis_cluster_raft_role",
+          "expr": "sum(varpulis_cluster_is_leader)",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "mappings": [
-            { "type": "value", "options": { "0": { "text": "Follower", "color": "blue" } } },
-            { "type": "value", "options": { "1": { "text": "Candidate", "color": "orange" } } },
-            { "type": "value", "options": { "2": { "text": "Leader", "color": "green" } } }
-          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "blue", "value": null },
-              { "color": "orange", "value": 1 },
-              { "color": "green", "value": 2 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
             ]
-          }
-        }
-      },
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "value"
+          },
+          "unit": "short"
+        },
+        "overrides": []
       }
     },
     {
       "title": "Current Term",
       "type": "stat",
-      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
-      "targets": [
-        {
-          "expr": "varpulis_cluster_raft_term",
-          "refId": "A"
-        }
-      ],
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "targets": [],
       "fieldConfig": {
         "defaults": {
           "unit": "short"
@@ -85,13 +98,13 @@
     {
       "title": "Commit Index",
       "type": "stat",
-      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
-      "targets": [
-        {
-          "expr": "varpulis_cluster_raft_commit_index",
-          "refId": "A"
-        }
-      ],
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [],
       "fieldConfig": {
         "defaults": {
           "unit": "short"
@@ -104,38 +117,50 @@
       }
     },
     {
-      "title": "Raft Term Over Time",
+      "title": "Leadership Handovers (15m)",
+      "description": "Churn here means the sweep interval is too close to the bucket TTL.",
       "type": "timeseries",
-      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
       "targets": [
         {
-          "expr": "varpulis_cluster_raft_term",
-          "legendFormat": "Term",
+          "expr": "sum(increase(varpulis_cluster_leadership_changes_total[15m]))",
+          "legendFormat": "handovers",
           "refId": "A"
-        },
-        {
-          "expr": "varpulis_cluster_raft_commit_index",
-          "legendFormat": "Commit Index",
-          "refId": "B"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short"
-        }
+        },
+        "overrides": []
       }
     },
     {
       "title": "Workers",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
       "collapsed": false,
       "panels": []
     },
     {
       "title": "Workers by Status",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
       "targets": [
         {
           "expr": "varpulis_cluster_workers_total{status=\"ready\"}",
@@ -160,27 +185,67 @@
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "Ready" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+            "matcher": {
+              "id": "byName",
+              "options": "Ready"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": { "id": "byName", "options": "Unhealthy" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+            "matcher": {
+              "id": "byName",
+              "options": "Unhealthy"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": { "id": "byName", "options": "Draining" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }]
+            "matcher": {
+              "id": "byName",
+              "options": "Draining"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
       "options": {
-        "tooltip": { "mode": "multi" }
+        "tooltip": {
+          "mode": "multi"
+        }
       }
     },
     {
       "title": "Worker Counts (Current)",
       "type": "piechart",
-      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 7 },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 7
+      },
       "targets": [
         {
           "expr": "varpulis_cluster_workers_total",
@@ -192,29 +257,72 @@
       "fieldConfig": {
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "ready" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+            "matcher": {
+              "id": "byName",
+              "options": "ready"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": { "id": "byName", "options": "unhealthy" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+            "matcher": {
+              "id": "byName",
+              "options": "unhealthy"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": { "id": "byName", "options": "draining" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }]
+            "matcher": {
+              "id": "byName",
+              "options": "draining"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
       "options": {
         "pieType": "donut",
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "right" }
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "right"
+        }
       }
     },
     {
       "title": "Pipeline Groups & Deployments",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 7 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 7
+      },
       "targets": [
         {
           "expr": "varpulis_cluster_pipeline_groups_total",
@@ -241,7 +349,12 @@
     {
       "title": "Health Sweep Duration",
       "type": "timeseries",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 11 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 11
+      },
       "targets": [
         {
           "expr": "rate(varpulis_cluster_health_sweep_duration_seconds_sum[5m]) / rate(varpulis_cluster_health_sweep_duration_seconds_count[5m])",
@@ -259,14 +372,24 @@
     {
       "title": "Deployments & Migrations",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
       "collapsed": false,
       "panels": []
     },
     {
       "title": "Deploy Duration",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.99, sum(rate(varpulis_cluster_deploy_duration_seconds_bucket[5m])) by (le, result))",
@@ -286,13 +409,20 @@
         }
       },
       "options": {
-        "tooltip": { "mode": "multi" }
+        "tooltip": {
+          "mode": "multi"
+        }
       }
     },
     {
       "title": "Migration Duration",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.99, sum(rate(varpulis_cluster_migration_duration_seconds_bucket[5m])) by (le, result))",
@@ -312,13 +442,20 @@
         }
       },
       "options": {
-        "tooltip": { "mode": "multi" }
+        "tooltip": {
+          "mode": "multi"
+        }
       }
     },
     {
       "title": "Migrations Rate",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
       "targets": [
         {
           "expr": "rate(varpulis_cluster_migrations_total{result=\"success\"}[5m])",
@@ -338,23 +475,52 @@
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "Success / sec" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+            "matcher": {
+              "id": "byName",
+              "options": "Success / sec"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": { "id": "byName", "options": "Failure / sec" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+            "matcher": {
+              "id": "byName",
+              "options": "Failure / sec"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
       "options": {
-        "tooltip": { "mode": "multi" }
+        "tooltip": {
+          "mode": "multi"
+        }
       }
     },
     {
       "title": "Cumulative Migrations",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 24 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 24
+      },
       "targets": [
         {
           "expr": "varpulis_cluster_migrations_total{result=\"success\"}",
@@ -373,12 +539,34 @@
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "Successful" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+            "matcher": {
+              "id": "byName",
+              "options": "Successful"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": { "id": "byName", "options": "Failed" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+            "matcher": {
+              "id": "byName",
+              "options": "Failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -391,7 +579,12 @@
     {
       "title": "Cumulative Deploys",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 24 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 24
+      },
       "targets": [
         {
           "expr": "varpulis_cluster_deploy_duration_seconds_count{result=\"success\"}",
@@ -410,12 +603,34 @@
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "Successful" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+            "matcher": {
+              "id": "byName",
+              "options": "Successful"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": { "id": "byName", "options": "Failed" },
-            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+            "matcher": {
+              "id": "byName",
+              "options": "Failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -428,7 +643,11 @@
   ],
   "schemaVersion": 39,
   "style": "dark",
-  "tags": ["varpulis", "cluster", "raft"],
+  "tags": [
+    "varpulis",
+    "cluster",
+    "control-plane"
+  ],
   "templating": {
     "list": []
   },

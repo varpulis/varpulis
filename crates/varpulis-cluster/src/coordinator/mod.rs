@@ -6,8 +6,6 @@ pub mod distributed_checkpoint;
 mod rebalance;
 
 use std::collections::HashMap;
-#[cfg(feature = "raft")]
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -73,28 +71,6 @@ pub enum ScalingAction {
     ScaleUp,
     ScaleDown,
     Stable,
-}
-
-/// Handle for Raft consensus integration.
-#[cfg(feature = "raft")]
-pub struct RaftHandle {
-    /// The Raft instance for client_write and leadership queries.
-    pub raft: Arc<crate::raft::VarpulisRaft>,
-    /// Shared read-only view of the replicated state (updated after Raft applies).
-    pub store_state: crate::raft::store::SharedCoordinatorState,
-    /// Mapping of Raft NodeId -> HTTP address for leader forwarding.
-    pub peer_addrs: std::collections::BTreeMap<u64, String>,
-    /// Admin API key for forwarding requests to the leader.
-    pub admin_key: Option<String>,
-}
-
-#[cfg(feature = "raft")]
-impl std::fmt::Debug for RaftHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RaftHandle")
-            .field("peer_addrs", &self.peer_addrs)
-            .finish_non_exhaustive()
-    }
 }
 
 // =========================================================================
@@ -180,13 +156,9 @@ pub struct Coordinator {
     pub nats_client: Option<async_nats::Client>,
     /// HA role of this coordinator instance.
     pub ha_role: HaRole,
-    /// Optional Raft consensus handle (enabled with `raft` feature).
-    #[cfg(feature = "raft")]
-    pub raft_handle: Option<RaftHandle>,
     /// JetStream KV control plane, when `VARPULIS_CONTROL_PLANE_URL` selects
-    /// it. Replaces Raft as the destination for replicated writes: `replicate`
-    /// sends a command to exactly one of the two, never both, because two
-    /// copies of the control state that drift are worse than either alone.
+    /// it. `replicate` sends every replicated write here; without it a
+    /// coordinator is standalone and its local state is the only copy.
     #[cfg(feature = "jetstream-control-plane")]
     pub control_plane: Option<crate::jetstream_control_plane::Applier>,
     /// This coordinator's hold on `control/leader`, when the control plane is
@@ -278,8 +250,6 @@ impl Coordinator {
             #[cfg(feature = "nats-transport")]
             nats_client: None,
             ha_role: HaRole::default(),
-            #[cfg(feature = "raft")]
-            raft_handle: None,
             #[cfg(feature = "jetstream-control-plane")]
             control_plane: None,
             #[cfg(feature = "jetstream-control-plane")]
@@ -290,24 +260,6 @@ impl Coordinator {
             #[cfg(feature = "federation")]
             federation: None,
         }
-    }
-
-    /// Create a coordinator with a Raft consensus handle for cluster mode.
-    #[cfg(feature = "raft")]
-    pub fn with_raft(
-        raft: Arc<crate::raft::VarpulisRaft>,
-        store_state: crate::raft::store::SharedCoordinatorState,
-        peer_addrs: std::collections::BTreeMap<u64, String>,
-        admin_key: Option<String>,
-    ) -> Self {
-        let mut coord = Self::new();
-        coord.raft_handle = Some(RaftHandle {
-            raft,
-            store_state,
-            peer_addrs,
-            admin_key,
-        });
-        coord
     }
 
     /// Replicate a control-plane command.
@@ -338,84 +290,30 @@ impl Coordinator {
             return Ok(());
         }
 
-        #[cfg(feature = "raft")]
-        if let Some(ref handle) = self.raft_handle {
-            handle.raft.client_write(cmd).await.map_err(|e| {
-                // Extract leader address for ForwardToLeader errors
-                let leader_info = format!("{}", e);
-                ClusterError::NotLeader(leader_info)
-            })?;
-            return Ok(());
-        }
-
         // Standalone: the in-memory state this call already mutated is the
         // only copy there is.
         let _ = cmd;
         Ok(())
     }
 
-    /// Check if this coordinator is the Raft leader (or standalone).
-    #[cfg(feature = "raft")]
-    pub fn is_raft_leader(&self) -> bool {
-        match &self.raft_handle {
-            None => true, // standalone = always leader
-            Some(handle) => {
-                let metrics = handle.raft.metrics().borrow().clone();
-                metrics.current_leader == Some(metrics.id)
-            }
-        }
-    }
-
-    /// Get the Raft leader's HTTP address, if known.
-    #[cfg(feature = "raft")]
-    pub fn raft_leader_addr(&self) -> Option<String> {
-        let handle = self.raft_handle.as_ref()?;
-        let metrics = handle.raft.metrics().borrow().clone();
-        let leader_id = metrics.current_leader?;
-        if leader_id == metrics.id {
-            return None; // We ARE the leader
-        }
-        handle.peer_addrs.get(&leader_id).cloned()
-    }
-
-    /// Synchronize local coordinator state from the Raft state machine.
+    /// Merge a materialised control-plane state value into local state.
     ///
-    /// Called when a node becomes the new leader after an election,
-    /// or periodically on followers for read-only API responses.
-    #[cfg(feature = "raft")]
-    pub fn sync_from_raft(&mut self) {
-        let Some(ref handle) = self.raft_handle else {
-            return;
-        };
-        let raft_state = handle.store_state.read().unwrap_or_else(|e| e.into_inner());
-        let snapshot = raft_state.clone();
-        drop(raft_state);
-        self.sync_from_control_state(&snapshot);
-    }
-
-    /// Synchronize local coordinator state from a shared control-plane state
-    /// value, whichever backend produced it.
-    ///
-    /// The Raft store publishes one of these after each apply
-    /// (`raft::store::SharedCoordinatorState`); the JetStream KV backend
-    /// produces the identical type from a bucket snapshot
-    /// (`jetstream_control_plane::materialize`). Keeping one merge function
-    /// means the two backends cannot drift in how they feed the coordinator,
-    /// and it is what makes them selectable rather than forked.
-    pub fn sync_from_control_state(&mut self, raft_state: &crate::control_state::CoordinatorState) {
-        // Sync workers: merge Raft state with local workers.
+    /// [`Coordinator::sync_from_control_plane`] produces the value from a
+    /// bucket snapshot (`jetstream_control_plane::materialize`) and calls
+    /// this. It is kept separate so the merge can be tested against a state
+    /// value without a broker, and so a future backend feeds the coordinator
+    /// through exactly one function rather than forking the merge.
+    pub fn sync_from_control_state(&mut self, state: &crate::control_state::CoordinatorState) {
+        // Merge replicated workers with local ones.
         // Preserve last_heartbeat for workers that already exist locally
         // (they may be receiving heartbeats from directly-connected workers).
-        // Trust Raft for status (unhealthy from another coordinator's detection).
-        let raft_worker_ids: std::collections::HashSet<WorkerId> = raft_state
-            .workers
-            .keys()
-            .map(|k| WorkerId(k.clone()))
-            .collect();
+        // Trust the control plane for status (unhealthy from another coordinator's detection).
+        let replicated_worker_ids: std::collections::HashSet<WorkerId> =
+            state.workers.keys().map(|k| WorkerId(k.clone())).collect();
 
-        for (id, entry) in &raft_state.workers {
+        for (id, entry) in &state.workers {
             let wid = WorkerId(id.clone());
-            let raft_status = match entry.status.as_str() {
+            let replicated_status = match entry.status.as_str() {
                 "ready" => WorkerStatus::Ready,
                 "unhealthy" => WorkerStatus::Unhealthy,
                 "draining" => WorkerStatus::Draining,
@@ -424,29 +322,29 @@ impl Coordinator {
             };
 
             if let Some(local) = self.workers.get_mut(&wid) {
-                // Existing worker: update structural fields from Raft.
+                // Existing worker: update structural fields from the control plane.
                 local.assigned_pipelines = entry.assigned_pipelines.clone();
                 local.capacity.cpu_cores = entry.cpu_cores;
                 local.capacity.max_pipelines = entry.max_pipelines;
-                // Heartbeat metrics are replicated through Raft via
-                // WorkerMetricsUpdated, so use max(local, raft) for
-                // events_processed (monotonically increasing) and raft
+                // Heartbeat metrics are replicated via
+                // WorkerMetricsUpdated, so use max(local, replicated) for
+                // events_processed (monotonically increasing) and the replicated
                 // value for pipelines_running (latest wins).
                 if entry.events_processed > local.events_processed {
                     local.events_processed = entry.events_processed;
                 }
                 local.capacity.pipelines_running = entry.pipelines_running;
-                // Trust Raft status for cross-coordinator transitions (e.g., unhealthy).
-                // If Raft says a worker is ready, only refresh last_heartbeat when the
+                // Trust the replicated status for cross-coordinator transitions (e.g., unhealthy).
+                // If the control plane says a worker is ready, only refresh last_heartbeat when the
                 // replicated liveness signal (heartbeat_seq) has actually ADVANCED since
                 // we last synced. This acts as a heartbeat proxy for workers connected to
                 // other coordinators WITHOUT masking a dead worker: if no new heartbeat is
                 // replicated, the seq stays put, last_heartbeat goes stale, and the local
                 // health_sweep can time the worker out. (Unconditionally stamping here was
                 // the C5 bug: it reset the clock every tick so dead workers stayed Ready.)
-                match raft_status {
+                match replicated_status {
                     WorkerStatus::Unhealthy | WorkerStatus::Draining => {
-                        local.status = raft_status;
+                        local.status = replicated_status;
                     }
                     WorkerStatus::Ready if entry.heartbeat_seq > local.last_seen_hb_seq => {
                         local.last_seen_hb_seq = entry.heartbeat_seq;
@@ -460,7 +358,7 @@ impl Coordinator {
                     id: wid.clone(),
                     address: entry.address.clone(),
                     api_key: varpulis_core::security::SecretString::new(entry.api_key.clone()),
-                    status: raft_status,
+                    status: replicated_status,
                     capacity: crate::worker::WorkerCapacity {
                         cpu_cores: entry.cpu_cores,
                         pipelines_running: entry.pipelines_running,
@@ -481,10 +379,11 @@ impl Coordinator {
         }
 
         // Remove workers that were deregistered in Raft
-        self.workers.retain(|id, _| raft_worker_ids.contains(id));
+        self.workers
+            .retain(|id, _| replicated_worker_ids.contains(id));
 
         // Sync pipeline groups: deserialize from serde_json::Value
-        self.pipeline_groups = raft_state
+        self.pipeline_groups = state
             .pipeline_groups
             .iter()
             .filter_map(|(name, val)| {
@@ -495,17 +394,17 @@ impl Coordinator {
             .collect();
 
         // Sync connectors: same type, direct clone
-        self.connectors = raft_state.connectors.clone();
+        self.connectors = state.connectors.clone();
 
         // Sync scaling policy: deserialize from serde_json::Value
-        self.scaling_policy = raft_state
+        self.scaling_policy = state
             .scaling_policy
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
         // Sync per-worker pipeline metrics from Raft (heartbeat data replicated
         // from whichever coordinator received the heartbeat).
-        for (worker_id_str, metrics) in &raft_state.worker_pipeline_metrics {
+        for (worker_id_str, metrics) in &state.worker_pipeline_metrics {
             let wid = WorkerId(worker_id_str.clone());
             // Only update if Raft has newer/more data than local state
             if !metrics.is_empty() {
@@ -710,27 +609,6 @@ impl Coordinator {
                     .unwrap_or_else(|| "unknown".to_string());
                 HaRole::Follower { leader_id }
             }
-        };
-    }
-
-    /// Update the HA role based on current Raft metrics.
-    #[cfg(feature = "raft")]
-    pub fn update_raft_role(&mut self) {
-        let Some(ref handle) = self.raft_handle else {
-            return;
-        };
-
-        let metrics = handle.raft.metrics().borrow().clone();
-        let is_leader = metrics.current_leader == Some(metrics.id);
-
-        self.ha_role = if is_leader {
-            HaRole::Leader
-        } else {
-            let leader_id = metrics
-                .current_leader
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-            HaRole::Follower { leader_id }
         };
     }
 

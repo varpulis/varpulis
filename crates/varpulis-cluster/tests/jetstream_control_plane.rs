@@ -86,11 +86,23 @@ fn replicas() -> usize {
 ///
 /// Returns `None` (after reporting the skip) when the broker is unreachable.
 async fn open(test: &str) -> Option<ControlPlane> {
+    // Unique per test *and* per run. The pid alone is not enough: buckets are
+    // never deleted, so a later `cargo test` that happens to get a recycled pid
+    // binds to the previous run's bucket instead of creating an empty one — and
+    // then an assertion like "the refusal wrote nothing" sees the earlier run's
+    // writes. That is a fixture collision presenting as a flaky security test.
+    // `scripts/nats-cluster.sh purge` clears the accumulation; this stops the
+    // collision.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or_default();
     let bucket = format!(
-        "VTEST_{}_{}",
+        "VTEST_{}_{}_{:X}",
         test.to_uppercase()
             .replace(|c: char| !c.is_alphanumeric(), "_"),
-        std::process::id()
+        std::process::id(),
+        stamp
     );
     let bucket: String = bucket.chars().take(60).collect();
     let cfg = ControlPlaneConfig {
@@ -160,6 +172,36 @@ fn worker(id: &str, pipelines: &[&str]) -> WorkerRecord {
     })
 }
 
+/// Wait until a `snapshot()` can see `key`.
+///
+/// `ControlPlane::get` is read-your-write on the connection that wrote it; a
+/// `snapshot()` is a key listing plus reads, and against a bucket with
+/// `num_replicas > 1` it can legitimately not show a key written a moment
+/// earlier. The reconciler reads snapshots, so a test that seeds a record and
+/// immediately ticks is asserting an immediacy the store never promised —
+/// which is exactly what made this suite flake once it started running against
+/// `VARPULIS_CONTROL_PLANE_REPLICAS=3` instead of a single node.
+///
+/// This is not papering over a bug: the reconciler is level-triggered so that
+/// a missed observation costs a tick and never correctness. Waiting for the
+/// precondition to be observable is what lets the test assert the *behaviour*
+/// rather than the store's propagation delay.
+async fn visible(cp: &ControlPlane, key: &ControlKey) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(snap) = cp.snapshot().await {
+            if snap.get::<serde_json::Value>(key).is_some() {
+                return;
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{key:?} never became visible in a snapshot"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 /// A `Coordinator` wired to this control plane and nothing else.
 fn coordinator_on(cp: &ControlPlane) -> varpulis_cluster::Coordinator {
     let mut c = varpulis_cluster::Coordinator::new();
@@ -209,12 +251,13 @@ fn migrate_plan(
 /// substrate for the same state machine*, not a different state machine.
 ///
 /// This drives the identical command sequence through
-/// `control_state::apply_command` (what Raft's state machine does) and through
-/// the KV `Applier`, then asserts the two resulting `CoordinatorState` values
-/// are byte-identical after serialisation.
+/// `control_state::apply_command` — the pure state machine, which the Raft
+/// backend also used before it was removed — and through the KV `Applier`,
+/// then asserts the two resulting `CoordinatorState` values are byte-identical
+/// after serialisation.
 #[tokio::test]
-async fn kv_backend_matches_the_raft_state_machine_command_for_command() {
-    const TEST: &str = "kv_backend_matches_the_raft_state_machine_command_for_command";
+async fn kv_backend_matches_apply_command_command_for_command() {
+    const TEST: &str = "kv_backend_matches_apply_command_command_for_command";
     let Some(cp) = open("parity").await else {
         return;
     };
@@ -1061,6 +1104,7 @@ async fn a_migration_abandoned_by_a_dead_coordinator_is_finished_by_another() {
     )
     .await
     .ok();
+    visible(&cp, &ControlKey::Worker("w-dying".into())).await;
 
     // Coordinator A mints the record, then dies. A one-millisecond deadline
     // stands in for "it has been stuck far too long"; the phase machine reads
@@ -1070,6 +1114,7 @@ async fn a_migration_abandoned_by_a_dead_coordinator_is_finished_by_another() {
     a.record_migration_started(&plan, Duration::from_millis(1))
         .await
         .expect("minting the migration record must not fail");
+    visible(&cp, &ControlKey::Migration("mig-orphan".into())).await;
 
     let minted = cp
         .get::<MigrationRecord>(&ControlKey::Migration("mig-orphan".into()))
@@ -1170,6 +1215,7 @@ async fn the_reconciler_drives_a_migration_and_fences_the_source_at_cutover() {
     cp.write(&ControlKey::Migration("m1".into()), &mig, Expect::Absent)
         .await
         .unwrap();
+    visible(&cp, &ControlKey::Migration("m1".into())).await;
 
     let phase = |cp: ControlPlane| async move {
         cp.get::<MigrationRecord>(&ControlKey::Migration("m1".into()))
@@ -1315,6 +1361,7 @@ async fn reconciliation_is_idempotent_and_missing_a_tick_is_harmless() {
     cp.write(&ControlKey::Migration("m1".into()), &mig, Expect::Absent)
         .await
         .unwrap();
+    visible(&cp, &ControlKey::Migration("m1".into())).await;
 
     let before = cp
         .get::<MigrationRecord>(&ControlKey::Migration("m1".into()))
@@ -1374,6 +1421,7 @@ async fn concurrent_reconcilers_do_not_lose_an_update() {
     cp.write(&ControlKey::Migration("m1".into()), &mig, Expect::Absent)
         .await
         .unwrap();
+    visible(&cp, &ControlKey::Migration("m1".into())).await;
 
     let t = now_ms();
     let (ra, rb) = tokio::join!(a.tick(t), b.tick(t));
@@ -1427,6 +1475,7 @@ async fn a_stuck_migration_fails_at_its_deadline() {
     cp.write(&ControlKey::Migration("m1".into()), &mig, Expect::Absent)
         .await
         .unwrap();
+    visible(&cp, &ControlKey::Migration("m1".into())).await;
 
     reconciler.tick(now_ms()).await.unwrap();
     let rec = cp

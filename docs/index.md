@@ -28,7 +28,7 @@ features:
     details: PST-based prediction of event sequences with sub-microsecond inference latency.
   - icon: "\uD83C\uDF10"
     title: Distributed Execution
-    details: Cluster mode with coordinator/worker architecture, Raft consensus, and horizontal scaling.
+    details: Cluster mode with coordinator/worker architecture, JetStream KV consensus, and horizontal scaling.
   - icon: "\uD83D\uDD12"
     title: Multi-Tenant SaaS
     details: Hierarchical tenancy, RBAC, per-tenant isolation with Kubernetes namespaces and Kafka topics.

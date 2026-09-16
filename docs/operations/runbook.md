@@ -54,19 +54,51 @@ varpulis server \
 
 Workers automatically register with the coordinator via heartbeats.
 
-### 1.3 Starting a Raft HA Cluster
+### 1.3 Starting an HA Cluster
 
-For coordinator high availability, use Raft consensus with 3+ coordinator nodes:
+For coordinator high availability, run 2+ coordinators against one JetStream
+KV control plane. Leadership is a lease on a single key and every replicated
+write is a compare-and-swap, so there is no node id, no peer list and no local
+log directory: each coordinator only needs to know the broker and its own
+reachable address.
 
 ```bash
+VARPULIS_CONTROL_PLANE_URL=nats://nats-1:4222 \
+VARPULIS_CONTROL_PLANE_REPLICAS=3 \
+VARPULIS_COORDINATOR_ADVERTISE_ADDR=http://coord-1:9100 \
 varpulis coordinator \
   --bind 0.0.0.0 --port 9100 \
   --api-key "$VARPULIS_API_KEY" \
-  --raft \
-  --raft-node-id 1 \
-  --raft-peers "http://coord-1:9100,http://coord-2:9100,http://coord-3:9100" \
-  --raft-data-dir /var/lib/varpulis/raft
+  --coordinator-id coord-1 \
+  --heartbeat-interval 5
 ```
+
+Run the same command on each node, changing only `--coordinator-id` and
+`VARPULIS_COORDINATOR_ADVERTISE_ADDR`.
+
+- **`VARPULIS_CONTROL_PLANE_REPLICAS=3`** against a NATS *cluster*. The bucket
+  is the only copy of the control state; on a single broker it is a single
+  point of failure in a way a three-node Raft group was not.
+- **`--coordinator-id`** must be stable across a restart and distinct between
+  peers. Two coordinators sharing an id would each accept the other's lease
+  renewal as its own. It defaults to `$HOSTNAME:$port`, which is already right
+  under Kubernetes.
+- **`--heartbeat-interval`** must stay well under half of
+  `VARPULIS_CONTROL_PLANE_TTL_SECS` (default 30), or the holder's record
+  expires between its own renewals and leadership flaps. The coordinator warns
+  at startup if you get this wrong.
+
+Check who leads:
+
+```bash
+curl -s -H "x-api-key: $VARPULIS_API_KEY" \
+  http://coord-1:9100/api/v1/cluster/consensus | jq .
+# { "backend": "jetstream-control-plane", "is_leader": true,
+#   "leader": "http://coord-1:9100", "role": "leader" }
+```
+
+A follower forwards writes to the holder transparently, so clients can address
+any coordinator.
 
 ### 1.4 Scaling Workers Up/Down
 
@@ -110,8 +142,10 @@ varpulis coordinator \
    d. Upgrade binary / apply config changes
    e. Restart the worker with `--coordinator` flag
    f. Verify it re-registers: `GET /api/v1/cluster/workers`
-3. For coordinator upgrades in Raft mode: restart non-leader nodes first, then
-   the leader (Raft will elect a new leader during the brief downtime).
+3. For coordinator upgrades in HA mode: restart followers first, then the
+   holder. The holder resigns on a clean shutdown, so a standby takes over
+   immediately instead of waiting out the lease TTL — which is the difference
+   between a rolling upgrade and a `SIGKILL`.
 
 ### 1.6 Configuration Hot Reload
 
@@ -131,19 +165,27 @@ Generate an example with `varpulis config-gen --format yaml`.
 
 ## 2. Incident Response
 
-### 2.1 Leader Failover (Raft)
+### 2.1 Leader Failover
 
-**What happens:** When the Raft leader becomes unavailable, remaining nodes hold
-an election. A new leader is elected within the heartbeat timeout (default 15s).
-All writes are blocked during the election; reads from the stale store may still
-succeed.
+**What happens:** the holder renews its lease on every health sweep with a
+compare-and-swap. On a clean shutdown it resigns and a standby takes over on
+its next sweep. On a `SIGKILL` it cannot resign, so the record ages out on the
+bucket TTL (`VARPULIS_CONTROL_PLANE_TTL_SECS`, default 30s) and the next
+acquire succeeds then.
+
+A coordinator that is merely *partitioned* keeps believing it leads until its
+next renewal is refused — the same window Raft had, with the same mitigation:
+every write it attempts is itself a CAS, so it cannot commit anything.
+
+Reads are served throughout, by every coordinator. Writes are refused, or
+forwarded to the holder, until one exists.
 
 **How to verify:**
 
 ```bash
-# Check which node is the current leader
-curl http://coord-1:9100/api/v1/cluster/raft/status \
-  -H "x-api-key: $VARPULIS_API_KEY"
+# Who holds the lease, as seen from one coordinator
+curl -s http://coord-1:9100/api/v1/cluster/consensus \
+  -H "x-api-key: $VARPULIS_API_KEY" | jq .
 
 # Check from each coordinator node to find the leader
 for port in 9100 9101 9102; do
@@ -152,9 +194,25 @@ for port in 9100 9101 9102; do
 done
 ```
 
-**Manual intervention:** If the cluster cannot elect a leader (majority lost):
-- Restart failed coordinator nodes with `--raft-data-dir` pointing to persistent storage
-- If data is lost, bootstrap a new cluster from the most recent Raft snapshot
+**Automatic behaviour:** a coordinator that is killed cannot resign, so its
+lease record ages out on the bucket's TTL
+(`VARPULIS_CONTROL_PLANE_TTL_SECS`, default 30s) and the next survivor's
+acquire succeeds. Failover is bounded by that TTL plus one health sweep, and
+needs no quorum among the coordinators — the broker decides.
+
+**Manual intervention:** if no coordinator takes the lease, the control plane
+itself is unreachable. Check the NATS cluster, not the coordinators:
+
+```bash
+# Does the bucket exist and does it have the replication you asked for?
+nats kv ls
+nats kv status VARPULIS_CONTROL
+```
+
+If the bucket has fewer replicas than `VARPULIS_CONTROL_PLANE_REPLICAS`, the
+broker silently ignored the request — the coordinator warns about this at
+startup. Losing that bucket loses the control state; back it up as you would
+any other datastore.
 
 ### 2.2 Worker Loss
 
@@ -324,14 +382,22 @@ varpulis simulate --program rules.vpl --events data.evt \
   --checkpoint-interval 60
 ```
 
-### 4.2 Raft Recovery (Bootstrap from Snapshot)
+### 4.2 Control-Plane Recovery
 
-If a majority of coordinator nodes are lost:
+Coordinators hold no durable state of their own: the control state lives in
+the JetStream KV bucket. Losing every coordinator loses nothing, and they can
+be replaced one at a time with no ordering constraint.
 
-1. Stop all remaining coordinator processes
-2. Identify the node with the most recent data in `--raft-data-dir`
-3. Bootstrap a new single-node cluster from that data
-4. Add new nodes one at a time to rebuild quorum
+If the **bucket** is lost:
+
+1. Stop the coordinators, so none of them writes into a half-restored bucket.
+2. Restore the NATS JetStream store from backup, or recreate the bucket empty.
+3. Start one coordinator. It takes the lease and serves whatever state the
+   bucket holds.
+4. Restart the workers. They re-register on their next heartbeat, which
+   repopulates `workers/*` without operator action.
+
+Pipeline *placements* do not survive an empty bucket; redeploy the groups.
 
 ### 4.3 Data Migration Between Workers
 
@@ -377,7 +443,8 @@ RUST_LOG=info,varpulis_runtime::engine=trace varpulis server ...
 | `DLQ write` | WARN | Events being dead-lettered. Inspect DLQ file. |
 | `Pipeline deployed` | INFO | Normal: pipeline started successfully. |
 | `Worker registered` | INFO | Normal: worker joined the cluster. |
-| `Raft leadership changed` | INFO | Leader election occurred. Verify cluster health. |
+| `acquired coordinator lease` | INFO | This coordinator now leads. Expected at startup and after a failover. |
+| `coordinator lease lost — standing down` | WARN | A renewal CAS was refused or the broker was unreachable. Expected during a failover; repeated occurrences mean the sweep interval is too close to the TTL. |
 | `Migration started` | INFO | Pipeline moving between workers. Monitor completion. |
 
 ### 5.2 Structured Logging

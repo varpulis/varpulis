@@ -596,13 +596,36 @@ fn heartbeat_constants() {
 // =============================================================================
 
 #[test]
-fn cluster_metrics_raft_update() {
+fn cluster_metrics_leadership_counts_transitions_not_ticks() {
     let m = ClusterPrometheusMetrics::new();
-    m.update_raft_metrics(2.0, 5.0, 42.0);
+
+    // The sweep calls this every interval, so a flat gauge must not look like
+    // churn: only a *change* counts.
+    m.set_leader(false);
+    m.set_leader(false);
+    assert_eq!(m.leadership_changes_total.get(), 0.0);
+
+    m.set_leader(true);
+    m.set_leader(true);
+    m.set_leader(true);
+    assert_eq!(
+        m.leadership_changes_total.get(),
+        1.0,
+        "taking the lease once is one transition, however often the sweep runs"
+    );
+    assert_eq!(m.is_leader.get(), 1.0);
+
+    m.set_leader(false);
+    assert_eq!(
+        m.leadership_changes_total.get(),
+        2.0,
+        "losing it is another"
+    );
+    assert_eq!(m.is_leader.get(), 0.0);
+
     let output = m.gather();
-    assert!(output.contains("varpulis_cluster_raft_role"));
-    assert!(output.contains("varpulis_cluster_raft_term"));
-    assert!(output.contains("varpulis_cluster_raft_commit_index"));
+    assert!(output.contains("varpulis_cluster_is_leader"));
+    assert!(output.contains("varpulis_cluster_leadership_changes_total"));
 }
 
 #[test]
@@ -615,7 +638,7 @@ fn cluster_metrics_full_lifecycle() {
     m.record_deploy(true, 0.8);
     m.record_deploy(false, 0.1);
     m.record_health_sweep(4, 0.002);
-    m.update_raft_metrics(2.0, 10.0, 100.0);
+    m.set_leader(true);
 
     let output = m.gather();
     assert!(output.contains("varpulis_cluster_workers_total"));
@@ -625,7 +648,7 @@ fn cluster_metrics_full_lifecycle() {
     assert!(output.contains("varpulis_cluster_migration_duration_seconds"));
     assert!(output.contains("varpulis_cluster_health_sweep_duration_seconds"));
     assert!(output.contains("varpulis_cluster_deploy_duration_seconds"));
-    assert!(output.contains("varpulis_cluster_raft_role"));
+    assert!(output.contains("varpulis_cluster_is_leader"));
 }
 
 // =============================================================================

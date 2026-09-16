@@ -35,7 +35,7 @@ warn() { echo -e "${YELLOW}==> $1${NC}"; }
 # ─── Step 1: Build release binary ──────────────────────────────────────────
 step "Building release binary (incremental)..."
 START=$(date +%s)
-cargo build -p varpulis-cli --release --features "kafka,raft,persistent,saas" 2>&1 | tail -3
+cargo build -p varpulis-cli --release --features "kafka,jetstream-control-plane,saas" 2>&1 | tail -3
 END=$(date +%s)
 echo "  Binary built in $((END - START))s"
 

@@ -138,35 +138,67 @@ can be executed.
 2. Check coordinator logs for mass worker deregistration.
 3. Verify no infrastructure-wide issue (network partition, DNS failure).
 
-### VarpulisRaftLeaderChurn
+### VarpulisSplitBrain
 
 | Field | Value |
 |-------|-------|
-| Severity | warning |
-| Condition | Raft role changes > 4 times in 15 minutes |
-| Metric | `varpulis_cluster_raft_role` |
+| Severity | **critical** |
+| Condition | `sum(varpulis_cluster_is_leader) > 1` for 1 minute |
+| Metric | `varpulis_cluster_is_leader` |
 
-**Cause:** The Raft consensus protocol is unable to maintain stable leadership.
-This causes cluster operations to stall during elections.
+**Cause:** more than one coordinator believes it holds the control-plane lease.
+The lease is a compare-and-swap on a single key, so this should be impossible
+for more than the moment it takes a stale holder's next renewal to be refused.
+A minute of it means either two coordinators share a `--coordinator-id` — each
+then accepts the other's renewal as its own, which is the one way past the CAS
+— or the metric is being scraped from a coordinator that has stopped sweeping.
 
 **Response:**
-1. Check network latency and packet loss between cluster nodes.
-2. Verify system clocks are synchronized (NTP).
-3. Ensure the cluster has an odd number of nodes (3 or 5 recommended).
-4. Check if any node is under extreme CPU or I/O pressure.
+1. `curl /api/v1/cluster/consensus` on every coordinator and compare `leader`.
+2. Check for duplicate `--coordinator-id` values (and for two pods sharing a
+   `$HOSTNAME`, which is the default identity).
+3. Writes are still safe — each is its own CAS — but stop the duplicate before
+   it does anything at scale.
 
-### VarpulisRaftTermAdvancing
+### VarpulisNoLeader
+
+| Field | Value |
+|-------|-------|
+| Severity | **critical** |
+| Condition | `sum(varpulis_cluster_is_leader) == 0` for 2 minutes |
+| Metric | `varpulis_cluster_is_leader` |
+
+**Cause:** no coordinator holds the lease. Reads still work everywhere; writes
+are refused. Normal for the length of one TTL after a holder is killed
+(`VARPULIS_CONTROL_PLANE_TTL_SECS`, default 30s); two minutes means the
+coordinators cannot reach the control plane at all.
+
+**Response:**
+1. Check the NATS cluster, not the coordinators.
+2. `nats kv status` on the control bucket: does it exist, and does it have the
+   replication that was asked for?
+3. See "Control-Plane Recovery" in the runbook.
+
+### VarpulisLeadershipChurn
 
 | Field | Value |
 |-------|-------|
 | Severity | warning |
-| Condition | Raft term increases > 5 in 10 minutes |
-| Metric | `varpulis_cluster_raft_term` |
+| Condition | `increase(varpulis_cluster_leadership_changes_total[15m]) > 4` |
+| Metric | `varpulis_cluster_leadership_changes_total` |
 
-**Cause:** Closely related to leader churn. Rapidly advancing terms indicate
-repeated failed elections.
+**Cause:** leadership is moving repeatedly. The usual cause is a health-sweep
+interval too close to the bucket TTL: the holder's own record ages out between
+its renewals, a standby acquires, and it bounces. The coordinator warns about
+this configuration at startup.
 
-**Response:** Same as VarpulisRaftLeaderChurn.
+**Response:**
+1. Check `--heartbeat-interval` against `VARPULIS_CONTROL_PLANE_TTL_SECS`. The
+   interval must be well under half the TTL.
+2. Check latency to the NATS cluster — a renewal that times out stands the
+   holder down, by design.
+3. Check whether any coordinator is under enough CPU or I/O pressure to miss
+   its own sweep.
 
 ### VarpulisMigrationFailures
 

@@ -218,21 +218,21 @@ async fn handle_heartbeat_message(subject: &str, payload: &[u8], coordinator: &S
     let wid = WorkerId(worker_id.to_string());
     let mut coord = coordinator.write().await;
     if let Err(e) = coord.heartbeat(&wid, &hb) {
+        // A bad heartbeat has nothing to replicate.
         warn!("Heartbeat error for {}: {}", worker_id, e);
-        // A bad heartbeat has nothing to replicate; under `raft` we must skip the
-        // replication below (this early return is compiled out when `raft` is off,
-        // where there is no trailing code and the return would be redundant).
-        #[cfg(feature = "raft")]
         return;
     }
-    // Replicate the heartbeat metrics + monotonic `heartbeat_seq` through Raft,
-    // exactly like the HTTP heartbeat handler (`api::handle_heartbeat`), via the
-    // shared leader-write-or-forward helper. Without this, the NATS path would
-    // advance only the *local* `heartbeat_seq` (via `heartbeat()` above) and
-    // never replicate it — so in a multi-coordinator NATS deployment a worker
-    // homed on a *non-leader* would have its liveness invisible to the leader's
-    // `sync_from_raft`, which could then false-mark it `Unhealthy` (audit C5).
-    // No-op when `raft` is off (single-coordinator liveness needs no replication).
-    #[cfg(feature = "raft")]
+    // Replicate the heartbeat metrics and the monotonic `heartbeat_seq`,
+    // exactly like the HTTP heartbeat handler (`api::handle_heartbeat`).
+    // Without this the NATS path advances only the *local* `heartbeat_seq`
+    // (via `heartbeat()` above) and never replicates it, so a worker homed on
+    // a non-leader coordinator has its liveness invisible to every other
+    // coordinator, which can then false-mark it `Unhealthy` (audit C5).
+    //
+    // This call used to be `#[cfg(feature = "raft")]`. `replicate_heartbeat`
+    // itself was un-gated when every replicated write moved to
+    // `Coordinator::replicate`, but the call site was not — so on a JetStream
+    // deployment C5 was still open on the NATS path, and silently: nothing
+    // asserted it, because the only test that did was itself gated on `raft`.
     crate::api::replicate_heartbeat(coord, worker_id, &hb).await;
 }

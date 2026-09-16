@@ -101,23 +101,6 @@ fn build_cors(origins: Option<Vec<String>>) -> tower_http::cors::CorsLayer {
         .allow_origin(origin)
 }
 
-/// Build all Raft + cluster API routes.
-///
-/// When the `raft` feature is enabled and a Raft handle is provided,
-/// the `/raft/*` routes are included for inter-coordinator RPCs.
-#[cfg(feature = "raft")]
-pub fn cluster_routes_with_raft(
-    coordinator: SharedCoordinator,
-    rbac: Arc<RbacConfig>,
-    raft: crate::raft::routes::SharedRaft,
-    rate_limiter: Option<Arc<RateLimiter>>,
-    cors_origins: Option<Vec<String>>,
-) -> Router {
-    let raft_router = crate::raft::routes::raft_routes(raft, rbac.any_admin_key());
-    let cluster = cluster_routes(coordinator, rbac, rate_limiter, cors_origins);
-    cluster.merge(raft_router)
-}
-
 /// Shared application state for all cluster API routes.
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -270,7 +253,8 @@ pub fn cluster_routes(
         .route("/api/v1/cluster/prometheus", get(handle_prometheus_metrics))
         .route("/api/v1/cluster/scaling", get(handle_scaling))
         .route("/api/v1/cluster/summary", get(handle_cluster_summary))
-        .route("/api/v1/cluster/raft", get(handle_raft_status))
+        .route("/api/v1/cluster/raft", get(handle_consensus_status))
+        .route("/api/v1/cluster/consensus", get(handle_consensus_status))
         .route("/api/v1/cluster/models", get(handle_list_models))
         .route(
             "/api/v1/cluster/models/{name}/download",
@@ -506,44 +490,14 @@ impl axum::extract::FromRequestParts<AppState> for RbacAdmin {
 // Leader forwarding helper
 // =============================================================================
 
-/// Forward a request to the Raft leader if this node is a follower.
-/// Returns `Some(response)` if forwarded, `None` if this node is the leader.
-/// Used for both read and write endpoints so the Raft topology is invisible.
-#[cfg(feature = "raft")]
-async fn forward_to_leader(
-    coordinator: &SharedCoordinator,
-    method: &str,
-    path: &str,
-    body: Option<serde_json::Value>,
-) -> Option<Response> {
-    let coord = coordinator.read().await;
-    coord.raft_handle.as_ref()?;
-    if coord.is_raft_leader() {
-        return None;
-    }
-    let leader_addr = match coord.raft_leader_addr() {
-        Some(addr) => addr,
-        None => {
-            return Some(cluster_error_response(ClusterError::NotLeader(
-                "no leader elected yet".into(),
-            )));
-        }
-    };
-    let client = coord.http_client.clone();
-    let admin_key = coord.raft_handle.as_ref().and_then(|h| h.admin_key.clone());
-    drop(coord);
-
-    forward_request(&client, method, &leader_addr, path, body, admin_key).await
-}
-
 /// Proxy one request to `leader_addr` and hand the response straight back.
 ///
-/// Shared by both leadership backends so a follower's forwarding behaves
-/// identically whichever one is in use — status, content type and body are
-/// passed through unchanged, and an unreachable leader becomes `NotLeader`
-/// rather than a 500, because retrying against whoever holds the lease next is
-/// the right thing for the caller to do.
-#[cfg(any(feature = "raft", feature = "jetstream-control-plane"))]
+/// Used by every read and write endpoint, so the cluster topology stays
+/// invisible to callers: status, content type and body are passed through
+/// unchanged, and an unreachable leader becomes `NotLeader` rather than a 500,
+/// because retrying against whoever holds the lease next is the right thing
+/// for the caller to do.
+#[cfg(feature = "jetstream-control-plane")]
 async fn forward_request(
     client: &reqwest::Client,
     method: &str,
@@ -597,7 +551,7 @@ async fn forward_request(
 /// same request instead came back `NotLeader`, correct but a downgrade from
 /// Raft mode, where the follower forwarded transparently and the caller never
 /// had to know the topology.
-#[cfg(all(not(feature = "raft"), feature = "jetstream-control-plane"))]
+#[cfg(feature = "jetstream-control-plane")]
 async fn forward_to_leader(
     coordinator: &SharedCoordinator,
     method: &str,
@@ -625,7 +579,7 @@ async fn forward_to_leader(
     forward_request(&client, method, &leader_addr, path, body, None).await
 }
 
-#[cfg(all(not(feature = "raft"), not(feature = "jetstream-control-plane")))]
+#[cfg(not(feature = "jetstream-control-plane"))]
 async fn forward_to_leader(
     _coordinator: &SharedCoordinator,
     _method: &str,
@@ -648,72 +602,6 @@ async fn handle_register_worker(
     // In Raft mode, forward to leader if we're a follower.
     // Workers always connect to their home coordinator, so we must transparently
     // forward the registration to the Raft leader.
-    #[cfg(feature = "raft")]
-    {
-        let coord = coordinator.read().await;
-        if let Some(ref handle) = coord.raft_handle {
-            if !coord.is_raft_leader() {
-                if let Some(leader_addr) = coord.raft_leader_addr() {
-                    let client = coord.http_client.clone();
-                    let admin_key = handle.admin_key.clone();
-                    drop(coord); // Release lock before HTTP call
-
-                    let url = format!("{}/api/v1/cluster/workers/register", leader_addr);
-                    let mut forward_req = client.post(&url).json(&body);
-                    if let Some(key) = &admin_key {
-                        forward_req = forward_req.header("x-api-key", key);
-                    }
-                    let forward_result: Result<reqwest::Response, reqwest::Error> =
-                        forward_req.send().await;
-                    match forward_result {
-                        Ok(forward_resp) if forward_resp.status().is_success() => {
-                            // Leader accepted the registration. Also register locally
-                            // so heartbeats work immediately (before next Raft sync).
-                            let mut coord = coordinator.write().await;
-                            let node = WorkerNode {
-                                id: WorkerId(body.worker_id.clone()),
-                                address: body.address,
-                                api_key: varpulis_core::security::SecretString::new(body.api_key),
-                                status: crate::worker::WorkerStatus::Registering,
-                                capacity: body.capacity,
-                                last_heartbeat: std::time::Instant::now(),
-                                assigned_pipelines: Vec::new(),
-                                events_processed: 0,
-                                heartbeat_seq: 0,
-                                last_seen_hb_seq: 0,
-                            };
-                            let id = coord.register_worker(node);
-                            let reg_resp = RegisterWorkerResponse {
-                                worker_id: id.0,
-                                status: "registered".into(),
-                                heartbeat_interval_secs: None,
-                            };
-                            return reply_json_status(&reg_resp, StatusCode::CREATED);
-                        }
-                        Ok(forward_resp) => {
-                            let status = forward_resp.status();
-                            let text = forward_resp.text().await.unwrap_or_default();
-                            tracing::warn!("Leader forwarding failed (HTTP {status}): {text}");
-                            return cluster_error_response(ClusterError::NotLeader(format!(
-                                "leader returned HTTP {status}"
-                            )));
-                        }
-                        Err(e) => {
-                            tracing::warn!("Cannot reach Raft leader at {leader_addr}: {e}");
-                            return cluster_error_response(ClusterError::NotLeader(format!(
-                                "cannot reach leader: {e}"
-                            )));
-                        }
-                    }
-                }
-
-                drop(coord);
-                return cluster_error_response(ClusterError::NotLeader(
-                    "no leader elected yet".into(),
-                ));
-            }
-        }
-    }
 
     let mut coord = coordinator.write().await;
 
@@ -792,34 +680,9 @@ pub(crate) async fn replicate_heartbeat(
     };
     // `is_raft_leader` is true in standalone mode and under the control plane,
     // where there is no election to lose.
-    #[cfg(not(feature = "raft"))]
     {
         if let Err(e) = coord.replicate(cmd).await {
             tracing::debug!("Failed to replicate heartbeat metrics: {e}");
-        }
-    }
-
-    #[cfg(feature = "raft")]
-    if coord.is_raft_leader() {
-        // Leader: replicate directly.
-        {
-            if let Err(e) = coord.replicate(cmd).await {
-                tracing::debug!("Failed to replicate heartbeat metrics: {e}");
-            }
-        }
-    } else if let Some(leader_addr) = coord.raft_leader_addr() {
-        // Follower: forward to the leader's /raft/write endpoint.
-        let client = coord.http_client.clone();
-        let admin_key = coord.raft_handle.as_ref().and_then(|h| h.admin_key.clone());
-        // Don't hold the lock during HTTP I/O.
-        drop(coord);
-        let url = format!("{}/raft/write", leader_addr);
-        let mut req = client.post(&url).json(&cmd);
-        if let Some(key) = admin_key {
-            req = req.header("x-api-key", key);
-        }
-        if let Err(e) = req.send().await {
-            tracing::debug!("Failed to forward heartbeat metrics to Raft leader: {e}");
         }
     }
 }
@@ -2762,52 +2625,35 @@ async fn handle_cluster_summary(State(state): State<AppState>, _auth: RbacViewer
 // Raft cluster status handler
 // =============================================================================
 
-async fn handle_raft_status(State(state): State<AppState>, _auth: RbacViewer) -> Response {
-    let coordinator = state.coordinator.clone();
-    let _coord = coordinator.read().await;
+/// Who leads, and through which backend.
+///
+/// Served at `/api/v1/cluster/consensus`, and at the old
+/// `/api/v1/cluster/raft` path so existing monitoring keeps working. The Raft
+/// shape it used to return — `this_node_id`, `term`, `commit_index`, a node
+/// list — described openraft's log, and there is no log any more: leadership
+/// is a lease on one KV key. Reporting zeros under the old field names would
+/// read as "a healthy cluster at term 0", so the fields are the ones that now
+/// mean something.
+async fn handle_consensus_status(State(state): State<AppState>, _auth: RbacViewer) -> Response {
+    let coord = state.coordinator.clone();
+    let coord = coord.read().await;
 
-    #[cfg(feature = "raft")]
-    {
-        if let Some(ref handle) = _coord.raft_handle {
-            let metrics = handle.raft.metrics().borrow().clone();
-            let current_leader = metrics.current_leader;
-            let this_node_id = metrics.id;
-
-            let mut nodes = Vec::new();
-            for (nid, addr) in &handle.peer_addrs {
-                let role = match current_leader {
-                    Some(leader_id) if *nid == leader_id => "leader",
-                    Some(_) => "follower",
-                    None => "unknown",
-                };
-                nodes.push(serde_json::json!({
-                    "id": nid,
-                    "address": addr,
-                    "role": role,
-                    "is_current": *nid == this_node_id,
-                }));
-            }
-
-            let resp = serde_json::json!({
-                "enabled": true,
-                "this_node_id": this_node_id,
-                "leader_id": current_leader,
-                "term": metrics.current_term,
-                "commit_index": metrics.last_applied.as_ref().map(|l| l.index).unwrap_or(0),
-                "nodes": nodes,
-            });
-            return reply_json_status(&resp, StatusCode::OK);
-        }
+    #[cfg(feature = "jetstream-control-plane")]
+    if coord.leader_lease.is_some() {
+        let resp = serde_json::json!({
+            "backend": "jetstream-control-plane",
+            "is_leader": coord.ha_role.is_writer(),
+            "leader": coord.control_plane_leader_addr().await,
+            "role": coord.ha_role,
+        });
+        return reply_json_status(&resp, StatusCode::OK);
     }
 
-    // Raft not enabled or no handle — standalone mode
     let resp = serde_json::json!({
-        "enabled": false,
-        "this_node_id": 0,
-        "leader_id": null,
-        "term": 0,
-        "commit_index": 0,
-        "nodes": [],
+        "backend": "standalone",
+        "is_leader": true,
+        "leader": serde_json::Value::Null,
+        "role": coord.ha_role,
     });
     reply_json_status(&resp, StatusCode::OK)
 }

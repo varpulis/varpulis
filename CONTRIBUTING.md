@@ -112,7 +112,7 @@ feat(engine): add sliding window support
 fix(parser): handle escaped quotes in string literals
 refactor(runtime): extract connector trait into separate module
 docs(guides): add SASE+ pattern examples
-test(cluster): add Raft leader election tests
+test(cluster): add coordinator lease takeover tests
 ci: add cargo-deny advisory check
 perf(sase): optimize NFA state transitions
 ```
@@ -214,7 +214,7 @@ crates/
   varpulis-parser/     Pest PEG parser for the VPL language
   varpulis-runtime/    Execution engine, SASE+ pattern matching, Hamlet
                        trend aggregation, PST forecasting, connectors
-  varpulis-cluster/    Coordinator/worker architecture, Raft consensus
+  varpulis-cluster/    Coordinator/worker architecture, JetStream KV control plane
   varpulis-cli/        CLI binary and REST API server
   varpulis-lsp/        Language Server Protocol implementation
   varpulis-mcp/        Model Context Protocol server
@@ -224,7 +224,7 @@ web-ui/                Vue 3 + Vuetify 3 control plane dashboard
 
 Data flows: **VPL source** -> `varpulis-parser` -> **AST** (`varpulis-core`) -> `varpulis-runtime` compiles to **RuntimeOps** -> engine executes against event streams via connectors.
 
-The cluster layer (`varpulis-cluster`) coordinates multiple workers, handles pipeline group assignment, and uses Raft for leader election.
+The cluster layer (`varpulis-cluster`) coordinates multiple workers, handles pipeline group assignment, and decides leadership with a lease on a JetStream KV key.
 
 ## Feature Flags
 
@@ -239,7 +239,7 @@ Connectors and optional subsystems are gated behind feature flags. CI tests each
 | `s3` | AWS S3 source/sink |
 | `kinesis` | AWS Kinesis source/sink |
 | `elasticsearch` | Elasticsearch sink |
-| `raft` | Raft consensus for cluster mode |
+| `jetstream-control-plane` | Coordinator consensus: leadership lease + compare-and-swap writes on a JetStream KV bucket |
 | `persistent` | RocksDB state persistence |
 | `k8s` | Kubernetes integration |
 

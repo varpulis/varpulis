@@ -97,12 +97,18 @@ pub trait CheckpointTransport: Send + Sync + 'static {
     ) -> impl std::future::Future<Output = Result<(), TransportError>> + Send;
 }
 
-/// Replicates checkpoint outcomes through Raft so every coordinator sees the
-/// latest durable checkpoint id for the group.
+/// Replicates checkpoint outcomes to the control plane so every coordinator
+/// sees the latest durable checkpoint id for the group.
 ///
-/// Task 1.4 introduces concrete `ClusterCommand::CheckpointCompleted` /
-/// `CheckpointAborted` variants and the matching state-machine apply logic;
-/// the trait keeps the orchestrator independent of that wiring.
+/// **Nothing in the product implements this against a real backend.** The
+/// openraft implementation was deleted with `raft/`, and it was never
+/// constructed either: no production path has ever sent a
+/// `ClusterCommand::CheckpointCompleted`, so `latest_checkpoints` is only
+/// ever written by tests. The replicator to write is one that goes through
+/// [`crate::coordinator::Coordinator::replicate`], which already routes every
+/// other replicated write; until it exists, a deployment runs
+/// [`NoopRaftReplicator`] and a new coordinator learns nothing about
+/// checkpoints its predecessor completed.
 pub trait CheckpointRaftReplicator: Send + Sync + 'static {
     /// Replicate a successful checkpoint.
     fn replicate_completed(
@@ -120,8 +126,11 @@ pub trait CheckpointRaftReplicator: Send + Sync + 'static {
     ) -> impl std::future::Future<Output = Result<(), ReplicateError>> + Send;
 }
 
-/// Stand-in replicator used in single-coordinator deployments that do not
-/// run Raft. Logs at debug level and reports success.
+/// Stand-in replicator for single-coordinator deployments.
+///
+/// Logs at debug level and reports success — correct when there is nobody to
+/// replicate to, and also what every deployment currently gets, per the
+/// trait's own note above.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoopRaftReplicator;
 
@@ -149,76 +158,6 @@ impl CheckpointRaftReplicator for NoopRaftReplicator {
             checkpoint_id, reason, "no-op replicator: checkpoint aborted"
         );
         Ok(())
-    }
-}
-
-/// Raft-backed replicator that submits checkpoint outcomes through
-/// [`crate::raft::VarpulisRaft::client_write`].
-///
-/// Only available when both the `raft` and `distributed-checkpoint` features
-/// are enabled. Each call writes a [`crate::control_state::ClusterCommand::CheckpointCompleted`]
-/// or [`crate::control_state::ClusterCommand::CheckpointAborted`] entry that the
-/// state machine applies into [`crate::raft::state_machine::CoordinatorState::latest_checkpoints`].
-///
-/// Non-leader writes return a `ReplicateError` whose message carries the
-/// `ForwardToLeader` payload — callers should typically resolve a leader and
-/// retry, mirroring the pattern used by [`crate::coordinator::Coordinator::replicate`].
-#[cfg(feature = "raft")]
-#[derive(Clone)]
-pub struct RaftCheckpointReplicator {
-    raft: Arc<crate::raft::VarpulisRaft>,
-}
-
-#[cfg(feature = "raft")]
-impl RaftCheckpointReplicator {
-    /// Build a new replicator backed by the supplied Raft handle.
-    pub fn new(raft: Arc<crate::raft::VarpulisRaft>) -> Self {
-        Self { raft }
-    }
-}
-
-#[cfg(feature = "raft")]
-impl std::fmt::Debug for RaftCheckpointReplicator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RaftCheckpointReplicator")
-            .finish_non_exhaustive()
-    }
-}
-
-#[cfg(feature = "raft")]
-impl CheckpointRaftReplicator for RaftCheckpointReplicator {
-    async fn replicate_completed(
-        &self,
-        group_id: &str,
-        checkpoint_id: CheckpointId,
-    ) -> Result<(), ReplicateError> {
-        let cmd = crate::control_state::ClusterCommand::CheckpointCompleted {
-            group_id: group_id.to_string(),
-            checkpoint_id,
-        };
-        self.raft
-            .client_write(cmd)
-            .await
-            .map(|_| ())
-            .map_err(|e| ReplicateError::new(format!("client_write completed: {e}")))
-    }
-
-    async fn replicate_aborted(
-        &self,
-        group_id: &str,
-        checkpoint_id: CheckpointId,
-        reason: &str,
-    ) -> Result<(), ReplicateError> {
-        let cmd = crate::control_state::ClusterCommand::CheckpointAborted {
-            group_id: group_id.to_string(),
-            checkpoint_id,
-            reason: reason.to_string(),
-        };
-        self.raft
-            .client_write(cmd)
-            .await
-            .map(|_| ())
-            .map_err(|e| ReplicateError::new(format!("client_write aborted: {e}")))
     }
 }
 

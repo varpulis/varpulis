@@ -34,7 +34,7 @@ jobs:
             ghcr.io/${{ github.repository }}:main
             ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
           build-args: |
-            FEATURES=kafka,raft,persistent,saas
+            FEATURES=kafka,jetstream-control-plane,saas
             COMMIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
