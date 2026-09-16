@@ -33,7 +33,7 @@ use varpulis_cluster::control_state::{
     apply_command, ClusterCommand, ClusterResponse, CoordinatorState, WorkerEntry,
 };
 use varpulis_cluster::jetstream_control_plane::{
-    fence_out, materialize, Applier, ConnectorSecretPolicy, ControlKey, ControlPlane,
+    fence_out, materialize, now_ms, Applier, ConnectorSecretPolicy, ControlKey, ControlPlane,
     ControlPlaneConfig, Expect, FencedCommand, LeaderLease, LeaderState, MigrationPhase,
     MigrationRecord, Reconciler, WorkerLease, WorkerRecord, STATUS_FENCED,
 };
@@ -160,11 +160,45 @@ fn worker(id: &str, pipelines: &[&str]) -> WorkerRecord {
     })
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
+/// A `Coordinator` wired to this control plane and nothing else.
+fn coordinator_on(cp: &ControlPlane) -> varpulis_cluster::Coordinator {
+    let mut c = varpulis_cluster::Coordinator::new();
+    c.control_plane = Some(Applier::new(cp.clone()));
+    c
+}
+
+/// The minimum migration plan `record_migration_started` reads from.
+fn migrate_plan(
+    id: &str,
+    pipeline: &str,
+    group: &str,
+    source: &str,
+    target: &str,
+) -> varpulis_cluster::coordinator::MigratePipelinePlan {
+    use varpulis_cluster::pipeline_group::{PipelineDeployment, PipelineDeploymentStatus};
+    use varpulis_cluster::WorkerId;
+
+    varpulis_cluster::coordinator::MigratePipelinePlan {
+        migration_id: id.to_string(),
+        pipeline_name: pipeline.to_string(),
+        group_id: group.to_string(),
+        source_worker_id: WorkerId(source.to_string()),
+        target_worker_id: WorkerId(target.to_string()),
+        target_address: format!("http://{target}:9000"),
+        target_api_key: "k".to_string(),
+        deployment: PipelineDeployment {
+            worker_id: WorkerId(source.to_string()),
+            worker_address: format!("http://{source}:9000"),
+            worker_api_key: "k".to_string(),
+            pipeline_id: format!("{pipeline}-1"),
+            status: PipelineDeploymentStatus::Running,
+            epoch: 1,
+            failure_reason: None,
+        },
+        vpl_source: "stream s from e".to_string(),
+        reason: varpulis_cluster::MigrationReason::Manual,
+        migrate_start: std::time::Instant::now(),
+    }
 }
 
 // ===========================================================================
@@ -860,6 +894,100 @@ async fn only_the_lease_holding_coordinator_is_a_writer() {
         }
         other => panic!("{TEST}: the resigned coordinator must not still write, got {other:?}"),
     }
+}
+
+/// A migration abandoned mid-flight must be finishable by another coordinator.
+///
+/// The old path ran the whole migration inside one HTTP request —
+/// `plan_migrate_pipeline`, then `execute_migrate_plan` doing checkpoint,
+/// deploy, restore, switch and clean-up over HTTP, then
+/// `commit_migrate_pipeline` writing a `MigrationTask` **after** it finished.
+/// The five intermediate phases were never materialised anywhere, so a
+/// coordinator that died partway through left no trace: the pipeline could be
+/// deployed on the target and still assigned on the source, and no surviving
+/// coordinator knew a migration had been in flight at all.
+///
+/// This asserts the two halves of the fix together — the coordinator writes
+/// the record before executing, and a *different* coordinator's reconciler
+/// picks it up and terminates it.
+#[tokio::test]
+async fn a_migration_abandoned_by_a_dead_coordinator_is_finished_by_another() {
+    const TEST: &str = "a_migration_abandoned_by_a_dead_coordinator_is_finished_by_another";
+    let Some(cp) = open("abandoned").await else {
+        return;
+    };
+
+    // The bucket outlives a failed run of this test, and the mint below is a
+    // create-if-absent. Clear the keys first so a previous failure does not
+    // turn into a different failure here.
+    cp.delete(&ControlKey::Migration("mig-orphan".into()))
+        .await
+        .ok();
+    cp.delete(&ControlKey::Worker("w-dying".into())).await.ok();
+
+    // The source worker exists and runs the pipeline.
+    cp.write(
+        &ControlKey::Worker("w-dying".into()),
+        &worker("w-dying", &["p-orphan"]),
+        Expect::Absent,
+    )
+    .await
+    .ok();
+
+    // Coordinator A mints the record, then dies. A one-millisecond deadline
+    // stands in for "it has been stuck far too long"; the phase machine reads
+    // the same clock either way.
+    let a = coordinator_on(&cp);
+    let plan = migrate_plan("mig-orphan", "p-orphan", "g1", "w-dying", "w-target");
+    a.record_migration_started(&plan, Duration::from_millis(1))
+        .await
+        .expect("minting the migration record must not fail");
+
+    let minted = cp
+        .get::<MigrationRecord>(&ControlKey::Migration("mig-orphan".into()))
+        .await
+        .unwrap()
+        .expect("the record must exist before execution, not after it");
+    assert_eq!(
+        minted.value.phase,
+        MigrationPhase::Checkpointing,
+        "{TEST}: a migration is recorded from its first phase"
+    );
+    assert_eq!(minted.value.source, "w-dying");
+    assert_eq!(minted.value.target, "w-target");
+    drop(a); // coordinator A is gone; nothing will ever commit this migration
+
+    // Coordinator B sweeps. It has never heard of this migration.
+    let b = coordinator_on(&cp);
+    let report = b
+        .reconcile_migrations()
+        .await
+        .expect("a configured control plane must produce a tick report");
+    assert!(
+        report.examined >= 1,
+        "{TEST}: the surviving coordinator must see the orphaned record, saw {}",
+        report.examined
+    );
+
+    let after = cp
+        .get::<MigrationRecord>(&ControlKey::Migration("mig-orphan".into()))
+        .await
+        .unwrap()
+        .expect("record still present, now terminal");
+    assert_eq!(
+        after.value.phase,
+        MigrationPhase::Failed,
+        "{TEST}: past its deadline the migration must be failed, not left pinning the pipeline"
+    );
+    assert!(
+        after.value.failure.is_some(),
+        "{TEST}: a failed migration must say why"
+    );
+
+    cp.delete(&ControlKey::Migration("mig-orphan".into()))
+        .await
+        .ok();
+    cp.delete(&ControlKey::Worker("w-dying".into())).await.ok();
 }
 
 // ===========================================================================

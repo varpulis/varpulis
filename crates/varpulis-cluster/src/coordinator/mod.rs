@@ -521,6 +521,116 @@ impl Coordinator {
         );
     }
 
+    /// Record a migration in the control plane before it is executed.
+    ///
+    /// Until this existed, a migration lived only in the coordinator process
+    /// that was running it: `plan_migrate_pipeline` built a plan,
+    /// `execute_migrate_plan` did the whole checkpoint/deploy/restore/switch
+    /// /clean-up over HTTP inside the request, and `commit_migrate_pipeline`
+    /// wrote a `MigrationTask` **after** it finished — `Completed` or
+    /// `Failed`, never one of the five phases in between.
+    ///
+    /// So a coordinator that died mid-migration left nothing behind. The
+    /// pipeline could be deployed on the target and still assigned on the
+    /// source, and no surviving coordinator had any record that a migration
+    /// was in flight, let alone which phase it had reached.
+    ///
+    /// The record is written *before* execution starts, so the crash window
+    /// is covered from the first phase. From there
+    /// [`Coordinator::reconcile_migrations`] drives it: it advances on
+    /// observed evidence, fences the source at cut-over, and fails the record
+    /// on its deadline rather than letting it pin the pipeline forever.
+    ///
+    /// A no-op when no control plane is configured — on Raft or standalone
+    /// the behaviour is unchanged.
+    #[cfg(feature = "jetstream-control-plane")]
+    pub async fn record_migration_started(
+        &self,
+        plan: &MigratePipelinePlan,
+        deadline: std::time::Duration,
+    ) -> Result<(), ClusterError> {
+        use crate::jetstream_control_plane::{ControlKey, Expect, MigrationPhase, MigrationRecord};
+
+        let Some(ref applier) = self.control_plane else {
+            return Ok(());
+        };
+        let cp = applier.control_plane();
+
+        // The source's current revision, kept for audit: the cut-over CASes
+        // against whatever the revision is *then*, not this one, but a record
+        // whose `source_fence` no longer matches says the source was replaced
+        // under the migration.
+        let source_fence = cp
+            .get::<crate::jetstream_control_plane::WorkerRecord>(&ControlKey::Worker(
+                plan.source_worker_id.0.clone(),
+            ))
+            .await
+            .ok()
+            .flatten()
+            .map(|v| v.revision)
+            .unwrap_or(0);
+
+        let now_ms = crate::jetstream_control_plane::now_ms();
+        let record = MigrationRecord {
+            id: plan.migration_id.clone(),
+            pipeline: plan.pipeline_name.clone(),
+            group: plan.group_id.clone(),
+            source: plan.source_worker_id.0.clone(),
+            target: plan.target_worker_id.0.clone(),
+            phase: MigrationPhase::Checkpointing,
+            reason: format!("{:?}", plan.reason),
+            source_fence,
+            restore_checkpoint: None,
+            restored: false,
+            deadline_ms: now_ms.saturating_add(deadline.as_millis() as u64),
+            finished_ms: None,
+            failure: None,
+        };
+
+        cp.write(
+            &ControlKey::Migration(plan.migration_id.clone()),
+            &record,
+            Expect::Absent,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| {
+            ClusterError::InvalidOperation(format!(
+                "could not record migration in control plane: {e}"
+            ))
+        })
+    }
+
+    /// Drive every in-flight migration one step.
+    ///
+    /// Level-triggered: it re-reads the world and re-derives each record's
+    /// phase, so calling it more often costs latency only, calling it less
+    /// often costs latency only, and a coordinator that takes over from a
+    /// dead one is indistinguishable from one that was merely slow. There is
+    /// no edge to miss — which is the property the old path did not have,
+    /// because the old path had no state outside the process doing the work.
+    ///
+    /// Leader-only, like the rest of the sweep: the CAS on each record makes
+    /// a second driver safe rather than necessary.
+    ///
+    /// Returns the tick report, or `None` when no control plane is configured.
+    #[cfg(feature = "jetstream-control-plane")]
+    pub async fn reconcile_migrations(&self) -> Option<crate::jetstream_control_plane::TickReport> {
+        let applier = self.control_plane.as_ref()?;
+        let reconciler =
+            crate::jetstream_control_plane::Reconciler::new(applier.control_plane().clone());
+        match reconciler
+            .tick(crate::jetstream_control_plane::now_ms())
+            .await
+        {
+            Ok(report) => Some(report),
+            Err(e) => {
+                tracing::warn!(error = %e, "migration reconciliation tick failed");
+                None
+            }
+        }
+    }
+
     /// Update the HA role from the control plane's leader lease.
     ///
     /// This is the JetStream counterpart of [`Coordinator::update_raft_role`],

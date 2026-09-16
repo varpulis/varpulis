@@ -2310,6 +2310,25 @@ async fn handle_manual_migrate(
             }
         };
         // Read lock released here
+
+        // Record the migration in the control plane before any of it runs.
+        // Everything below happens inside this request; a coordinator that
+        // dies partway through used to leave no trace of a migration that had
+        // already deployed the pipeline on the target. The record is what a
+        // surviving coordinator's reconciler picks up.
+        #[cfg(feature = "jetstream-control-plane")]
+        if let Err(e) = coordinator
+            .read()
+            .await
+            .record_migration_started(
+                &plan,
+                crate::jetstream_control_plane::DEFAULT_MIGRATION_DEADLINE,
+            )
+            .await
+        {
+            return cluster_error_response(e);
+        }
+
         let result = crate::coordinator::Coordinator::execute_migrate_plan_dispatch(
             nats_client.as_ref(),
             &http_client,
@@ -2345,6 +2364,22 @@ async fn handle_manual_migrate(
             }
         };
         // Read lock released here
+
+        // See the NATS arm above: the record is written before execution so
+        // the crash window is covered from the first phase.
+        #[cfg(feature = "jetstream-control-plane")]
+        if let Err(e) = coordinator
+            .read()
+            .await
+            .record_migration_started(
+                &plan,
+                crate::jetstream_control_plane::DEFAULT_MIGRATION_DEADLINE,
+            )
+            .await
+        {
+            return cluster_error_response(e);
+        }
+
         let result = crate::coordinator::Coordinator::execute_migrate_plan(
             &http_client,
             &plan,
