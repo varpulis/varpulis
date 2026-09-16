@@ -631,6 +631,50 @@ impl Coordinator {
         }
     }
 
+    /// Base URL of the coordinator that currently holds the lease.
+    ///
+    /// The control-plane analogue of [`Coordinator::raft_leader_addr`], which
+    /// resolved a `NodeId` through a peer-address map built from
+    /// `--raft-peers`. There is no such map here and there should not be one:
+    /// the leader is the only party that knows its own reachable address, and
+    /// it already writes a record every sweep, so it publishes the address
+    /// there.
+    ///
+    /// `None` when nobody holds the lease, or the holder published no address
+    /// — the caller must refuse rather than invent a destination.
+    #[cfg(feature = "jetstream-control-plane")]
+    pub async fn control_plane_leader_addr(&self) -> Option<String> {
+        self.leader_lease.as_ref()?.current_leader_address().await
+    }
+
+    /// Materialise coordinator state from the control-plane bucket.
+    ///
+    /// The counterpart of [`Coordinator::sync_from_raft`], and it feeds the
+    /// same backend-agnostic [`Coordinator::sync_from_control_state`], so the
+    /// two backends cannot drift in how they update the coordinator.
+    ///
+    /// Every coordinator runs it, not just the leader: a follower serves
+    /// read-only API responses out of this state, and the leader uses it to
+    /// refresh heartbeat timestamps for workers that are connected to a
+    /// different coordinator. Without it a follower on a JetStream deployment
+    /// answered from whatever it happened to have seen directly — which for a
+    /// coordinator that just started is nothing at all.
+    #[cfg(feature = "jetstream-control-plane")]
+    pub async fn sync_from_control_plane(&mut self) {
+        let Some(ref applier) = self.control_plane else {
+            return;
+        };
+        let snapshot = match applier.control_plane().snapshot().await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "control-plane snapshot failed; keeping local state");
+                return;
+            }
+        };
+        let state = crate::jetstream_control_plane::materialize(&snapshot);
+        self.sync_from_control_state(&state);
+    }
+
     /// Update the HA role from the control plane's leader lease.
     ///
     /// This is the JetStream counterpart of [`Coordinator::update_raft_role`],

@@ -533,7 +533,26 @@ async fn forward_to_leader(
     let admin_key = coord.raft_handle.as_ref().and_then(|h| h.admin_key.clone());
     drop(coord);
 
-    let url = format!("{}{}", leader_addr, path);
+    forward_request(&client, method, &leader_addr, path, body, admin_key).await
+}
+
+/// Proxy one request to `leader_addr` and hand the response straight back.
+///
+/// Shared by both leadership backends so a follower's forwarding behaves
+/// identically whichever one is in use — status, content type and body are
+/// passed through unchanged, and an unreachable leader becomes `NotLeader`
+/// rather than a 500, because retrying against whoever holds the lease next is
+/// the right thing for the caller to do.
+#[cfg(any(feature = "raft", feature = "jetstream-control-plane"))]
+async fn forward_request(
+    client: &reqwest::Client,
+    method: &str,
+    leader_addr: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+    admin_key: Option<String>,
+) -> Option<Response> {
+    let url = format!("{leader_addr}{path}");
     let mut req = match method {
         "GET" => client.get(&url),
         "PUT" => client.put(&url),
@@ -562,7 +581,7 @@ async fn forward_to_leader(
             Some((axum_status, [("content-type", content_type)], body_text).into_response())
         }
         Err(e) => {
-            tracing::warn!("Cannot reach Raft leader at {leader_addr}: {e}");
+            tracing::warn!("cannot reach coordinator leader at {leader_addr}: {e}");
             Some(cluster_error_response(ClusterError::NotLeader(format!(
                 "cannot reach leader: {e}"
             ))))
@@ -570,7 +589,43 @@ async fn forward_to_leader(
     }
 }
 
-#[cfg(not(feature = "raft"))]
+/// Control-plane follower forwarding.
+///
+/// Until this existed, the non-Raft build returned `None` unconditionally —
+/// "this node is the leader, carry on". On a JetStream deployment that meant a
+/// follower handled the write itself. Once the lease decided who writes, the
+/// same request instead came back `NotLeader`, correct but a downgrade from
+/// Raft mode, where the follower forwarded transparently and the caller never
+/// had to know the topology.
+#[cfg(all(not(feature = "raft"), feature = "jetstream-control-plane"))]
+async fn forward_to_leader(
+    coordinator: &SharedCoordinator,
+    method: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> Option<Response> {
+    let coord = coordinator.read().await;
+    coord.leader_lease.as_ref()?;
+    if coord.ha_role.is_writer() {
+        return None;
+    }
+    let leader_addr = match coord.control_plane_leader_addr().await {
+        Some(addr) => addr,
+        None => {
+            // Nobody holds the lease, or the holder published no address.
+            // Refusing beats forwarding to a guess.
+            return Some(cluster_error_response(ClusterError::NotLeader(
+                "no coordinator holds the control-plane lease".into(),
+            )));
+        }
+    };
+    let client = coord.http_client.clone();
+    drop(coord);
+
+    forward_request(&client, method, &leader_addr, path, body, None).await
+}
+
+#[cfg(all(not(feature = "raft"), not(feature = "jetstream-control-plane")))]
 async fn forward_to_leader(
     _coordinator: &SharedCoordinator,
     _method: &str,
