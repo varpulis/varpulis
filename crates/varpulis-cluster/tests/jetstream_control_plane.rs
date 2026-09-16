@@ -896,6 +896,117 @@ async fn only_the_lease_holding_coordinator_is_a_writer() {
     }
 }
 
+/// A follower must be able to say *where* the leader is, not just that it is
+/// not itself.
+///
+/// Raft mode forwarded a follower's writes to the leader transparently, by
+/// resolving a `NodeId` through the peer-address map built from
+/// `--raft-peers`. The control plane has no such map, so the leader publishes
+/// its own reachable URL in the lease record; without that a follower can only
+/// refuse, which is correct but strictly worse than what Raft did.
+#[tokio::test]
+async fn a_follower_learns_where_to_forward_and_an_old_record_degrades_safely() {
+    const TEST: &str = "a_follower_learns_where_to_forward_and_an_old_record_degrades_safely";
+    let Some(cp) = open("forwardaddr").await else {
+        return;
+    };
+    cp.delete(&ControlKey::Leader).await.ok();
+
+    let ttl = Duration::from_secs(30);
+    let mut leader =
+        LeaderLease::new(cp.clone(), "coord-a", ttl).with_address("http://coord-a:8080");
+    let follower = LeaderLease::new(cp.clone(), "coord-b", ttl);
+
+    assert_eq!(leader.tick().await, LeaderState::Leader);
+    assert_eq!(
+        follower.current_leader_address().await,
+        Some("http://coord-a:8080".to_string()),
+        "{TEST}: the follower must read the holder's address out of the record"
+    );
+
+    // The same, through the coordinator, which is what `forward_to_leader` calls.
+    let mut b = coordinator_on(&cp);
+    b.leader_lease = Some(LeaderLease::new(cp.clone(), "coord-b", ttl));
+    b.update_control_plane_role().await;
+    assert!(
+        b.require_writer().is_err(),
+        "{TEST}: coord-b is a follower here"
+    );
+    assert_eq!(
+        b.control_plane_leader_addr().await,
+        Some("http://coord-a:8080".to_string()),
+        "{TEST}: a follower coordinator must resolve the leader's address"
+    );
+
+    // A record minted by a build that did not publish one — a bucket outlives
+    // a rolling upgrade — must read as "no address", so the caller refuses
+    // rather than forwarding to an empty URL.
+    let held = leader.revision().expect("leader holds a revision");
+    cp.write(
+        &ControlKey::Leader,
+        &serde_json::json!({ "id": "coord-a", "term": 9 }),
+        Expect::Revision(held),
+    )
+    .await
+    .expect("overwriting with a legacy-shaped record must succeed");
+    assert_eq!(
+        b.control_plane_leader_addr().await,
+        None,
+        "{TEST}: an address-less record must not produce a forwarding target"
+    );
+
+    cp.delete(&ControlKey::Leader).await.ok();
+}
+
+/// Every coordinator, follower included, must serve state it read from the
+/// bucket rather than only what it happened to see directly.
+///
+/// `sync_from_raft` did this for Raft on every sweep, on every node. The
+/// control-plane build had no counterpart, so a coordinator that had just
+/// started answered read-only API calls out of an empty map.
+#[tokio::test]
+async fn a_coordinator_materialises_cluster_state_from_the_bucket() {
+    const TEST: &str = "a_coordinator_materialises_cluster_state_from_the_bucket";
+    let Some(cp) = open("materialise").await else {
+        return;
+    };
+    cp.delete(&ControlKey::Worker("w-elsewhere".into()))
+        .await
+        .ok();
+
+    // A worker registered against some *other* coordinator.
+    cp.write(
+        &ControlKey::Worker("w-elsewhere".into()),
+        &worker("w-elsewhere", &["p-a", "p-b"]),
+        Expect::Absent,
+    )
+    .await
+    .expect("seeding the worker must succeed");
+
+    // This coordinator has never heard of it.
+    let mut c = coordinator_on(&cp);
+    assert!(
+        c.workers.is_empty(),
+        "{TEST}: a fresh coordinator starts knowing nothing"
+    );
+
+    c.sync_from_control_plane().await;
+
+    let w = c
+        .workers
+        .get(&varpulis_cluster::WorkerId("w-elsewhere".into()))
+        .unwrap_or_else(|| panic!("{TEST}: the worker must appear after materialising"));
+    assert_eq!(
+        w.assigned_pipelines,
+        vec!["p-a".to_string(), "p-b".to_string()],
+        "{TEST}: and with the pipelines the bucket says it runs"
+    );
+
+    cp.delete(&ControlKey::Worker("w-elsewhere".into()))
+        .await
+        .ok();
+}
+
 /// A migration abandoned mid-flight must be finishable by another coordinator.
 ///
 /// The old path ran the whole migration inside one HTTP request —

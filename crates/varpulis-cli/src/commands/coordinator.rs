@@ -219,6 +219,27 @@ pub async fn run_coordinator(
         format!("{host}:{port}")
     });
 
+    // Base URL a follower forwards writes to. `bind` is frequently 0.0.0.0,
+    // which is a listen address and not a destination, so it is replaced by a
+    // name peers can actually resolve. `VARPULIS_COORDINATOR_ADVERTISE_ADDR`
+    // wins outright, for a deployment behind a service name or an ingress that
+    // the process cannot infer.
+    #[cfg(feature = "jetstream-control-plane")]
+    let coordinator_advertise_addr =
+        std::env::var(varpulis_cluster::jetstream_control_plane::ENV_ADVERTISE_ADDR)
+            .ok()
+            .filter(|a| !a.is_empty())
+            .unwrap_or_else(|| {
+                let host = match bind {
+                    "0.0.0.0" | "::" | "[::]" | "" => std::env::var("HOSTNAME")
+                        .ok()
+                        .filter(|h| !h.is_empty())
+                        .unwrap_or_else(|| "127.0.0.1".to_string()),
+                    other => other.to_string(),
+                };
+                format!("{http_protocol}://{host}:{port}")
+            });
+
     // Build rate limiter for API routes
     let coordinator_rate_limiter = if rate_limit_rps > 0 {
         println!("Rate limit: {rate_limit_rps} req/s per client (mutating endpoints)");
@@ -420,11 +441,11 @@ pub async fn run_coordinator(
                         );
                     }
                     println!("Leader:    lease on 'control/leader' as '{coordinator_identity}'");
-                    coord.leader_lease = Some(LeaderLease::new(
-                        cp.clone(),
-                        coordinator_identity.clone(),
-                        cfg.ttl,
-                    ));
+                    println!("Forward:   followers forward writes to {coordinator_advertise_addr}");
+                    coord.leader_lease = Some(
+                        LeaderLease::new(cp.clone(), coordinator_identity.clone(), cfg.ttl)
+                            .with_address(coordinator_advertise_addr.clone()),
+                    );
                     coord.control_plane = Some(Applier::new(cp));
                 }
                 Err(e) => {
@@ -460,6 +481,14 @@ pub async fn run_coordinator(
             // Update Raft role if enabled
             #[cfg(feature = "raft")]
             coord.update_raft_role();
+
+            // Materialise state from the control-plane bucket on EVERY
+            // coordinator, exactly as `sync_from_raft` below does for Raft:
+            // a follower answers read-only API calls out of this, and the
+            // leader uses it to refresh heartbeat timestamps for workers
+            // connected to a different coordinator.
+            #[cfg(feature = "jetstream-control-plane")]
+            coord.sync_from_control_plane().await;
 
             // Update Raft Prometheus metrics
             #[cfg(feature = "raft")]
