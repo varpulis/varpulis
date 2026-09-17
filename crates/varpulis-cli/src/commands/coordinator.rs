@@ -349,13 +349,36 @@ pub async fn run_coordinator(
             use varpulis_cluster::jetstream_control_plane::{Applier, ControlPlane, LeaderLease};
             match ControlPlane::connect(&cfg).await {
                 Ok(cp) => {
-                    let replicas = cp.replicas().await.unwrap_or(cfg.num_replicas);
-                    if replicas < 3 {
+                    // The count the broker reports, not the one that was asked
+                    // for: binding to a pre-existing bucket keeps its own
+                    // configuration and ignores `num_replicas` silently. A
+                    // coordinator that cannot read it back is in no position
+                    // to claim the state is durable, so an unreadable status
+                    // is treated as the undurable case rather than waved
+                    // through with the requested number.
+                    let replicas = match cp.replicas().await {
+                        Ok(n) => n,
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "the control plane opened but its bucket status could not be \
+                                 read ({e}), so there is no way to tell whether the cluster's \
+                                 control state is replicated. Refusing to start on an unknown \
+                                 durability."
+                            ));
+                        }
+                    };
+                    if let Err(why) = varpulis_cluster::jetstream_control_plane::check_durable(
+                        replicas,
+                        cp.bucket(),
+                    ) {
+                        return Err(anyhow::anyhow!(why));
+                    }
+                    if replicas < varpulis_cluster::jetstream_control_plane::MIN_DURABLE_REPLICAS {
                         eprintln!(
-                            "WARNING: the control-plane bucket has {replicas} replica(s). \
-                             It is the only copy of the cluster's control state; a \
-                             deployment replacing Raft with it should set \
-                             VARPULIS_CONTROL_PLANE_REPLICAS=3 against a NATS cluster."
+                            "WARNING: running on {replicas} control-plane replica(s) because \
+                             {} is set. Losing that broker loses the worker registry, the \
+                             pipeline placements and the leader lease. Development only.",
+                            varpulis_cluster::jetstream_control_plane::ENV_ALLOW_SINGLE_REPLICA
                         );
                     }
                     println!(

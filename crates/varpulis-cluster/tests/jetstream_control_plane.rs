@@ -25,6 +25,14 @@
 //! No mocking, and no abstaining-as-passing: with `VARPULIS_REQUIRE_BROKERS=1`
 //! an unreachable broker is a hard failure. Without it the abstention is
 //! reported loudly on stderr and in the GitHub job summary.
+//!
+//! **Purge between sessions.** Every test creates its own bucket and none
+//! deletes it, so a cluster kept up across a working session accumulates
+//! them — a few hundred replicated KV streams make a three-node JetStream
+//! slow and then unreliable, and the suite starts failing in ways that look
+//! like flaky tests and are not. `scripts/nats-cluster.sh purge` drops them;
+//! `stop` then `start` is cheaper still, because it wipes the store. CI is
+//! unaffected: it builds the cluster fresh for every run.
 #![cfg(feature = "jetstream-control-plane")]
 
 use std::time::Duration;

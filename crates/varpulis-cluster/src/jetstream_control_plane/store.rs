@@ -37,6 +37,74 @@ pub const ENV_TTL_SECS: &str = "VARPULIS_CONTROL_PLANE_TTL_SECS";
 /// configured the documented way got one replica and no way to ask for more.
 pub const ENV_REPLICAS: &str = "VARPULIS_CONTROL_PLANE_REPLICAS";
 
+/// Escape hatch for running the control plane on a bucket that cannot survive
+/// losing a broker. Development and CI only.
+///
+/// It exists because the alternative is worse: without it, every local run and
+/// every chaos job would need a three-node cluster, and the pressure would be
+/// to weaken the check instead. With it, an operator who sets it has said so
+/// explicitly and the coordinator says so on every startup.
+pub const ENV_ALLOW_SINGLE_REPLICA: &str = "VARPULIS_CONTROL_PLANE_ALLOW_SINGLE_REPLICA";
+
+/// Fewest replicas that can lose a broker and still hold the control state.
+///
+/// Three, for the same reason Raft wanted three: the bucket is now the only
+/// copy of the worker registry, the pipeline placements and the leader lease,
+/// and on one broker a disk failure loses the cluster's idea of itself. Two is
+/// not enough either — JetStream needs a majority to accept a write, so a
+/// two-replica bucket stops accepting writes the moment one node goes.
+pub const MIN_DURABLE_REPLICAS: usize = 3;
+
+/// Whether a bucket with `observed` replicas may hold the control state.
+///
+/// Called at startup with the count read back from the broker, not the one
+/// that was requested: binding to a pre-existing bucket ignores
+/// `num_replicas` entirely, so a coordinator can ask for three and be running
+/// on one without anything saying so.
+///
+/// `Err` carries the message the coordinator prints before refusing to start.
+/// It used to be a warning; a warning on a single point of failure is a note
+/// that the cluster will lose its control state, filed where nobody reads it.
+pub fn check_durable(observed: usize, bucket: &str) -> std::result::Result<(), String> {
+    check_durable_with(
+        observed,
+        bucket,
+        std::env::var_os(ENV_ALLOW_SINGLE_REPLICA).is_some(),
+    )
+}
+
+/// [`check_durable`] with the escape hatch passed in rather than read.
+///
+/// The policy is the part worth testing, and a test that sets a process-wide
+/// environment variable to reach it is a test that fights every other test in
+/// the binary.
+pub(crate) fn check_durable_with(
+    observed: usize,
+    bucket: &str,
+    allow_single: bool,
+) -> std::result::Result<(), String> {
+    if observed >= MIN_DURABLE_REPLICAS {
+        return Ok(());
+    }
+    if allow_single {
+        return Ok(());
+    }
+    Err(format!(
+        "the control-plane bucket '{bucket}' has {observed} replica(s), and it is the only \
+         copy of this cluster's control state — the worker registry, the pipeline \
+         placements and the leader lease. Losing that broker loses all of it, which is \
+         exactly what the Raft group it replaced was there to prevent.\n\
+         \n\
+         Point {ENV_URL} at a NATS cluster of at least {MIN_DURABLE_REPLICAS} nodes and set \
+         {ENV_REPLICAS}={MIN_DURABLE_REPLICAS}. If the bucket already exists with fewer \
+         replicas, JetStream keeps its existing configuration and ignores what you ask for: \
+         delete it, or edit it with `nats kv edit --replicas={MIN_DURABLE_REPLICAS} {bucket}`.\n\
+         \n\
+         For a laptop or a CI job, set {ENV_ALLOW_SINGLE_REPLICA}=1 — which says you accept \
+         losing the control state when that one broker goes."
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -242,11 +310,47 @@ pub struct ControlPlane {
 
 impl ControlPlane {
     /// Connect to NATS and open (creating if absent) the control bucket.
+    ///
+    /// The URL may name several servers, comma-separated, which is how every
+    /// NATS tool addresses a cluster — and a cluster is now required, so this
+    /// is the ordinary case rather than an exotic one. `async_nats`'s
+    /// `ToServerAddrs for str` parses exactly one address and fails on a list,
+    /// so the split happens here; connecting to any one node would work too
+    /// via server gossip, but only while that particular node is up when the
+    /// coordinator starts.
     pub async fn connect(cfg: &ControlPlaneConfig) -> Result<Self> {
-        let client = async_nats::connect(&cfg.url)
+        let addrs = Self::server_addrs(&cfg.url)?;
+        let client = async_nats::connect(addrs)
             .await
             .map_err(|e| ControlPlaneError::transport("connect", e))?;
         Self::open(async_nats::jetstream::new(client), cfg).await
+    }
+
+    /// Parse a one-or-many NATS URL into addresses.
+    pub(crate) fn server_addrs(url: &str) -> Result<Vec<async_nats::ServerAddr>> {
+        let mut addrs = Vec::new();
+        for part in url.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            let addr = part.parse::<async_nats::ServerAddr>().map_err(|e| {
+                ControlPlaneError::transport(
+                    "connect",
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("'{part}' is not a NATS server address: {e}"),
+                    ),
+                )
+            })?;
+            addrs.push(addr);
+        }
+        if addrs.is_empty() {
+            return Err(ControlPlaneError::transport(
+                "connect",
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("{ENV_URL} is set but names no server"),
+                ),
+            ));
+        }
+        Ok(addrs)
     }
 
     /// Open (creating if absent) the control bucket on an existing JetStream
@@ -615,6 +719,80 @@ mod tests {
         assert_eq!(cfg.bucket, "CUSTOM_BUCKET");
         assert_eq!(cfg.ttl, Duration::from_secs(90));
         assert_eq!(cfg.num_replicas, 3, "replication must be settable");
+    }
+
+    /// A cluster is addressed by a list, and that is now the ordinary case.
+    ///
+    /// `async_nats`'s `ToServerAddrs for str` parses exactly one address, so
+    /// passing the URL straight through turned a perfectly idiomatic
+    /// `nats://a:4222,nats://b:4222` into an opaque parse failure — at the
+    /// moment the coordinator is being told to use a cluster.
+    #[test]
+    fn a_comma_separated_url_addresses_every_node() {
+        let addrs =
+            ControlPlane::server_addrs("nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222")
+                .expect("a cluster list must parse");
+        assert_eq!(addrs.len(), 3);
+
+        // Whitespace around the commas is what a YAML file produces.
+        let spaced = ControlPlane::server_addrs(" nats://a:4222 , nats://b:4222 ")
+            .expect("spacing must not matter");
+        assert_eq!(spaced.len(), 2);
+
+        // One server still works — a laptop, or a cluster reached by gossip.
+        assert_eq!(
+            ControlPlane::server_addrs("nats://127.0.0.1:4222")
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // And a list of nothing is refused rather than connected to nowhere.
+        assert!(ControlPlane::server_addrs(" , ").is_err());
+        assert!(ControlPlane::server_addrs("not a url").is_err());
+    }
+
+    /// A bucket that cannot lose a broker must stop the coordinator, not warn
+    /// it.
+    ///
+    /// This was a `WARNING:` on stderr for exactly as long as the control
+    /// plane has existed. A warning on a single point of failure is a note
+    /// that the cluster will lose its control state, filed where nobody reads
+    /// it — and the control state is the worker registry, the pipeline
+    /// placements and the leader lease.
+    #[test]
+    fn a_bucket_that_cannot_lose_a_broker_is_refused() {
+        for n in [0, 1, 2] {
+            let err = check_durable_with(n, "VARPULIS_CONTROL", false)
+                .expect_err("{n} replica(s) must be refused");
+            assert!(
+                err.contains(ENV_URL) && err.contains(ENV_REPLICAS),
+                "the refusal must say how to fix it, got: {err}"
+            );
+            assert!(
+                err.contains("nats kv edit"),
+                "and must cover the pre-existing-bucket case, which silently \
+                 ignores the requested replica count, got: {err}"
+            );
+        }
+        // Two is not a near miss: JetStream needs a majority to accept a
+        // write, so a two-replica bucket stops taking writes when one node
+        // goes. It is refused for the same reason as one.
+        assert!(check_durable_with(2, "B", false).is_err());
+        assert!(check_durable_with(MIN_DURABLE_REPLICAS, "B", false).is_ok());
+        assert!(check_durable_with(5, "B", false).is_ok());
+    }
+
+    /// The escape hatch has to work, or every local run and every CI job needs
+    /// a three-node cluster and the pressure goes on weakening the check.
+    #[test]
+    fn the_escape_hatch_permits_a_single_replica_and_only_that() {
+        assert!(check_durable_with(1, "B", true).is_ok());
+        assert!(check_durable_with(0, "B", true).is_ok());
+        // And it is named in the refusal, so an operator hitting the wall on a
+        // laptop is told the way out rather than left to find it.
+        let err = check_durable_with(1, "B", false).unwrap_err();
+        assert!(err.contains(ENV_ALLOW_SINGLE_REPLICA), "got: {err}");
     }
 
     /// JetStream rejects 0 replicas and caps a stream at 5. Clamping keeps a

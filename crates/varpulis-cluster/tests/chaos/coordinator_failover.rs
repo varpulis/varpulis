@@ -214,6 +214,14 @@ impl MultiCoordinatorCluster {
                     &HEARTBEAT_INTERVAL_SECS.to_string(),
                 ])
                 .env("VARPULIS_CONTROL_PLANE_URL", nats_url())
+                // This harness runs against one `-js` broker, and the
+                // coordinator now refuses to start on a bucket that cannot
+                // lose one. That refusal is right for a deployment and wrong
+                // here: the property under test is leadership failover
+                // between coordinators, not bucket durability, and a
+                // three-node NATS cluster would make this job slower without
+                // testing anything more.
+                .env("VARPULIS_CONTROL_PLANE_ALLOW_SINGLE_REPLICA", "1")
                 .env("VARPULIS_CONTROL_PLANE_BUCKET", &bucket)
                 .env(
                     "VARPULIS_CONTROL_PLANE_TTL_SECS",

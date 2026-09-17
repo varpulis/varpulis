@@ -63,7 +63,7 @@ log directory: each coordinator only needs to know the broker and its own
 reachable address.
 
 ```bash
-VARPULIS_CONTROL_PLANE_URL=nats://nats-1:4222 \
+VARPULIS_CONTROL_PLANE_URL=nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222 \
 VARPULIS_CONTROL_PLANE_REPLICAS=3 \
 VARPULIS_COORDINATOR_ADVERTISE_ADDR=http://coord-1:9100 \
 varpulis coordinator \
@@ -76,9 +76,25 @@ varpulis coordinator \
 Run the same command on each node, changing only `--coordinator-id` and
 `VARPULIS_COORDINATOR_ADVERTISE_ADDR`.
 
-- **`VARPULIS_CONTROL_PLANE_REPLICAS=3`** against a NATS *cluster*. The bucket
-  is the only copy of the control state; on a single broker it is a single
-  point of failure in a way a three-node Raft group was not.
+- **A NATS cluster of at least three nodes is required, and enforced.** The
+  coordinator reads the bucket's replica count back from the broker at
+  startup and *refuses to start* below three. This used to be a warning on
+  stderr, which is a note that the cluster will lose its control state filed
+  where nobody reads it. The bucket is the only copy of the worker registry,
+  the pipeline placements and the leader lease.
+
+  `VARPULIS_CONTROL_PLANE_URL` takes the whole cluster, comma-separated, so a
+  coordinator can start while any one node is down.
+
+  If the bucket already exists with fewer replicas, JetStream keeps its
+  existing configuration and ignores `VARPULIS_CONTROL_PLANE_REPLICAS`
+  silently — which is why the check reads the broker rather than the config.
+  Fix it with `nats kv edit --replicas=3 VARPULIS_CONTROL`, or delete the
+  bucket and let the coordinator recreate it.
+
+  For a laptop or a CI job, `VARPULIS_CONTROL_PLANE_ALLOW_SINGLE_REPLICA=1`
+  permits one replica and says so on every startup. A deployment must not set
+  it.
 - **`--coordinator-id`** must be stable across a restart and distinct between
   peers. Two coordinators sharing an id would each accept the other's lease
   renewal as its own. It defaults to `$HOSTNAME:$port`, which is already right

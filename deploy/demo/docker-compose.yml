@@ -121,24 +121,37 @@ services:
     networks:
       - varpulis-demo
 
-  # ─── NATS + JetStream (coordinator control plane) ─────────
+  # ─── NATS JetStream cluster (coordinator control plane) ───
   #
   # This is the coordinators' consensus. Leadership is a lease on one KV key
   # and every replicated write is a compare-and-swap, which is what replaced
   # the three-node Raft group the coordinators used to form among themselves.
   #
-  # One broker here means one copy of the control state: adequate for a demo,
-  # and a single point of failure in a way a three-node Raft group was not.
-  # A production deployment runs a NATS cluster and sets
-  # VARPULIS_CONTROL_PLANE_REPLICAS=3.
-  nats:
+  # Three nodes, not one. The bucket is now the ONLY copy of the control state
+  # — the worker registry, the pipeline placements, the leader lease — so a
+  # single broker would be a point of failure that the Raft group it replaced
+  # was not. The coordinator refuses to start on a bucket with fewer than three
+  # replicas for exactly that reason; the escape hatch exists for laptops and
+  # CI, and a deployment must not use it.
+  #
+  # `-js` enables JetStream, `-sd` gives it a durable store, and the three
+  # route to each other by container name so a restart keeps the quorum.
+  nats-1: &nats-node
     image: nats:2.10-alpine
-    container_name: demo-nats
-    command: ["-js", "-sd", "/data"]
+    container_name: demo-nats-1
+    command:
+      - "-js"
+      - "-sd"
+      - "/data"
+      - "--server_name=n1"
+      - "--cluster_name=varpulis-demo"
+      - "--cluster=nats://0.0.0.0:6222"
+      - "--routes=nats://nats-1:6222,nats://nats-2:6222,nats://nats-3:6222"
     expose:
       - "4222"
+      - "6222"
     volumes:
-      - nats-data:/data
+      - nats1-data:/data
     healthcheck:
       test: ["CMD", "nats-server", "--help"]
       interval: 10s
@@ -148,6 +161,34 @@ services:
     restart: unless-stopped
     networks:
       - varpulis-demo
+
+  nats-2:
+    <<: *nats-node
+    container_name: demo-nats-2
+    command:
+      - "-js"
+      - "-sd"
+      - "/data"
+      - "--server_name=n2"
+      - "--cluster_name=varpulis-demo"
+      - "--cluster=nats://0.0.0.0:6222"
+      - "--routes=nats://nats-1:6222,nats://nats-2:6222,nats://nats-3:6222"
+    volumes:
+      - nats2-data:/data
+
+  nats-3:
+    <<: *nats-node
+    container_name: demo-nats-3
+    command:
+      - "-js"
+      - "-sd"
+      - "/data"
+      - "--server_name=n3"
+      - "--cluster_name=varpulis-demo"
+      - "--cluster=nats://0.0.0.0:6222"
+      - "--routes=nats://nats-1:6222,nats://nats-2:6222,nats://nats-3:6222"
+    volumes:
+      - nats3-data:/data
 
   # ─── Coordinator 1 ──────────────────────────
   coordinator-1:
@@ -175,8 +216,8 @@ services:
       # key and every replicated write is a compare-and-swap. Three replicas
       # so the bucket survives losing a broker, which is what the Raft group
       # it replaced was there for.
-      - VARPULIS_CONTROL_PLANE_URL=nats://nats:4222
-      - VARPULIS_CONTROL_PLANE_REPLICAS=1
+      - VARPULIS_CONTROL_PLANE_URL=nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      - VARPULIS_CONTROL_PLANE_REPLICAS=3
       - VARPULIS_LLM_ENDPOINT=${VARPULIS_LLM_ENDPOINT:-http://ollama:11434/v1}
       - VARPULIS_LLM_MODEL=${VARPULIS_LLM_MODEL:-qwen2.5:7b}
       - VARPULIS_LLM_API_KEY=${VARPULIS_LLM_API_KEY:-}
@@ -193,7 +234,11 @@ services:
       - FRONTEND_URL=${FRONTEND_URL:-https://demo.varpulis-cep.com}
       - SERVER_URL=${SERVER_URL:-https://demo.varpulis-cep.com}
     depends_on:
-      nats:
+      nats-1:
+        condition: service_started
+      nats-2:
+        condition: service_started
+      nats-3:
         condition: service_started
     volumes:
       - coord1-data:/app/state
@@ -233,8 +278,8 @@ services:
       # key and every replicated write is a compare-and-swap. Three replicas
       # so the bucket survives losing a broker, which is what the Raft group
       # it replaced was there for.
-      - VARPULIS_CONTROL_PLANE_URL=nats://nats:4222
-      - VARPULIS_CONTROL_PLANE_REPLICAS=1
+      - VARPULIS_CONTROL_PLANE_URL=nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      - VARPULIS_CONTROL_PLANE_REPLICAS=3
       - VARPULIS_LLM_ENDPOINT=${VARPULIS_LLM_ENDPOINT:-http://ollama:11434/v1}
       - VARPULIS_LLM_MODEL=${VARPULIS_LLM_MODEL:-qwen2.5:7b}
       - VARPULIS_LLM_API_KEY=${VARPULIS_LLM_API_KEY:-}
@@ -251,7 +296,11 @@ services:
       - FRONTEND_URL=${FRONTEND_URL:-https://demo.varpulis-cep.com}
       - SERVER_URL=${SERVER_URL:-https://demo.varpulis-cep.com}
     depends_on:
-      nats:
+      nats-1:
+        condition: service_started
+      nats-2:
+        condition: service_started
+      nats-3:
         condition: service_started
     volumes:
       - coord2-data:/app/state
@@ -291,8 +340,8 @@ services:
       # key and every replicated write is a compare-and-swap. Three replicas
       # so the bucket survives losing a broker, which is what the Raft group
       # it replaced was there for.
-      - VARPULIS_CONTROL_PLANE_URL=nats://nats:4222
-      - VARPULIS_CONTROL_PLANE_REPLICAS=1
+      - VARPULIS_CONTROL_PLANE_URL=nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+      - VARPULIS_CONTROL_PLANE_REPLICAS=3
       - VARPULIS_LLM_ENDPOINT=${VARPULIS_LLM_ENDPOINT:-http://ollama:11434/v1}
       - VARPULIS_LLM_MODEL=${VARPULIS_LLM_MODEL:-qwen2.5:7b}
       - VARPULIS_LLM_API_KEY=${VARPULIS_LLM_API_KEY:-}
@@ -309,7 +358,11 @@ services:
       - FRONTEND_URL=${FRONTEND_URL:-https://demo.varpulis-cep.com}
       - SERVER_URL=${SERVER_URL:-https://demo.varpulis-cep.com}
     depends_on:
-      nats:
+      nats-1:
+        condition: service_started
+      nats-2:
+        condition: service_started
+      nats-3:
         condition: service_started
     volumes:
       - coord3-data:/app/state
@@ -688,7 +741,9 @@ services:
 volumes:
   caddy-data:
   caddy-config:
-  nats-data:
+  nats1-data:
+  nats2-data:
+  nats3-data:
   coord1-data:
   coord2-data:
   coord3-data:

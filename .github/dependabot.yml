@@ -23,6 +23,19 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    ignore:
+      # `dtolnay/rust-toolchain@1.93` is not an action version — that action
+      # uses its git tag to name the *Rust toolchain* to install, and 1.93 is
+      # this project's MSRV. Dependabot reads it as a version and proposes
+      # bumping it (it offered 1.120), which would leave the MSRV job
+      # installing some other Rust and still reporting green: the gate would
+      # stop testing the thing it exists to test, silently.
+      #
+      # Every other use of this action in the workflows is `@stable` or
+      # `@nightly`, which dependabot leaves alone. Raising the MSRV is a
+      # deliberate edit to this pin and to `rust-version` in the manifests,
+      # not a dependency update.
+      - dependency-name: "dtolnay/rust-toolchain"
 
   - package-ecosystem: npm
     directory: /web-ui
