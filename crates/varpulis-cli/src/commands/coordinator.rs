@@ -189,9 +189,10 @@ pub async fn run_coordinator(
     if std::env::var("VARPULIS_CONTROL_PLANE_URL").is_ok_and(|u| !u.is_empty()) {
         anyhow::bail!(
             "VARPULIS_CONTROL_PLANE_URL is set but this binary was built without \
-             the `jetstream-control-plane` feature, so coordination would \
-             silently stay on Raft or standalone. Rebuild with \
-             `--features jetstream-control-plane`, or unset the variable."
+             the `jetstream-control-plane` feature, so this coordinator would \
+             silently run standalone while believing it is in a cluster. \
+             Rebuild with `--features jetstream-control-plane`, or unset the \
+             variable."
         );
     }
     if let Some(ref sp) = scaling_policy {
@@ -411,9 +412,8 @@ pub async fn run_coordinator(
             interval.tick().await;
             let mut coord = health_coordinator.write().await;
 
-            // Decide who writes. Exactly one of these is configured: the
-            // control plane's lease when VARPULIS_CONTROL_PLANE_URL selected
-            // it, Raft's metrics when the raft feature is on, and neither in
+            // Decide who writes: the control plane's lease when
+            // VARPULIS_CONTROL_PLANE_URL selected one, and nothing at all in
             // standalone mode — where `ha_role` stays `Standalone` and this
             // single coordinator is correctly the writer.
             #[cfg(feature = "jetstream-control-plane")]

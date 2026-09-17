@@ -264,19 +264,14 @@ impl Coordinator {
 
     /// Replicate a control-plane command.
     ///
-    /// One destination, chosen once:
-    ///
-    /// * the JetStream KV control plane, when `VARPULIS_CONTROL_PLANE_URL`
-    ///   configured one, or
-    /// * Raft, when it is enabled, or
-    /// * nowhere, in standalone mode, where the local state is the only copy.
-    ///
-    /// Never both. Two copies of the control state that drift apart are worse
-    /// than either alone, and nothing reconciles them.
+    /// One destination, chosen once: the JetStream KV control plane when
+    /// `VARPULIS_CONTROL_PLANE_URL` configured one, and nowhere in standalone
+    /// mode, where the local state is the only copy.
     ///
     /// Every replicated write in the cluster goes through here. It used to be
-    /// bypassed by fifteen direct `handle.raft.client_write(...)` calls in
-    /// `api.rs`, which is why the backend could not be swapped in one place.
+    /// bypassed by sixteen direct `raft.client_write(...)` calls, which is why
+    /// the backend could not be swapped in one place — and why removing Raft
+    /// had to route them all through one function first.
     #[tracing::instrument(skip(self))]
     pub async fn replicate(
         &self,
@@ -298,9 +293,11 @@ impl Coordinator {
 
     /// Merge a materialised control-plane state value into local state.
     ///
-    /// [`Coordinator::sync_from_control_plane`] produces the value from a
+    /// `Coordinator::sync_from_control_plane` produces the value from a
     /// bucket snapshot (`jetstream_control_plane::materialize`) and calls
-    /// this. It is kept separate so the merge can be tested against a state
+    /// this. (A plain span, not a link: that method is behind
+    /// `jetstream-control-plane`, and the doc build runs on default features,
+    /// where a link to it cannot resolve.) It is kept separate so the merge can be tested against a state
     /// value without a broker, and so a future backend feeds the coordinator
     /// through exactly one function rather than forking the merge.
     pub fn sync_from_control_state(&mut self, state: &crate::control_state::CoordinatorState) {
@@ -440,8 +437,8 @@ impl Coordinator {
     /// observed evidence, fences the source at cut-over, and fails the record
     /// on its deadline rather than letting it pin the pipeline forever.
     ///
-    /// A no-op when no control plane is configured — on Raft or standalone
-    /// the behaviour is unchanged.
+    /// A no-op in standalone mode, where there is no control plane to record
+    /// it in and no second coordinator to hand it to.
     #[cfg(feature = "jetstream-control-plane")]
     pub async fn record_migration_started(
         &self,
