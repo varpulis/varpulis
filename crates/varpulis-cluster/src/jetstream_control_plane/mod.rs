@@ -243,6 +243,7 @@ pub use reconcile::{
     TickReport, WorkerObservation, DEFAULT_LINGER, DEFAULT_MIGRATION_DEADLINE,
 };
 pub use store::{
-    ControlPlane, ControlPlaneConfig, ControlPlaneError, Expect, Snapshot, Versioned,
-    DEFAULT_BUCKET, ENV_BUCKET, ENV_REPLICAS, ENV_TTL_SECS, ENV_URL,
+    check_durable, ControlPlane, ControlPlaneConfig, ControlPlaneError, Expect, Snapshot,
+    Versioned, DEFAULT_BUCKET, ENV_ALLOW_SINGLE_REPLICA, ENV_BUCKET, ENV_REPLICAS, ENV_TTL_SECS,
+    ENV_URL, MIN_DURABLE_REPLICAS,
 };

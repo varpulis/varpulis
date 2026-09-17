@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The coordinator now refuses to start on a control-plane bucket with fewer
+  than three replicas.** It was a warning on stderr. The bucket is the only
+  copy of the cluster's control state — the worker registry, the pipeline
+  placements, the leader lease — so a single broker is a point of failure the
+  Raft group it replaced was not, and a warning about that is a note filed
+  where nobody reads it.
+
+  The count is read back *from the broker*, not taken from
+  `VARPULIS_CONTROL_PLANE_REPLICAS`: binding to a pre-existing bucket keeps
+  its own configuration and ignores what you asked for, so a coordinator could
+  request three and run on one with nothing saying so. A bucket status that
+  cannot be read is treated as undurable rather than waved through.
+
+  **Operators must act.** Point `VARPULIS_CONTROL_PLANE_URL` at a NATS cluster
+  of at least three nodes and set `VARPULIS_CONTROL_PLANE_REPLICAS=3`; the URL
+  now accepts the whole cluster comma-separated, so a coordinator can start
+  while one node is down. An existing under-replicated bucket needs `nats kv
+  edit --replicas=3`. For a laptop or a CI job,
+  `VARPULIS_CONTROL_PLANE_ALLOW_SINGLE_REPLICA=1` permits one replica and says
+  so on every startup.
+
+  `deploy/demo/docker-compose.yml` now runs a three-node JetStream cluster
+  instead of one broker.
+
 ### Removed
 
 - **Raft.** Coordinator consensus is the JetStream KV control plane:

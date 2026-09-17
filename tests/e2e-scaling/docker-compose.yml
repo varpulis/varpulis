@@ -47,6 +47,11 @@ services:
       retries: 5
     environment:
       - VARPULIS_CONTROL_PLANE_URL=nats://nats:4222
+      # One broker here on purpose: this compose tests horizontal scaling and
+      # coordinator HA, not control-plane durability, and the coordinator
+      # refuses by default to run on a bucket that cannot lose a broker.
+      # A deployment must NOT set this — see deploy/demo for the real shape.
+      - VARPULIS_CONTROL_PLANE_ALLOW_SINGLE_REPLICA=1
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -81,6 +86,11 @@ services:
       retries: 5
     environment:
       - VARPULIS_CONTROL_PLANE_URL=nats://nats:4222
+      # One broker here on purpose: this compose tests horizontal scaling and
+      # coordinator HA, not control-plane durability, and the coordinator
+      # refuses by default to run on a bucket that cannot lose a broker.
+      # A deployment must NOT set this — see deploy/demo for the real shape.
+      - VARPULIS_CONTROL_PLANE_ALLOW_SINGLE_REPLICA=1
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -115,6 +125,11 @@ services:
       retries: 5
     environment:
       - VARPULIS_CONTROL_PLANE_URL=nats://nats:4222
+      # One broker here on purpose: this compose tests horizontal scaling and
+      # coordinator HA, not control-plane durability, and the coordinator
+      # refuses by default to run on a bucket that cannot lose a broker.
+      # A deployment must NOT set this — see deploy/demo for the real shape.
+      - VARPULIS_CONTROL_PLANE_ALLOW_SINGLE_REPLICA=1
     depends_on:
       mosquitto:
         condition: service_healthy
