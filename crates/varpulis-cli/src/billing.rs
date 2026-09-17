@@ -476,7 +476,7 @@ fn signature_timestamp_is_fresh(sig_header: &str, now: i64, tolerance: i64) -> b
 
 /// Verify Stripe webhook signature (HMAC-SHA256).
 fn verify_stripe_signature(payload: &[u8], sig_header: &str, secret: &str) -> bool {
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     use sha2::Sha256;
 
     // Parse signature header: "t=timestamp,v1=signature"
@@ -1272,7 +1272,7 @@ mod tests {
     }
 
     fn stripe_signature(payload: &[u8], secret: &str, timestamp: i64) -> String {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         use sha2::Sha256;
         let signed = format!("{}.{}", timestamp, std::str::from_utf8(payload).unwrap());
         let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
@@ -1579,7 +1579,7 @@ mod tests {
 
     #[test]
     fn test_verify_stripe_signature() {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         use sha2::Sha256;
 
         let secret = "whsec_test123";
