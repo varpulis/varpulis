@@ -147,6 +147,117 @@ stream LateralMovement = SmbConnect as smb
     assert!(late.is_empty(), "three minutes is outside .within(2m)");
 }
 
+const LATERAL_RULE: &str = r#"
+event SmbConnect:
+    host: str
+    target: str
+
+event ServiceStart:
+    host: str
+    image: str
+
+stream LateralMovement = SmbConnect as smb
+    -> ServiceStart where host == smb.target as svc
+    .within(2m)
+    .emit(rule: "lateral_movement", from: smb.host, to: svc.host, image: svc.image)
+"#;
+
+fn smb(i: usize) -> Vec<u8> {
+    format!(
+        r#"{{"event_type":"SmbConnect","@timestamp":"2026-09-21T10:00:00Z","host":"ws-{i}","target":"srv-{i}"}}"#
+    )
+    .into_bytes()
+}
+
+fn service(i: usize, at: &str) -> Vec<u8> {
+    format!(
+        r#"{{"event_type":"ServiceStart","@timestamp":"{at}","host":"srv-{i}","image":"psexesvc.exe"}}"#
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_snapshot_restored_into_a_fresh_program_closes_the_sequences_it_held_open() {
+    let mut before = Program::compile(LATERAL_RULE).unwrap();
+    for i in 0..20 {
+        assert!(before.feed_json("SmbConnect", &smb(i)).unwrap().is_empty());
+    }
+    let bytes = before.snapshot().unwrap();
+    assert!(!bytes.is_empty());
+    drop(before); // the crash
+
+    // Without the snapshot, a fresh program knows nothing of the twenty.
+    let mut naive = Program::compile(LATERAL_RULE).unwrap();
+    let lost: usize = (0..20)
+        .map(|i| {
+            naive
+                .feed_json("ServiceStart", &service(i, "2026-09-21T10:01:00Z"))
+                .unwrap()
+                .len()
+        })
+        .sum();
+    assert_eq!(lost, 0, "a fresh program cannot close what it never opened");
+
+    // With it, every sequence opened before the snapshot closes after it.
+    let mut after = Program::compile(LATERAL_RULE).unwrap();
+    after.restore(&bytes).unwrap();
+    let matched: usize = (0..20)
+        .map(|i| {
+            after
+                .feed_json("ServiceStart", &service(i, "2026-09-21T10:01:00Z"))
+                .unwrap()
+                .len()
+        })
+        .sum();
+    assert_eq!(matched, 20);
+
+    // The deadlines travelled with them: three minutes on, in event time,
+    // the restored sequence is closed, however soon the event arrives.
+    let mut later = Program::compile(LATERAL_RULE).unwrap();
+    later.restore(&bytes).unwrap();
+    let out = later
+        .feed_json("ServiceStart", &service(3, "2026-09-21T10:03:00Z"))
+        .unwrap();
+    assert!(
+        out.is_empty(),
+        ".within(2m) counts from the restored sequence's own start"
+    );
+}
+
+#[test]
+fn taking_a_snapshot_changes_nothing_for_the_program_that_took_it() {
+    let mut program = Program::compile(LATERAL_RULE).unwrap();
+    program.feed_json("SmbConnect", &smb(7)).unwrap();
+    let first: serde_json::Value = serde_json::from_slice(&program.snapshot().unwrap()).unwrap();
+    let second: serde_json::Value = serde_json::from_slice(&program.snapshot().unwrap()).unwrap();
+    assert_eq!(first, second, "a snapshot is a copy, not a move");
+    let out = program
+        .feed_json("ServiceStart", &service(7, "2026-09-21T10:01:00Z"))
+        .unwrap();
+    assert_eq!(
+        out.len(),
+        1,
+        "the sequence is still open in the program that was snapshotted"
+    );
+}
+
+#[test]
+fn restore_refuses_bytes_that_are_not_a_snapshot() {
+    let mut program = Program::compile(LATERAL_RULE).unwrap();
+    assert!(matches!(
+        program.restore(b"not a snapshot"),
+        Err(varpulis_engine::Error::Snapshot(_))
+    ));
+    assert!(matches!(
+        program.restore(b""),
+        Err(varpulis_engine::Error::Snapshot(_))
+    ));
+    assert!(matches!(
+        program.restore(b"{}"),
+        Err(varpulis_engine::Error::Snapshot(_))
+    ));
+}
+
 #[test]
 fn end_of_input_closes_the_last_window() {
     const COUNTS: &str = r"

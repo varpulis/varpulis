@@ -41,7 +41,10 @@
 //!   reported through [`Program::sources`] and [`Program::sinks`] for the
 //!   host to honour. Nothing in this crate opens a socket.
 //! - **State lives in the [`Program`].** Windows, sequences and aggregates are
-//!   in memory; snapshotting them is the host's contract, not this crate's.
+//!   in memory. [`Program::snapshot`] hands them to the host as bytes and
+//!   [`Program::restore`] takes them back; when to take one, where to keep
+//!   it and which position in the input it stands for is the host's
+//!   contract, not this crate's.
 //!
 //! ## The guarantee this crate makes
 //!
@@ -71,6 +74,9 @@ pub enum Error {
     /// A JSON payload could not become an event.
     #[error("event: {0}")]
     Event(String),
+    /// A snapshot could not be taken or put back.
+    #[error("snapshot: {0}")]
+    Snapshot(String),
 }
 
 /// A compiled VPL program with its running state.
@@ -205,6 +211,37 @@ impl Program {
         self.engine.flush_end_of_input_sync()?;
         let out = self.engine.take_collected_outputs();
         Ok(self.route(out))
+    }
+
+    /// The program's state as bytes: open sequences with their event-time
+    /// deadlines, windows, joins, distinct and limit counters, variables and
+    /// the watermark. The host keeps it next to whatever names the position
+    /// in its input — a stream sequence, an offset — and gives it to
+    /// [`Program::restore`] on a `Program` compiled from the same source.
+    ///
+    /// Not in it: trend aggregates (`.trend_aggregate()`) and forecasts
+    /// (`.forecast()`), which start empty after a restore.
+    pub fn snapshot(&self) -> Result<Vec<u8>, Error> {
+        let checkpoint = self.engine.create_checkpoint();
+        varpulis_runtime::codec::serialize(
+            &checkpoint,
+            varpulis_runtime::codec::CheckpointFormat::active(),
+        )
+        .map_err(|e| Error::Snapshot(e.to_string()))
+    }
+
+    /// Put back what [`Program::snapshot`] returned, on a program compiled
+    /// from the same source. The host then resumes its input just after the
+    /// position the snapshot stands for; what it feeds again is judged as if
+    /// for the first time, so a sequence opened before the snapshot closes
+    /// on the event that arrives after the restart.
+    pub fn restore(&mut self, snapshot: &[u8]) -> Result<(), Error> {
+        let checkpoint: varpulis_runtime::persistence::EngineCheckpoint =
+            varpulis_runtime::codec::deserialize(snapshot)
+                .map_err(|e| Error::Snapshot(e.to_string()))?;
+        self.engine
+            .restore_checkpoint(&checkpoint)
+            .map_err(|e| Error::Snapshot(e.to_string()))
     }
 
     fn route(&self, events: Vec<Event>) -> Vec<Emit> {
