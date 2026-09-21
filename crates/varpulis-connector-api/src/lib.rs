@@ -284,6 +284,25 @@ mod tests {
         assert!(payload_max >= string_max);
     }
 
+    /// The `[package.metadata.cargo-semver-checks.lints]` block in Cargo.toml
+    /// allows `struct_missing` and `pub_module_level_const_missing` because
+    /// `decode::EventDecoder` and the `limits` constants moved to
+    /// varpulis-core (#265) and live here as re-exports the tool cannot see
+    /// through. Taken against the 0.11.0 baseline; once the version moves past
+    /// 0.11.x the baseline contains the move and the block must go — an
+    /// exception nobody is reminded to remove is how a gate goes quietly blind.
+    #[test]
+    fn semver_exceptions_expire_with_their_baseline() {
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(
+            version.starts_with("0.11."),
+            "varpulis-connector-api is now {version}, past the 0.11.0 baseline the \
+             cargo-semver-checks lint exceptions were taken against. Delete the \
+             [package.metadata.cargo-semver-checks.lints] block in \
+             crates/varpulis-connector-api/Cargo.toml and this test with it."
+        );
+    }
+
     // ---- JSON Converter tests ----
 
     #[test]
