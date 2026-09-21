@@ -172,6 +172,15 @@ pub struct Coordinator {
     /// same time, against each other.
     #[cfg(feature = "jetstream-control-plane")]
     pub leader_lease: Option<crate::jetstream_control_plane::LeaderLease>,
+    /// Which migrations this coordinator has a deploy in flight for.
+    ///
+    /// Owned here and not by the reconciler, because
+    /// [`Coordinator::reconcile_migrations`] builds a reconciler per sweep:
+    /// a ledger inside it was empty on every sweep, and the throttle on
+    /// re-issued deploys throttled nothing. See
+    /// [`crate::jetstream_control_plane::DeployLedger`].
+    #[cfg(feature = "jetstream-control-plane")]
+    pub deploy_ledger: crate::jetstream_control_plane::DeployLedger,
     /// Prometheus metrics for cluster operations.
     pub cluster_metrics: ClusterPrometheusMetrics,
     /// Model registry (name -> metadata).
@@ -227,6 +236,60 @@ impl HaRole {
     }
 }
 
+/// Deploys a pipeline to a worker over HTTP, for the migration reconciler.
+///
+/// It resolves the target itself, from the control plane rather than from the
+/// coordinator's local map: the whole point is that a coordinator which never
+/// heard of this migration can finish it, and such a coordinator may not have
+/// the target in local state yet. The address and API key come out of the
+/// target's `WorkerRecord`, so the credential never travels through a
+/// `Decision`, a `TickReport` or a log line.
+#[cfg(feature = "jetstream-control-plane")]
+#[derive(Debug, Clone)]
+struct HttpDeployer {
+    cp: crate::jetstream_control_plane::ControlPlane,
+    http: reqwest::Client,
+    connectors: HashMap<String, ClusterConnector>,
+}
+
+#[cfg(feature = "jetstream-control-plane")]
+impl crate::jetstream_control_plane::DeployExecutor for HttpDeployer {
+    async fn deploy(&self, target: &str, pipeline: &str, source: &str) -> Result<(), String> {
+        use crate::jetstream_control_plane::{ControlKey, WorkerRecord};
+
+        let worker = self
+            .cp
+            .get::<WorkerRecord>(&ControlKey::Worker(target.to_string()))
+            .await
+            .map_err(|e| format!("could not read worker '{target}': {e}"))?
+            .ok_or_else(|| format!("worker '{target}' is not in the control plane"))?;
+        let entry = worker.value.entry;
+
+        // Same enrichment the planned path does, so a pipeline deployed by a
+        // survivor is byte-identical to one deployed by its planner.
+        let (enriched, _) = crate::connector_config::inject_connectors(source, &self.connectors);
+
+        let resp = self
+            .http
+            .post(format!("{}/api/v1/pipelines", entry.address))
+            .header("x-api-key", &entry.api_key)
+            .json(&serde_json::json!({ "name": pipeline, "source": enriched }))
+            .send()
+            .await
+            .map_err(|e| format!("deploy to {} failed: {e}", entry.address))?;
+
+        if resp.status().is_success() {
+            return Ok(());
+        }
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        Err(format!(
+            "deploy to {} returned {status}: {body}",
+            entry.address
+        ))
+    }
+}
+
 impl Coordinator {
     pub fn new() -> Self {
         Self {
@@ -254,6 +317,8 @@ impl Coordinator {
             control_plane: None,
             #[cfg(feature = "jetstream-control-plane")]
             leader_lease: None,
+            #[cfg(feature = "jetstream-control-plane")]
+            deploy_ledger: Default::default(),
             cluster_metrics: ClusterPrometheusMetrics::new(),
             model_registry: HashMap::new(),
             llm_config: None,
@@ -481,6 +546,10 @@ impl Coordinator {
             deadline_ms: now_ms.saturating_add(deadline.as_millis() as u64),
             finished_ms: None,
             failure: None,
+            // The one thing a deploy needs that the bucket did not already
+            // hold. With it, a coordinator that inherits this migration can
+            // finish it; without it, it could only observe and fail it.
+            vpl_source: plan.vpl_source.clone(),
         };
 
         cp.write(
@@ -489,12 +558,20 @@ impl Coordinator {
             Expect::Absent,
         )
         .await
-        .map(|_| ())
         .map_err(|e| {
             ClusterError::InvalidOperation(format!(
                 "could not record migration in control plane: {e}"
             ))
-        })
+        })?;
+
+        // This coordinator executes the plan itself, deploy included, inside
+        // the request that called this. Its own sweep runs meanwhile and would
+        // see a `Deploying` record whose target does not yet run the pipeline,
+        // which is exactly the shape the reconciler re-issues a deploy for.
+        // Hold the migration for as long as the executor may take, so the
+        // survivor path and the inline path never both deploy it.
+        self.deploy_ledger.hold(&plan.migration_id, deadline);
+        Ok(())
     }
 
     /// Drive every in-flight migration one step.
@@ -514,7 +591,20 @@ impl Coordinator {
     pub async fn reconcile_migrations(&self) -> Option<crate::jetstream_control_plane::TickReport> {
         let applier = self.control_plane.as_ref()?;
         let reconciler =
-            crate::jetstream_control_plane::Reconciler::new(applier.control_plane().clone());
+            crate::jetstream_control_plane::Reconciler::new(applier.control_plane().clone())
+                // With this attached, a coordinator that inherits a migration
+                // can finish it instead of only watching it reach its
+                // deadline. Everything the deploy needs is in the bucket: the
+                // target's address and key in its worker record, the VPL in
+                // the migration record, the connector parameters in their own.
+                .with_deployer(HttpDeployer {
+                    cp: applier.control_plane().clone(),
+                    http: self.http_client.clone(),
+                    connectors: self.connectors.clone(),
+                })
+                // One ledger per coordinator, shared by every sweep's
+                // reconciler: this is what makes the re-issue throttle real.
+                .with_ledger(self.deploy_ledger.clone());
         match reconciler
             .tick(crate::jetstream_control_plane::now_ms())
             .await

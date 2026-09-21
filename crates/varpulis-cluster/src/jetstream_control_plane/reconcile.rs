@@ -14,7 +14,7 @@
 //! | phase          | advances when                                           | side effect |
 //! |----------------|---------------------------------------------------------|-------------|
 //! | `Checkpointing`| a restore point is resolvable — a durable group checkpoint exists, or the source is observably alive so the executor can checkpoint it over HTTP | — |
-//! | `Deploying`    | the **target** reports the pipeline in `assigned_pipelines` | — |
+//! | `Deploying`    | the **target** reports the pipeline in `assigned_pipelines` | [`Effect::Deploy`] while it does not, at most once per [`Reconciler::DEPLOY_REISSUE_AFTER`] per process |
 //! | `Restoring`    | the executor has acked the state restore (`restored`)    | — |
 //! | `Switching`    | the **source** is observably fenced, or gone             | [`Effect::FenceSource`] while it is not |
 //! | `CleaningUp`   | the source no longer reports the pipeline, or is gone    | — |
@@ -37,6 +37,7 @@
 //! coordinators: the store decides the winner. That single fact is what lets
 //! the rest of the machine be eventually-consistent without being unsafe.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -117,6 +118,21 @@ pub struct MigrationRecord {
     /// Failure detail, when `phase == Failed`.
     #[serde(default)]
     pub failure: Option<String>,
+    /// The pipeline's VPL, so a coordinator that did not plan this migration
+    /// can still deploy it.
+    ///
+    /// The one thing a deploy needs that was not already here. The target's
+    /// address and API key live in its [`WorkerRecord`], the pipeline's name
+    /// is above, and connector parameters are in the bucket too — so with the
+    /// source, a survivor has everything. Without it, an abandoned migration
+    /// could be *observed* and *failed* but never finished, which is where
+    /// this left off.
+    ///
+    /// Empty on a record written before this field existed: `step` then falls
+    /// back to waiting for whoever planned the migration, which is the old
+    /// behaviour rather than a broken deploy.
+    #[serde(default)]
+    pub vpl_source: String,
 }
 
 /// A level-triggered observation of one worker.
@@ -148,11 +164,29 @@ pub struct Evidence {
     pub latest_checkpoint: Option<u64>,
 }
 
-/// A side effect the driver must perform. Every one is idempotent.
+/// A side effect the driver must perform.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     /// Revoke the source worker's grant, CASing at the revision just observed.
+    ///
+    /// Idempotent: it is a compare-and-swap, and a second attempt at the same
+    /// revision is simply refused.
     FenceSource { worker: String, observed_fence: u64 },
+
+    /// Deploy the pipeline to the target worker.
+    ///
+    /// **Not** idempotent at the worker, which is why the driver throttles
+    /// re-issues rather than emitting this on every tick — see
+    /// [`Reconciler::DEPLOY_REISSUE_AFTER`].
+    ///
+    /// Carries no credential. The target's API key is in its `WorkerRecord`
+    /// and the driver reads it there, so it never passes through a `Decision`,
+    /// a `TickReport` or a log line.
+    Deploy {
+        target: String,
+        pipeline: String,
+        source: String,
+    },
 }
 
 /// What the transition function decided.
@@ -254,6 +288,26 @@ pub fn step(rec: &MigrationRecord, ev: &Evidence, now_ms: u64, linger: Duration)
                     next.phase = MigrationPhase::Restoring;
                     Decision::Advance(Box::new(next))
                 }
+                // The target is alive and does not run the pipeline. Until
+                // now this waited — which is right for the coordinator that
+                // issued the deploy and is watching for it to land, and wrong
+                // for a coordinator that inherited the migration from a dead
+                // one and would wait for a deploy nobody is going to send.
+                //
+                // Emitting the effect is safe for both: the driver throttles
+                // re-issues, and the guard above is still the only thing that
+                // advances the phase. `Act` leaves the record alone, so a
+                // crash between the deploy and the target reporting it costs
+                // one repeated attempt and never a wrong transition.
+                //
+                // Without a source there is nothing to send. That is a record
+                // written before the field existed, so it keeps the old
+                // behaviour rather than deploying an empty pipeline.
+                Some(_) if !rec.vpl_source.is_empty() => Decision::Act(Effect::Deploy {
+                    target: rec.target.clone(),
+                    pipeline: rec.pipeline.clone(),
+                    source: rec.vpl_source.clone(),
+                }),
                 Some(_) => Decision::Wait,
                 None => Decision::Advance(Box::new(fail(
                     rec,
@@ -340,19 +394,165 @@ pub struct TickReport {
     pub waiting: usize,
 }
 
-/// The level-triggered reconciler.
-#[derive(Debug, Clone)]
-pub struct Reconciler {
-    cp: ControlPlane,
-    linger: Duration,
+/// Sends a pipeline to a worker.
+///
+/// A trait so the reconciler can be driven without HTTP: every property of
+/// the phase machine is testable against a recording implementation, and the
+/// real one lives with the coordinator that already owns an HTTP client and
+/// the connector parameters.
+///
+/// The implementation is responsible for resolving `target` to an address and
+/// a credential — deliberately, so neither travels through a `Decision`, a
+/// `TickReport` or a log line.
+pub trait DeployExecutor: Send + Sync + std::fmt::Debug {
+    /// Deploy `source` as `pipeline` on `target`.
+    ///
+    /// `Err` is a message for the log; the reconciler retries on a later tick
+    /// either way, because the only thing that advances the phase is the
+    /// target reporting the pipeline.
+    fn deploy(
+        &self,
+        target: &str,
+        pipeline: &str,
+        source: &str,
+    ) -> impl std::future::Future<Output = std::result::Result<(), String>> + Send;
 }
 
-impl Reconciler {
+/// The level-triggered reconciler.
+#[derive(Debug, Clone)]
+pub struct Reconciler<D = NoDeploy> {
+    cp: ControlPlane,
+    linger: Duration,
+    deployer: Option<D>,
+    /// The process's [`DeployLedger`]. A private default until
+    /// [`Reconciler::with_ledger`] shares the owner's; the coordinator always
+    /// shares its own, because it builds a reconciler per sweep.
+    ledger: DeployLedger,
+}
+
+/// The default: no deployer, so the reconciler waits exactly as it did before
+/// one could be attached.
+///
+/// A unit type rather than an uninhabited one. `Reconciler<NoDeploy>` never
+/// holds a value of it (`deployer` is `None`), and an empty enum would need
+/// the `match *self {}` that clippy refuses as a dereference of an
+/// uninhabited reference.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoDeploy;
+
+impl DeployExecutor for NoDeploy {
+    async fn deploy(&self, _: &str, _: &str, _: &str) -> std::result::Result<(), String> {
+        Err("no deployer attached".to_string())
+    }
+}
+
+/// Which migrations this *process* has a deploy in flight for, and until when.
+///
+/// The record cannot hold this: [`step`] is pure and the record advances only
+/// on observed evidence, while this only throttles *how often* an effect is
+/// attempted, which is a property of the driver and not of the migration. So
+/// it lives with the process — and it must outlive a tick. The first draft
+/// kept it inside the [`Reconciler`], which the coordinator builds afresh on
+/// every health sweep; the throttle was then empty on every tick, and a deploy
+/// went out every sweep until the target's heartbeat caught up, each one a
+/// second running copy of the pipeline. The coordinator now owns one ledger and
+/// hands a clone to each sweep's reconciler.
+///
+/// A coordinator that dies loses it, and its successor issues one deploy it
+/// cannot know was already sent. That is the right trade: the case this exists
+/// for is precisely the one where nobody else will send it.
+#[derive(Debug, Clone, Default)]
+pub struct DeployLedger {
+    inflight: std::sync::Arc<std::sync::Mutex<HashMap<String, std::time::Instant>>>,
+}
+
+impl DeployLedger {
+    /// Claim the right to issue a deploy for `id` now.
+    ///
+    /// `true` when nothing is held in flight for it, in which case a deploy is
+    /// now recorded as in flight for `window`. `false` when one is, in which
+    /// case nothing changes. A claim is not given back when the attempt
+    /// fails: the request may have landed even though the response did not.
+    pub fn claim(&self, id: &str, window: Duration) -> bool {
+        let now = std::time::Instant::now();
+        let mut inflight = self.lock();
+        match inflight.get(id) {
+            Some(until) if *until > now => false,
+            _ => {
+                inflight.insert(id.to_string(), now + window);
+                true
+            }
+        }
+    }
+
+    /// Hold `id` as in flight for `duration`, unconditionally.
+    ///
+    /// For the coordinator that executes a migration itself: its inline
+    /// executor sends the deploy, and its own reconciler must not send a
+    /// second one while that is under way.
+    pub fn hold(&self, id: &str, duration: Duration) {
+        self.lock()
+            .insert(id.to_string(), std::time::Instant::now() + duration);
+    }
+
+    /// Forget `id`, once its record is retired, so the ledger does not grow
+    /// with every migration the process ever drove.
+    pub fn release(&self, id: &str) {
+        self.lock().remove(id);
+    }
+
+    /// Whether a deploy for `id` is currently held in flight.
+    pub fn is_in_flight(&self, id: &str) -> bool {
+        let now = std::time::Instant::now();
+        self.lock().get(id).is_some_and(|until| *until > now)
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, std::time::Instant>> {
+        self.inflight.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+impl Reconciler<NoDeploy> {
     pub fn new(cp: ControlPlane) -> Self {
         Self {
             cp,
             linger: DEFAULT_LINGER,
+            deployer: None,
+            ledger: DeployLedger::default(),
         }
+    }
+}
+
+impl<D: DeployExecutor> Reconciler<D> {
+    /// How long before a deploy for the same migration is attempted again.
+    ///
+    /// The worker's `assigned_pipelines` is what proves the deploy landed, and
+    /// it only refreshes on a heartbeat, so re-issuing faster than that races
+    /// the evidence and duplicates the pipeline.
+    pub const DEPLOY_REISSUE_AFTER: Duration = Duration::from_secs(30);
+
+    /// Attach the thing that actually sends a pipeline to a worker.
+    ///
+    /// Without it the reconciler waits in `Deploying` for whoever planned the
+    /// migration to finish it — which is what it did before, and which loses
+    /// the migration when that coordinator does not come back.
+    pub fn with_deployer<E: DeployExecutor>(self, deployer: E) -> Reconciler<E> {
+        Reconciler {
+            cp: self.cp,
+            linger: self.linger,
+            deployer: Some(deployer),
+            ledger: self.ledger,
+        }
+    }
+
+    /// Share the deploy ledger of the process that owns this reconciler.
+    ///
+    /// The coordinator builds a reconciler per sweep; without this each one
+    /// would start with an empty ledger and the throttle on
+    /// [`Effect::Deploy`] would be no throttle at all.
+    pub fn with_ledger(mut self, ledger: DeployLedger) -> Self {
+        self.ledger = ledger;
+        self
     }
 
     pub fn with_linger(mut self, linger: Duration) -> Self {
@@ -392,6 +592,53 @@ impl Reconciler {
             match step(&rec, &evidence, now_ms, self.linger) {
                 Decision::Wait => report.waiting += 1,
 
+                Decision::Act(Effect::Deploy {
+                    target,
+                    pipeline,
+                    source,
+                }) => {
+                    let Some(ref deployer) = self.deployer else {
+                        // No deployer attached: wait for whoever planned this
+                        // migration, exactly as before one could be attached.
+                        report.waiting += 1;
+                        continue;
+                    };
+                    if !self.ledger.claim(&rec.id, Self::DEPLOY_REISSUE_AFTER) {
+                        // Already sent, by this sweep's predecessor or by the
+                        // inline executor of the coordinator that planned
+                        // it, and the target has not had time to report it.
+                        // Sending again would start a second copy of the
+                        // pipeline on the worker, which no later tick can
+                        // undo.
+                        report.waiting += 1;
+                        continue;
+                    }
+                    match deployer.deploy(&target, &pipeline, &source).await {
+                        Ok(()) => {
+                            report.effects += 1;
+                            tracing::info!(
+                                migration = %rec.id,
+                                worker = %target,
+                                pipeline = %pipeline,
+                                "deployed pipeline to migration target"
+                            );
+                        }
+                        Err(e) => {
+                            // Not fatal and not a phase change: the deadline
+                            // is what ends a migration that cannot progress,
+                            // and the next tick re-derives from fresh
+                            // evidence.
+                            report.contended += 1;
+                            tracing::warn!(
+                                migration = %rec.id,
+                                worker = %target,
+                                error = %e,
+                                "deploy to migration target failed; retrying on a later tick"
+                            );
+                        }
+                    }
+                }
+
                 Decision::Act(Effect::FenceSource {
                     worker,
                     observed_fence,
@@ -430,7 +677,10 @@ impl Reconciler {
                 }
 
                 Decision::Retire => match self.cp.delete_at(&key, versioned.revision).await {
-                    Ok(()) => report.retired += 1,
+                    Ok(()) => {
+                        report.retired += 1;
+                        self.ledger.release(&rec.id);
+                    }
                     Err(e) if e.is_cas_conflict() => report.contended += 1,
                     Err(e) => return Err(e),
                 },
@@ -512,6 +762,16 @@ mod tests {
             deadline_ms: 1_000_000,
             finished_ms: None,
             failure: None,
+            // A record from before the field existed. The tests that need a
+            // source say so with `rec_with_source`.
+            vpl_source: String::new(),
+        }
+    }
+
+    fn rec_with_source(phase: MigrationPhase) -> MigrationRecord {
+        MigrationRecord {
+            vpl_source: "stream s from e".into(),
+            ..rec(phase)
         }
     }
 
@@ -573,7 +833,8 @@ mod tests {
         assert_eq!(
             step(&rec(MigrationPhase::Deploying), &ev, 0, DEFAULT_LINGER),
             Decision::Wait,
-            "absence of evidence must never be read as evidence of the deploy"
+            "absence of evidence must never be read as evidence of the deploy; \
+             and a record with no source to send waits for its planner"
         );
 
         let ev = Evidence {
@@ -589,6 +850,63 @@ mod tests {
             ))
             .phase,
             MigrationPhase::Restoring
+        );
+    }
+
+    #[test]
+    fn deploying_reissues_the_deploy_when_the_record_carries_the_source() {
+        let ev = Evidence {
+            source: Some(obs("ready", &["p1"], 11)),
+            target: Some(obs("ready", &[], 20)),
+            latest_checkpoint: Some(7),
+        };
+        assert_eq!(
+            step(
+                &rec_with_source(MigrationPhase::Deploying),
+                &ev,
+                0,
+                DEFAULT_LINGER
+            ),
+            Decision::Act(Effect::Deploy {
+                target: "w-tgt".into(),
+                pipeline: "p1".into(),
+                source: "stream s from e".into(),
+            }),
+            "a live target that does not run the pipeline gets the deploy"
+        );
+
+        // The effect never moves the record; only the target reporting the
+        // pipeline does, exactly as without a source.
+        let landed = Evidence {
+            target: Some(obs("ready", &["p1"], 21)),
+            ..ev
+        };
+        assert_eq!(
+            advanced(step(
+                &rec_with_source(MigrationPhase::Deploying),
+                &landed,
+                0,
+                DEFAULT_LINGER
+            ))
+            .phase,
+            MigrationPhase::Restoring
+        );
+
+        // A fenced target still fails the migration, source or not: nothing
+        // is deployed onto a worker the cluster has cut off.
+        let fenced = Evidence {
+            target: Some(obs(STATUS_FENCED, &[], 20)),
+            ..Default::default()
+        };
+        assert_eq!(
+            advanced(step(
+                &rec_with_source(MigrationPhase::Deploying),
+                &fenced,
+                5,
+                DEFAULT_LINGER
+            ))
+            .phase,
+            MigrationPhase::Failed
         );
     }
 
@@ -753,22 +1071,25 @@ mod tests {
                         for cp in checkpoints {
                             for r in restored {
                                 for present in [true, false] {
-                                    let mut m = rec(phase);
-                                    m.restored = r;
-                                    let ev = Evidence {
-                                        source: present.then(|| obs(s, a, 11)),
-                                        target: present.then(|| obs(t, a, 21)),
-                                        latest_checkpoint: cp,
-                                    };
-                                    if let Decision::Advance(next) =
-                                        step(&m, &ev, 1, DEFAULT_LINGER)
-                                    {
-                                        assert!(
-                                            next.phase.rank() >= phase.rank(),
-                                            "regression {:?} -> {:?} for evidence {ev:?}",
-                                            phase,
-                                            next.phase
-                                        );
+                                    for src in ["", "stream s from e"] {
+                                        let mut m = rec(phase);
+                                        m.restored = r;
+                                        m.vpl_source = src.into();
+                                        let ev = Evidence {
+                                            source: present.then(|| obs(s, a, 11)),
+                                            target: present.then(|| obs(t, a, 21)),
+                                            latest_checkpoint: cp,
+                                        };
+                                        if let Decision::Advance(next) =
+                                            step(&m, &ev, 1, DEFAULT_LINGER)
+                                        {
+                                            assert!(
+                                                next.phase.rank() >= phase.rank(),
+                                                "regression {:?} -> {:?} for evidence {ev:?}",
+                                                phase,
+                                                next.phase
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -864,5 +1185,62 @@ mod tests {
         let back: MigrationRecord =
             serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
         assert_eq!(back, m);
+    }
+
+    // -- the deploy ledger ------------------------------------------------
+
+    #[test]
+    fn the_ledger_admits_one_deploy_per_window_per_migration() {
+        let l = DeployLedger::default();
+        let window = Duration::from_mins(1);
+        assert!(
+            l.claim("m1", window),
+            "nothing in flight: the first claim wins"
+        );
+        assert!(
+            !l.claim("m1", window),
+            "a second claim inside the window is refused"
+        );
+        assert!(l.claim("m2", window), "the ledger is per migration");
+
+        l.release("m1");
+        assert!(l.claim("m1", window), "released, so claimable again");
+
+        let expired = DeployLedger::default();
+        assert!(expired.claim("z", Duration::ZERO));
+        assert!(
+            expired.claim("z", Duration::ZERO),
+            "an elapsed window admits the next attempt"
+        );
+    }
+
+    #[test]
+    fn a_held_migration_is_not_claimable_until_released() {
+        let l = DeployLedger::default();
+        l.hold("m1", Duration::from_mins(1));
+        assert!(l.is_in_flight("m1"));
+        assert!(
+            !l.claim("m1", Duration::from_mins(1)),
+            "the planner's inline deploy is under way: nobody else sends one"
+        );
+        l.release("m1");
+        assert!(!l.is_in_flight("m1"));
+        assert!(l.claim("m1", Duration::from_mins(1)));
+    }
+
+    #[test]
+    fn a_cloned_ledger_is_the_same_ledger() {
+        // The property the coordinator relies on: it builds a reconciler per
+        // sweep and hands each one a clone, so the clones must see each
+        // other's claims. A ledger that was per reconciler was no throttle.
+        let owner = DeployLedger::default();
+        let sweep_1 = owner.clone();
+        let sweep_2 = owner.clone();
+        assert!(sweep_1.claim("m1", Duration::from_mins(1)));
+        assert!(
+            !sweep_2.claim("m1", Duration::from_mins(1)),
+            "the next sweep must see the previous sweep's deploy"
+        );
+        assert!(owner.is_in_flight("m1"));
     }
 }
