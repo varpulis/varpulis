@@ -42,8 +42,9 @@ use varpulis_cluster::control_state::{
 };
 use varpulis_cluster::jetstream_control_plane::{
     fence_out, materialize, now_ms, Applier, ConnectorSecretPolicy, ControlKey, ControlPlane,
-    ControlPlaneConfig, Expect, FencedCommand, LeaderLease, LeaderState, MigrationPhase,
-    MigrationRecord, Reconciler, WorkerLease, WorkerRecord, STATUS_FENCED,
+    ControlPlaneConfig, DeployExecutor, DeployLedger, Expect, FencedCommand, LeaderLease,
+    LeaderState, MigrationPhase, MigrationRecord, Reconciler, WorkerLease, WorkerRecord,
+    STATUS_FENCED,
 };
 use varpulis_cluster::worker::{PipelineMetrics, WorkerCapacity};
 
@@ -1219,6 +1220,7 @@ async fn the_reconciler_drives_a_migration_and_fences_the_source_at_cutover() {
         deadline_ms: now + 60_000,
         finished_ms: None,
         failure: None,
+        vpl_source: String::new(),
     };
     cp.write(&ControlKey::Migration("m1".into()), &mig, Expect::Absent)
         .await
@@ -1365,6 +1367,7 @@ async fn reconciliation_is_idempotent_and_missing_a_tick_is_harmless() {
         deadline_ms: now + 60_000,
         finished_ms: None,
         failure: None,
+        vpl_source: String::new(),
     };
     cp.write(&ControlKey::Migration("m1".into()), &mig, Expect::Absent)
         .await
@@ -1425,6 +1428,7 @@ async fn concurrent_reconcilers_do_not_lose_an_update() {
         deadline_ms: now + 60_000,
         finished_ms: None,
         failure: None,
+        vpl_source: String::new(),
     };
     cp.write(&ControlKey::Migration("m1".into()), &mig, Expect::Absent)
         .await
@@ -1479,6 +1483,7 @@ async fn a_stuck_migration_fails_at_its_deadline() {
         deadline_ms: now.saturating_sub(1),
         finished_ms: None,
         failure: None,
+        vpl_source: String::new(),
     };
     cp.write(&ControlKey::Migration("m1".into()), &mig, Expect::Absent)
         .await
@@ -1663,4 +1668,293 @@ async fn losing_the_lease_stops_the_engine_not_just_the_control_plane() {
         "a fenced engine must refuse to process"
     );
     eprintln!("[fence_reaches_data_plane] engine refused after the lease was fenced out");
+}
+
+// ===========================================================================
+// 7. Re-issuing the deploy of an inherited migration
+// ===========================================================================
+
+/// A deployer that records what it was asked to send instead of sending it.
+#[derive(Debug, Clone, Default)]
+struct RecordingDeployer {
+    sent: std::sync::Arc<std::sync::Mutex<Vec<(String, String, String)>>>,
+}
+
+impl RecordingDeployer {
+    fn sent(&self) -> Vec<(String, String, String)> {
+        self.sent.lock().unwrap().clone()
+    }
+}
+
+impl DeployExecutor for RecordingDeployer {
+    async fn deploy(&self, target: &str, pipeline: &str, source: &str) -> Result<(), String> {
+        self.sent.lock().unwrap().push((
+            target.to_string(),
+            pipeline.to_string(),
+            source.to_string(),
+        ));
+        Ok(())
+    }
+}
+
+/// Poll the reconciler until the record reaches `want`, or fail after 10 s.
+///
+/// A snapshot against a replicated bucket can lag a write by a moment (see
+/// [`visible`]); the reconciler is level-triggered precisely so that costs a
+/// tick and never correctness. Returns the tick reports, so a test can assert
+/// what happened *across* the ticks it took.
+async fn tick_until<D: DeployExecutor + Clone>(
+    make: impl Fn() -> Reconciler<D>,
+    cp: &ControlPlane,
+    id: &str,
+    want: MigrationPhase,
+) -> Vec<varpulis_cluster::jetstream_control_plane::TickReport> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut reports = Vec::new();
+    loop {
+        reports.push(make().tick(now_ms()).await.unwrap());
+        let phase = cp
+            .get::<MigrationRecord>(&ControlKey::Migration(id.to_string()))
+            .await
+            .unwrap()
+            .map(|v| v.value.phase);
+        if phase == Some(want) {
+            return reports;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "migration {id} never reached {want:?}, last seen {phase:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// A coordinator that inherits a `Deploying` migration sends the deploy the
+/// dead planner never will — once per window, not once per sweep — and stops
+/// the moment the target reports the pipeline.
+///
+/// The reconciler is rebuilt for every sweep, exactly as the coordinator does
+/// it, and every sweep is handed the same ledger. That is the property under
+/// test: with a ledger that lived inside the reconciler, every sweep sent
+/// another deploy, and every deploy was another running copy of the pipeline.
+#[tokio::test]
+async fn a_survivor_reissues_the_deploy_once_per_window_not_once_per_sweep() {
+    const TEST: &str = "a_survivor_reissues_the_deploy_once_per_window_not_once_per_sweep";
+    let Some(cp) = open("reissue").await else {
+        return;
+    };
+
+    // World: the source runs p1, the target is idle, and the migration has
+    // already been carried to `Deploying` by a coordinator that then died.
+    let _src = WorkerLease::acquire(&cp, &worker("w-src", &["p1"]), Duration::from_secs(30))
+        .await
+        .unwrap();
+    cp.write(
+        &ControlKey::Worker("w-tgt".into()),
+        &worker("w-tgt", &[]),
+        Expect::Absent,
+    )
+    .await
+    .unwrap();
+    let now = now_ms();
+    let mig = MigrationRecord {
+        id: "m1".into(),
+        pipeline: "p1".into(),
+        group: "g1".into(),
+        source: "w-src".into(),
+        target: "w-tgt".into(),
+        phase: MigrationPhase::Deploying,
+        reason: "rebalance".into(),
+        source_fence: 1,
+        restore_checkpoint: Some(12),
+        restored: false,
+        deadline_ms: now + 60_000,
+        finished_ms: None,
+        failure: None,
+        vpl_source: "stream s from e".into(),
+    };
+    cp.write(&ControlKey::Migration("m1".into()), &mig, Expect::Absent)
+        .await
+        .unwrap();
+    visible(&cp, &ControlKey::Migration("m1".into())).await;
+    visible(&cp, &ControlKey::Worker("w-tgt".into())).await;
+
+    let ledger = DeployLedger::default();
+    let deployer = RecordingDeployer::default();
+    let sweep = || {
+        Reconciler::new(cp.clone())
+            .with_linger(Duration::from_millis(1))
+            .with_deployer(deployer.clone())
+            .with_ledger(ledger.clone())
+    };
+
+    // The first sweep that observes the record sends the deploy. (The very
+    // first snapshot may not show the keys yet; keep sweeping until one
+    // deploy has gone out.)
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while deployer.sent().is_empty() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{TEST}: no sweep ever sent the deploy nobody else will send"
+        );
+        sweep().tick(now_ms()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        deployer.sent(),
+        vec![(
+            "w-tgt".to_string(),
+            "p1".to_string(),
+            "stream s from e".to_string()
+        )],
+        "{TEST}: the deploy goes to the record's target, with the record's source"
+    );
+
+    // Three more sweeps, each with a fresh reconciler: none may re-send.
+    for i in 0..3 {
+        let again = sweep().tick(now_ms()).await.unwrap();
+        assert_eq!(
+            again.effects, 0,
+            "{TEST}: sweep {i} re-sent while the first deploy was still in flight"
+        );
+        assert_eq!(again.waiting, 1, "{TEST}: the record waits for evidence");
+    }
+    assert_eq!(
+        deployer.sent().len(),
+        1,
+        "{TEST}: exactly one deploy across four sweeps; each extra one is a second running \
+         copy of the pipeline on the worker"
+    );
+    let phase = cp
+        .get::<MigrationRecord>(&ControlKey::Migration("m1".into()))
+        .await
+        .unwrap()
+        .map(|v| v.value.phase);
+    assert_eq!(
+        phase,
+        Some(MigrationPhase::Deploying),
+        "{TEST}: the effect never moves the record; only evidence does"
+    );
+
+    // The target reports the pipeline: the machine advances and sends nothing.
+    let tgt = cp
+        .get::<WorkerRecord>(&ControlKey::Worker("w-tgt".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let mut tgt_rec = tgt.value;
+    tgt_rec.entry.assigned_pipelines.push("p1".into());
+    cp.write(
+        &ControlKey::Worker("w-tgt".into()),
+        &tgt_rec,
+        Expect::Revision(tgt.revision),
+    )
+    .await
+    .unwrap();
+    let reports = tick_until(sweep, &cp, "m1", MigrationPhase::Restoring).await;
+    assert!(
+        reports.iter().all(|r| r.effects == 0),
+        "{TEST}: once the target runs the pipeline nothing is deployed"
+    );
+    assert_eq!(deployer.sent().len(), 1, "{TEST}: still exactly one deploy");
+}
+
+/// The coordinator that plans a migration executes it inline, deploy
+/// included. Its own sweep runs meanwhile, and must not send a second deploy
+/// while the inline one is under way.
+///
+/// The target's address is one nothing listens on, so an attempt is
+/// observable as `contended` (the request failed) instead of needing a fake
+/// worker. Without the hold that `record_migration_started` places in the
+/// ledger, the sweep after the record reaches `Deploying` makes that attempt.
+#[tokio::test]
+async fn the_planning_coordinator_does_not_deploy_what_its_executor_is_deploying() {
+    const TEST: &str = "the_planning_coordinator_does_not_deploy_what_its_executor_is_deploying";
+    let Some(cp) = open("planner_once").await else {
+        return;
+    };
+
+    // World: the source is alive (so the checkpoint step can resolve), a
+    // durable checkpoint exists, and the target is idle at a dead address.
+    let _src = WorkerLease::acquire(&cp, &worker("w-src", &["p-plan"]), Duration::from_secs(30))
+        .await
+        .unwrap();
+    let mut idle = worker("w-tgt", &[]);
+    idle.entry.address = "http://127.0.0.1:9".to_string();
+    cp.write(&ControlKey::Worker("w-tgt".into()), &idle, Expect::Absent)
+        .await
+        .unwrap();
+    cp.write(
+        &ControlKey::Checkpoint("g-plan".into()),
+        &serde_json::json!({"latest_completed": 3}),
+        Expect::Absent,
+    )
+    .await
+    .unwrap();
+    visible(&cp, &ControlKey::Worker("w-tgt".into())).await;
+    visible(&cp, &ControlKey::Checkpoint("g-plan".into())).await;
+
+    // The planner records the migration, as the REST handler does right
+    // before it runs the executor inline.
+    let planner = coordinator_on(&cp);
+    let plan = migrate_plan("m-plan", "p-plan", "g-plan", "w-src", "w-tgt");
+    planner
+        .record_migration_started(
+            &plan,
+            varpulis_cluster::jetstream_control_plane::DEFAULT_MIGRATION_DEADLINE,
+        )
+        .await
+        .expect("minting the migration record must not fail");
+    visible(&cp, &ControlKey::Migration("m-plan".into())).await;
+    assert!(
+        planner.deploy_ledger.is_in_flight("m-plan"),
+        "{TEST}: recording a migration holds its deploy in flight for the inline executor"
+    );
+
+    // Sweeps until the record is `Deploying`: the durable checkpoint advances
+    // it, and nothing is deployed on the way.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let report = planner
+            .reconcile_migrations()
+            .await
+            .expect("a configured control plane must produce a tick report");
+        assert_eq!(
+            report.contended, 0,
+            "{TEST}: the planner's sweep attempted a deploy (a request to 127.0.0.1:9 \
+             fails and counts as contended) while its own executor was deploying"
+        );
+        assert_eq!(
+            report.effects, 0,
+            "{TEST}: nothing to deploy, nothing to fence"
+        );
+        let phase = cp
+            .get::<MigrationRecord>(&ControlKey::Migration("m-plan".into()))
+            .await
+            .unwrap()
+            .map(|v| v.value.phase);
+        if phase == Some(MigrationPhase::Deploying) && report.waiting == 1 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{TEST}: record never reached Deploying and waited there, last {phase:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // Two more sweeps in `Deploying`, target alive and not running the
+    // pipeline: the survivor path would deploy here. The planner does not.
+    for _ in 0..2 {
+        let report = planner.reconcile_migrations().await.unwrap();
+        assert_eq!(
+            (report.contended, report.effects, report.waiting),
+            (0, 0, 1),
+            "{TEST}: while the inline deploy is held, a sweep waits and sends nothing"
+        );
+    }
+
+    cp.delete(&ControlKey::Migration("m-plan".into()))
+        .await
+        .ok();
 }

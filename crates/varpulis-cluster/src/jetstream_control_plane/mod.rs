@@ -239,8 +239,9 @@ pub use fence::{fence_out, FenceGuard, FencedCommand, LeaseError, WorkerLease, S
 pub use keys::ControlKey;
 pub use leader::{LeaderLease, LeaderRecord, LeaderState, ENV_ADVERTISE_ADDR};
 pub use reconcile::{
-    now_ms, step, Decision, Effect, Evidence, MigrationPhase, MigrationRecord, Reconciler,
-    TickReport, WorkerObservation, DEFAULT_LINGER, DEFAULT_MIGRATION_DEADLINE,
+    now_ms, step, Decision, DeployExecutor, DeployLedger, Effect, Evidence, MigrationPhase,
+    MigrationRecord, NoDeploy, Reconciler, TickReport, WorkerObservation, DEFAULT_LINGER,
+    DEFAULT_MIGRATION_DEADLINE,
 };
 pub use store::{
     check_durable, ControlPlane, ControlPlaneConfig, ControlPlaneError, Expect, Snapshot,
