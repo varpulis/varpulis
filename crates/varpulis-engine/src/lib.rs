@@ -31,8 +31,10 @@
 //!
 //! ## What the engine does and does not do here
 //!
-//! - **Time is event time.** An event's `timestamp` field (or `ts`, or
-//!   `@timestamp`, RFC 3339) is its time; a field missing means "now". Every
+//! - **Time is event time.** A payload's `@timestamp` (RFC 3339), else its
+//!   `ts` or `timestamp` (epoch milliseconds), is the event's time — the same
+//!   rules as every Varpulis connector, decoded by the same
+//!   [`varpulis_core::decode::EventDecoder`]; none of them means "now". Every
 //!   `.within()` and window is evaluated against it, so replaying the same
 //!   events yields the same emits.
 //! - **`.from()` and `.to()` are declarations, not connections.** They are
@@ -50,6 +52,7 @@
 
 #![forbid(unsafe_code)]
 
+pub use varpulis_core::decode::EventDecoder;
 pub use varpulis_core::{Event, Value};
 use varpulis_runtime::Engine;
 pub use varpulis_runtime::{EngineError, SinkBinding, SourceBinding};
@@ -80,6 +83,9 @@ pub struct Program {
     sources: Vec<SourceBinding>,
     sinks: Vec<SinkBinding>,
     source_text: String,
+    /// One decoder per program: its field-name cache makes a steady stream
+    /// (the same schema on every payload) decode with no key allocations.
+    decoder: EventDecoder,
 }
 
 impl std::fmt::Debug for Program {
@@ -111,7 +117,14 @@ impl Emit {
     /// Using the sink's own encoding means a host that embeds the engine
     /// publishes byte-for-byte what a Varpulis worker would have published.
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::from_slice(&self.event.to_sink_payload()).unwrap_or(serde_json::Value::Null)
+        serde_json::from_slice(&self.to_payload()).unwrap_or(serde_json::Value::Null)
+    }
+
+    /// The same payload as [`Emit::to_json`], as the bytes to publish: one
+    /// serialisation, no intermediate tree. A host on a hot path wants this
+    /// one.
+    pub fn to_payload(&self) -> Vec<u8> {
+        self.event.to_sink_payload()
     }
 }
 
@@ -132,6 +145,7 @@ impl Program {
             sources,
             sinks,
             source_text: vpl.to_string(),
+            decoder: EventDecoder::new(),
         })
     }
 
@@ -167,13 +181,18 @@ impl Program {
         Ok(self.route(out))
     }
 
-    /// Decode a JSON object into an event and feed it.
+    /// Decode a JSON payload into an event and feed it.
     ///
-    /// `default_event_type` applies when the payload has neither `event_type`
-    /// nor `type`; a host typically passes the event type of the `.from()`
-    /// binding the payload arrived on. See [`event_from_json`].
+    /// `default_event_type` applies when the payload has no string
+    /// `event_type`; a host passes the event type of the `.from()` binding the
+    /// payload arrived on. The decode is the connectors' own
+    /// ([`EventDecoder`]), with this program's interning cache, so it is the
+    /// path a hot loop should take rather than [`event_from_json`].
     pub fn feed_json(&mut self, default_event_type: &str, json: &[u8]) -> Result<Vec<Emit>, Error> {
-        let event = event_from_json(default_event_type, json)?;
+        let event = self
+            .decoder
+            .decode(default_event_type, json)
+            .map_err(|e| Error::Event(e.to_string()))?;
         self.feed(event)
     }
 
@@ -204,51 +223,24 @@ impl Program {
     }
 }
 
-/// Decode a JSON object into an [`Event`].
+/// Decode a JSON payload into an [`Event`], with a fresh decoder.
 ///
-/// The event type is `event_type`, else `type`, else `default_event_type`.
-/// The timestamp is `timestamp`, else `ts`, else `@timestamp`, parsed as
-/// RFC 3339; absent or unparseable means now. Those keys are not kept as
-/// fields. Every other member becomes a field, nested objects and arrays
-/// included, so `shipping_address.country` in a program reaches into the
-/// payload's `{"shipping_address": {"country": ...}}`.
+/// The event type is the payload's string `event_type`, else
+/// `default_event_type`; the time is `@timestamp` (RFC 3339), else `ts` or
+/// `timestamp` (epoch milliseconds), else now. `event_type` is not kept as a
+/// field; everything else is, nested objects and arrays included, so
+/// `shipping_address.country` in a program reaches into the payload's
+/// `{"shipping_address": {"country": ...}}`. A payload that is not a JSON
+/// object decodes to an event with no fields; malformed JSON is an error.
+/// Same rules and same limits as every Varpulis connector.
+///
+/// A fresh [`EventDecoder`] each call: fine for a one-off, wasteful on a
+/// stream. A host feeding many payloads uses [`Program::feed_json`], which
+/// keeps one decoder and its interning cache.
 pub fn event_from_json(default_event_type: &str, json: &[u8]) -> Result<Event, Error> {
-    let value: serde_json::Value =
-        serde_json::from_slice(json).map_err(|e| Error::Event(e.to_string()))?;
-    let Some(object) = value.as_object() else {
-        return Err(Error::Event("payload is not a JSON object".to_string()));
-    };
-
-    let event_type = object
-        .get("event_type")
-        .or_else(|| object.get("type"))
-        .and_then(|v| v.as_str())
-        .unwrap_or(default_event_type);
-
-    let timestamp = ["timestamp", "ts", "@timestamp"]
-        .iter()
-        .find_map(|k| object.get(*k))
-        .and_then(|v| v.as_str())
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|t| t.with_timezone(&chrono::Utc));
-
-    let mut event = match timestamp {
-        Some(t) => Event::new_at(event_type, t),
-        None => Event::new(event_type),
-    };
-
-    for (key, member) in object {
-        if matches!(
-            key.as_str(),
-            "event_type" | "type" | "timestamp" | "ts" | "@timestamp"
-        ) {
-            continue;
-        }
-        let field: Value = serde_json::from_value(member.clone())
-            .map_err(|e| Error::Event(format!("field '{key}': {e}")))?;
-        event = event.with_field(key.as_str(), field);
-    }
-    Ok(event)
+    EventDecoder::new()
+        .decode(default_event_type, json)
+        .map_err(|e| Error::Event(e.to_string()))
 }
 
 #[cfg(test)]
@@ -273,15 +265,17 @@ mod tests {
     fn json_routing_keys_become_type_and_time_and_the_rest_become_fields() {
         let ev = event_from_json(
             "Fallback",
-            br#"{"type": "Order", "timestamp": "2026-09-21T10:00:00Z",
+            br#"{"event_type": "Order", "@timestamp": "2026-09-21T10:00:00Z",
                  "id": "SO#1", "n": 2, "price": 1.5, "ok": true,
                  "shipping_address": {"country": "France"}, "items": [1, 2]}"#,
         )
         .unwrap();
         assert_eq!(&*ev.event_type, "Order");
         assert_eq!(ev.timestamp.to_rfc3339(), "2026-09-21T10:00:00+00:00");
-        assert!(ev.data.get("type").is_none(), "routing keys are not fields");
-        assert!(ev.data.get("timestamp").is_none());
+        assert!(
+            ev.data.get("event_type").is_none(),
+            "the type is not a field"
+        );
         assert_eq!(ev.data.get("n"), Some(&Value::Int(2)));
         assert_eq!(ev.data.get("price"), Some(&Value::Float(1.5)));
         assert_eq!(ev.data.get("ok"), Some(&Value::Bool(true)));
@@ -294,7 +288,12 @@ mod tests {
         let ev = event_from_json("Fallback", br#"{"x": 1}"#).unwrap();
         assert_eq!(&*ev.event_type, "Fallback");
 
-        let err = event_from_json("Fallback", b"[1, 2]").unwrap_err();
+        // Not an object: an event with no fields, the connectors' own fallback.
+        let ev = event_from_json("Fallback", b"[1, 2]").unwrap();
+        assert!(ev.data.is_empty());
+        assert_eq!(&*ev.event_type, "Fallback");
+
+        let err = event_from_json("Fallback", b"{not json").unwrap_err();
         assert!(matches!(err, Error::Event(_)));
     }
 }

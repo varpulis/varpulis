@@ -15,9 +15,75 @@
 pub mod circuit_breaker;
 pub mod component;
 pub mod converter;
-pub mod decode;
+/// The JSON → `Event` decoder, now in `varpulis-core` so a host without the
+/// connector SDK can use it; the path here is kept for its users.
+pub mod decode {
+    pub use varpulis_core::decode::*;
+
+    /// The decoder and `helpers::json_to_event` must agree on every payload:
+    /// the decoder exists to replace that helper on the hot path without
+    /// changing a single decoded event. Kept here because the helper lives
+    /// here; the decoder's own tests are in `varpulis-core`.
+    #[cfg(test)]
+    mod equivalence {
+        use varpulis_core::Event;
+
+        use super::EventDecoder;
+        use crate::helpers::json_to_event;
+
+        fn decode(payload: &str) -> Event {
+            // the helper's own fallback type, so a payload without `event_type`
+            // decodes to the same event on both sides
+            EventDecoder::new()
+                .decode("KafkaEvent", payload.as_bytes())
+                .expect("valid payload")
+        }
+
+        fn assert_equivalent(payload: &str) {
+            let new = decode(payload);
+            let json: serde_json::Value = serde_json::from_slice(payload.as_bytes()).unwrap();
+            let old = json_to_event(
+                json.get("event_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("KafkaEvent"),
+                &json,
+            );
+            assert_eq!(new.event_type, old.event_type, "event_type for {payload}");
+            assert_eq!(new.data, old.data, "data for {payload}");
+            // Timestamps only comparable when the payload pins one; otherwise
+            // both fall back to (different) Utc::now() readings.
+            if payload.contains("@timestamp") || payload.contains("\"ts\"") {
+                assert_eq!(new.timestamp, old.timestamp, "timestamp for {payload}");
+            }
+        }
+
+        #[test]
+        fn equivalent_to_json_to_event() {
+            assert_equivalent(
+                r#"{"ts": 1775990400000, "symbol": "AAPL", "price": 50.5, "volume": 100}"#,
+            );
+            assert_equivalent(r#"{"event_type": "Tick", "price": 1}"#);
+            assert_equivalent(r#"{"@timestamp": "2030-01-01T00:00:00Z", "device_id": "dev_0"}"#);
+            assert_equivalent(
+                r#"{"@timestamp": "2030-01-01T00:00:00Z", "ts": 1775990400000, "device_id": "dev_0"}"#,
+            );
+            assert_equivalent(r#"{"nested": {"a": 1, "b": [1, 2.5, "x", null, true]}, "ts": 5}"#);
+            assert_equivalent(r#"{"neg": -42, "big": 18446744073709551615, "f": 1e10, "ts": 1}"#);
+            assert_equivalent(r#"{"event_type": 123, "x": 1, "ts": 2}"#);
+            assert_equivalent("{}");
+            assert_equivalent("[1, 2, 3]");
+            assert_equivalent(r#""just a string""#);
+            assert_equivalent("42");
+            assert_equivalent("null");
+            assert_equivalent(r#"{"esc\"aped": "va\"lue", "ts": 3}"#);
+        }
+    }
+}
 pub mod helpers;
-pub mod limits;
+/// Resource limits, now in `varpulis-core`; the path here is kept.
+pub mod limits {
+    pub use varpulis_core::limits::*;
+}
 pub mod managed;
 pub mod sink;
 pub mod types;

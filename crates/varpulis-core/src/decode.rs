@@ -1,6 +1,10 @@
 //! Streaming JSON → [`Event`] decoder with field-name interning.
 //!
-//! [`helpers::json_to_event`](crate::helpers::json_to_event) first parses the
+//! Lives here, with [`Event`] and [`Value`], so an embedding host that carries
+//! no connector SDK (and no async runtime) decodes payloads exactly the way
+//! the connectors do. The SDK re-exports it under its old path.
+//!
+//! The connector SDK's `json_to_event` helper first parses the
 //! payload into an intermediate `serde_json::Value` tree, then walks that tree
 //! allocating a second copy of every key and string. At connector throughput
 //! (100k+ events/sec) that intermediate tree is the single largest source of
@@ -32,9 +36,8 @@ use rustc_hash::{FxBuildHasher, FxHashMap};
 use serde::de::{DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 use tracing::warn;
-use varpulis_core::{Event, Value};
 
-use crate::limits;
+use crate::{limits, Event, Value};
 
 /// Interning caches stop growing past this many distinct entries to bound
 /// memory under adversarial (random-key) input. Entries past the cap still
@@ -514,9 +517,9 @@ impl<'de> Visitor<'de> for ValueSeed<'_> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::helpers::json_to_event;
 
     fn decode(payload: &str) -> Event {
         EventDecoder::new()
@@ -525,45 +528,6 @@ mod tests {
     }
 
     /// The decoder must produce the same Event as the legacy two-pass path.
-    fn assert_equivalent(payload: &str) {
-        let new = decode(payload);
-        let json: serde_json::Value = serde_json::from_slice(payload.as_bytes()).unwrap();
-        let old = json_to_event(
-            json.get("event_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("KafkaEvent"),
-            &json,
-        );
-        assert_eq!(new.event_type, old.event_type, "event_type for {payload}");
-        assert_eq!(new.data, old.data, "data for {payload}");
-        // Timestamps only comparable when the payload pins one; otherwise
-        // both fall back to (different) Utc::now() readings.
-        if payload.contains("@timestamp") || payload.contains("\"ts\"") {
-            assert_eq!(new.timestamp, old.timestamp, "timestamp for {payload}");
-        }
-    }
-
-    #[test]
-    fn equivalent_to_json_to_event() {
-        assert_equivalent(
-            r#"{"ts": 1775990400000, "symbol": "AAPL", "price": 50.5, "volume": 100}"#,
-        );
-        assert_equivalent(r#"{"event_type": "Tick", "price": 1}"#);
-        assert_equivalent(r#"{"@timestamp": "2030-01-01T00:00:00Z", "device_id": "dev_0"}"#);
-        assert_equivalent(
-            r#"{"@timestamp": "2030-01-01T00:00:00Z", "ts": 1775990400000, "device_id": "dev_0"}"#,
-        );
-        assert_equivalent(r#"{"nested": {"a": 1, "b": [1, 2.5, "x", null, true]}, "ts": 5}"#);
-        assert_equivalent(r#"{"neg": -42, "big": 18446744073709551615, "f": 1e10, "ts": 1}"#);
-        assert_equivalent(r#"{"event_type": 123, "x": 1, "ts": 2}"#);
-        assert_equivalent("{}");
-        assert_equivalent("[1, 2, 3]");
-        assert_equivalent(r#""just a string""#);
-        assert_equivalent("42");
-        assert_equivalent("null");
-        assert_equivalent(r#"{"esc\"aped": "va\"lue", "ts": 3}"#);
-    }
-
     #[test]
     fn timestamp_field_priority() {
         let e = decode(r#"{"timestamp": 1000, "ts": 2000}"#);
