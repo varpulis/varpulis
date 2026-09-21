@@ -48,7 +48,7 @@ pub use types::NamedPattern;
 pub use types::WindowedColumnarAggregateState;
 pub use types::{
     AggregatorState, EngineConfig, EngineMetrics, PartitionedAggregatorState, ReloadReport,
-    SourceBinding, UserFunction,
+    SinkBinding, SourceBinding, UserFunction,
 };
 // Re-export internal types for use within the engine module
 use types::{RuntimeOp, RuntimeSource, StreamDefinition, WindowType};
@@ -726,6 +726,45 @@ impl Engine {
     /// Get source connector bindings from .from() declarations
     pub fn source_bindings(&self) -> &[SourceBinding] {
         &self.source_bindings
+    }
+
+    /// Sink connector bindings from every stream's `.to()` declarations.
+    ///
+    /// Available on every build. The async runtime resolves these into live
+    /// sink tasks itself; an embedding host with no async runtime uses this
+    /// list to publish [`Self::process_batch_sync_collect`]'s outputs where
+    /// the program said they go.
+    pub fn sink_bindings(&self) -> Vec<SinkBinding> {
+        let mut out = Vec::new();
+        for (name, stream) in &self.streams {
+            for op in &stream.operations {
+                if let RuntimeOp::To(cfg) = op {
+                    let (topic, dynamic_topic) = match &cfg.topic {
+                        Some(types::TopicSpec::Static(t)) => (Some(t.clone()), false),
+                        Some(types::TopicSpec::Dynamic(_)) => (None, true),
+                        None => (None, false),
+                    };
+                    out.push(SinkBinding {
+                        stream: name.clone(),
+                        connector_name: cfg.connector_name.clone(),
+                        topic,
+                        dynamic_topic,
+                    });
+                }
+            }
+        }
+        out.sort_by(|a, b| a.stream.cmp(&b.stream));
+        out
+    }
+
+    /// Take the outputs collected since the last take, in sync-collect mode.
+    ///
+    /// [`Self::process_batch_sync_collect`] clears and returns the buffer for
+    /// the events it processes; outputs produced by anything else — an
+    /// end-of-input flush, a watermark — stay in the buffer until this is
+    /// called. Without it those outputs were unreachable to an embedding host.
+    pub fn take_collected_outputs(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.collected_outputs)
     }
 
     /// Get a variable value by name

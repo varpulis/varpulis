@@ -83,6 +83,22 @@ pub struct SourceBinding {
     pub extra_params: HashMap<String, String>,
 }
 
+/// Sink connector binding from a stream's `.to()` declaration.
+///
+/// What an embedding host needs to publish an output event: which stream it
+/// came from, which connector it was routed to, and the topic when the
+/// program named one statically. A topic computed per event
+/// (`dynamic_topic`) is not resolved here; the host reads it from the event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SinkBinding {
+    pub stream: String,
+    pub connector_name: String,
+    /// Static topic from `.to(connector, topic: "...")`, if any.
+    pub topic: Option<String>,
+    /// The topic is an expression evaluated per event.
+    pub dynamic_topic: bool,
+}
+
 /// Named SASE+ pattern definition
 #[derive(Debug, Clone)]
 pub struct NamedPattern {

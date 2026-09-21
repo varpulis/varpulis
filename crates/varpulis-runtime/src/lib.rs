@@ -174,7 +174,7 @@ pub use context::{
 pub use engine::error::EngineError;
 #[cfg(feature = "async-runtime")]
 pub use engine::EngineBuilder;
-pub use engine::{Engine, ReloadReport, SourceBinding};
+pub use engine::{Engine, ReloadReport, SinkBinding, SourceBinding};
 pub use event::{Event, SharedEvent};
 pub use event_file::StreamingEventReader;
 #[cfg(feature = "async-runtime")]

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`varpulis-engine`: the CEP engine as an embeddable library with no async
+  runtime.** Compile a VPL program, feed it events, get its emits with the
+  `.to()` binding each one was routed to, and publish them on your own bus.
+  `varpulis-runtime` is taken with its default features off, so
+  `cargo tree -p varpulis-engine` names no tokio, broker client or server
+  stack — 76 packages instead of 947 — and a new fast-gate job, *Engine Stays
+  Runtime-Free* (`scripts/check-engine-deps.py`), fails the build if one ever
+  appears. Time is event time: a payload's `timestamp` is the event's time, so
+  a replay reproduces the same emits. This is the seam Vejas ADR-0031 embeds.
+- `Engine::sink_bindings()` and `Engine::take_collected_outputs()` on every
+  build of `varpulis-runtime`: the `.to()` declarations of a loaded program,
+  and the outputs an end-of-input flush leaves behind, which an embedding host
+  could not reach before.
+
 ### Changed
 
 - **The coordinator now refuses to start on a control-plane bucket with fewer

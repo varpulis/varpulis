@@ -164,6 +164,7 @@ Each connector is an independent crate. The default binary includes all; build w
 - Prometheus metrics, OpenTelemetry tracing, Grafana dashboards
 - RocksDB state persistence with optional AES-256-GCM encryption
 - Circuit breaker, dead letter queue, backpressure signaling
+- **Embeddable engine** — [`varpulis-engine`](crates/varpulis-engine/): the CEP engine as a library with no async runtime (`cargo tree` names no tokio, gated in CI). Compile VPL, feed events, publish the emits on your own bus.
 </details>
 
 ## Beyond Security
