@@ -1,0 +1,25 @@
+[package]
+name = "varpulis-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The Varpulis CEP engine as an embeddable library with no async runtime: compile VPL, feed events, collect emits"
+readme = "README.md"
+keywords = ["cep", "event-processing", "pattern-matching", "embedded", "streaming"]
+categories = ["data-structures"]
+
+# No async runtime, no broker client, no server stack. `varpulis-runtime` is
+# taken with its default features off, which is what its WASM build already
+# does; scripts/check-engine-deps.py keeps the dependency tree that way in CI.
+[dependencies]
+varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
+varpulis-parser = { version = "0.11.0", path = "../varpulis-parser" }
+varpulis-runtime = { version = "0.11.0", path = "../varpulis-runtime", default-features = false }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

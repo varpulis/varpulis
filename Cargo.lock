@@ -9014,6 +9014,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "varpulis-engine"
+version = "0.11.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "thiserror 2.0.18",
+ "varpulis-core",
+ "varpulis-parser",
+ "varpulis-runtime",
+]
+
+[[package]]
 name = "varpulis-engine-wasm"
 version = "0.11.0"
 dependencies = [

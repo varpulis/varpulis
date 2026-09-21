@@ -216,6 +216,21 @@ jobs:
         run: cargo install cargo-machete --locked
       - run: cargo machete
 
+  engine-runtime-free:
+    name: Engine Stays Runtime-Free
+    needs: [gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # varpulis-engine is the part of Varpulis that embeds in a process with no
+    # async runtime (Vejas ADR-0031). A dependency on tokio, a broker client or
+    # a server stack sneaking into its tree would compile without a word and
+    # undo that. `cargo tree` resolves the lockfile without building, so this
+    # needs no system libraries.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python3 scripts/check-engine-deps.py
+
   documented-env:
     name: Documented Settings Are Read
     needs: [gate]
