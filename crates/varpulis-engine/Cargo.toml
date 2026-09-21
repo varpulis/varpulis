@@ -17,7 +17,6 @@ categories = ["data-structures"]
 varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
 varpulis-parser = { version = "0.11.0", path = "../varpulis-parser" }
 varpulis-runtime = { version = "0.11.0", path = "../varpulis-runtime", default-features = false }
-chrono = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
