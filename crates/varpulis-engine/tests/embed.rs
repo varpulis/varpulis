@@ -107,14 +107,14 @@ stream LateralMovement = SmbConnect as smb
     let first = program
         .feed_json(
             "SmbConnect",
-            br#"{"type": "SmbConnect", "timestamp": "2026-09-21T10:00:00Z", "host": "ws-1", "target": "srv-9"}"#,
+            br#"{"event_type": "SmbConnect", "@timestamp": "2026-09-21T10:00:00Z", "host": "ws-1", "target": "srv-9"}"#,
         )
         .unwrap();
     assert!(first.is_empty(), "an open sequence emits nothing");
     let second = program
         .feed_json(
             "ServiceStart",
-            br#"{"type": "ServiceStart", "timestamp": "2026-09-21T10:01:00Z", "host": "srv-9", "image": "psexesvc.exe"}"#,
+            br#"{"event_type": "ServiceStart", "@timestamp": "2026-09-21T10:01:00Z", "host": "srv-9", "image": "psexesvc.exe"}"#,
         )
         .unwrap();
     assert_eq!(
@@ -135,13 +135,13 @@ stream LateralMovement = SmbConnect as smb
     program
         .feed_json(
             "SmbConnect",
-            br#"{"type": "SmbConnect", "timestamp": "2026-09-21T10:00:00Z", "host": "ws-1", "target": "srv-9"}"#,
+            br#"{"event_type": "SmbConnect", "@timestamp": "2026-09-21T10:00:00Z", "host": "ws-1", "target": "srv-9"}"#,
         )
         .unwrap();
     let late = program
         .feed_json(
             "ServiceStart",
-            br#"{"type": "ServiceStart", "timestamp": "2026-09-21T10:03:00Z", "host": "srv-9", "image": "psexesvc.exe"}"#,
+            br#"{"event_type": "ServiceStart", "@timestamp": "2026-09-21T10:03:00Z", "host": "srv-9", "image": "psexesvc.exe"}"#,
         )
         .unwrap();
     assert!(late.is_empty(), "three minutes is outside .within(2m)");
@@ -161,7 +161,7 @@ stream PerMinute = Ping
     let mut program = Program::compile(COUNTS).unwrap();
     for second in [0, 10, 20] {
         let payload = format!(
-            r#"{{"type": "Ping", "timestamp": "2026-09-21T10:00:{second:02}Z", "host": "a"}}"#
+            r#"{{"event_type": "Ping", "@timestamp": "2026-09-21T10:00:{second:02}Z", "host": "a"}}"#
         );
         let emits = program.feed_json("Ping", payload.as_bytes()).unwrap();
         assert!(emits.is_empty(), "the window is still open");
@@ -188,5 +188,61 @@ fn check_refuses_what_the_engine_refuses() {
     assert!(
         matches!(err, varpulis_engine::Error::Engine(_)),
         "a refusal is the engine's own, not a parse error: {err}"
+    );
+}
+
+/// Not a test: a probe for where the microseconds go, run by hand.
+/// `cargo test -p varpulis-engine --release --test embed -- --ignored --nocapture throughput_probe`
+#[test]
+#[ignore]
+fn throughput_probe() {
+    use std::time::Instant;
+    const N: usize = 64_000;
+    let mut program = Program::compile(ORDERS).unwrap();
+
+    let t = Instant::now();
+    let mut events = Vec::with_capacity(N);
+    for _ in 0..N {
+        events.push(varpulis_engine::event_from_json("Order", ORDER).unwrap());
+    }
+    let decode_us = t.elapsed().as_secs_f64() * 1e6 / N as f64;
+
+    let t = Instant::now();
+    let mut emitted = 0usize;
+    let mut bytes = 0usize;
+    for ev in events {
+        let emits = program.feed(ev).unwrap();
+        for e in &emits {
+            bytes += e.to_json().to_string().len();
+        }
+        emitted += emits.len();
+    }
+    let feed_us = t.elapsed().as_secs_f64() * 1e6 / N as f64;
+
+    let mut program = Program::compile(ORDERS).unwrap();
+    let t = Instant::now();
+    for _ in 0..N {
+        let ev = varpulis_engine::event_from_json("Order", ORDER).unwrap();
+        let emits = program.feed(ev).unwrap();
+        for e in &emits {
+            bytes += e.event.to_sink_payload().len();
+        }
+    }
+    let feed_only_us = t.elapsed().as_secs_f64() * 1e6 / N as f64 - decode_us;
+
+    let t = Instant::now();
+    let batch: Vec<varpulis_engine::Event> = (0..N)
+        .map(|_| varpulis_engine::event_from_json("Order", ORDER).unwrap())
+        .collect();
+    let decode2 = t.elapsed();
+    let mut program = Program::compile(ORDERS).unwrap();
+    let t = Instant::now();
+    let emits = program.feed_batch(batch).unwrap();
+    let batch_us = t.elapsed().as_secs_f64() * 1e6 / N as f64;
+
+    eprintln!(
+        "probe: event_from_json {decode_us:.1} us | feed + to_json {feed_us:.1} us | feed + to_sink_payload {feed_only_us:.1} us | feed_batch(64k) {batch_us:.1} us/event (decode {:.1} us) | emits {emitted} + {} | {bytes} bytes",
+        decode2.as_secs_f64() * 1e6 / N as f64,
+        emits.len()
     );
 }

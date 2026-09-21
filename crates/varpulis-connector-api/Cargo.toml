@@ -8,6 +8,17 @@ homepage.workspace = true
 documentation.workspace = true
 description = "Shared traits and types for Varpulis connector crates"
 
+# The JSON decoder (`decode::EventDecoder`) and the `limits` constants moved
+# to varpulis-core in #265 and are re-exported here at their old paths, so
+# every `use` of them keeps compiling. cargo-semver-checks cannot see through
+# a cross-crate re-export and reports them missing; that is the tool, not the
+# API. Taken against the 0.11.0 baseline:
+# `semver_exceptions_expire_with_their_baseline` in src/lib.rs turns red the
+# moment the version moves past 0.11.x, which is when this block must go.
+[package.metadata.cargo-semver-checks.lints]
+struct_missing = "allow"
+pub_module_level_const_missing = "allow"
+
 [dependencies]
 varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
 tokio = { workspace = true }

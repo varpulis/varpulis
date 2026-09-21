@@ -15,9 +15,75 @@
 pub mod circuit_breaker;
 pub mod component;
 pub mod converter;
-pub mod decode;
+/// The JSON → `Event` decoder, now in `varpulis-core` so a host without the
+/// connector SDK can use it; the path here is kept for its users.
+pub mod decode {
+    pub use varpulis_core::decode::*;
+
+    /// The decoder and `helpers::json_to_event` must agree on every payload:
+    /// the decoder exists to replace that helper on the hot path without
+    /// changing a single decoded event. Kept here because the helper lives
+    /// here; the decoder's own tests are in `varpulis-core`.
+    #[cfg(test)]
+    mod equivalence {
+        use varpulis_core::Event;
+
+        use super::EventDecoder;
+        use crate::helpers::json_to_event;
+
+        fn decode(payload: &str) -> Event {
+            // the helper's own fallback type, so a payload without `event_type`
+            // decodes to the same event on both sides
+            EventDecoder::new()
+                .decode("KafkaEvent", payload.as_bytes())
+                .expect("valid payload")
+        }
+
+        fn assert_equivalent(payload: &str) {
+            let new = decode(payload);
+            let json: serde_json::Value = serde_json::from_slice(payload.as_bytes()).unwrap();
+            let old = json_to_event(
+                json.get("event_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("KafkaEvent"),
+                &json,
+            );
+            assert_eq!(new.event_type, old.event_type, "event_type for {payload}");
+            assert_eq!(new.data, old.data, "data for {payload}");
+            // Timestamps only comparable when the payload pins one; otherwise
+            // both fall back to (different) Utc::now() readings.
+            if payload.contains("@timestamp") || payload.contains("\"ts\"") {
+                assert_eq!(new.timestamp, old.timestamp, "timestamp for {payload}");
+            }
+        }
+
+        #[test]
+        fn equivalent_to_json_to_event() {
+            assert_equivalent(
+                r#"{"ts": 1775990400000, "symbol": "AAPL", "price": 50.5, "volume": 100}"#,
+            );
+            assert_equivalent(r#"{"event_type": "Tick", "price": 1}"#);
+            assert_equivalent(r#"{"@timestamp": "2030-01-01T00:00:00Z", "device_id": "dev_0"}"#);
+            assert_equivalent(
+                r#"{"@timestamp": "2030-01-01T00:00:00Z", "ts": 1775990400000, "device_id": "dev_0"}"#,
+            );
+            assert_equivalent(r#"{"nested": {"a": 1, "b": [1, 2.5, "x", null, true]}, "ts": 5}"#);
+            assert_equivalent(r#"{"neg": -42, "big": 18446744073709551615, "f": 1e10, "ts": 1}"#);
+            assert_equivalent(r#"{"event_type": 123, "x": 1, "ts": 2}"#);
+            assert_equivalent("{}");
+            assert_equivalent("[1, 2, 3]");
+            assert_equivalent(r#""just a string""#);
+            assert_equivalent("42");
+            assert_equivalent("null");
+            assert_equivalent(r#"{"esc\"aped": "va\"lue", "ts": 3}"#);
+        }
+    }
+}
 pub mod helpers;
-pub mod limits;
+/// Resource limits, now in `varpulis-core`; the path here is kept.
+pub mod limits {
+    pub use varpulis_core::limits::*;
+}
 pub mod managed;
 pub mod sink;
 pub mod types;
@@ -216,6 +282,25 @@ mod tests {
         let payload_max = limits::MAX_EVENT_PAYLOAD_BYTES;
         let string_max = limits::MAX_STRING_VALUE_BYTES;
         assert!(payload_max >= string_max);
+    }
+
+    /// The `[package.metadata.cargo-semver-checks.lints]` block in Cargo.toml
+    /// allows `struct_missing` and `pub_module_level_const_missing` because
+    /// `decode::EventDecoder` and the `limits` constants moved to
+    /// varpulis-core (#265) and live here as re-exports the tool cannot see
+    /// through. Taken against the 0.11.0 baseline; once the version moves past
+    /// 0.11.x the baseline contains the move and the block must go — an
+    /// exception nobody is reminded to remove is how a gate goes quietly blind.
+    #[test]
+    fn semver_exceptions_expire_with_their_baseline() {
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(
+            version.starts_with("0.11."),
+            "varpulis-connector-api is now {version}, past the 0.11.0 baseline the \
+             cargo-semver-checks lint exceptions were taken against. Delete the \
+             [package.metadata.cargo-semver-checks.lints] block in \
+             crates/varpulis-connector-api/Cargo.toml and this test with it."
+        );
     }
 
     // ---- JSON Converter tests ----
