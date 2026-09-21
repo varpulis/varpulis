@@ -4,7 +4,7 @@
 
 <p align="center"><strong>Open-source SASE+ engine for SIEM correlation and MITRE ATT&amp;CK kill-chain detection.</strong></p>
 
-[![CI](https://github.com/varpulis/varpulis/actions/workflows/ci.yml/badge.svg)](https://github.com/varpulis/varpulis/actions/workflows/ci.yml)
+[![CI](https://github.com/varpulis/varpulis/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/varpulis/varpulis/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/varpulis-cli.svg)](https://crates.io/crates/varpulis-cli)
 [![docs.rs](https://docs.rs/varpulis-core/badge.svg)](https://docs.rs/varpulis-core)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
