@@ -1412,3 +1412,29 @@ fn valid_nested_expressions_in_where() {
         "Valid where should not produce E090: {diags:?}"
     );
 }
+
+// =============================================================================
+// E052: a regex_match pattern the engine cannot compile
+// =============================================================================
+
+#[test]
+fn e052_a_pattern_with_look_around_is_reported_where_it_is_written() {
+    // PCRE look-ahead, as in many Sigma rules: Rust's regex refuses it, and at
+    // run time the call would answer nothing, so the rule would never fire.
+    for src in [
+        "stream R = T\n    .where(regex_match(CommandLine, '(?i)powershell(?!.*-nop)'))\n    .emit(c: CommandLine)\n",
+        "stream R = T\n    .where(CommandLine.regex_match('(a)\\1'))\n    .emit(c: CommandLine)\n",
+        "stream R = Start as s\n    -> T where regex_match(CommandLine, '(?<=x)y') as t\n    .within(1m)\n    .emit(c: t.CommandLine)\n",
+        "stream R = T\n    .where(Image == 'x')\n    .emit(hit: regex_match(CommandLine, '[unclosed'))\n",
+    ] {
+        let d = validate_vpl(src);
+        assert!(has_error(&d, "E052"), "no E052 for:\n{src}\n{d:?}");
+    }
+}
+
+#[test]
+fn e052_a_pattern_the_engine_compiles_is_not_reported() {
+    let src = "stream R = T\n    .where(regex_match(Image, '(?i)^.*\\\\svc[a-z]+\\.exe$') and not regex_match(CommandLine, '-nop'))\n    .emit(i: Image)\n";
+    let d = validate_vpl(src);
+    assert!(!has_code(&d, "E052"), "{d:?}");
+}

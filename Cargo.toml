@@ -38,6 +38,7 @@ description = "Rust stream processing engine for real-time detection — Apache 
 [workspace.dependencies]
 # Parsing
 logos = "0.16"
+regex = "1.12"
 
 # Async runtime
 tokio = { version = "1.50", features = ["full"] }

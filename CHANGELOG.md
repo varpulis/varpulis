@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — rules that ran and never fired
+
+- A condition on a field the event does not carry is false in `.where()`, as
+  it always was in a `->` sequence step. `a == "x" or ends_with(b, "y")` used
+  to fire only on events that had a `b`, `selection and not filter` dropped
+  every event without the filter's field, and the same predicate answered
+  differently in the two places. `and` and `or` now stop at the first operand
+  that decides.
+- A field the event does not carry, passed to a function, is `null` in its
+  own position. It was dropped from the argument list, so `is_null(b)` never
+  held for a missing `b` and a user function received its later arguments
+  shifted one place left.
+- `varpulis simulate` reads a JSON line the way a live source does: `EventID`
+  and `Channel` stay fields of the event (they were dropped, so a rule testing
+  `EventID == 4625` fired on the bus and never in a simulation), and an
+  explicit `"type"` wins over the type guessed from `EventID`.
+- `coalesce`, `unique` and `clamp` were documented as implemented and were
+  not; they are now. `now()` was documented and never existed; the table no
+  longer lists it (a rule runs on the time its events carry).
+
+### Added
+
+- Single-quoted strings are raw, as in Sigma's YAML: a backslash is only a
+  backslash, even last (`'\AppData\Local\Temp\'`, which a double-quoted
+  string cannot end with), and `''` is one quote. The type documentation had
+  listed `'world'` as a string all along; the parser refused it.
+- `regex_match(s, pattern)` / `s.regex_match(pattern)`, with Rust `regex`
+  syntax: linear time, no look-around or back-references, each pattern
+  compiled once per thread. `varpulis check` reports a literal pattern that
+  does not compile as **E052** instead of loading a rule that never fires.
+
 ### Removed — the platform (ADR-008)
 
 Varpulis is its engine. Retired in favour of [Vejas](https://github.com/cpoder/vejas),

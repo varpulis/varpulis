@@ -126,6 +126,7 @@ Available as both functions and methods: `len(s)` or `s.len()`.
 | `replace(s, old, new)` / `s.replace(old, new)` | String replacement |
 | `substring(s, start, end?)` / `s.substring(start, end?)` | Extract substring |
 | `reverse(s)` / `s.reverse()` | Reverse string |
+| `regex_match(s, pattern)` / `s.regex_match(pattern)` | Whether `pattern` matches anywhere in `s` (see below) |
 
 ### Array/Collection Functions (Implemented)
 
@@ -177,15 +178,58 @@ Available as both functions and methods: `len(s)` or `s.len()`.
 
 | Function | Description |
 |----------|-------------|
-| `coalesce(a, b, ...)` | First non-null value |
-| `now()` | Current timestamp |
+| `coalesce(a, b, ...)` | First argument that is not null (a field the event lacks is null) |
 | `range(n)` / `range(start, end)` | Generate integer range |
+
+There is no `now()`. A rule is judged in the time its events carry, so the
+same log replayed next week raises the same alerts; a wall clock would make
+the replay and the live run disagree.
+
+### Regular expressions
+
+`regex_match(s, pattern)` searches `s` for `pattern` and is true on the first
+match; anchor with `^` and `$` to match the whole value. The syntax is Rust's
+[`regex`](https://docs.rs/regex/latest/regex/#syntax): matching takes linear
+time whatever the pattern and input, which is why look-around (`(?=`, `(?!`,
+`(?<=`, `(?<!`) and back-references (`\1`) are not available. Flags go inline:
+`(?i)` ignores case, `(?s)` lets `.` match a newline, `(?m)` makes `^` and `$`
+match at line breaks. Write the pattern in single quotes, so every backslash
+reaches the regex engine as written:
+
+```vpl
+stream EncodedPowershell = SysmonProcessCreate
+    .where(regex_match(CommandLine, '(?i)\s-e(nc|ncodedcommand)?\s+[a-z0-9+/=]{40,}'))
+    .emit(host: Hostname, cmd: CommandLine)
+```
+
+A literal pattern the engine cannot compile is an error in `varpulis check`
+(**E052**), not a rule that loads and never fires. Each distinct pattern is
+compiled once per thread.
+
+### Fields the event does not carry
+
+Logs are uneven: one Sysmon version records `OriginalFileName`, the next host's
+does not. A condition on a field the event does not carry is **false**, in
+`.where()` exactly as in a `->` sequence step:
+
+| Expression, on an event without `b` | Result |
+|---|---|
+| `b == "y"`, `b != "y"`, `ends_with(b, "y")`, `b > 3` | false |
+| `not (b == "y")`, `not ends_with(b, "y")` | true |
+| `a == "x" or ends_with(b, "y")` | same as `a == "x"` |
+| `is_null(b)`, `b.is_null()` | true |
+| `coalesce(b, "none")` | `"none"` |
+| `.emit(b: b)` | the emitted event has no `b` |
+
+So `selection and not filter` keeps an event that lacks the filter's field,
+and `!=` is itself a condition on the field (false when it is missing), which
+is why `not (b == "y")` is the way to say "unless b is y". A missing field
+passed to a function is `null` in its own position.
 
 ### Planned Functions (Not Yet Implemented)
 
 | Function | Description |
 |----------|-------------|
-| `regex_match(s, pat)` | Regex matching |
 | `uuid()` | Generate UUID |
 | `random()` | Random number |
 | `year(ts)` / `month(ts)` / `day(ts)` | Date extraction |

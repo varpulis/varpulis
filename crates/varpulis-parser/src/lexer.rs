@@ -334,9 +334,9 @@ pub enum Token {
         let s = lex.slice();
         Some(s[1..s.len()-1].to_string())
     })]
-    #[regex(r#"'([^'\\]|\\.)*'"#, |lex| {
+    #[regex(r#"'([^']|'')*'"#, |lex| {
         let s = lex.slice();
-        Some(s[1..s.len()-1].to_string())
+        Some(s[1..s.len()-1].replace("''", "'"))
     })]
     String(String),
 

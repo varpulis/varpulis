@@ -12,6 +12,29 @@
 | `duration` | Time duration | `5s`, `10m`, `1h`, `2d` |
 | `null` | Absence of value | `null` |
 
+### Strings
+
+A string is written in double or single quotes, and neither form has escape
+sequences: what is between the quotes is the value, so `"\PsExec.exe"` is a
+backslash followed by `PsExec.exe`, and `\t` is a backslash and a `t`, never a
+tab.
+
+- In a **double-quoted** string a backslash still pairs with the character
+  after it, which lets `"say \"hi\""` contain quotes (the backslashes stay in
+  the value). The same pairing means a double-quoted string cannot end in a
+  backslash: `"\Temp\"` does not close.
+- A **single-quoted** string is raw, the way Sigma's YAML is: a backslash is
+  only a backslash, even last, and `''` stands for one quote. Windows paths
+  that end in a separator are written this way.
+
+```vpl
+stream TempExec = SysmonProcessCreate
+    .where(contains(lower(Image), '\appdata\local\temp\'))
+    .emit(image: Image, parent: ParentImage)
+
+const QUOTE = 'it''s'   # it's
+```
+
 ## Composite Types
 
 ### Arrays

@@ -454,9 +454,16 @@ fn check_stream_ops(
     let has_forecast = ops.iter().any(|op| matches!(op, StreamOp::Forecast(_)));
     let has_enrich = ops.iter().any(|op| matches!(op, StreamOp::Enrich(_)));
 
+    if let StreamSource::IdentWithFilterAndAlias { filter, .. } = source {
+        check_regex_literals(v, filter, span);
+    }
+
     for (op_idx, op) in ops.iter().enumerate() {
         // Use per-operation op_span if available, fall back to stream declaration op_span
         let op_span = op_spans.get(op_idx).copied().unwrap_or(span);
+        for expr in op_expressions(op) {
+            check_regex_literals(v, expr, op_span);
+        }
         match op {
             // --- Unimplemented operations (E090) ---
             StreamOp::Map(_) => {
@@ -1836,6 +1843,91 @@ fn check_function_call(v: &mut Validator, name: &str, args_len: usize, span: Spa
         format!("unknown function '{name}'"),
         hint,
     );
+}
+
+// ---------------------------------------------------------------------------
+// Regular expressions — a pattern the engine cannot compile never matches
+// ---------------------------------------------------------------------------
+
+/// The expressions an operation evaluates against events.
+fn op_expressions(op: &StreamOp) -> Vec<&Expr> {
+    match op {
+        StreamOp::Where(e) | StreamOp::Having(e) | StreamOp::Filter(e) => vec![e],
+        StreamOp::Emit { fields, .. } | StreamOp::Tap(fields) | StreamOp::Log(fields) => {
+            fields.iter().map(|f| &f.value).collect()
+        }
+        StreamOp::Select(items) => items
+            .iter()
+            .filter_map(|item| match item {
+                SelectItem::Alias(_, e) => Some(e),
+                SelectItem::Field(_) => None,
+            })
+            .collect(),
+        StreamOp::FollowedBy(clause) | StreamOp::Not(clause) => clause.filter.iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Report a `regex_match` whose pattern is a literal the engine cannot
+/// compile (E052). At run time such a pattern makes every call answer "no
+/// value", so the rule would load, run and never fire. The engine is Rust's
+/// `regex` (linear time, no backtracking): look-around and back-references,
+/// common in PCRE rules, are the usual reason.
+fn check_regex_literals(v: &mut Validator, expr: &Expr, span: Span) {
+    match expr {
+        Expr::Call { func, args } => {
+            let pattern = match (func.as_ref(), args.as_slice()) {
+                (Expr::Ident(name), [_, Arg::Positional(Expr::Str(p))])
+                    if name == "regex_match" =>
+                {
+                    Some(p)
+                }
+                (Expr::Member { member, .. }, [Arg::Positional(Expr::Str(p))])
+                    if member == "regex_match" =>
+                {
+                    Some(p)
+                }
+                _ => None,
+            };
+            if let Some(pattern) = pattern {
+                if let Err(e) = regex::Regex::new(pattern) {
+                    let reason = e.to_string();
+                    let reason = reason.lines().last().unwrap_or(&reason).trim().to_string();
+                    v.emit_with_hint(
+                        Severity::Error,
+                        span,
+                        "E052",
+                        format!("regex_match pattern does not compile: {reason}"),
+                        "the engine is Rust's regex crate: no look-around, no back-references"
+                            .to_string(),
+                    );
+                }
+            }
+            check_regex_literals(v, func, span);
+            for arg in args {
+                match arg {
+                    Arg::Positional(e) | Arg::Named(_, e) => check_regex_literals(v, e, span),
+                }
+            }
+        }
+        Expr::Binary { left, right, .. } => {
+            check_regex_literals(v, left, span);
+            check_regex_literals(v, right, span);
+        }
+        Expr::Unary { expr: inner, .. }
+        | Expr::Member { expr: inner, .. }
+        | Expr::OptionalMember { expr: inner, .. } => check_regex_literals(v, inner, span),
+        Expr::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            check_regex_literals(v, cond, span);
+            check_regex_literals(v, then_branch, span);
+            check_regex_literals(v, else_branch, span);
+        }
+        _ => {}
+    }
 }
 
 // ---------------------------------------------------------------------------
