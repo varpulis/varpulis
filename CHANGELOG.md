@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed — rules that ran and never fired
 
+- A program that evaluated `arr.filter(x => ...)` or `arr.map(x => ...)`
+  (both documented), `a?.b` or a timestamp literal
+  aborted the whole process with a stack overflow: the evaluator's fallback
+  for a kind of expression it did not list called the evaluator again with the
+  same expression. An abort is not a panic, so a host running several units
+  (Vejas) went down with all of them. A lambda whose body is a block
+  (`x => { let y = x * 2 ... }`) now evaluates too. Every kind is now listed, with no
+  fallback, so a new one is a compile error instead.
 - A condition on a field the event does not carry is false in `.where()`, as
   it always was in a `->` sequence step. `a == "x" or ends_with(b, "y")` used
   to fire only on events that had a `b`, `selection and not filter` dropped
