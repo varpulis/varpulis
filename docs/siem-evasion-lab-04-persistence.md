@@ -222,4 +222,9 @@ The demo includes the IFEO persistence comparison, the broad autostart detection
 
 *This concludes Season 1 of SIEM Evasion Lab. The pattern is clear: single-event, path-specific detection creates coverage gaps that behavioral sequence matching eliminates.*
 
-*Built with [Varpulis](https://github.com/varpulis/varpulis) — a dual red/blue kill chain detection engine.*
+## Run it on your own events
+
+The rules in this lab run on [Vejas](https://vejas.dev), next to your SIEM, reading the event stream you already forward — Kafka, NATS JetStream, a webhook. They keep their state through a crash and judge time windows on the timestamps in the logs.
+
+If you want to see what your own correlation rules look like in VPL, and what they catch, send three of them with one sample event to [contact@varpulis-cep.com](mailto:contact@varpulis-cep.com?subject=Three%20rules%20to%20port). They come back ported, free. For a proof of concept on your own traffic, see [what a four-week engagement covers](https://www.varpulis-cep.com/#pricing).
+

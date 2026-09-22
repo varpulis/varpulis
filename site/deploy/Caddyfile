@@ -1,0 +1,15 @@
+# varpulis-site: the landing at /, the documentation under /docs/.
+# Clean URLs (/docs/foo serves foo.html) as the old docs server did.
+:80 {
+	root * /usr/share/caddy
+	encode gzip
+	try_files {path} {path}.html {path}/index.html
+	file_server
+	handle_errors {
+		@notfound expression {err.status_code} == 404
+		handle @notfound {
+			rewrite * /docs/404.html
+			file_server
+		}
+	}
+}
