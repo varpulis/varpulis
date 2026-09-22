@@ -11,6 +11,19 @@ keywords = ["parser", "dsl", "streaming", "pest", "detection"]
 categories = ["parser-implementations", "development-tools"]
 build = "build.rs"
 
+# `pest_parser` was a public module, so the `Rule` enum pest_derive generates
+# was public API and every grammar rule added was reported as a breaking change
+# (a variant added, the discriminants after it moved). Nothing outside this
+# crate used it; it is private now and `parse` is re-exported as before. That
+# removal is the one break, taken against the 0.11.0 baseline:
+# `semver_exceptions_expire_with_their_baseline` in src/lib.rs turns red the
+# moment the version moves past 0.11.x, which is when this block must go.
+[package.metadata.cargo-semver-checks.lints]
+module_missing = "allow"
+enum_missing = "allow"
+struct_missing = "allow"
+function_missing = "allow"
+
 [dependencies]
 varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
 logos = { workspace = true }
