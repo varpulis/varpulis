@@ -99,7 +99,7 @@ arrow-arith = { version = "58", optional = true, default-features = false }
 # arrow-row: SIMD-friendly comparison encoding for multi-column group keys.
 # Used by the streaming columnar grouped aggregator to hash partition keys
 # in bulk, the same way DataFusion's GroupedHashAggregateStream does.
-arrow-row = { version = "58", optional = true, default-features = false }
+arrow-row = { version = "60", optional = true, default-features = false }
 
 # Encryption at rest
 aes-gcm = { version = "0.10", optional = true }
