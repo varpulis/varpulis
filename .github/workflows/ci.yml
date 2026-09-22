@@ -279,11 +279,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: semver
-      # semver-checks rustdoc-builds crates with --all-features, which
-      # reaches rdkafka-sys (needs curl/zlib headers) and pulsar (needs
-      # protoc). Without these the job dies on build errors before ever
-      # evaluating an API — which is how it silently rotted: it only
-      # triggers on non-dependabot PRs, and those were rare.
+      # semver-checks rustdoc-builds both sides with --all-features. This
+      # side no longer reaches rdkafka-sys or pulsar — the connectors are
+      # gone (ADR-008) — but the BASELINE still does, and a baseline that
+      # cannot build is a job that passes without comparing anything. These
+      # headers stay until no reachable baseline carries the connectors.
+      - name: Install connector system dependencies (for the baseline)
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev protobuf-compiler zlib1g-dev
       - name: Install cargo-semver-checks
         run: cargo install cargo-semver-checks --locked
       # Scoped to the crates external consumers depend on: the engine

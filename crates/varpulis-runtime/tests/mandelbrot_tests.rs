@@ -1,5 +1,8 @@
-//! Tests for emit statement and .process() operation
-//! Used by the Mandelbrot set demo
+//! `.process()` and `emit`: a VPL function called per event, its arguments
+//! evaluated as expressions, its result emitted with the fields the program
+//! names. The programs here are inline — the shipped example that used to
+//! exercise the same path was a web demo and went with the platform
+//! (ADR-008); every shipped `.vpl` is still loaded by `examples_e2e`.
 
 use std::sync::Arc;
 
@@ -366,28 +369,4 @@ for row in 0..2:
     tile_types.sort();
     tile_types.dedup();
     assert_eq!(tile_types.len(), 4, "All 4 tiles should produce output");
-}
-
-#[tokio::test]
-async fn test_mandelbrot_vpl_file_loads_into_engine() {
-    // Verify the actual mandelbrot_parallel.vpl loads into the engine
-    // (without MQTT connector, so we strip the connector and .to() lines)
-    let vpl = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/mandelbrot/web/mandelbrot_parallel.vpl"),
-    )
-    .expect("Failed to read mandelbrot_parallel.vpl");
-
-    let program = parse(&vpl).expect("Failed to parse mandelbrot_parallel.vpl");
-
-    let (tx, _rx) = mpsc::channel(1000);
-    let mut engine = Engine::new(tx);
-    engine
-        .load(&program)
-        .expect("Failed to load mandelbrot_parallel.vpl into engine");
-
-    assert!(
-        engine.has_contexts(),
-        "Mandelbrot VPL should have 16 contexts"
-    );
 }
