@@ -1,377 +1,101 @@
-# Getting Started with Varpulis
+# Getting Started
 
-This tutorial will get you up and running with Varpulis in under 5 minutes. You'll learn to write, validate, and run your first VPL program.
+Varpulis is a complex-event-processing engine: it reads a stream of events
+and says when a *pattern* of them has happened — this, then that, within
+two minutes, for the same host. You write the pattern in VPL; the engine
+runs as a library inside a host that owns the bus.
 
-## Prerequisites
-
-- **Rust 1.93+**: Install via [rustup](https://rustup.rs/)
-- **Git**: For cloning the repository
-- **Optional**: MQTT broker (Mosquitto) for real-time streaming
-
-## Installation
-
-### From Source
+## Install the command line
 
 ```bash
-# Clone the repository
-git clone https://github.com/varpulis/varpulis.git
+git clone https://github.com/varpulis/varpulis
 cd varpulis
-
-# Build the CLI
-cargo build --release
-
-# Add to PATH (optional)
-export PATH="$PATH:$(pwd)/target/release"
-
-# Verify installation
+cargo install --path crates/varpulis-cli
 varpulis --version
-# Output: varpulis 0.9.0
 ```
 
-### Quick Build Check
+## Write a program
 
-```bash
-# Run tests to verify everything works
-cargo test --workspace
-```
-
-## Your First VPL Program
-
-Let's create a simple temperature monitoring program.
-
-### Step 1: Create the Program File
-
-Create a file called `temperature_monitor.vpl`:
+`lateral.vpl` — an SMB connection followed, within two minutes, by a
+service starting on the machine it connected to:
 
 ```vpl
-# temperature_monitor.vpl
-# Simple temperature monitoring with alerts
+event SmbConnect:
+    host: str
+    target: str
 
-# Declare the event type we expect
-event TemperatureReading:
-    sensor_id: str
-    temperature: float
-    unit: str
+event ServiceStart:
+    host: str
+    image: str
 
-# Create an alert stream for high temperatures
-stream HighTempAlerts = TemperatureReading
-    .where(temperature > 100)
-    .emit(
-        alert_type: "HighTemperature",
-        sensor: sensor_id,
-        temp: temperature
-    )
+stream LateralMovement = SmbConnect as smb
+    -> ServiceStart where host == smb.target as svc
+    .within(2m)
+    .emit(rule: "lateral_movement", from: smb.host, to: svc.host, image: svc.image)
 ```
-
-### Step 2: Validate the Syntax
-
-Before running, check that your program has valid syntax:
 
 ```bash
-varpulis check temperature_monitor.vpl
+varpulis check lateral.vpl
 ```
 
-**Expected output:**
-```
-Syntax OK
-   Statements: 2
-```
+`ok` means the parser and the engine both accept it. Anything else is the
+reason, with the line.
 
-If there's an error, you'll see helpful diagnostics:
+## Feed it events
+
+`lateral.evt` — one event per line, `BATCH <ms>` advances the clock:
 
 ```
-Syntax error: unexpected token at line 5, column 10
-   Hint: Expected 'where', 'select', or 'emit'
-   |
-   | stream HighTempAlerts form TemperatureReading
-   |                       ^^^^
+SmbConnect { host: "ws-1", target: "srv-9" }
+BATCH 60000
+ServiceStart { host: "srv-9", image: "psexesvc.exe" }
 ```
-
-### Step 3: View the AST (Optional)
-
-To understand how Varpulis parses your program:
 
 ```bash
-varpulis parse temperature_monitor.vpl
+varpulis simulate -p lateral.vpl -e lateral.evt
 ```
 
-This shows the Abstract Syntax Tree, useful for debugging complex expressions.
-
-### Step 4: Run a Simulation
-
-Create a test event file called `test_events.evt`:
-
-```
-# test_events.evt
-# Format: @delay_ms EventType { field: value, ... }
-
-@0 TemperatureReading { sensor_id: "sensor-1", temperature: 72.5, unit: "F" }
-@100 TemperatureReading { sensor_id: "sensor-2", temperature: 68.0, unit: "F" }
-@200 TemperatureReading { sensor_id: "sensor-1", temperature: 105.2, unit: "F" }
-@300 TemperatureReading { sensor_id: "sensor-3", temperature: 71.8, unit: "F" }
-@400 TemperatureReading { sensor_id: "sensor-1", temperature: 112.5, unit: "F" }
+```json
+{"event_type":"LateralMovement","rule":"lateral_movement","from":"ws-1","to":"srv-9","image":"psexesvc.exe","timestamp":"1970-01-01T00:01:00Z"}
 ```
 
-Now simulate the events:
+Make the second batch `BATCH 180000` — three minutes — and nothing is
+emitted: `.within(2m)` is judged in the events' own time, never against
+the wall clock, so the same file gives the same answer every run.
 
-```bash
-varpulis simulate \
-    --program temperature_monitor.vpl \
-    --events test_events.evt \
-    --verbose
+## Embed it
+
+```toml
+[dependencies]
+varpulis-engine = { git = "https://github.com/varpulis/varpulis" }
 ```
 
-**Expected output:**
-```
-Varpulis Event Simulation
-============================
-Program: temperature_monitor.vpl
-Events:  test_events.evt
-Mode:    timed
-Workers: 1
+```rust
+use varpulis_engine::Program;
 
-Program loaded: 2 streams
-
-Starting simulation...
-
-  [  1] @     0ms TemperatureReading { ... }
-  [  2] @   100ms TemperatureReading { ... }
-  [  3] @   200ms TemperatureReading { ... }
-ALERT: HighTemperature - Temperature exceeded 100 degrees
-   sensor_id: sensor-1
-   temperature: 105.2
-  [  4] @   300ms TemperatureReading { ... }
-  [  5] @   400ms TemperatureReading { ... }
-ALERT: HighTemperature - Temperature exceeded 100 degrees
-   sensor_id: sensor-1
-   temperature: 112.5
-
-Simulation Complete
-======================
-Duration:         0.402s
-Events processed: 5
-Workers used:     1
-Alerts generated: 2
-Event rate:       12.4 events/sec
+let mut program = Program::compile(include_str!("lateral.vpl"))?;
+program.feed_json("SmbConnect", br#"{"@timestamp":"2026-09-21T10:00:00Z","host":"ws-1","target":"srv-9"}"#)?;
+let emits = program.feed_json("ServiceStart", br#"{"@timestamp":"2026-09-21T10:01:00Z","host":"srv-9","image":"psexesvc.exe"}"#)?;
+assert_eq!(emits[0].to_json()["rule"], "lateral_movement");
 ```
 
-## Faster Processing with Parallel Workers
+A payload's `@timestamp` (RFC 3339), else `ts` or `timestamp` (epoch
+milliseconds), is the event's time; a string `event_type` names its type,
+else the one you pass. `program.snapshot()` gives you the engine's state as
+bytes — open sequences with their deadlines, windows, joins — and
+`restore()` puts it back into a fresh program.
 
-By default, `simulate` runs in fast mode -- it preloads all events into memory and processes them as fast as possible with no timing delays. To scale across multiple CPU cores:
+## Run it on a bus
 
-```bash
-varpulis simulate \
-    --program temperature_monitor.vpl \
-    --events test_events.evt \
-    --workers 8 \
-    --partition-by sensor_id
-```
+The engine opens no socket. The reference host is
+[Vejas](https://github.com/cpoder/vejas): put `lateral.vpl` under
+`detects/`, and it is a unit with a durable JetStream consumer over its
+`.from()` subjects, emit before ack, a snapshot every few seconds and
+resume by sequence after a crash. See *Detect units* in the Vejas book.
 
-If you want to replay events with real-time timing delays (e.g., to observe how alerts trigger over time), use `--timed`:
+## Next
 
-```bash
-varpulis simulate \
-    --program temperature_monitor.vpl \
-    --events test_events.evt \
-    --timed
-```
-
-## Adding Aggregations
-
-Let's enhance our program with windowed aggregations:
-
-```vpl
-# temperature_monitor_v2.vpl
-
-# Raw temperature readings
-stream Readings = TemperatureReading
-
-# Calculate average temperature over 1-minute windows
-stream AvgTemperature = TemperatureReading
-    .window(1m)
-    .aggregate(
-        avg_temp: avg(temperature),
-        max_temp: max(temperature),
-        min_temp: min(temperature),
-        reading_count: count()
-    )
-    .print("Minute summary: avg={avg_temp}, max={max_temp}, min={min_temp}")
-
-# Alert on sustained high temperatures (average > 90 over window)
-stream SustainedHighTemp = TemperatureReading
-    .window(1m)
-    .aggregate(avg_temp: avg(temperature))
-    .where(avg_temp > 90)
-    .emit(
-        alert_type: "SustainedHighTemp",
-        avg_temp: avg_temp,
-        message: "Average temperature exceeds threshold"
-    )
-```
-
-## Running the Built-in Demo
-
-Varpulis includes a HVAC building monitoring demo:
-
-```bash
-# Run for 30 seconds with simulated anomalies
-varpulis demo --duration 30 --anomalies
-
-# With Prometheus metrics
-varpulis demo --duration 60 --anomalies --metrics --metrics-port 9090
-```
-
-Then open http://localhost:9090/metrics to see real-time metrics.
-
-## Interactive Mode (Recommended for Learning)
-
-The fastest way to explore VPL is the interactive shell — type definitions and
-events directly, no files needed:
-
-```bash
-varpulis interactive
-```
-
-```
-Varpulis Interactive Shell v0.9.0
-Type VPL declarations (event, stream, ...) or event literals to inject.
-Type :help for commands, :quit to exit.
-
-vpl> event TemperatureReading:
-...>     sensor_id: str
-...>     temperature: float
-vpl>
-✓ 0 stream(s) loaded
-
-vpl> stream HighTemp = TemperatureReading .where(temperature > 100) .emit(sensor: sensor_id, temp: temperature)
-✓ 1 stream(s) loaded: HighTemp
-  added: HighTemp
-
-vpl> TemperatureReading { sensor_id: "sensor-1", temperature: 72.5 }
-
-vpl> TemperatureReading { sensor_id: "sensor-1", temperature: 105.2 }
-→ HighTemp: {"sensor":"sensor-1","temp":105.2}
-
-vpl> TemperatureReading { sensor_id: "sensor-1", temperature: 112.5 }
-→ HighTemp: {"sensor":"sensor-1","temp":112.5}
-
-vpl> :streams
-  HighTemp (source: stream:TemperatureReading, 2 ops)
-
-vpl> :quit
-Bye!
-```
-
-**Key features:**
-- Type `event` or `stream` declarations and they compile incrementally
-- Multi-line blocks: type `event Foo:`, then indented fields, blank line to submit
-- Type event literals (e.g., `Sensor { temp: 150 }`) to inject and see results
-- Commands: `:streams`, `:topology`, `:trace on`, `:gen fraud`, `:help`
-
-### TUI Mode
-
-For a split-pane visual experience with topology, events, and metrics:
-
-```bash
-varpulis interactive --file temperature_monitor.vpl --trace
-```
-
-This opens a full terminal UI with 4 panes:
-- **Top-left**: Pipeline topology graph
-- **Top-right**: Scrolling event stream with trace (PASS/BLOCK indicators)
-- **Bottom-left**: VPL input / command area
-- **Bottom-right**: Live metrics dashboard
-
-Key bindings: `Tab` (switch pane), `Ctrl+G` (toggle datagen), `Ctrl+T` (trace), `Ctrl+Q` (quit).
-
-## Pipeline Trace (Explain Mode)
-
-To understand exactly how events flow through your pipeline, use `--trace`:
-
-```bash
-varpulis simulate --trace \
-    -p temperature_monitor.vpl \
-    -e test_events.evt \
-    -w 1
-```
-
-```
-EVENT [1/5] TemperatureReading { sensor_id="sensor-1", temperature=72.5, unit="F" }
-  -> stream HighTempAlerts matched on TemperatureReading
-     | Filter BLOCK
-
-EVENT [3/5] TemperatureReading { sensor_id="sensor-1", temperature=105.2, unit="F" }
-  -> stream HighTempAlerts matched on TemperatureReading
-     | Filter PASS
-  <- HighTempAlerts emitted { alert_type="HighTemperature", sensor="sensor-1", temp=105.2 }
-```
-
-Each event shows: which streams matched, which operators passed (green) or
-blocked (red), and what output was emitted. Essential for debugging complex
-pipelines.
-
-## Schema Inference
-
-Don't want to write event declarations manually? Use `varpulis infer` to
-generate them from sample data:
-
-```bash
-varpulis infer --input test_events.evt
-```
-
-```
-event TemperatureReading:
-    sensor_id: str
-    temperature: float
-    unit: str
-# Inferred 1 event type(s) from 5 event(s)
-```
-
-Copy the output into your VPL file — instant type declarations.
-
-## Next Steps
-
-Now that you have Varpulis running:
-
-1. **Learn the Language**: Read the [VPL Language Tutorial](language-tutorial.md) for comprehensive coverage of streams, patterns, windows, and more.
-
-2. **Explore Windows**: See the [Windows & Aggregations Reference](../reference/windows-aggregations.md) for tumbling, sliding, and count-based windows.
-
-3. **Pattern Matching**: Learn about SASE+ patterns in the [Pattern Guide](../guides/sase-patterns.md) for detecting complex event sequences.
-
-4. **Production Setup**: Review the [Configuration Guide](../guides/configuration.md) for MQTT integration, TLS, and deployment options.
-
-## Quick Reference
-
-| Command | Purpose |
-|---------|---------|
-| `varpulis interactive` | Split-pane terminal UI: type VPL + events live |
-| `varpulis interactive --no-tui` | The same shell, plain line-oriented |
-| `varpulis interactive --json` | JSON-line protocol (for agents) |
-| `varpulis check file.vpl` | Validate syntax |
-| `varpulis simulate -p file.vpl -e events.evt` | Run simulation |
-| `varpulis simulate --trace ...` | Explain mode (per-event flow) |
-| `varpulis simulate --watch ...` | Auto-reload on file changes |
-| `varpulis infer --input data.jsonl` | Infer event type declarations |
-| `varpulis connector list` | Show available connectors |
-| `varpulis run --file file.vpl` | Run with live connectors |
-| `varpulis demo` | Built-in HVAC demo |
-| `varpulis server` | Start WebSocket API |
-
-## Troubleshooting
-
-**"Parse error: unexpected token"**
-- Check for typos in keywords (`where`, `emit`)
-- Ensure strings are quoted: `"value"` not `value`
-- Verify brackets match: `{ }` for blocks, `( )` for function calls
-
-**"No events processed"**
-- Check event file format matches expected event types
-- Verify the stream declaration (`stream Name = EventType`) matches the event type exactly
-
-**"Simulation runs slowly"**
-- The default mode already runs as fast as possible (no timing delays, events preloaded)
-- Use `--workers N` for parallel processing
-- If using `--timed` or `--streaming`, switch to the default fast mode for maximum throughput
-
-For more help, see the [Troubleshooting Guide](../guides/troubleshooting.md).
+- [The language](../language/overview.md) — events, streams, operators.
+- [SASE+ semantics](../adr/004-sase-plus-semantics.md) — what a sequence
+  means, exactly.
+- [Scenarios](../scenarios/) — fraud, kill chains, predictive maintenance.

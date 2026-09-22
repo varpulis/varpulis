@@ -10,20 +10,7 @@ description = "Connector implementations for Varpulis (MQTT, Kafka, NATS, HTTP, 
 
 [dependencies]
 varpulis-connector-api = { version = "0.11.0", path = "../varpulis-connector-api" }
-varpulis-connector-mqtt = { version = "0.11.0", path = "../varpulis-connector-mqtt", optional = true }
-varpulis-connector-kafka = { version = "0.11.0", path = "../varpulis-connector-kafka", optional = true }
-varpulis-connector-nats = { version = "0.11.0", path = "../varpulis-connector-nats", optional = true }
-varpulis-connector-redis = { version = "0.11.0", path = "../varpulis-connector-redis", optional = true }
-varpulis-connector-elasticsearch = { version = "0.11.0", path = "../varpulis-connector-elasticsearch", optional = true }
-varpulis-connector-pulsar = { version = "0.11.0", path = "../varpulis-connector-pulsar", optional = true }
-varpulis-connector-kinesis = { version = "0.11.0", path = "../varpulis-connector-kinesis", optional = true }
-varpulis-connector-s3 = { version = "0.11.0", path = "../varpulis-connector-s3", optional = true }
-varpulis-connector-database = { version = "0.11.0", path = "../varpulis-connector-database", optional = true }
 varpulis-connector-http = { version = "0.11.0", path = "../varpulis-connector-http" }
-varpulis-connector-slack = { version = "0.11.0", path = "../varpulis-connector-slack", optional = true }
-varpulis-connector-splunk = { version = "0.11.0", path = "../varpulis-connector-splunk", optional = true }
-varpulis-connector-syslog = { version = "0.11.0", path = "../varpulis-connector-syslog", optional = true }
-varpulis-connector-cdc = { version = "0.11.0", path = "../varpulis-connector-cdc", optional = true }
 varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -46,26 +33,9 @@ serde_yaml = "0.9"
 
 [features]
 default = []
-mqtt = ["varpulis-connector-mqtt"]
-kafka = ["varpulis-connector-kafka"]
-nats = ["varpulis-connector-nats"]
-redis = ["varpulis-connector-redis"]
-elasticsearch = ["varpulis-connector-elasticsearch"]
-pulsar = ["varpulis-connector-pulsar"]
-kinesis = ["varpulis-connector-kinesis"]
-s3 = ["varpulis-connector-s3"]
-database = ["varpulis-connector-database"]
-postgres = ["varpulis-connector-database"]
-mysql = ["varpulis-connector-database"]
-sqlite = ["varpulis-connector-database"]
 http = []
-slack = ["varpulis-connector-slack"]
-splunk = ["varpulis-connector-splunk"]
-syslog = ["varpulis-connector-syslog"]
-cdc = ["varpulis-connector-cdc"]
 csv-converter = []
 encryption = ["aes-gcm", "base64"]
-all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch", "pulsar", "http", "slack", "splunk", "syslog", "cdc"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

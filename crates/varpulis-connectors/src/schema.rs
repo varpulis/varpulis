@@ -22,54 +22,6 @@ pub fn generate_all_schemas() -> serde_json::Value {
         ),
     ];
 
-    #[cfg(feature = "kafka")]
-    configs.push(("KafkaConfig", schemars::schema_for!(crate::KafkaConfig)));
-
-    #[cfg(feature = "mqtt")]
-    configs.push((
-        "MqttConfig",
-        schemars::schema_for!(varpulis_connector_mqtt::MqttConfig),
-    ));
-
-    #[cfg(feature = "nats")]
-    configs.push(("NatsConfig", schemars::schema_for!(crate::NatsConfig)));
-
-    #[cfg(feature = "redis")]
-    {
-        configs.push(("RedisConfig", schemars::schema_for!(crate::RedisConfig)));
-        configs.push((
-            "RedisStreamConfig",
-            schemars::schema_for!(crate::RedisStreamConfig),
-        ));
-    }
-
-    #[cfg(feature = "s3")]
-    configs.push(("S3Config", schemars::schema_for!(crate::S3Config)));
-
-    #[cfg(feature = "kinesis")]
-    configs.push(("KinesisConfig", schemars::schema_for!(crate::KinesisConfig)));
-
-    #[cfg(feature = "elasticsearch")]
-    configs.push((
-        "ElasticsearchConfig",
-        schemars::schema_for!(crate::ElasticsearchConfig),
-    ));
-
-    #[cfg(feature = "pulsar")]
-    configs.push(("PulsarConfig", schemars::schema_for!(crate::PulsarConfig)));
-
-    #[cfg(feature = "database")]
-    configs.push((
-        "DatabaseConfig",
-        schemars::schema_for!(crate::DatabaseConfig),
-    ));
-
-    #[cfg(feature = "cdc")]
-    configs.push((
-        "PostgresCdcConfig",
-        schemars::schema_for!(crate::PostgresCdcConfig),
-    ));
-
     let mut schemas = serde_json::Map::new();
     for (name, schema) in configs {
         schemas.insert(name.to_string(), serde_json::to_value(&schema).unwrap());

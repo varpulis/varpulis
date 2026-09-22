@@ -5,10 +5,6 @@
 
 mod cache;
 mod http;
-#[cfg(feature = "redis")]
-mod redis_provider;
-#[cfg(feature = "database")]
-mod sql;
 
 use std::collections::HashMap;
 
@@ -64,20 +60,6 @@ pub fn create_provider(
         "http" => Ok(Box::new(http::HttpEnrichmentProvider::new(
             connector_config,
         ))),
-        #[cfg(feature = "database")]
-        "database" => Ok(Box::new(sql::SqlEnrichmentProvider::new(connector_config)?)),
-        #[cfg(not(feature = "database"))]
-        "database" => Err(
-            ".enrich() with database connector requires the 'database' feature flag".to_string(),
-        ),
-        #[cfg(feature = "redis")]
-        "redis" => Ok(Box::new(redis_provider::RedisEnrichmentProvider::new(
-            connector_config,
-        )?)),
-        #[cfg(not(feature = "redis"))]
-        "redis" => {
-            Err(".enrich() with redis connector requires the 'redis' feature flag".to_string())
-        }
         other => Err(format!(
             ".enrich() is not supported for connector type '{other}' — use http, database, or redis"
         )),

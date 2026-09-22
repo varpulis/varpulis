@@ -7,6 +7,7 @@ PASS=0
 FAIL=0
 
 run_test() {
+    rm -f "$DEMO_DIR/.stderr"
     local name="$1"
     local vpl="$2"
     local data="$3"
@@ -18,15 +19,18 @@ run_test() {
     echo "  $name"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    output=$($VARPULIS simulate -p "$vpl" -e "$data" -v -w 1 2>&1)
-    count=$(echo "$output" | grep -c "OUTPUT EVENT" || true)
+    # `simulate` prints one JSON object per emit on stdout; stderr carries the
+    # count and any error.
+    output=$($VARPULIS simulate -p "$vpl" -e "$data" 2>"$DEMO_DIR/.stderr")
+    count=$(echo "$output" | grep -c '^{' || true)
 
     if [ "$count" -ge "$expected_min" ] && [ "$count" -le "$expected_max" ]; then
         echo "  PASS ($count alerts, expected $expected_min+)"
         PASS=$((PASS + 1))
     else
         echo "  FAIL ($count alerts, expected $expected_min-$expected_max)"
-        echo "$output" | grep -E "OUTPUT EVENT|Error" || true
+        echo "$output" | head -3
+        grep -E "error" "$DEMO_DIR/.stderr" || true
         FAIL=$((FAIL + 1))
     fi
 }

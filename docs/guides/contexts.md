@@ -243,8 +243,8 @@ varpulis check iot_pipeline.vpl
 # Run with simulation
 varpulis simulate -p iot_pipeline.vpl -e sensor_data.evt
 
-# Run with MQTT
-varpulis run --file iot_pipeline.vpl
+# On a bus, the program is a Vejas detect unit: put it under detects/
+varpulis check iot_pipeline.vpl
 ```
 
 ---

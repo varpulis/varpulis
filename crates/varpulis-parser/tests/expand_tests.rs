@@ -56,55 +56,6 @@ fn test_parse_expanded_contexts() {
 }
 
 #[test]
-fn test_parse_actual_mandelbrot_vpl_file() {
-    // Parse the real mandelbrot_parallel.vpl through the full pipeline
-    let vpl = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/mandelbrot/web/mandelbrot_parallel.vpl"),
-    )
-    .expect("Failed to read mandelbrot_parallel.vpl");
-
-    let result = parse(&vpl);
-    assert!(
-        result.is_ok(),
-        "mandelbrot_parallel.vpl should parse successfully: {:?}",
-        result.err()
-    );
-
-    let program = result.unwrap();
-
-    // Count statement types
-    let mut context_count = 0;
-    let mut stream_count = 0;
-    let mut fn_count = 0;
-    let mut connector_count = 0;
-
-    for spanned_stmt in &program.statements {
-        match &spanned_stmt.node {
-            varpulis_core::ast::Stmt::ContextDecl { .. } => context_count += 1,
-            varpulis_core::ast::Stmt::StreamDecl { .. } => stream_count += 1,
-            varpulis_core::ast::Stmt::FnDecl { .. } => fn_count += 1,
-            varpulis_core::ast::Stmt::ConnectorDecl { .. } => connector_count += 1,
-            _ => {}
-        }
-    }
-
-    assert_eq!(
-        context_count, 16,
-        "Should have 16 context declarations (4x4 grid)"
-    );
-    assert_eq!(
-        stream_count, 16,
-        "Should have 16 stream declarations (4x4 grid)"
-    );
-    assert_eq!(
-        fn_count, 2,
-        "Should have 2 functions (mandelbrot + compute_tile)"
-    );
-    assert_eq!(connector_count, 1, "Should have 1 connector (MqttOut)");
-}
-
-#[test]
 fn test_expanded_stream_arithmetic_args_parse() {
     // Verify that `0 * 250` style expressions in .process() args parse correctly.
     // This is what loop expansion produces (vs pre-computed literal values).

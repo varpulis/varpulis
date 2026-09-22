@@ -145,8 +145,6 @@ pub mod context;
 #[cfg(feature = "async-runtime")]
 pub use varpulis_enrichment as enrichment;
 #[cfg(feature = "async-runtime")]
-pub mod interactive;
-#[cfg(feature = "async-runtime")]
 pub mod metrics;
 #[cfg(feature = "async-runtime")]
 pub mod simulator;

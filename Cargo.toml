@@ -4,41 +4,22 @@ exclude = [
     "tree-sitter-varpulis",
 ]
 members = [
-    "crates/varpulis-actors",
     "crates/varpulis-connector-api",
-    "crates/varpulis-connector-cdc",
-    "crates/varpulis-connector-database",
-    "crates/varpulis-connector-elasticsearch",
     "crates/varpulis-connector-http",
-    "crates/varpulis-connector-kafka",
-    "crates/varpulis-connector-kinesis",
-    "crates/varpulis-connector-mqtt",
-    "crates/varpulis-connector-nats",
-    "crates/varpulis-connector-pulsar",
-    "crates/varpulis-connector-redis",
-    "crates/varpulis-connector-s3",
-    "crates/varpulis-connector-slack",
-    "crates/varpulis-connector-splunk",
-    "crates/varpulis-connector-syslog",
     "crates/varpulis-connectors",
     "crates/varpulis-core",
+    "crates/varpulis-cli",
     "crates/varpulis-parser",
     "crates/varpulis-sase",
     "crates/varpulis-runtime",
-    "crates/varpulis-cli",
     "crates/varpulis-zdd",
     "crates/varpulis-lsp",
-    "crates/varpulis-cluster",
-    "crates/varpulis-mcp",
     "crates/varpulis-wasm",
-    "crates/varpulis-datagen",
-    "crates/varpulis-db",
     "crates/varpulis-pst",
     "crates/varpulis-hamlet",
     "crates/varpulis-enrichment",
     "crates/varpulis-simd",
     "crates/varpulis-dead-letter",
-    "crates/varpulis",
     "crates/varpulis-engine",
     "crates/varpulis-engine-wasm",
 ]
@@ -115,7 +96,6 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 futures-util = "0.3"
 
 # Actor framework
-varpulis-actors = { version = "0.11.0", path = "crates/varpulis-actors" }
 
 # OAuth & JWT
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }

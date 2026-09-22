@@ -66,6 +66,10 @@ def invocations():
         if not md.is_file() or ".vitepress" in md.parts or "node_modules" in md.parts:
             continue
         text = md.read_text(errors="replace")
+        # A superseded decision record is history: its command lines describe
+        # the platform that was retired (ADR-008), not this binary.
+        if md.parent.name == "adr" and "Superseded" in text[:600]:
+            continue
         # Match EVERY fence and filter by language, rather than only the shell
         # ones. Matching `^```(?:bash|sh)?\n` skips a ```vpl opener, so its
         # closing fence becomes the next opener and every block after it pairs

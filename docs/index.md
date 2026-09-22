@@ -46,14 +46,6 @@ the full list, and for what has landed since.
 
 ### From v0.9.0
 
-- **Interactive shell** — type VPL + events directly like a Python interpreter (`varpulis interactive`)
-- **TUI mode** — the split-pane terminal UI is what `varpulis interactive` opens; `--no-tui` gives a plain shell
-- **Pipeline trace** — explain mode showing per-event operator pass/block (`--trace`)
-- **Schema inference** — generate event declarations from sample data (`varpulis infer`)
-- **Watch mode** — auto-reload simulation on file changes (`--watch`)
-- **`.alert()` operator** — webhook notifications with `{field}` template interpolation
-- **Connector discovery** — `varpulis connector list/info/test`
-- **Agent integration** — JSON-line protocol + MCP tools for AI-driven stream analysis
 - **Pipeline graph API** — VPL-to-graph and graph-to-VPL endpoints for visual builders
 
 [Full changelog](/development/STATUS) | [Getting started](/tutorials/getting-started)

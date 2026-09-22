@@ -26,6 +26,14 @@ categories = ["science", "development-tools", "data-structures"]
 #       feature as an empty stub would preserve the name and the no-op, which
 #       is the thing this change exists to remove.
 #
+#   module_missing / struct_missing / enum_missing
+#       The platform is retired (ADR-008). `interactive` — the session
+#       protocol of the removed CLI's streaming shell — is gone with its
+#       types, and so are the two Kafka sink adapters, which existed to wrap
+#       a connector crate that no longer ships here. Nothing outside the
+#       retired platform used them: the engine's consumers compile against
+#       `varpulis-engine`, which re-exports none of it.
+#
 # `semver_exceptions_expire_with_their_baseline` in src/engine/error.rs turns
 # red the moment the version moves past 0.11.x, which is when this whole
 # block must be deleted.
@@ -33,6 +41,9 @@ categories = ["science", "development-tools", "data-structures"]
 enum_variant_added = "allow"
 enum_marked_non_exhaustive = "allow"
 feature_missing = "allow"
+module_missing = "allow"
+struct_missing = "allow"
+enum_missing = "allow"
 
 [dependencies]
 varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
@@ -63,7 +74,6 @@ tokio = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 prometheus = { workspace = true, optional = true }
 async-trait = { version = "0.1", optional = true }
-futures = { version = "0.3", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 core_affinity = { version = "0.8", optional = true }
 
@@ -102,7 +112,6 @@ rmp-serde = { version = "1.3", optional = true }
 varpulis-wasm = { version = "0.11.0", path = "../varpulis-wasm", optional = true, features = ["smartmodule"] }
 
 # Event generation for interactive mode
-varpulis-datagen = { version = "0.11.0", path = "../varpulis-datagen", optional = true }
 
 [features]
 # `arrow` is in default so the release binary and web-ui preview mode get
@@ -114,37 +123,21 @@ default = ["async-runtime", "arrow"]
 # Full async runtime with tokio, connectors, metrics, and all async infrastructure.
 # Disable this (use --no-default-features) for WASM or pure-sync builds.
 async-runtime = [
-    "tokio", "reqwest", "prometheus", "async-trait", "futures",
+    "tokio", "reqwest", "prometheus", "async-trait",
     "uuid", "core_affinity",
     "varpulis-connectors", "varpulis-enrichment",
 ]
 # Pure synchronous engine for wasm32-unknown-unknown. No tokio, no connectors.
 wasm = []
-mqtt = ["varpulis-connectors/mqtt", "async-runtime"]
-kafka = ["varpulis-connectors/kafka", "async-runtime"]
-postgres = ["varpulis-connectors/postgres", "async-runtime"]
-mysql = ["varpulis-connectors/mysql", "async-runtime"]
-sqlite = ["varpulis-connectors/sqlite", "async-runtime"]
-database = ["varpulis-connectors/database", "varpulis-enrichment/database", "async-runtime"]
-redis = ["varpulis-connectors/redis", "varpulis-enrichment/redis", "async-runtime"]
 persistence = ["rocksdb"]
 s3-state = ["aws-config", "aws-sdk-s3", "async-runtime"]
 checkpoint-compression = ["zstd"]
-kinesis = ["varpulis-connectors/kinesis", "async-runtime"]
-s3 = ["varpulis-connectors/s3", "async-runtime"]
-nats = ["varpulis-connectors/nats", "async-runtime"]
-elasticsearch = ["varpulis-connectors/elasticsearch", "async-runtime"]
-pulsar = ["varpulis-connectors/pulsar", "async-runtime"]
 arrow = ["arrow-array", "arrow-schema", "arrow-arith", "arrow-row"]
 onnx = ["ort"]
 gpu = ["onnx"]
 binary-codec = ["rmp-serde"]
 encryption = ["aes-gcm", "argon2"]
-cdc = ["varpulis-connectors/cdc", "async-runtime"]
-csv-converter = ["varpulis-connectors/csv-converter", "async-runtime"]
 wasm-udf = ["varpulis-wasm"]
-interactive = ["varpulis-datagen", "async-runtime"]
-all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch", "pulsar"]
 
 [dev-dependencies]
 tempfile = "3"
@@ -159,7 +152,6 @@ rumqttc = { package = "rumqttc-v4-next", version = "0.28" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 tokio-postgres = { version = "0.7" }
 uuid = { version = "1", features = ["v4"] }
-futures = "0.3"
 
 [[bench]]
 name = "pattern_benchmark"
@@ -192,11 +184,6 @@ harness = false
 [[bench]]
 name = "eventflux_comparison"
 harness = false
-
-[[bench]]
-name = "cdc_benchmark"
-harness = false
-required-features = ["cdc"]
 
 [[bench]]
 name = "columnar_agg_benchmark"

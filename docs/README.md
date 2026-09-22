@@ -1,155 +1,36 @@
 # Varpulis Documentation
 
-> **Varpulis** - Next-generation streaming analytics engine
->
-> *Named after the Slavic wind spirit, companion of thunder*
+Varpulis is a complex-event-processing engine, embedded as a library in a
+host that owns the bus; the reference host is
+[Vejas](https://github.com/cpoder/vejas), where a VPL program is a `detect`
+unit ([ADR-008](adr/008-engine-only-platform-retired.md)).
 
-## Quick Start
+## Start here
 
-```bash
-# Build
-cargo build --release
+- [Getting started](tutorials/getting-started.md) — install `varpulis`,
+  check a program, simulate it over an event file, embed the engine.
+- [The language](language/overview.md) — events, streams, operators,
+  built-ins, keywords, the grammar.
+- [Language tutorial](tutorials/language-tutorial.md).
 
-# Run a VPL program with MQTT
-varpulis run my_patterns.vpl
-```
+## Semantics and engines
 
-**Minimal VPL file with MQTT:**
-```vpl
-connector MqttBroker = mqtt (
-    host: "localhost",
-    port: 1883,
-    client_id: "my-app"
-)
+- [SASE+ semantics](adr/004-sase-plus-semantics.md), [emission modes](adr/006-emission-modes.md),
+  [SASE patterns](guides/sase-patterns.md).
+- [Windows and aggregations](reference/windows-aggregations.md), [joins](reference/joins.md),
+  [outer joins](tutorials/outer-joins-tutorial.md).
+- [Trend aggregation](reference/trend-aggregation.md) (Hamlet, [ADR-005](adr/005-hamlet-trend-aggregation.md)),
+  [forecasting](architecture/forecasting.md) (prediction suffix trees).
+- [Contexts and parallelism](guides/contexts.md), [architecture/parallelism](architecture/parallelism.md).
 
-stream Events = SomeEvent
-    .from(MqttBroker, topic: "events/#")
+## Scenarios and comparisons
 
-stream Alert = Events
-    .where(value > 100)
-    .emit(message: "High value detected")
-```
+- [Scenarios](scenarios/) — fraud, kill chains, insider trading, patient safety, predictive maintenance.
+- [SIEM evasion lab](siem-evasion-lab-01-psexec-lateral-movement.md) — four articles on detections that survive evasion.
+- [Comparisons](comparisons/) — Flink, Proton, Arroyo, Kafka Streams, Esper; [benchmarks](spec/benchmarks.md).
 
----
+## Reference
 
-## Documentation Structure
-
-### Project Status
-- [`development/STATUS.md`](development/STATUS.md) - **Current project status**
-- [`development/AUDIT_REPORT.md`](development/AUDIT_REPORT.md) - Security audit
-- [`PRODUCTION_DEPLOYMENT.md`](PRODUCTION_DEPLOYMENT.md) - **Production deployment guide**
-
-### Specifications
-- [`spec/overview.md`](spec/overview.md) - Project overview and vision
-- [`spec/roadmap.md`](spec/roadmap.md) - Roadmap and development phases
-- [`spec/benchmarks.md`](spec/benchmarks.md) - Performance objectives
-- [`spec/glossary.md`](spec/glossary.md) - Glossary of terms
-- [`benchmarks-apama-comparison.md`](benchmarks-apama-comparison.md) - **Varpulis vs Apama benchmarks**
-
-### VPL Language
-- [`language/overview.md`](language/overview.md) - Language philosophy and design
-- [`language/syntax.md`](language/syntax.md) - Complete syntax reference
-- [`language/connectors.md`](language/connectors.md) - Connectors (MQTT, HTTP)
-- [`language/builtins.md`](language/builtins.md) - Built-in functions
-- [`language/types.md`](language/types.md) - Type system
-- [`language/operators.md`](language/operators.md) - Operators
-- [`language/grammar.md`](language/grammar.md) - Formal grammar (Pest PEG)
-
-### Architecture
-- [`architecture/system.md`](architecture/system.md) - System architecture
-- [`architecture/cluster.md`](architecture/cluster.md) - **Distributed execution (cluster mode)**
-- [`architecture/state-management.md`](architecture/state-management.md) - State management
-- [`architecture/parallelism.md`](architecture/parallelism.md) - Parallelization
-- [`architecture/observability.md`](architecture/observability.md) - Metrics and traces
-- [`architecture/multi-tenancy.md`](architecture/multi-tenancy.md) - **Multi-tenancy and SaaS billing**
-
-### Examples & Demos
-- [`examples/hvac-building.md`](examples/hvac-building.md) - HVAC monitoring
-- [`examples/financial-markets.md`](examples/financial-markets.md) - Financial analytics
-- [`../demos/README.md`](../demos/README.md) - **Interactive demos**
-
----
-
-### Reference
-- [`reference/cli-reference.md`](reference/cli-reference.md) - CLI commands and options
-- [`reference/windows-aggregations.md`](reference/windows-aggregations.md) - Windows and aggregations
-
-### Tutorials
-- [`tutorials/getting-started.md`](tutorials/getting-started.md) - Installation and first program
-- [`tutorials/language-tutorial.md`](tutorials/language-tutorial.md) - Comprehensive VPL language guide
-- [`tutorials/contexts-tutorial.md`](tutorials/contexts-tutorial.md) - Parallel processing with contexts
-- [`tutorials/cluster-tutorial.md`](tutorials/cluster-tutorial.md) - **Distributed execution with cluster mode**
-- [`tutorials/checkpointing-tutorial.md`](tutorials/checkpointing-tutorial.md) - Checkpointing, persistence, and watermarks
-
-### Guides
-- [`guides/contexts.md`](guides/contexts.md) - **Context-based multi-threaded execution**
-- [`guides/performance-tuning.md`](guides/performance-tuning.md) - Optimization
-- [`guides/configuration.md`](guides/configuration.md) - Configuration options
-- [`guides/sase-patterns.md`](guides/sase-patterns.md) - Pattern matching guide
-
----
-
-## Connector Status
-
-Each connector is an independent crate — install only what you need.
-
-| Connector | Crate | Input | Output | Status |
-|-----------|-------|-------|--------|--------|
-| **MQTT** | `varpulis-connector-mqtt` | Yes | Yes | Production |
-| **Kafka** | `varpulis-connector-kafka` | Yes | Yes | Production |
-| **NATS** | `varpulis-connector-nats` | Yes | Yes | Production |
-| **HTTP** | `varpulis-connector-http` | Yes | Yes | Production |
-| **Redis** | `varpulis-connector-redis` | Yes | Yes | Available |
-| **Database** | `varpulis-connector-database` | Yes | Yes | Available |
-| **Elasticsearch** | `varpulis-connector-elasticsearch` | No | Yes | Available |
-| **Kinesis** | `varpulis-connector-kinesis` | Yes | Yes | Available |
-| **S3** | `varpulis-connector-s3` | No | Yes | Available |
-| **Pulsar** | `varpulis-connector-pulsar` | Yes | Yes | Available |
-| **CDC** | `varpulis-connector-cdc` | Yes | No | Available |
-
-See [`language/connectors.md`](language/connectors.md) for details.
-
-## SaaS / REST API
-
-Varpulis includes a multi-tenant REST API for pipeline management:
-
-```bash
-# Start the API server
-varpulis server --port 9000 --api-key "my-key" --metrics
-
-# Deploy a pipeline
-curl -X POST http://localhost:9000/api/v1/pipelines \
-  -H "X-API-Key: my-key" -H "Content-Type: application/json" \
-  -d '{"name": "my-pipeline", "source": "stream X = Y .where(z > 10)"}'
-```
-
-Full SaaS stack with monitoring:
-```bash
-docker compose -f deploy/docker/docker-compose.saas.yml up -d
-# Grafana: http://localhost:3000 | Prometheus: http://localhost:9091
-```
-
-## Distributed Execution (Cluster Mode)
-
-Varpulis supports distributed execution across multiple worker processes,
-coordinated by a central control plane:
-
-```bash
-# Start coordinator
-varpulis coordinator --port 9100 --api-key admin
-
-# Start workers (each registers with coordinator)
-varpulis server --port 9000 --api-key test \
-    --coordinator http://localhost:9100 --worker-id worker-0
-
-# Or use Docker Compose
-docker compose -f deploy/docker/docker-compose.cluster.yml up -d
-```
-
-See [`architecture/cluster.md`](architecture/cluster.md) for full documentation.
-
----
-
-**Version**: 0.11.0
-**Parser**: Pest PEG
-**License**: MIT
+- [CLI](reference/cli-reference.md) — `varpulis check`, `parse`, `simulate`.
+- [Decision records](adr/) — from the parser to the retirement of the platform.
+- [Specification](spec/overview.md), [glossary](spec/glossary.md), [MSRV policy](development/MSRV_POLICY.md).

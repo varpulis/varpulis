@@ -70,7 +70,6 @@ export default defineConfig({
       { text: 'Home', link: '/' },
       { text: 'Getting Started', link: '/tutorials/getting-started' },
       { text: 'Language', link: '/language/overview' },
-      { text: 'Architecture', link: '/architecture/system' },
       { text: 'Scenarios', link: '/scenarios/' },
       { text: 'Comparisons', link: '/comparisons/varpulis-vs-flink' },
       { text: 'GitHub', link: 'https://github.com/varpulis/varpulis' }
@@ -82,18 +81,14 @@ export default defineConfig({
           text: 'Getting Started',
           items: [
             { text: 'Quick Start', link: '/tutorials/getting-started' },
-            { text: 'Interactive Shell', link: '/tutorials/interactive-shell-tutorial' },
             { text: 'VPL Language Tutorial', link: '/tutorials/language-tutorial' },
           ]
         },
         {
           text: 'Core Features',
           items: [
-            { text: 'Alert Notifications', link: '/tutorials/alert-tutorial' },
             { text: 'Contexts & Parallelism', link: '/tutorials/contexts-tutorial' },
-            { text: 'Cluster Mode', link: '/tutorials/cluster-tutorial' },
             { text: 'Outer Joins', link: '/tutorials/outer-joins-tutorial' },
-            { text: 'Checkpointing', link: '/tutorials/checkpointing-tutorial' },
           ]
         },
         {
@@ -101,15 +96,6 @@ export default defineConfig({
           items: [
             { text: 'Trend Aggregation', link: '/tutorials/trend-aggregation-tutorial' },
             { text: 'Forecasting', link: '/tutorials/forecasting-tutorial' },
-            { text: 'Encryption at Rest', link: '/tutorials/encryption-at-rest-tutorial' },
-          ]
-        },
-        {
-          text: 'Connectors',
-          items: [
-            { text: 'NATS', link: '/tutorials/nats-connector' },
-            { text: 'PostgreSQL CDC', link: '/tutorials/postgres-cdc-tutorial' },
-            { text: 'SSO / OIDC', link: '/tutorials/sso-oidc-tutorial' },
           ]
         },
       ],
@@ -134,19 +120,7 @@ export default defineConfig({
         {
           text: 'Architecture',
           items: [
-            { text: 'System Overview', link: '/architecture/system' },
-            { text: 'Cluster Mode', link: '/architecture/cluster' },
             { text: 'Parallelism', link: '/architecture/parallelism' },
-            { text: 'State Management', link: '/architecture/state-management' },
-            { text: 'Observability', link: '/architecture/observability' },
-            { text: 'Output Event Relay', link: '/architecture/output-event-relay' },
-          ]
-        },
-        {
-          text: 'Connectors & Transport',
-          items: [
-            { text: 'NATS Transport', link: '/architecture/nats-transport' },
-            { text: 'PostgreSQL CDC', link: '/architecture/postgres-cdc' },
           ]
         },
         {
@@ -156,13 +130,6 @@ export default defineConfig({
             { text: 'Forecasting', link: '/architecture/forecasting' },
           ]
         },
-        {
-          text: 'SaaS & Security',
-          items: [
-            { text: 'Multi-Tenancy', link: '/architecture/multi-tenancy' },
-            { text: 'Authentication', link: '/architecture/authentication' },
-          ]
-        },
       ],
 
       '/reference/': [
@@ -170,12 +137,9 @@ export default defineConfig({
           text: 'Reference',
           items: [
             { text: 'CLI Reference', link: '/reference/cli-reference' },
-            { text: 'Interactive Protocol', link: '/reference/interactive-protocol' },
             { text: 'Windows & Aggregations', link: '/reference/windows-aggregations' },
             { text: 'Joins', link: '/reference/joins' },
-            { text: 'Enrichment', link: '/reference/enrichment' },
             { text: 'Trend Aggregation', link: '/reference/trend-aggregation' },
-            { text: 'MCP Integration', link: '/reference/mcp-integration' },
           ]
         },
       ],
@@ -184,30 +148,13 @@ export default defineConfig({
         {
           text: 'Guides',
           items: [
-            { text: 'Configuration', link: '/guides/configuration' },
-            { text: 'Debugging Pipelines', link: '/guides/debugging-pipelines' },
-            { text: 'Schema Inference', link: '/guides/schema-inference' },
-            { text: 'Performance Tuning', link: '/guides/performance-tuning' },
             { text: 'Contexts', link: '/guides/contexts' },
             { text: 'SASE Patterns', link: '/guides/sase-patterns' },
-            { text: 'Connector Security', link: '/guides/connector-security' },
-            { text: 'Stripe Setup', link: '/guides/stripe-setup' },
-            { text: 'Troubleshooting', link: '/guides/troubleshooting' },
           ]
         },
       ],
 
       '/operations/': [
-        {
-          text: 'Operations',
-          items: [
-            { text: 'Runbook', link: '/operations/runbook' },
-            { text: 'Alerting', link: '/operations/alerting' },
-            { text: 'SLOs', link: '/operations/slo' },
-            { text: 'Capacity Planning', link: '/operations/capacity-planning' },
-            { text: 'TLS Certificates', link: '/operations/tls-certificate-management' },
-          ]
-        },
       ],
 
       '/scenarios/': [
@@ -246,6 +193,7 @@ export default defineConfig({
             { text: 'ADR-005: Hamlet Aggregation', link: '/adr/005-hamlet-trend-aggregation' },
             { text: 'ADR-006: Emission Modes', link: '/adr/006-emission-modes' },
             { text: 'ADR-007: JetStream Cluster Substrate', link: '/adr/007-jetstream-cluster-substrate' },
+            { text: 'ADR-008: The Platform Is Retired', link: '/adr/008-engine-only-platform-retired' },
           ]
         },
       ],
@@ -256,7 +204,6 @@ export default defineConfig({
           items: [
             { text: 'Overview', link: '/spec/overview' },
             { text: 'Benchmarks', link: '/spec/benchmarks' },
-            { text: 'Roadmap', link: '/spec/roadmap' },
             { text: 'Glossary', link: '/spec/glossary' },
           ]
         },
@@ -266,9 +213,7 @@ export default defineConfig({
         {
           text: 'Development',
           items: [
-            { text: 'Status', link: '/development/STATUS' },
             { text: 'MSRV Policy', link: '/development/MSRV_POLICY' },
-            { text: 'Audit Report', link: '/development/AUDIT_REPORT' },
           ]
         },
       ],

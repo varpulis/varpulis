@@ -56,8 +56,11 @@ pub enum EngineError {
 
 #[cfg(test)]
 mod semver_exception_tests {
-    /// `Cargo.toml` allows `enum_variant_added` and `enum_marked_non_exhaustive`
-    /// for this crate. Both were taken deliberately against the 0.11.0 baseline
+    /// `Cargo.toml` allows six cargo-semver-checks lints for this crate:
+    /// `enum_variant_added`, `enum_marked_non_exhaustive`, `feature_missing`,
+    /// and — since the platform was retired (ADR-008) — `module_missing`,
+    /// `struct_missing` and `enum_missing`.
+    /// They were taken deliberately against the 0.11.0 baseline
     /// (see the comment on that block), and both stop being needed the moment
     /// the version moves past 0.11.x, because cargo-semver-checks then compares
     /// against a baseline that already contains the change.

@@ -229,11 +229,9 @@ stream AlertsOut = SuspiciousActivity
 ### Running with MQTT
 
 ```bash
-# Basic execution (requires --features mqtt)
-varpulis run --file fraud_detection.vpl
+# The engine accepts the declarations; a host (Vejas) opens the connections
+varpulis check fraud_detection.vpl
 
-# With verbose logging
-RUST_LOG=info varpulis run --file fraud_detection.vpl
 ```
 
 ### Deprecated: `config mqtt` Block
@@ -504,8 +502,8 @@ stream RapidTrading = Trade as t1
 # Start nats-server
 docker run -d -p 4222:4222 nats:latest
 
-# Run the pipeline
-varpulis run --file market_pipeline.vpl
+# Check the pipeline; on a bus it is a Vejas detect unit
+varpulis check market_pipeline.vpl
 
 # Publish test events
 nats pub market.trades.NYSE '{"type":"Trade","symbol":"AAPL","price":150.25,"volume":15000,"exchange":"NYSE"}'
@@ -551,16 +549,6 @@ stream CriticalAlerts = AllAlerts
 
 For HTTP input, use Varpulis in server mode with the REST API:
 
-```bash
-# Start the server
-varpulis server --port 9000 --api-key "your-key" --metrics
-
-# Inject events via HTTP POST
-curl -X POST http://localhost:9000/api/v1/pipelines/<id>/events \
-  -H "X-API-Key: your-key" \
-  -H "Content-Type: application/json" \
-  -d '{"event_type": "Login", "fields": {"user_id": "user123"}}'
-```
 
 ---
 

@@ -353,5 +353,4 @@ stream AllIoTForecasts = merge(
     IneffectiveMaintenanceForecast,
     ZoneForecastSummary
 )
-.tap(counter: "iot_forecasts_total", labels: [alert_type, severity])
 .emit()

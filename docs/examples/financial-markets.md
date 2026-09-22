@@ -114,11 +114,8 @@ varpulis check examples/financial_markets.vpl
 # Run with event file simulation
 varpulis simulate -p examples/financial_markets.vpl -e market_data.evt
 
-# Run with real-time replay (respects event timing delays)
-varpulis simulate -p examples/financial_markets.vpl -e market_data.evt --timed
 
-# Run with MQTT data source (configured via connectors in the VPL file)
-varpulis run --file examples/financial_markets.vpl
+# On a bus, the program is a Vejas detect unit: put it under detects/
 ```
 
 ## See Also

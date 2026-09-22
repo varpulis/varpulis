@@ -21,9 +21,7 @@ The following components are in scope for security reports:
 - **VPL parser** -- injection, denial-of-service via crafted input, parser crashes
 - **Runtime engine** -- unsafe memory access, resource exhaustion, sandbox escapes
 - **REST API endpoints** -- authentication bypass, authorization flaws, injection
-- **Connectors** (MQTT, Kafka, database, Redis, S3, Kinesis, Elasticsearch) -- credential leakage, connection hijacking
 - **Authentication and RBAC** -- privilege escalation, API key handling flaws
-- **Cluster communication** -- control-plane manipulation (lease theft, forged compare-and-swap), worker impersonation, mTLS bypass
 - **Web UI** -- XSS, CSRF, session management issues
 
 ## Out of Scope
@@ -67,14 +65,11 @@ Varpulis includes the following security measures:
 - **Request body size limits** -- enforced maximum payload sizes to prevent memory exhaustion
 - **Path traversal prevention** -- file path inputs are sanitized and restricted
 - **Secrets zeroization** -- API keys and credentials are zeroized in memory on drop via `SecretString`
-- **mTLS support** -- mutual TLS for cluster node communication
 - **Distributed tracing** -- OpenTelemetry integration for audit trails
 - **Event resource limits** -- bounded Kleene closure events, bounded join buffers, bounded stream queues
-- **Circuit breakers** -- connector failures are isolated with circuit breaker patterns
 - **Dead letter queues** -- failed events are preserved rather than silently dropped
 - **Encryption at rest** -- AES-256-GCM encryption of checkpoint/state data (`encryption` feature), with Argon2id key derivation from passphrases
 - **SSO / OIDC** -- OpenID Connect authentication (`oidc` feature) with Authorization Code + PKCE flow, ID token validation, and automatic OIDC discovery
-- **CDC security** -- PostgreSQL CDC connector uses standard authentication (user/password), replication-privilege users only, slot names are UUID-isolated in tests
 - **cargo-audit in CI** -- automated dependency vulnerability scanning on every build
 - **cargo-deny in CI** -- license and advisory checks for all dependencies
 
