@@ -16,7 +16,15 @@ docker run -d --name varpulis-site --restart unless-stopped \
 ```
 
 Updating the page is copying the file; the container serves whatever is in
-the directory.
+the directory. The documentation is the VitePress build of `docs/`
+(`cd docs && npx vitepress build`), copied to `docs/` inside that directory;
+`site/deploy/Caddyfile` is the container's own config (clean URLs, the docs
+404 page).
+
+Cloudflare caches 404s for static-looking paths: request a new asset before
+its route exists and the edge keeps answering 404 for a few minutes. Assets
+are therefore referenced with a version query string (`?v=3.17.0`), which
+also makes each update visible at once.
 
 The front door routes only what the landing replaced, and leaves the rest of
 the old application where it was (the blog, the docs, the API behind it):
@@ -24,8 +32,12 @@ the old application where it was (the blog, the docs, the API behind it):
 ```caddy
 # in the varpulis-cep.com, demo.varpulis-cep.com, www.varpulis-cep.com block,
 # before the final `reverse_proxy /* web-ui:8080`
-@landing path / /index.html
+@landing path / /index.html /detect-demo.cast /vendor/*
 reverse_proxy @landing varpulis-site:80
+@docs path /docs /docs/*
+reverse_proxy @docs varpulis-site:80
+@seo path /sitemap.xml /robots.txt
+reverse_proxy @seo varpulis-site:80
 
 @pricing path /pricing /pricing/*
 redir @pricing "/#pricing" 302
