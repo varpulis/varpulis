@@ -26,6 +26,14 @@ categories = ["science", "development-tools", "data-structures"]
 #       feature as an empty stub would preserve the name and the no-op, which
 #       is the thing this change exists to remove.
 #
+#   module_missing / struct_missing / enum_missing
+#       The platform is retired (ADR-008). `interactive` — the session
+#       protocol of the removed CLI's streaming shell — is gone with its
+#       types, and so are the two Kafka sink adapters, which existed to wrap
+#       a connector crate that no longer ships here. Nothing outside the
+#       retired platform used them: the engine's consumers compile against
+#       `varpulis-engine`, which re-exports none of it.
+#
 # `semver_exceptions_expire_with_their_baseline` in src/engine/error.rs turns
 # red the moment the version moves past 0.11.x, which is when this whole
 # block must be deleted.
@@ -33,6 +41,9 @@ categories = ["science", "development-tools", "data-structures"]
 enum_variant_added = "allow"
 enum_marked_non_exhaustive = "allow"
 feature_missing = "allow"
+module_missing = "allow"
+struct_missing = "allow"
+enum_missing = "allow"
 
 [dependencies]
 varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
