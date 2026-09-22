@@ -25,6 +25,10 @@ It runs inside a host that owns the bus. The reference host is
 snapshots and resume by sequence — the platform that used to live in this
 repository, retired in favour of it ([ADR-008](docs/adr/008-engine-only-platform-retired.md)).
 
+Working on detection for a SOC? [www.varpulis-cep.com](https://www.varpulis-cep.com)
+has a fixed-price proof of concept, and a free first step: send three of your
+correlation rules and get them back ported.
+
 ## Ten lines
 
 ```vpl

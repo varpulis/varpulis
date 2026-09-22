@@ -199,6 +199,6 @@ The whole migration runs on top of the ESM you already have. There is no "rip ou
 
 ---
 
-If you're sitting on an ACE deployment that's silently dropping correlation alerts under load, the next step is short. Stand up the [Sysmon security demo](../examples/security-demo/) to see the engine in motion against real APT29 telemetry, then book a [proof-of-concept engagement](https://varpulis-cep.com/poc) — we'll wire your ESM Kafka topic into a Varpulis instance and translate three of your highest-volume rules together. Two weeks, fixed-price entry.
+If you're sitting on an ACE deployment that's silently dropping correlation alerts under load, the next step is short. Run the [detect demo](https://github.com/cpoder/vejas/tree/master/e2e/detect-demo) to see a behavioural rule catch what a signature misses, and survive a crash mid-sequence. Then send three of your ACE rules with one sample event from your ESM Kafka topic to [contact@varpulis-cep.com](mailto:contact@varpulis-cep.com?subject=Three%20ACE%20rules%20to%20port): they come back ported to VPL, with what they catch, free. For your own traffic, the [four-week proof of concept](https://www.varpulis-cep.com/#pricing) wires your ESM Kafka topic into a deployment next to your SIEM and takes three to five of your scenarios to production — fixed price.
 
 *If you've migrated rules off ACE before, I'd genuinely like to hear what surprised you :)*

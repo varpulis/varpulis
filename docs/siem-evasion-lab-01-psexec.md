@@ -186,4 +186,9 @@ The demo includes the renamed PsExec comparison, 6 more detection rules, and the
 
 *This is SIEM Evasion Lab #1 — a series dissecting popular detection rules and the attack variants they miss. Next up: Mimikatz detection and why hash-based rules fail against reflective loading.*
 
-*Built with [Varpulis](https://github.com/varpulis/varpulis) — a dual red/blue kill chain detection engine.*
+## Run it on your own events
+
+The rules in this lab run on [Vejas](https://vejas.dev), next to your SIEM, reading the event stream you already forward — Kafka, NATS JetStream, a webhook. They keep their state through a crash and judge time windows on the timestamps in the logs.
+
+If you want to see what your own correlation rules look like in VPL, and what they catch, send three of them with one sample event to [contact@varpulis-cep.com](mailto:contact@varpulis-cep.com?subject=Three%20rules%20to%20port). They come back ported, free. For a proof of concept on your own traffic, see [what a four-week engagement covers](https://www.varpulis-cep.com/#pricing).
+

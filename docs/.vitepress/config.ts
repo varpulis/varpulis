@@ -12,10 +12,17 @@ const vplGrammar = JSON.parse(
 
 export default defineConfig({
   title: 'Varpulis',
-  description: 'Rust stream processing engine for real-time detection. Open-source Apache Flink alternative built for detection engineering, fraud prevention, and MITRE ATT&CK coverage. 1.5M events/sec. Single 22MB binary. No JVM.',
+  description: 'Varpulis, the detection engine: correlation rules on the event stream you already forward, outside the SIEM. Sequences across hosts in log time, MITRE ATT&CK mapped, open source.',
   lang: 'en-US',
 
   base: '/docs/',
+  // Internal design notes live next to the docs but are not part of the site.
+  srcExclude: ['development/columnar-aggregation-plan.md'],
+  // A section's README is its index page, so /scenarios/ and /adr/ resolve.
+  rewrites: {
+    'scenarios/README.md': 'scenarios/index.md',
+    'adr/README.md': 'adr/index.md',
+  },
 
   sitemap: {
     hostname: 'https://varpulis-cep.com',
