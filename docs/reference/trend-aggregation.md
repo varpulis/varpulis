@@ -294,4 +294,3 @@ The trend aggregation implementation is based on the following research:
 
 - [SASE+ Pattern Matching Guide](../guides/sase-patterns.md) -- pattern syntax and detection mode
 - [Windows & Aggregations Reference](windows-aggregations.md) -- window-based aggregations (non-trend)
-- [Performance Tuning](../guides/performance-tuning.md) -- optimizing throughput

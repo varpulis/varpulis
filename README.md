@@ -8,7 +8,7 @@
 [![docs.rs](https://docs.rs/varpulis-core/badge.svg)](https://docs.rs/varpulis-core)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 
-[Language](docs/language/overview.md) · [Semantics](docs/adr/004-sase-plus-semantics.md) · [Scenarios](docs/scenarios/) · [SIEM Evasion Lab](docs/siem-evasion-lab-01-psexec-lateral-movement.md) · [Benchmarks](docs/spec/benchmarks.md)
+[Language](docs/language/overview.md) · [Semantics](docs/adr/004-sase-plus-semantics.md) · [Scenarios](docs/scenarios/) · [SIEM Evasion Lab](docs/siem-evasion-lab-01-psexec.md) · [Benchmarks](docs/spec/benchmarks.md)
 
 </div>
 

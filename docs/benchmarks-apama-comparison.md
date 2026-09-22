@@ -472,7 +472,6 @@ python3 run_benchmark.py --connector mqtt --events 100000 --runs 3
 
 - [`spec/benchmarks.md`](spec/benchmarks.md) — Performance objectives and targets
 - [`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md) — Optimization history and profiling
-- [`guides/performance-tuning.md`](guides/performance-tuning.md) — Production tuning guide
 - [`guides/sase-patterns.md`](guides/sase-patterns.md) — SASE+ pattern matching reference
 
 ¹ Withdrawn: the Varpulis side of this scenario produced zero output events. See the note at the top of this document.

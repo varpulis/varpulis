@@ -426,7 +426,6 @@ The optimizer dynamically switches between shared and non-shared mode based on r
 
 - [SASE+ Pattern Guide](../guides/sase-patterns.md) -- detailed coverage of Kleene closures, negation, and logical operators
 - [Windows & Aggregations Reference](../reference/windows-aggregations.md) -- tumbling, sliding, and count-based windows
-- [Performance Tuning Guide](../guides/performance-tuning.md) -- tips for maximizing throughput
 - [Financial Markets Example](../examples/financial-markets.md) -- full trading signal generation with trend detection
 
 ## References

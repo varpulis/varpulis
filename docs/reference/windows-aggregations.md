@@ -602,5 +602,4 @@ stream HourlyOverview = DeviceMinutes
 ## See Also
 
 - [Language Tutorial](../tutorials/language-tutorial.md) - Learn VPL basics
-- [Performance Tuning](../guides/performance-tuning.md) - Optimize window performance
 - [SASE+ Pattern Guide](../guides/sase-patterns.md) - Pattern matching over windows

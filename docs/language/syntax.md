@@ -421,7 +421,7 @@ Available in `.where()` and `.emit()` after `.enrich()`:
 | `enrich_status` | `str` | `"ok"`, `"error"`, `"cached"`, or `"timeout"` |
 | `enrich_latency_ms` | `int` | Lookup latency in ms (0 for cache hits) |
 
-Compatible connectors: `http`, `database`, `redis`. See [Enrichment Reference](../reference/enrichment.md) for details.
+Enrichment calls out to a provider the host supplies — HTTP, a database, a cache; the engine only sees the values that come back.
 
 ## Alert Notifications
 

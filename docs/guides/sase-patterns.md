@@ -844,5 +844,4 @@ The PST learns online from the event stream — no pre-training required. See [F
 - [Trend Aggregation](../reference/trend-aggregation.md) - `.trend_aggregate()` reference
 - [Forecasting Tutorial](../tutorials/forecasting-tutorial.md) - PST-based pattern forecasting
 - [Forecasting Architecture](../architecture/forecasting.md) - PST/PMC design
-- [Troubleshooting Guide](troubleshooting.md) - Pattern debugging tips
 - [SIGMOD 2006 Paper](https://dl.acm.org/doi/10.1145/1142473.1142520) - Original SASE+ research
