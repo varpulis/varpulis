@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backslash, even last (`'\AppData\Local\Temp\'`, which a double-quoted
   string cannot end with), and `''` is one quote. The type documentation had
   listed `'world'` as a string all along; the parser refused it.
+- A field whose name is not an identifier is written between backticks,
+  wherever an expression reads a field: `` `cs-uri-query` ``, `` p.`sc-status` ``.
+  Web and proxy logs name their fields that way (W3C extended format), and a
+  rule over them could not be written before.
 - `regex_match(s, pattern)` / `s.regex_match(pattern)`, with Rust `regex`
   syntax: linear time, no look-around or back-references, each pattern
   compiled once per thread. `varpulis check` reports a literal pattern that

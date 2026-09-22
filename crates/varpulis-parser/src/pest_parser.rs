@@ -121,6 +121,15 @@ const MAX_NESTING_DEPTH: usize = 10;
 /// (unmatched brackets are always parse errors anyway).
 const MAX_UNMATCHED_OPEN_BRACKETS: usize = 6;
 
+/// The field name an identifier stands for: a backticked one
+/// (`` `cs-uri-query` ``) without its backticks, any other as written.
+pub(crate) fn identifier_name(text: &str) -> String {
+    text.strip_prefix('`')
+        .and_then(|t| t.strip_suffix('`'))
+        .unwrap_or(text)
+        .to_string()
+}
+
 /// The value of a string literal as the source writes it. A double-quoted
 /// literal is taken verbatim between its quotes: a backslash stays a
 /// backslash, and `\"` keeps both characters. A single-quoted literal is raw
@@ -182,6 +191,16 @@ fn check_nesting_depth(source: &str) -> ParseResult<()> {
                 }
                 i += 1;
             }
+            continue;
+        }
+
+        // Skip backticked field names: `a(b` is a name, not a bracket
+        if b == b'`' {
+            i += 1;
+            while i < len && bytes[i] != b'`' && bytes[i] != b'\n' {
+                i += 1;
+            }
+            i += 1;
             continue;
         }
 
@@ -2395,19 +2414,16 @@ fn parse_filter_postfix_suffix(expr: Expr, pair: pest::iterators::Pair<Rule>) ->
 
     if let Some(first) = inner.next() {
         match first.as_rule() {
-            Rule::identifier => {
+            Rule::identifier | Rule::quoted_identifier => {
                 // Member access: .identifier
                 Ok(Expr::Member {
                     expr: Box::new(expr),
-                    member: first.as_str().to_string(),
+                    member: identifier_name(first.as_str()),
                 })
             }
             Rule::optional_member_access => {
-                let member = first
-                    .into_inner()
-                    .expect_next("member name")?
-                    .as_str()
-                    .to_string();
+                let member =
+                    identifier_name(first.into_inner().expect_next("member name")?.as_str());
                 Ok(Expr::OptionalMember {
                     expr: Box::new(expr),
                     member,
@@ -2445,6 +2461,7 @@ fn parse_filter_primary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<E
     match inner.as_rule() {
         Rule::literal => parse_literal(inner),
         Rule::identifier => Ok(Expr::Ident(inner.as_str().to_string())),
+        Rule::quoted_identifier => Ok(Expr::Ident(identifier_name(inner.as_str()))),
         Rule::filter_expr => parse_filter_expr(inner),
         _ => Ok(Expr::Ident(inner.as_str().to_string())),
     }
@@ -2692,22 +2709,14 @@ fn parse_postfix_suffix(expr: Expr, pair: pest::iterators::Pair<Rule>) -> ParseR
 
     match inner.as_rule() {
         Rule::member_access => {
-            let member = inner
-                .into_inner()
-                .expect_next("member name")?
-                .as_str()
-                .to_string();
+            let member = identifier_name(inner.into_inner().expect_next("member name")?.as_str());
             Ok(Expr::Member {
                 expr: Box::new(expr),
                 member,
             })
         }
         Rule::optional_member_access => {
-            let member = inner
-                .into_inner()
-                .expect_next("member name")?
-                .as_str()
-                .to_string();
+            let member = identifier_name(inner.into_inner().expect_next("member name")?.as_str());
             Ok(Expr::OptionalMember {
                 expr: Box::new(expr),
                 member,
@@ -2789,6 +2798,7 @@ fn parse_primary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
         Rule::if_expr => parse_if_expr(inner),
         Rule::literal => parse_literal(inner),
         Rule::identifier => Ok(Expr::Ident(inner.as_str().to_string())),
+        Rule::quoted_identifier => Ok(Expr::Ident(identifier_name(inner.as_str()))),
         Rule::array_literal => parse_array_literal(inner),
         Rule::map_literal => parse_map_literal(inner),
         Rule::expr => parse_expr(inner),

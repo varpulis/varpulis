@@ -360,6 +360,15 @@ fn match_token_ctx(s: &str, after_dot: bool) -> Option<(usize, u32)> {
         }
     }
 
+    // A backticked field name (`cs-uri-query`) is a variable, backticks included
+    if let Some(rest) = s.strip_prefix('`') {
+        if let Some(end) = rest.find(['`', '\n']) {
+            if rest.as_bytes()[end] == b'`' {
+                return Some((end + 2, TOKEN_VARIABLE));
+            }
+        }
+    }
+
     // Strings
     if let Some(rest) = s.strip_prefix('"') {
         let end = rest.find('"').map_or(s.len(), |i| i + 2);

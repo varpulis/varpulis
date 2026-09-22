@@ -1458,3 +1458,10 @@ fn e052_a_pattern_the_engine_compiles_is_not_reported() {
     let d = validate_vpl(src);
     assert!(!has_code(&d, "E052"), "{d:?}");
 }
+
+#[test]
+fn a_backticked_field_name_is_a_field_like_any_other() {
+    let src = "stream WebShell = Proxy\n    .where(`cs-method` == 'POST' and contains(lower(`cs-uri-query`), 'cmd='))\n    .emit(query: `cs-uri-query`)\n\nstream Seq = Login as l\n    -> Proxy where `c-ip` == l.ip as p\n    .within(1m)\n    .emit(q: p.`cs-uri-query`)\n";
+    let d = validate_vpl(src);
+    assert!(has_no_errors(&d), "{d:?}");
+}
