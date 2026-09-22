@@ -53,25 +53,13 @@ run_step() {
 
 # ----- clippy strategy ------------------------------------------------------
 #
-# We run clippy in two passes, mirroring what CI does for `cargo check` and
-# `cargo test` (`.github/workflows/ci.yml`):
-#
-#   1. **Workspace pass with excludes.** One `cargo clippy --workspace
-#      --exclude X --exclude Y --exclude Z --all-targets -- -D warnings`
-#      analyzes the dep graph ONCE for every crate except the three
-#      problematic connectors, instead of 30+ separate clippy
-#      invocations each rebuilding shared deps. ~10× faster.
-#
-#   2. **Per-crate pass for the excluded connectors.** Workspace clippy
-#      would unify optional features across all members, forcing
-#      `openssl-sys` (Pulsar via tokio-runtime, Kafka via rdkafka-sys)
-#      and elasticsearch's TLS chain to compile with the wrong feature
-#      set. Per-crate clippy each gets its own clean default features.
-#
-# CONNECTOR_CRATES is intentionally short — only the three that hit the
-# openssl-sys / feature-unification trap. New "well-behaved" connectors
-# (no openssl-sys-via-features, no rdkafka-sys) belong in the workspace
-# pass, not here.
+# Clippy runs as one workspace pass. It used to need a second, per-crate pass
+# for three connectors whose optional features dragged `openssl-sys` and
+# `rdkafka-sys` into a workspace-wide feature unification; those connectors
+# were retired with the platform (ADR-008), so the list is empty and the
+# second pass does nothing. It is kept because a connector with the same
+# trap would need it again: put such a crate in CONNECTOR_CRATES and the
+# workspace pass will exclude it.
 CONNECTOR_CRATES=()
 
 # Anchor to repo root so relative paths inside cargo behave the same
