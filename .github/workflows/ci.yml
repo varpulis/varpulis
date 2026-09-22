@@ -480,7 +480,7 @@ jobs:
       - name: Generate coverage
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
