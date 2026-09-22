@@ -1,5 +1,13 @@
 # Parallel Stream Processing with Contexts
 
+> **Contexts have no effect in the engine as it ships.** `context`
+> declarations and `.context(...)` parse and pass `varpulis check`, but the
+> threads and channels behind them belong to the engine's asynchronous runtime,
+> which neither `varpulis simulate` nor a Vejas detect unit includes (see
+> [ADR-008](../adr/008-engine-only-platform-retired.md)). A program with
+> contexts runs on one thread, exactly like the same program without them. In
+> Vejas, work runs in parallel as separate detect units.
+
 This tutorial teaches you to use VPL contexts for parallel stream processing. You'll start with a single context and build up to multi-stage pipelines with session windows -- each step includes runnable code you can copy-paste and test.
 
 ## What You'll Learn
@@ -198,7 +206,7 @@ stream ZoneStats = ValidReadings
     .partition_by(zone)
     .window(1m)
     .aggregate(
-        zone: zone,
+        zone: last(zone),
         avg_value: avg(value),
         max_value: max(value),
         reading_count: count()
@@ -302,9 +310,9 @@ stream ZoneAStats = SensorReading
     .context(zone_a_ctx)
     .where(zone == "A")
     .partition_by(sensor_id)
-    .window(tumbling 30s)
+    .window(30s)
     .aggregate(
-        sensor_id: sensor_id,
+        sensor_id: last(sensor_id),
         avg_value: avg(value),
         max_value: max(value),
         stddev_value: stddev(value),
@@ -316,9 +324,9 @@ stream ZoneBStats = SensorReading
     .context(zone_b_ctx)
     .where(zone == "B")
     .partition_by(sensor_id)
-    .window(tumbling 30s)
+    .window(30s)
     .aggregate(
-        sensor_id: sensor_id,
+        sensor_id: last(sensor_id),
         avg_value: avg(value),
         max_value: max(value),
         stddev_value: stddev(value),
@@ -353,25 +361,20 @@ Create `parallel_windows.evt`:
 varpulis simulate -p parallel_windows.vpl -e parallel_windows.evt --verbose
 ```
 
-**Expected output:**
+**Output:**
 
 ```
-Program loaded: 2 streams, 2 contexts
-
-Starting simulation...
-
-  [  1-10] 10 events dispatched to 2 contexts
-
-  [window] ZoneAStats (A1): { sensor_id: "A1", avg_value: 75.2, max_value: 78.0, stddev_value: 2.5, reading_count: 3 }
-  [window] ZoneAStats (A2): { sensor_id: "A2", avg_value: 81.3, max_value: 82.5, stddev_value: 1.3, reading_count: 2 }
-  [window] ZoneBStats (B1): { sensor_id: "B1", avg_value: 66.8, max_value: 68.0, stddev_value: 1.3, reading_count: 3 }
-  [window] ZoneBStats (B2): { sensor_id: "B2", avg_value: 72.0, max_value: 73.0, stddev_value: 1.0, reading_count: 2 }
-
-Simulation Complete
-======================
-Events processed: 10
-Contexts used:    2
+{"_partition":"A2","avg_value":81.25,"event_type":"ZoneAStats","max_value":82.5,"reading_count":2,"sensor_id":"A2","stddev_value":1.7677669529663689,"timestamp":"1970-01-01T00:00:00.600Z"}
+{"_partition":"A1","avg_value":75.16666666666667,"event_type":"ZoneAStats","max_value":78.0,"reading_count":3,"sensor_id":"A1","stddev_value":3.0138568866708524,"timestamp":"1970-01-01T00:00:00.600Z"}
+{"_partition":"B1","avg_value":66.83333333333333,"event_type":"ZoneBStats","max_value":68.0,"reading_count":3,"sensor_id":"B1","stddev_value":1.60727512683216,"timestamp":"1970-01-01T00:00:00.900Z"}
+{"_partition":"B2","avg_value":72.0,"event_type":"ZoneBStats","max_value":73.0,"reading_count":2,"sensor_id":"B2","stddev_value":1.4142135623730951,"timestamp":"1970-01-01T00:00:00.900Z"}
+10 events in, 4 emitted
 ```
+
+`stddev` is the sample standard deviation. An aggregate item must be an
+aggregate function, so the partition key comes out through `last(sensor_id)`;
+a bare `sensor_id: sensor_id` is rejected by `varpulis check` (E073). The key
+is also in `_partition`.
 
 ### Without Contexts (Baseline)
 
@@ -384,9 +387,9 @@ For comparison, here's the same logic without contexts:
 stream ZoneAStats = SensorReading
     .where(zone == "A")
     .partition_by(sensor_id)
-    .window(tumbling 30s)
+    .window(30s)
     .aggregate(
-        sensor_id: sensor_id,
+        sensor_id: last(sensor_id),
         avg_value: avg(value),
         max_value: max(value),
         stddev_value: stddev(value),
@@ -396,9 +399,9 @@ stream ZoneAStats = SensorReading
 stream ZoneBStats = SensorReading
     .where(zone == "B")
     .partition_by(sensor_id)
-    .window(tumbling 30s)
+    .window(30s)
     .aggregate(
-        sensor_id: sensor_id,
+        sensor_id: last(sensor_id),
         avg_value: avg(value),
         max_value: max(value),
         stddev_value: stddev(value),
@@ -406,7 +409,7 @@ stream ZoneBStats = SensorReading
     )
 ```
 
-Same output, but both streams share one thread. Under high load, the context-based version will process events faster because zone A and zone B aggregation happen simultaneously.
+Same output. In the engine as it ships the two versions are the same program, both on one thread (see the note at the top).
 
 **Key takeaway:** Contexts provide true parallelism for CPU-bound workloads. Partition your streams by workload domain (zone, region, customer) and assign each to its own context.
 
@@ -433,7 +436,7 @@ stream UserSessions = UserActivity
     .partition_by(user_id)
     .window(session: 5s)
     .aggregate(
-        user_id: user_id,
+        user_id: last(user_id),
         event_count: count(),
         first_action: first(action),
         last_action: last(action)
@@ -526,7 +529,7 @@ stream UserSessions = ValidActivity
     .partition_by(user_id)
     .window(session: 5s)
     .aggregate(
-        user_id: user_id,
+        user_id: last(user_id),
         event_count: count(),
         first_action: first(action),
         last_action: last(action)

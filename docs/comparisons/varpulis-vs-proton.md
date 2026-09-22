@@ -257,14 +257,14 @@ This is the security analogue of Workload 3, with the extra twist of **cross-eve
 
 ```vpl
 pattern PsExecKillChain =
-    ProcessCreate where image contains "cmd.exe" as cmd ->
-    ProcessCreate where image contains "powershell.exe"
+    ProcessCreate where contains(image, "cmd.exe") as cmd ->
+    ProcessCreate where contains(image, "powershell.exe")
                   and parent_pid == cmd.pid as ps ->
     NetworkConnect where dest_port in [445, 139] and host == cmd.host as net
     within 10m
     partition by host
 
-stream APT = use pattern PsExecKillChain
+stream APT = PsExecKillChain
     .emit(
         alert_type: "PSEXEC_KILL_CHAIN",
         host: cmd.host,

@@ -1,5 +1,13 @@
 # Context-Based Multi-Threaded Execution
 
+> **Contexts have no effect in the engine as it ships.** `context`
+> declarations and `.context(...)` parse and pass `varpulis check`, but the
+> threads and channels behind them belong to the engine's asynchronous runtime,
+> which neither `varpulis simulate` nor a Vejas detect unit includes (see
+> [ADR-008](../adr/008-engine-only-platform-retired.md)). A program with
+> contexts runs on one thread, exactly like the same program without them. In
+> Vejas, work runs in parallel as separate detect units.
+
 Contexts provide isolated execution domains for stream processing. Each context runs on its own OS thread with a single-threaded Tokio runtime, enabling true parallelism without locks within a context.
 
 ## Table of Contents
@@ -161,6 +169,9 @@ context alert (cores: [3])      # Alert generation and delivery
 
 ```vpl
 # Fast filtering in the ingestion context
+context ingest (cores: [1])     # declared in Step 1
+context analyze (cores: [2])
+
 stream ValidReadings = SensorReading
     .context(ingest)
     .where(value > 0 and sensor_id != "")
@@ -171,12 +182,15 @@ stream ValidReadings = SensorReading
 
 ```vpl
 # Per-zone statistics in the analytics context
+context analyze (cores: [2])    # declared in Step 1
+context alert (cores: [3])
+
 stream ZoneStats = ValidReadings
     .context(analyze)
     .partition_by(zone)
     .window(1m)
     .aggregate(
-        zone: zone,
+        zone: last(zone),
         avg_value: avg(value),
         max_value: max(value),
         reading_count: count()
@@ -188,6 +202,8 @@ stream ZoneStats = ValidReadings
 
 ```vpl
 # Alert on anomalies in the alert context
+context alert (cores: [3])      # declared in Step 1
+
 stream OverheatAlerts = ZoneStats
     .context(alert)
     .where(max_value > 150)
@@ -209,8 +225,6 @@ context ingest (cores: [1])
 context analyze (cores: [2])
 context alert (cores: [3])
 
-let threshold = 150
-
 stream ValidReadings = SensorReading
     .context(ingest)
     .where(value > 0 and sensor_id != "")
@@ -221,7 +235,7 @@ stream ZoneStats = ValidReadings
     .partition_by(zone)
     .window(1m)
     .aggregate(
-        zone: zone,
+        zone: last(zone),
         avg_value: avg(value),
         max_value: max(value),
         reading_count: count()
@@ -230,9 +244,14 @@ stream ZoneStats = ValidReadings
 
 stream OverheatAlerts = ZoneStats
     .context(alert)
-    .where(max_value > threshold)
+    .where(max_value > 150)
     .emit(alert_type: "ZoneOverheat", message: "Zone overheated")
 ```
+
+The threshold is written as a literal on purpose. A top-level `let`, `const`
+or `var` passes `varpulis check` but is not visible inside a stream expression
+today: `.where(max_value > threshold)` with `let threshold = 150` never fires,
+while `.where(max_value > 150)` does.
 
 ### Running It
 
@@ -335,6 +354,9 @@ context io_bound (cores: [6])
 Each cross-context emit goes through a channel. Minimize boundary crossings:
 
 ```vpl
+context ingestion
+context analytics
+
 # Good: filter before crossing context boundary
 stream Filtered = RawData
     .context(ingestion)
