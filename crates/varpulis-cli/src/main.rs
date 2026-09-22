@@ -26,7 +26,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Check a VPL program: parse it and load it into the engine
+    /// Check a VPL program: parse it, validate it, load it into the engine
     Check {
         /// Path to the .vpl file
         file: PathBuf,
@@ -72,9 +72,20 @@ fn run() -> Result<(), String> {
     match Cli::parse().command {
         Command::Check { file } => {
             let src = read(&file)?;
-            Program::check(&src).map_err(|e| e.to_string())?;
-            println!("ok");
-            Ok(())
+            match Program::check_with_warnings(&src) {
+                Ok(warnings) => {
+                    for warning in warnings {
+                        eprintln!("{warning}");
+                    }
+                    println!("ok");
+                    Ok(())
+                }
+                Err(varpulis_engine::Error::Invalid(diagnostics)) => {
+                    eprintln!("{diagnostics}");
+                    Err(format!("{} does not check", file.display()))
+                }
+                Err(e) => Err(e.to_string()),
+            }
         }
         Command::Parse { file } => {
             let src = read(&file)?;

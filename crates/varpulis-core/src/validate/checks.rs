@@ -349,6 +349,14 @@ fn check_stream_source(v: &mut Validator, source: &StreamSource, span: Span) {
 }
 
 fn check_source_name(v: &mut Validator, name: &str, span: Span) {
+    // A program that declares no event type is open: the engine takes any
+    // name it does not know as an event type, so there is nothing to check a
+    // name against (a converted Sigma rule, a rule over whatever a bus
+    // carries). Declaring one event type closes it, and from then on an
+    // undeclared name is most likely a typo.
+    if v.symbols.events.is_empty() {
+        return;
+    }
     if !v.symbols.events.contains_key(name)
         && !v.symbols.streams.contains_key(name)
         && !v.symbols.patterns.contains_key(name)
@@ -359,7 +367,7 @@ fn check_source_name(v: &mut Validator, name: &str, span: Span) {
             span,
             "E033",
             format!("undefined event type or stream '{name}'"),
-            format!("declare it with: event {name} {{ ... }} or stream {name} = ...{suggestion}"),
+            format!("declare it with `event {name}:` and its fields, or `stream {name} = ...`{suggestion}"),
         );
     }
 }
@@ -924,7 +932,7 @@ fn check_stream_ops(
                             op_span,
                             "E034",
                             format!(".emit as '{type_name}' references an undeclared type"),
-                            format!("declare it with: event {type_name} {{ ... }}{suggestion}"),
+                            format!("declare it with `event {type_name}:` and its fields{suggestion}"),
                         );
                     }
                 }
@@ -1891,8 +1899,11 @@ fn check_regex_literals(v: &mut Validator, expr: &Expr, span: Span) {
             };
             if let Some(pattern) = pattern {
                 if let Err(e) = regex::Regex::new(pattern) {
-                    let reason = e.to_string();
-                    let reason = reason.lines().last().unwrap_or(&reason).trim().to_string();
+                    // The regex crate's message ends with the reason on its
+                    // own line, after the pattern and a caret under it.
+                    let text = e.to_string();
+                    let last = text.lines().last().unwrap_or(&text).trim();
+                    let reason = last.strip_prefix("error: ").unwrap_or(last).to_string();
                     v.emit_with_hint(
                         Severity::Error,
                         span,

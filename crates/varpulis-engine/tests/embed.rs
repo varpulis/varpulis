@@ -290,15 +290,19 @@ stream PerMinute = Ping
 #[test]
 fn check_refuses_what_the_engine_refuses() {
     assert!(Program::check(ORDERS).is_ok());
-    // `.filter()` is not a VPL operator; the engine refuses it at load, the
-    // way `varpulis check` does, so a host can validate before deploying.
+    // `.filter()` parses but is not an operator the engine runs; the check
+    // refuses it (the validator does, before the engine would), so a host can
+    // validate before deploying.
     let err = Program::check(
         "event Order:\n    id: str\n\nstream Bad = Order\n    .filter(id == \"x\")\n    .emit(x: 1)\n",
     )
     .unwrap_err();
     assert!(
-        matches!(err, varpulis_engine::Error::Engine(_)),
-        "a refusal is the engine's own, not a parse error: {err}"
+        matches!(
+            err,
+            varpulis_engine::Error::Invalid(_) | varpulis_engine::Error::Engine(_)
+        ),
+        "a refusal of the program, not a parse error: {err}"
     );
 }
 

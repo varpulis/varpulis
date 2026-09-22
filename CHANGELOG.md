@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `Channel` stay fields of the event (they were dropped, so a rule testing
   `EventID == 4625` fired on the bus and never in a simulation), and an
   explicit `"type"` wins over the type guessed from `EventID`.
+- `varpulis check` runs the semantic validator again, as the documentation
+  said it did. Since the CLI was rewritten on the engine crate it parsed and
+  loaded only, so an unbounded closure (W003), a misspelled event type (E033)
+  or a regular expression that cannot compile (E052) all checked "ok".
+  `Program::check` is the same check for a host (Vejas's `vpl-check`), and
+  `Program::check_with_warnings` returns the warnings. A program that declares
+  no event type is open, as the engine is: E033 applies once one is declared.
 - `coalesce`, `unique` and `clamp` were documented as implemented and were
   not; they are now. `now()` was documented and never existed; the table no
   longer lists it (a rule runs on the time its events carry).

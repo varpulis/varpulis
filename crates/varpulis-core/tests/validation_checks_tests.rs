@@ -963,8 +963,26 @@ fn w002_partition_before_window_ok() {
 
 #[test]
 fn e033_undeclared_event_type() {
-    let diags = validate_vpl("stream S = UndeclaredEvent\n    .where(x > 0)");
+    // Declaring one event type closes the program: other names are checked.
+    let diags = validate_vpl(
+        "event Declared:\n    x: int\n\nstream S = UndeclaredEvent\n    .where(x > 0)",
+    );
     assert!(has_error(&diags, "E033"), "Expected E033: {diags:?}");
+}
+
+#[test]
+fn e033_a_program_that_declares_no_event_type_is_open() {
+    // The engine takes any name it does not know as an event type, and a
+    // program with no declarations (a converted Sigma rule, a rule over
+    // whatever a bus carries) has nothing to check the name against.
+    let diags = validate_vpl(
+        "stream S = SysmonProcessCreate\n    .where(Image == 'x')\n    .emit(i: Image)",
+    );
+    assert!(!has_code(&diags, "E033"), "{diags:?}");
+    let diags = validate_vpl(
+        "stream S = A as a\n    -> B where k == a.k as b\n    .within(1m)\n    .emit(k: a.k)",
+    );
+    assert!(!has_code(&diags, "E033"), "{diags:?}");
 }
 
 #[test]
@@ -1124,7 +1142,8 @@ fn e050_nested_unknown_function() {
 
 #[test]
 fn pattern_with_undeclared_event_refs() {
-    let diags = validate_vpl("pattern P = UndeclaredA -> UndeclaredB");
+    let diags =
+        validate_vpl("event Declared:\n    x: int\n\npattern P = UndeclaredA -> UndeclaredB");
     // E033 should be emitted for undeclared event types in patterns
     assert!(
         has_error(&diags, "E033"),
@@ -1307,7 +1326,8 @@ fn myFunc(a: int) -> int:
 
 #[test]
 fn e033_undeclared_source_produces_error() {
-    let diags = validate_vpl("stream S = UndeclaredEvent\n    .emit()");
+    let diags =
+        validate_vpl("event Declared:\n    x: int\n\nstream S = UndeclaredEvent\n    .emit()");
     assert!(
         has_error(&diags, "E033"),
         "Expected E033 for undeclared source: {diags:?}"
