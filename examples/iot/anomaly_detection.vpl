@@ -95,13 +95,12 @@ stream RepeatedAlarms = AlarmsKeyed
         tenant_id: tenant_id,
         device_id: device_id,
         type: "repeated_alarm_pattern",
-        text: "Device raised " + str(alarm_count) + " alarms of type " + alarm_type + " in 1h",
+        text: "Device raised " + to_string(alarm_count) + " alarms of type " + alarm_type + " in 1h",
         severity: "major",
         source_id: device_id,
         active: true,
         protocol: protocol,
-        connector_id: connector_id,
-        ts: now()
+        connector_id: connector_id
     )
 
 # ─── Device flapping detection ────────────────────────────────
@@ -123,13 +122,12 @@ stream DeviceFlapping = Events
         tenant_id: tenant_id,
         device_id: device_id,
         type: "device_flapping",
-        text: "Device connectivity unstable — " + str(state_changes) + " state changes in 30m",
+        text: "Device connectivity unstable — " + to_string(state_changes) + " state changes in 30m",
         severity: "major",
         source_id: device_id,
         active: true,
         protocol: protocol,
-        connector_id: connector_id,
-        ts: now()
+        connector_id: connector_id
     )
 
 # ─── Output ──────────────────────────────────────────────────

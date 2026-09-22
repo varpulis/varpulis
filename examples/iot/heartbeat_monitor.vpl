@@ -43,8 +43,7 @@ stream MissingHeartbeats = HeartbeatWindow
         source_id: device_id,
         active: true,
         protocol: protocol,
-        connector_id: "",
-        ts: now()
+        connector_id: ""
     )
 
 # ─── Detect low battery ──────────────────────────────────────
@@ -60,8 +59,7 @@ stream LowBatteryAlarms = HeartbeatWindow
         source_id: device_id,
         active: true,
         protocol: protocol,
-        connector_id: "",
-        ts: now()
+        connector_id: ""
     )
 
 # ─── Output alarms ───────────────────────────────────────────

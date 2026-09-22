@@ -138,13 +138,11 @@ Available as both functions and methods: `len(s)` or `s.len()`.
 | `sort(arr)` / `arr.sort()` | Sorted copy |
 | `reverse(arr)` / `arr.reverse()` | Reversed copy |
 | `unique(arr)` / `arr.unique()` | Deduplicated copy |
-| `flatten(arr)` / `arr.flatten()` | Flatten nested arrays |
 | `contains(arr, val)` / `arr.contains(val)` | Membership test |
 | `arr.filter(x => cond)` | Filter with lambda |
 | `arr.map(x => expr)` | Transform with lambda |
 | `arr.sum()` | Numeric sum |
 | `arr.avg()` | Numeric average |
-| `arr.min()` / `arr.max()` | Numeric min/max |
 
 ### Map/Object Functions (Implemented)
 
@@ -230,6 +228,8 @@ passed to a function is `null` in its own position.
 
 | Function | Description |
 |----------|-------------|
+| `flatten(arr)` / `arr.flatten()` | Flatten nested arrays (exists only inside `.pattern()` lambdas today) |
+| `arr.min()` / `arr.max()` | Smallest and largest element (`min(a, b)` / `max(a, b)` take two values) |
 | `uuid()` | Generate UUID |
 | `random()` | Random number |
 | `year(ts)` / `month(ts)` / `day(ts)` | Date extraction |

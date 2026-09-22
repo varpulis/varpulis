@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `coalesce`, `unique` and `clamp` were documented as implemented and were
   not; they are now. `now()` was documented and never existed; the table no
   longer lists it (a rule runs on the time its events carry).
+- `varpulis check` reports a function it does not know wherever a stream
+  evaluates one (**E050**): `.where()`, `.emit()`, `.having()`, a `->` step's
+  filter. It only looked at `let` values, so `ends_wiht(Image, ...)` checked
+  "ok" and never matched. Its list of built-ins is now the evaluator's, kept
+  so by a test in both directions: it listed `to_lower`, `concat`, `now`,
+  which the engine never evaluated, and did not know `lower`, `is_null`,
+  `substring` or `regex_match`. Three shipped examples called `now()` and
+  `str()`, which never existed; they now use the event's own timestamp and
+  `to_string()`.
+- The builtins table no longer lists `flatten` and `arr.min()`/`arr.max()`
+  as implemented; outside `.pattern()` lambdas they answered nothing.
 
 ### Added
 

@@ -266,8 +266,7 @@ stream HVACHealthScore = HVACMetrics
             - (if avg_power > 5.0 then 10 else 0)
             - (if avg_pressure < 2.0 or avg_pressure > 4.0 then 15 else 0)
             - (if avg_refrigerant_temp > 50 then 20 else 0)
-            - (if runtime_hours > 5000 then 10 else 0),
-        ts: now()
+            - (if runtime_hours > 5000 then 10 else 0)
     )
 
 # Health score alert
