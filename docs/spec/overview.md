@@ -117,6 +117,4 @@ Varpulis is a next-generation streaming analytics engine combining:
 
 ## See Also
 
-- [System Architecture](../architecture/system.md)
 - [VPL Language](../language/overview.md)
-- [Roadmap](roadmap.md)

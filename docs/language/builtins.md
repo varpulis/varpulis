@@ -359,7 +359,7 @@ stream Enriched = Temperature as t
     .emit(city: t.city, forecast: forecast, latency: enrich_latency_ms)
 ```
 
-See [Enrichment Reference](../reference/enrichment.md) for details.
+Enrichment calls out to a provider the host supplies; the engine only sees the values that come back.
 
 ---
 

@@ -1,6 +1,6 @@
 # ADR-002: Warp as the HTTP Framework
 
-**Status:** Superseded by [ADR-007](../../design/decisions/ADR-007-axum-migration.md)
+**Status:** Superseded by [ADR-008](008-engine-only-platform-retired.md) — there is no HTTP server here any more
 **Date:** 2026-02-17
 **Authors:** Varpulis Team
 

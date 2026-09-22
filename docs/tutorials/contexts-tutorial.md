@@ -603,5 +603,4 @@ Key metrics to watch:
 ## Next Steps
 
 - [Contexts Guide](../guides/contexts.md) -- Architecture deep-dive, internal design, and advanced best practices
-- [Performance Tuning](../guides/performance-tuning.md) -- CPU pinning, NUMA optimization, and benchmarking
 - [HVAC Building Example](../examples/hvac-building.md) -- Full IoT monitoring example using contexts

@@ -140,6 +140,12 @@ encryption = ["aes-gcm", "argon2"]
 wasm-udf = ["varpulis-wasm"]
 
 [dev-dependencies]
+# `test-util` for `#[tokio::test(start_paused = true)]` in tests/timer_tests.rs:
+# the timer tests advance tokio's clock instead of sleeping. It used to arrive
+# through feature unification from a platform crate's dev-dependencies, which
+# is why it compiled on Linux and only Windows noticed when those crates went
+# (ADR-008). A crate declares the features its own tests need.
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread", "time"] }
 tempfile = "3"
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1.10"

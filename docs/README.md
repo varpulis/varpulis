@@ -26,7 +26,7 @@ unit ([ADR-008](adr/008-engine-only-platform-retired.md)).
 ## Scenarios and comparisons
 
 - [Scenarios](scenarios/) — fraud, kill chains, insider trading, patient safety, predictive maintenance.
-- [SIEM evasion lab](siem-evasion-lab-01-psexec-lateral-movement.md) — four articles on detections that survive evasion.
+- [SIEM evasion lab](siem-evasion-lab-01-psexec.md) — four articles on detections that survive evasion.
 - [Comparisons](comparisons/) — Flink, Proton, Arroyo, Kafka Streams, Esper; [benchmarks](spec/benchmarks.md).
 
 ## Reference

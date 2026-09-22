@@ -753,4 +753,3 @@ varpulis simulate -p program.vpl -e test_events.evt --verbose
 - [CLI Reference](../reference/cli-reference.md) - All command options
 - [Windows & Aggregations Reference](../reference/windows-aggregations.md) - Detailed window documentation
 - [SASE+ Pattern Guide](../guides/sase-patterns.md) - Advanced pattern matching
-- [Configuration Guide](../guides/configuration.md) - MQTT, deployment, and more

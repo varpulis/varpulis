@@ -367,7 +367,7 @@ connector Kafka = kafka (
 )
 ```
 
-> For full details on credentials file format, master key setup, encryption, mTLS, SCRAM walkthroughs, and security best practices, see the [Connector Security Guide](../guides/connector-security.md).
+> Credentials, encryption at rest, TLS and authentication are the host's: a `.from()` or `.to()` in VPL names a connector and a topic, and the host decides how it connects. In [Vejas](https://github.com/cpoder/vejas) that is the bus configuration and its secrets.
 
 ---
 
@@ -521,7 +521,7 @@ cargo build --release --features mqtt,nats,kafka
 
 ### NATS Cluster Transport
 
-NATS is also used as the transport layer for Varpulis cluster communication (coordinator-worker messaging). This is a separate feature from the data connector. See [NATS Transport Architecture](../architecture/nats-transport.md) for details.
+NATS is also what a host runs the programs on: in [Vejas](https://github.com/cpoder/vejas) a VPL program under `detects/` gets a durable JetStream consumer over its `.from()` subjects.
 
 ---
 
@@ -648,8 +648,3 @@ stream DebugOutput = SomeStream
 ## See Also
 
 - [Syntax Reference](syntax.md) - Complete VPL syntax
-- [Architecture](../architecture/system.md) - System architecture
-- [NATS Transport Architecture](../architecture/nats-transport.md) - NATS cluster transport layer
-- [NATS Connector Tutorial](../tutorials/nats-connector.md) - Step-by-step NATS setup
-- [Configuration Guide](../guides/configuration.md) - CLI and server configuration
-- [Connector Security Guide](../guides/connector-security.md) - Credentials, encryption, TLS, and authentication
