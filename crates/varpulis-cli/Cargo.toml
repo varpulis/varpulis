@@ -6,118 +6,19 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "CLI for Varpulis — Rust stream processing engine for real-time detection, fraud prevention, and MITRE ATT&CK coverage. Apache Flink alternative."
-keywords = ["stream-processing", "detection", "streaming", "rust", "siem"]
-categories = ["command-line-utilities", "science", "development-tools"]
-
-[lib]
-name = "varpulis_cli"
-path = "src/lib.rs"
+description = "The varpulis command: check, parse and simulate VPL programs with the Varpulis CEP engine"
+readme = "README.md"
 
 [[bin]]
 name = "varpulis"
 path = "src/main.rs"
 
 [dependencies]
-varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
+varpulis-engine = { version = "0.11.0", path = "../varpulis-engine" }
 varpulis-parser = { version = "0.11.0", path = "../varpulis-parser" }
-varpulis-runtime = { version = "0.11.0", path = "../varpulis-runtime", features = ["mqtt", "interactive"] }
-tokio = { workspace = true }
+varpulis-runtime = { version = "0.11.0", path = "../varpulis-runtime", default-features = false }
 clap = { workspace = true }
-anyhow = { workspace = true }
-miette = { workspace = true, features = ["fancy"] }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
-serde = { workspace = true }
-axum = { workspace = true }
-tower = { workspace = true }
-tower-http = { workspace = true }
-axum-server = { workspace = true }
-rustls = { workspace = true }
-rustls-pemfile = "2"
-futures-util = { workspace = true }
-chrono = { workspace = true }
-indexmap = { workspace = true }
-rustc-hash = { workspace = true }
-rand = { workspace = true }
-rayon = "1.10"
-serde_yaml = "0.9"
-toml = "1"
-thiserror = { workspace = true }
-uuid = { version = "1", features = ["v4"] }
-reqwest = { workspace = true }
-async-trait = "0.1"
-varpulis-cluster = { version = "0.11.0", path = "../varpulis-cluster" }
-varpulis-datagen = { version = "0.11.0", path = "../varpulis-datagen" }
-jsonwebtoken = { workspace = true }
-urlencoding = "2"
-bytes = "1"
-hmac = { workspace = true }
-sha2 = { workspace = true }
-hex = { workspace = true }
-argon2 = "0.5"
-getrandom = "0.4"
-indicatif = "0.18"
-owo-colors = "4"
-comfy-table = "7"
-varpulis-connector-api = { version = "0.11.0", path = "../varpulis-connector-api" }
-varpulis-connectors = { version = "0.11.0", path = "../varpulis-connectors" }
-notify = "7"
-
-# REPL (optional, behind "repl" feature)
-rustyline = { version = "17", optional = true }
-
-# TUI
-ratatui = "0.30"
-crossterm = { version = "0.29", features = ["event-stream"] }
-
-# OIDC/SSO (optional, behind "oidc" feature)
-openidconnect = { version = "4", optional = true }
-
-# SaaS layer (optional, behind "saas" feature)
-varpulis-db = { version = "0.11.0", path = "../varpulis-db", optional = true }
-lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "builder"], optional = true }
-
-# OpenTelemetry (optional, behind "otel" feature)
-opentelemetry = { workspace = true, optional = true }
-opentelemetry_sdk = { workspace = true, optional = true }
-opentelemetry-otlp = { workspace = true, optional = true }
-tracing-opentelemetry = { workspace = true, optional = true }
-mimalloc = "0.1.52"
-
-[features]
-default = []
-kafka = ["varpulis-runtime/kafka"]
-nats = ["varpulis-runtime/nats"]
-nats-transport = ["varpulis-cluster/nats-transport"]
-onnx = ["varpulis-runtime/onnx"]
-k8s = ["varpulis-cluster/k8s"]
-# Without this the chaos suite's five distributed-checkpoint tests could not
-# run at all: they spawn the real `varpulis` binary as coordinator and worker,
-# and a binary built without the feature has no barrier handler compiled in,
-# so the worker never answers a checkpoint barrier. The tests were written,
-# listed in the runner, and unreachable.
-distributed-checkpoint = ["varpulis-cluster/distributed-checkpoint"]
-# The JetStream KV control plane. Off unless VARPULIS_CONTROL_PLANE_URL is
-# also set, so linking it in changes no deployment's behaviour on its own.
-jetstream-control-plane = ["varpulis-cluster/jetstream-control-plane"]
-saas = ["varpulis-db", "lettre"]
-oidc = ["openidconnect"]
-# Both halves. This turned on connector-payload encryption only, so a binary
-# built with `--features encryption` still had no `EncryptedStateStore`
-# compiled in and wrote every checkpoint in plaintext.
-encryption = ["varpulis-connectors/encryption", "varpulis-runtime/encryption"]
-syslog = ["varpulis-connectors/syslog"]
-slack = ["varpulis-connectors/slack"]
-splunk = ["varpulis-connectors/splunk"]
-enterprise = ["syslog", "slack", "splunk"]
-repl = ["rustyline"]
-tui = []  # TUI is now always available; kept for backwards compatibility
-otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry", "varpulis-cluster/otel"]
-
-[dev-dependencies]
-tempfile = "3.10"
 
 [lints]
 workspace = true

@@ -13,23 +13,23 @@ on:
         options:
           - all
           - varpulis-core
-          - varpulis-actors
           - varpulis-zdd
           - varpulis-pst
-          - varpulis-datagen
-          - varpulis-db
           - varpulis-parser
           - varpulis-simd
           - varpulis-hamlet
           - varpulis-dead-letter
+          - varpulis-sase
           - varpulis-connector-api
-          - varpulis-connector-mqtt
-          - varpulis-connector-kafka
-          - varpulis-connector-nats
-          - varpulis-connector-redis
-          - varpulis-connector-elasticsearch
-          - varpulis-connector-pulsar
-          - varpulis-connector-kinesis
+          - varpulis-connector-http
+          - varpulis-connectors
+          - varpulis-enrichment
+          - varpulis-wasm
+          - varpulis-runtime
+          - varpulis-engine
+          - varpulis-engine-wasm
+          - varpulis-lsp
+          - varpulis-cli
           - varpulis-connector-s3
           - varpulis-connector-database
           - varpulis-connector-http
@@ -45,7 +45,6 @@ on:
           - varpulis-wasm
           - varpulis-engine-wasm
           - varpulis-runtime
-          - varpulis-cluster
           - varpulis-cli
           - varpulis
         default: 'all'
@@ -106,50 +105,24 @@ jobs:
           # Note: varpulis-core has a dev-dep on varpulis-parser (cycle),
           # so we use --no-verify and rely on the workspace check above.
           CRATES=(
-            # Level 0: no internal deps
             "varpulis-core"
-            "varpulis-actors"
             "varpulis-zdd"
             "varpulis-pst"
-            "varpulis-datagen"
-            "varpulis-db"
             "varpulis-parser"
             "varpulis-simd"
             "varpulis-hamlet"
             "varpulis-dead-letter"
-            # Level 1: connector API (depends on varpulis-core)
+            "varpulis-sase"
             "varpulis-connector-api"
-            # Level 2: individual connectors (depend on connector-api + core)
-            "varpulis-connector-mqtt"
-            "varpulis-connector-kafka"
-            "varpulis-connector-nats"
-            "varpulis-connector-redis"
-            "varpulis-connector-elasticsearch"
-            "varpulis-connector-pulsar"
-            "varpulis-connector-kinesis"
-            "varpulis-connector-s3"
-            "varpulis-connector-database"
             "varpulis-connector-http"
-            "varpulis-connector-slack"
-            "varpulis-connector-splunk"
-            "varpulis-connector-syslog"
-            "varpulis-connector-cdc"
-            # Level 3: aggregation crates
-            "varpulis-connectors"    # depends on all connector crates
-            "varpulis-sase"          # depends on core, zdd
-            "varpulis-enrichment"    # depends on core, connectors
-            # Level 4: LSP + WASM (depend on core + parser, no runtime)
-            "varpulis-lsp"
+            "varpulis-connectors"
+            "varpulis-enrichment"
             "varpulis-wasm"
-            # Level 5: runtime (depends on core, parser, sase, connectors, enrichment, etc.)
             "varpulis-runtime"
-            # Level 6: crates that depend on runtime
-            "varpulis-mcp"           # depends on core, parser, runtime
-            "varpulis-engine-wasm"   # depends on core, parser, runtime
-            "varpulis-cluster"       # depends on core, parser, runtime
-            "varpulis-cli"           # depends on everything
-            # Level 7: meta-crate
-            "varpulis"               # depends on core, runtime
+            "varpulis-engine"
+            "varpulis-engine-wasm"
+            "varpulis-lsp"
+            "varpulis-cli"
           )
 
           publish_crate() {

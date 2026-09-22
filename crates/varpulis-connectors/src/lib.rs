@@ -45,63 +45,19 @@ pub use types::{
     SourceConnector,
 };
 // PostgreSQL CDC connector
-#[cfg(feature = "cdc")]
-pub use varpulis_connector_cdc as postgres_cdc;
-#[cfg(feature = "cdc")]
-pub use varpulis_connector_cdc::{CdcOperation, PostgresCdcConfig, PostgresCdcSource};
 // Database connectors
-#[cfg(feature = "database")]
-pub use varpulis_connector_database::{DatabaseConfig, DatabaseSink, DatabaseSource};
 // Elasticsearch connectors
-#[cfg(feature = "elasticsearch")]
-pub use varpulis_connector_elasticsearch::{ElasticsearchConfig, ElasticsearchSink};
 // HTTP connectors (always available)
 pub use varpulis_connector_http::{HttpSink, HttpWebhookConfig, HttpWebhookSource};
-// Kafka connectors
-#[cfg(feature = "kafka")]
-pub use varpulis_connector_kafka::{KafkaConfig, KafkaSink, KafkaSource, ManagedKafkaConnector};
-// Slack webhook connector
-#[cfg(feature = "slack")]
-pub use varpulis_connector_slack::{event_to_slack_payload, SlackWebhookSink};
-// Splunk HEC connector
-#[cfg(feature = "splunk")]
-pub use varpulis_connector_splunk::{parse_hec_event, SplunkHecSource};
-// Syslog CEF connector
-#[cfg(feature = "syslog")]
-pub use varpulis_connector_syslog::{
-    event_to_cef, parse_syslog_line, SyslogCefSink, SyslogTcpSource, SyslogTransport,
-};
-/// Backward-compatible alias for `KafkaSink` (was `KafkaSinkImpl` in the old monolithic module).
-#[cfg(feature = "kafka")]
-pub type KafkaSinkFull = varpulis_connector_kafka::KafkaSink;
-/// Backward-compatible alias for `KafkaSource` (was `KafkaSourceImpl` in the old monolithic module).
-#[cfg(feature = "kafka")]
-pub type KafkaSourceFull = varpulis_connector_kafka::KafkaSource;
-// Kinesis connectors
-#[cfg(feature = "kinesis")]
-pub use varpulis_connector_kinesis::{KinesisConfig, KinesisSink, KinesisSource};
 // ==========================================
 // Re-exports from extracted connector crates
 // ==========================================
 
 // MQTT connectors
-#[cfg(feature = "mqtt")]
-pub use varpulis_connector_mqtt::{ManagedMqttConnector, MqttConfig, MqttSink, MqttSource};
 // NATS connectors
-#[cfg(feature = "nats")]
-pub use varpulis_connector_nats::{ManagedNatsConnector, NatsConfig, NatsSink, NatsSource};
 // Pulsar connectors
-#[cfg(feature = "pulsar")]
-pub use varpulis_connector_pulsar::{PulsarConfig, PulsarSink, PulsarSource};
 // Redis connectors
-#[cfg(feature = "redis")]
-pub use varpulis_connector_redis::{
-    RedisConfig, RedisSink, RedisSource, RedisStreamConfig, RedisStreamSink, RedisStreamSinkStub,
-    RedisStreamSource,
-};
 // S3 connectors
-#[cfg(feature = "s3")]
-pub use varpulis_connector_s3::{S3Config, S3OutputFormat, S3Sink};
 
 #[cfg(test)]
 mod tests {
@@ -129,42 +85,6 @@ mod tests {
             config.properties.get("group.id"),
             Some(&"test-group".to_string())
         );
-    }
-
-    #[cfg(feature = "kafka")]
-    #[test]
-    fn test_kafka_config() {
-        let config = KafkaConfig::new("broker:9092", "my-topic").with_group_id("my-group");
-
-        assert_eq!(config.brokers, "broker:9092");
-        assert_eq!(config.topic, "my-topic");
-        assert_eq!(config.group_id, Some("my-group".to_string()));
-    }
-
-    #[cfg(feature = "mqtt")]
-    #[test]
-    fn test_mqtt_config() {
-        let config = MqttConfig::new("mqtt.example.com", "sensors/#")
-            .with_port(8883)
-            .with_credentials("user", "pass");
-
-        assert_eq!(config.broker, "mqtt.example.com");
-        assert_eq!(config.port, 8883);
-        assert_eq!(config.topic, "sensors/#");
-        assert_eq!(config.username, Some("user".to_string()));
-    }
-
-    #[cfg(feature = "nats")]
-    #[test]
-    fn test_nats_config() {
-        let config = NatsConfig::new("nats://localhost:4222", "events.>")
-            .with_queue_group("varpulis")
-            .with_credentials("user", "pass");
-
-        assert_eq!(config.servers, "nats://localhost:4222");
-        assert_eq!(config.subject, "events.>");
-        assert_eq!(config.queue_group, Some("varpulis".to_string()));
-        assert_eq!(config.username, Some("user".to_string()));
     }
 
     #[test]
@@ -306,24 +226,5 @@ mod tests {
         assert!(json.contains("connector_type"));
         assert!(json.contains("url"));
         assert!(json.contains("topic"));
-    }
-
-    #[cfg(feature = "kafka")]
-    #[test]
-    fn test_kafka_config_schema() {
-        let schema = schemars::schema_for!(KafkaConfig);
-        let json = serde_json::to_string_pretty(&schema).unwrap();
-        assert!(json.contains("brokers"));
-        assert!(json.contains("topic"));
-    }
-
-    #[cfg(feature = "mqtt")]
-    #[test]
-    fn test_mqtt_config_schema() {
-        let schema = schemars::schema_for!(MqttConfig);
-        let json = serde_json::to_string_pretty(&schema).unwrap();
-        assert!(json.contains("broker"));
-        assert!(json.contains("port"));
-        assert!(json.contains("password"));
     }
 }

@@ -1,6 +1,6 @@
 # ADR-003: Coordinator/Worker Cluster Architecture
 
-**Status:** Accepted
+**Status:** Superseded by ADR-008
 **Date:** 2026-02-17
 **Authors:** Varpulis Team
 

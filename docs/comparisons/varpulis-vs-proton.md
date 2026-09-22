@@ -332,7 +332,7 @@ We ran our own head-to-head benchmark of both engines on **identical workloads**
 
 **Test setup**:
 - Hardware: Ryzen 9 7950X / 32 GB DDR5 / NVMe SSD
-- Varpulis: v0.10.x release build, single core, file-based input via `varpulis simulate --workers 1 --quiet`
+- Varpulis: v0.10.x release build, single core, file-based input via `varpulis simulate`
 - Proton: v3.0.19 in Docker, single container, INSERT FROM JSONEachRow over `docker exec` stdin, output measured via materialized-view propagation to a destination stream
 - Both engines see exactly the same event payloads with the same field values
 - Memory: peak resident-set-size during the run (Varpulis via `/proc/{pid}/status`, Proton via `docker stats`)

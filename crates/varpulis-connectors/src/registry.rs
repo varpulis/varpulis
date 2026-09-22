@@ -76,63 +76,6 @@ impl ConnectorRegistry {
                 let api_config = RestApiConfig::new(&config.url);
                 Ok(Box::new(RestApiSink::new("rest", api_config, &path)?))
             }
-            #[cfg(feature = "redis")]
-            "redis" => {
-                let channel = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                let sink =
-                    crate::RedisSink::new("redis", crate::RedisConfig::new(&config.url, &channel))
-                        .await?;
-                Ok(Box::new(sink))
-            }
-            #[cfg(feature = "database")]
-            "database" | "postgres" | "mysql" | "sqlite" => {
-                let table = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                let sink = crate::DatabaseSink::new(
-                    "database",
-                    crate::DatabaseConfig::new(&config.url, &table)?,
-                )
-                .await?;
-                Ok(Box::new(sink))
-            }
-            #[cfg(feature = "kinesis")]
-            "kinesis" => {
-                let stream = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                let region = config
-                    .properties
-                    .get("region")
-                    .cloned()
-                    .unwrap_or_else(|| "us-east-1".to_string());
-                let sink =
-                    crate::KinesisSink::new("kinesis", crate::KinesisConfig::new(&stream, &region))
-                        .await?;
-                Ok(Box::new(sink))
-            }
-            #[cfg(feature = "s3")]
-            "s3" => {
-                let prefix = config
-                    .topic
-                    .clone()
-                    .unwrap_or_else(|| "events/".to_string());
-                let region = config
-                    .properties
-                    .get("region")
-                    .cloned()
-                    .unwrap_or_else(|| "us-east-1".to_string());
-                let sink =
-                    crate::S3Sink::new("s3", crate::S3Config::new(&config.url, &prefix, &region))
-                        .await?;
-                Ok(Box::new(sink))
-            }
-            #[cfg(feature = "redis")]
-            "redis_stream" => {
-                let stream_key = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                let sink = crate::RedisStreamSink::new(
-                    "redis_stream",
-                    crate::RedisStreamConfig::new(&config.url, &stream_key),
-                )
-                .await?;
-                Ok(Box::new(sink))
-            }
             _ => Err(ConnectorError::ConfigError(format!(
                 "Unknown connector type: {}",
                 config.connector_type

@@ -97,32 +97,6 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Install connector system dependencies (Linux)
-        if: runner.os == 'Linux' && !matrix.use_cross
-        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev protobuf-compiler zlib1g-dev
-
-      - name: Install LLVM tools for PGO+BOLT (Linux x86_64)
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          rustup component add llvm-tools
-          sudo apt-get install -y bolt-19 libbolt-19-dev
-
-      - name: Build with PGO+BOLT (Linux x86_64)
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          # PGO-optimized CLI binary (builds to target/release/)
-          ./scripts/pgo-build.sh
-          # Use BOLT binary if available, otherwise PGO-only
-          if [ -f target/release/varpulis-pgo-bolt ]; then
-            cp target/release/varpulis-pgo-bolt target/release/varpulis
-          fi
-          # Copy to target triple path expected by artifact step
-          mkdir -p target/${{ matrix.target }}/release
-          cp target/release/varpulis target/${{ matrix.target }}/release/varpulis
-          # LSP built with same PGO profile (benefits from shared runtime code)
-          RUSTFLAGS="-Cprofile-use=$(pwd)/target/pgo-merged.profdata" \
-            cargo build --release --target ${{ matrix.target }} -p varpulis-lsp
-
       - name: Build (cross)
         if: matrix.use_cross
         run: |
@@ -130,7 +104,7 @@ jobs:
           cross build --release --target ${{ matrix.target }} -p varpulis-lsp
 
       - name: Build (native, non-PGO)
-        if: ${{ !matrix.use_cross && matrix.target != 'x86_64-unknown-linux-gnu' }}
+        if: ${{ !matrix.use_cross }}
         run: |
           # rust-toolchain.toml pins the toolchain cargo actually uses (1.95.0),
           # and dtolnay/rust-toolchain@stable only adds the matrix target to
@@ -178,52 +152,9 @@ jobs:
           name: varpulis-lsp-${{ matrix.target }}.exe
           path: artifacts/varpulis-lsp-${{ matrix.target }}.exe
 
-  docker:
-    name: Build Docker Image
-    runs-on: ubuntu-latest
-    needs: build
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Download Linux artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: varpulis-linux-x86_64
-          path: docker-build
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract version
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
-            ghcr.io/${{ github.repository }}:latest
-          platforms: linux/amd64
-          build-args: |
-            VERSION=${{ steps.version.outputs.version }}
-
   release:
     name: Create Release
-    needs: [audit, test, build, docker]
+    needs: [audit, test, build]
     # Publish whatever built. A single failed target (or the docker job) must not
     # skip the release entirely — otherwise a missing binary silently blocks the
     # whole release, which is how v0.11.0 initially failed to publish.
@@ -298,108 +229,3 @@ jobs:
             artifacts/varpulis-lsp-x86_64-pc-windows-msvc.exe/varpulis-lsp-x86_64-pc-windows-msvc.exe
             artifacts/checksums.txt
 
-  homebrew:
-    name: Update Homebrew Tap
-    needs: release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Extract version
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Download release binaries and compute SHA256
-        id: sha
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          BASE="https://github.com/varpulis/varpulis/releases/download/v${VERSION}"
-
-          for asset in varpulis-macos-x86_64 varpulis-macos-aarch64 varpulis-linux-x86_64 varpulis-linux-aarch64; do
-            curl -fsSL -o "$asset" "${BASE}/${asset}"
-            HASH=$(sha256sum "$asset" | cut -d' ' -f1)
-            KEY=$(echo "$asset" | tr '-' '_')
-            echo "${KEY}=${HASH}" >> "$GITHUB_OUTPUT"
-            echo "$asset: $HASH"
-          done
-
-      - name: Checkout homebrew-tap
-        uses: actions/checkout@v7
-        with:
-          repository: varpulis/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-tap
-
-      - name: Update formula
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          cat > homebrew-tap/Formula/varpulis.rb << 'FORMULA'
-          class Varpulis < Formula
-            desc "Modern streaming analytics engine with advanced pattern detection"
-            homepage "https://github.com/varpulis/varpulis"
-            version "VERSION_PLACEHOLDER"
-            license any_of: ["MIT", "Apache-2.0"]
-
-            on_macos do
-              on_intel do
-                url "https://github.com/varpulis/varpulis/releases/download/v#{version}/varpulis-macos-x86_64"
-                sha256 "SHA_MACOS_X86_64"
-              end
-
-              on_arm do
-                url "https://github.com/varpulis/varpulis/releases/download/v#{version}/varpulis-macos-aarch64"
-                sha256 "SHA_MACOS_AARCH64"
-              end
-            end
-
-            on_linux do
-              on_intel do
-                url "https://github.com/varpulis/varpulis/releases/download/v#{version}/varpulis-linux-x86_64"
-                sha256 "SHA_LINUX_X86_64"
-              end
-
-              on_arm do
-                url "https://github.com/varpulis/varpulis/releases/download/v#{version}/varpulis-linux-aarch64"
-                sha256 "SHA_LINUX_AARCH64"
-              end
-            end
-
-            def install
-              if OS.mac? && Hardware::CPU.intel?
-                bin.install "varpulis-macos-x86_64" => "varpulis"
-              elsif OS.mac? && Hardware::CPU.arm?
-                bin.install "varpulis-macos-aarch64" => "varpulis"
-              elsif OS.linux? && Hardware::CPU.intel?
-                bin.install "varpulis-linux-x86_64" => "varpulis"
-              elsif OS.linux? && Hardware::CPU.arm?
-                bin.install "varpulis-linux-aarch64" => "varpulis"
-              end
-            end
-
-            test do
-              assert_match "varpulis #{version}", shell_output("#{bin}/varpulis --version")
-            end
-          end
-          FORMULA
-
-          # Strip leading whitespace from heredoc
-          sed -i 's/^          //' homebrew-tap/Formula/varpulis.rb
-
-          # Substitute placeholders
-          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/" homebrew-tap/Formula/varpulis.rb
-          sed -i "s/SHA_MACOS_X86_64/${{ steps.sha.outputs.varpulis_macos_x86_64 }}/" homebrew-tap/Formula/varpulis.rb
-          sed -i "s/SHA_MACOS_AARCH64/${{ steps.sha.outputs.varpulis_macos_aarch64 }}/" homebrew-tap/Formula/varpulis.rb
-          sed -i "s/SHA_LINUX_X86_64/${{ steps.sha.outputs.varpulis_linux_x86_64 }}/" homebrew-tap/Formula/varpulis.rb
-          sed -i "s/SHA_LINUX_AARCH64/${{ steps.sha.outputs.varpulis_linux_aarch64 }}/" homebrew-tap/Formula/varpulis.rb
-
-          echo "Generated formula:"
-          cat homebrew-tap/Formula/varpulis.rb
-
-      - name: Commit and push
-        run: |
-          cd homebrew-tap
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/varpulis.rb
-          git diff --cached --quiet && echo "No changes to formula" || {
-            git commit -m "Update varpulis to ${{ steps.version.outputs.version }}"
-            git push
-          }

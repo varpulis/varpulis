@@ -44,7 +44,7 @@ jobs:
       # an exemption list in the checker, which would also excuse a subcommand
       # that was genuinely removed.
       - name: Build varpulis
-        run: cargo build --release -p varpulis-cli --features repl
+        run: cargo build --release -p varpulis-cli
       - uses: actions/upload-artifact@v7
         with:
           name: varpulis-cli-vpl-check
@@ -67,24 +67,6 @@ jobs:
         uses: ./.github/actions/varpulis-check
         with:
           path: 'examples/'
-          binary: ${{ github.workspace }}/cli/varpulis
-
-  check-demos:
-    name: Parse-check demo VPL files
-    needs: [build-cli]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: varpulis-cli-vpl-check
-          path: cli
-      - run: chmod +x cli/varpulis
-      - name: Check demos
-        uses: ./.github/actions/varpulis-check
-        with:
-          path: 'demos/'
           binary: ${{ github.workspace }}/cli/varpulis
 
   check-docs:

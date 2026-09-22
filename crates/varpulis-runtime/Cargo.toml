@@ -102,7 +102,6 @@ rmp-serde = { version = "1.3", optional = true }
 varpulis-wasm = { version = "0.11.0", path = "../varpulis-wasm", optional = true, features = ["smartmodule"] }
 
 # Event generation for interactive mode
-varpulis-datagen = { version = "0.11.0", path = "../varpulis-datagen", optional = true }
 
 [features]
 # `arrow` is in default so the release binary and web-ui preview mode get
@@ -120,31 +119,15 @@ async-runtime = [
 ]
 # Pure synchronous engine for wasm32-unknown-unknown. No tokio, no connectors.
 wasm = []
-mqtt = ["varpulis-connectors/mqtt", "async-runtime"]
-kafka = ["varpulis-connectors/kafka", "async-runtime"]
-postgres = ["varpulis-connectors/postgres", "async-runtime"]
-mysql = ["varpulis-connectors/mysql", "async-runtime"]
-sqlite = ["varpulis-connectors/sqlite", "async-runtime"]
-database = ["varpulis-connectors/database", "varpulis-enrichment/database", "async-runtime"]
-redis = ["varpulis-connectors/redis", "varpulis-enrichment/redis", "async-runtime"]
 persistence = ["rocksdb"]
 s3-state = ["aws-config", "aws-sdk-s3", "async-runtime"]
 checkpoint-compression = ["zstd"]
-kinesis = ["varpulis-connectors/kinesis", "async-runtime"]
-s3 = ["varpulis-connectors/s3", "async-runtime"]
-nats = ["varpulis-connectors/nats", "async-runtime"]
-elasticsearch = ["varpulis-connectors/elasticsearch", "async-runtime"]
-pulsar = ["varpulis-connectors/pulsar", "async-runtime"]
 arrow = ["arrow-array", "arrow-schema", "arrow-arith", "arrow-row"]
 onnx = ["ort"]
 gpu = ["onnx"]
 binary-codec = ["rmp-serde"]
 encryption = ["aes-gcm", "argon2"]
-cdc = ["varpulis-connectors/cdc", "async-runtime"]
-csv-converter = ["varpulis-connectors/csv-converter", "async-runtime"]
 wasm-udf = ["varpulis-wasm"]
-interactive = ["varpulis-datagen", "async-runtime"]
-all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch", "pulsar"]
 
 [dev-dependencies]
 tempfile = "3"
@@ -192,11 +175,6 @@ harness = false
 [[bench]]
 name = "eventflux_comparison"
 harness = false
-
-[[bench]]
-name = "cdc_benchmark"
-harness = false
-required-features = ["cdc"]
 
 [[bench]]
 name = "columnar_agg_benchmark"

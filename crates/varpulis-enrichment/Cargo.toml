@@ -23,8 +23,6 @@ redis = { version = "1", features = ["tokio-comp", "connection-manager"], option
 
 [features]
 default = []
-database = ["sqlx", "varpulis-connectors/database"]
-redis = ["dep:redis", "varpulis-connectors/redis"]
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
 # ADR-007: JetStream as the Durable Substrate for Cluster Event Paths
 
-**Status:** Accepted
+**Status:** Superseded by ADR-008
 **Date:** 2026-09-10
 **Authors:** Varpulis Team
 

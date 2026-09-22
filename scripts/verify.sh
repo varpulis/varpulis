@@ -72,11 +72,7 @@ run_step() {
 # openssl-sys / feature-unification trap. New "well-behaved" connectors
 # (no openssl-sys-via-features, no rdkafka-sys) belong in the workspace
 # pass, not here.
-CONNECTOR_CRATES=(
-    varpulis-connector-elasticsearch
-    varpulis-connector-kafka
-    varpulis-connector-pulsar
-)
+CONNECTOR_CRATES=()
 
 # Anchor to repo root so relative paths inside cargo behave the same
 # regardless of the caller's CWD.
@@ -155,7 +151,7 @@ clippy_step() {
     done
 }
 if [[ "${SKIP_CLIPPY:-0}" != "1" ]]; then
-    run_step "cargo clippy (workspace + 3 connectors, -D warnings)" clippy_step
+    run_step "cargo clippy (workspace, -D warnings)" clippy_step
 else
     echo "${YELLOW}  · skipping clippy (SKIP_CLIPPY=1)${RESET}"
 fi

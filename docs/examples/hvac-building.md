@@ -82,13 +82,10 @@ health_score = 100
 # Check syntax
 varpulis check examples/hvac_demo.vpl
 
-# Run demo with built-in simulator
-varpulis demo --duration 60 --anomalies --degradation --metrics
+# Run over the shipped events
+varpulis simulate -p examples/hvac_demo.vpl -e examples/hvac_demo.evt
 
-# Run with custom data source
-varpulis run examples/hvac_demo.vpl \
-  --source kafka://building-sensors \
-  --output kafka://hvac-alerts
+# On a bus, the program is a Vejas detect unit: put it under detects/
 ```
 
 ## Metrics Exposed

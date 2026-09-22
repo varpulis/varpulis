@@ -25,7 +25,6 @@ NAME = re.compile(r"\bVARPULIS_[A-Z0-9_]+\b")
 # the only way a documented variable escapes the check, so it must stay short
 # and every entry must say who reads it.
 CONSUMED_ELSEWHERE = {
-    "VARPULIS_WORKER_KEY": "docker-compose.cluster.yml, passed to the worker as --api-key",
 }
 
 
@@ -37,7 +36,11 @@ def documented() -> dict[str, set[str]]:
         # `.vitepress/dist` is generated output; checking it would double-report.
         if not md.is_file() or ".vitepress" in md.parts:
             continue
-        for name in NAME.findall(md.read_text(errors="replace")):
+        text = md.read_text(errors="replace")
+        # A superseded decision record is history, not a promise (ADR-008).
+        if md.parent.name == "adr" and "Superseded" in text[:600]:
+            continue
+        for name in NAME.findall(text):
             found.setdefault(name, set()).add(str(md.relative_to(ROOT)))
     return found
 

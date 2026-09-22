@@ -8,11 +8,12 @@ This directory contains Architecture Decision Records (ADRs) for the Varpulis CE
 |-----|-------|--------|------|
 | [001](001-pest-parser.md) | Pest PEG Parser for VPL | Accepted | 2026-02-17 |
 | [002](002-warp-http.md) | Warp as the HTTP Framework | Superseded by [007](../../design/decisions/ADR-007-axum-migration.md) | 2026-02-17 |
-| [003](003-coordinator-worker.md) | Coordinator/Worker Cluster Architecture | Accepted | 2026-02-17 |
+| [003](003-coordinator-worker.md) | Coordinator/Worker Cluster Architecture | Superseded by [008](008-engine-only-platform-retired.md) | 2026-02-17 |
 | [004](004-sase-plus-semantics.md) | SASE+ Semantics for Pattern Matching | Accepted | 2026-02-17 |
 | [005](005-hamlet-trend-aggregation.md) | Hamlet for Multi-Query Trend Aggregation | Accepted | 2026-02-17 |
 | [006](006-emission-modes.md) | Emission Modes (Each / Longest / Subsets) | Accepted | 2026-04-08 |
-| [007](007-jetstream-cluster-substrate.md) | JetStream as the Durable Substrate for Cluster Event Paths | Accepted | 2026-09-10 |
+| [007](007-jetstream-cluster-substrate.md) | JetStream as the Durable Substrate for Cluster Event Paths | Superseded by [008](008-engine-only-platform-retired.md) | 2026-09-10 |
+| [008](008-engine-only-platform-retired.md) | Varpulis Is Its Engine — the Platform Is Retired in Favour of Vejas | Accepted | 2026-09-22 |
 
 ---
 

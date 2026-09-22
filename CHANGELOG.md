@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed — the platform (ADR-008)
+
+Varpulis is its engine. Retired in favour of [Vejas](https://github.com/cpoder/vejas),
+where a VPL program is a `detect` unit with a durable consumer, snapshots and
+replay: `varpulis-cli` (server, SaaS, auth, billing, deploy, coordinator,
+federation), `varpulis-cluster`, `varpulis-mcp`, the thirteen connector
+implementations, `varpulis-db`, `varpulis-datagen`, `varpulis-actors`, the
+`varpulis` meta-crate, `deploy/`, the Docker-bound test suites, `demos/`,
+`integrations/`, `starters/`, the stream builder and public site sources, the
+SaaS and cluster scripts, the Homebrew formula, the container images, nine
+broker-bound CI jobs and the platform's documentation. From
+`varpulis-runtime`: its dependency on `varpulis-datagen`, sixteen features
+that only enabled retired crates, the interactive session module, the Kafka
+sink adapters. Kept with the runtime's `async-runtime` feature until that
+goes: `varpulis-connector-api`, `varpulis-connectors` (HTTP only),
+`varpulis-connector-http`, `varpulis-enrichment`.
+
+### Added
+
+- `varpulis-cli` is new and small: `varpulis check`, `parse`, `simulate -p
+  program.vpl -e events.evt` on the engine crate. No `run`.
+- `Program::snapshot` / `Program::restore` on `varpulis-engine` (#266): the
+  engine's state as bytes the host keeps, with the deadlines of open
+  sequences; a fresh program restored from them closes them.
+- `varpulis-engine` (#264, #265): the engine as a library with no async
+  runtime, decoding payloads with the connectors' own decoder, now in
+  `varpulis-core`.
+
+
 ### Added
 
 - **`varpulis-engine`: the CEP engine as an embeddable library with no async

@@ -40,7 +40,6 @@ Varpulis is open-source under MIT/Apache-2.0 and we welcome contributions across
 - **Runtime** (`crates/varpulis-runtime/`, `crates/varpulis-sase/`, `crates/varpulis-zdd/`) — engine, SASE+ pattern matching, Hamlet, PST forecasting, optimizations.
 - **VPL language** (`crates/varpulis-parser/`, `crates/varpulis-core/`) — grammar, AST, type/semantic checks, new operators.
 - **CLI** (`crates/varpulis-cli/`) — commands, output formats, ergonomics, `varpulis interactive`.
-- **Connectors** (`crates/varpulis-connector-*/`) — new sources/sinks, fixes, hardening (MQTT, Kafka, NATS, HTTP, database, Redis, S3, Kinesis, Elasticsearch, Pulsar, Sysmon, etc.).
 - **Security demo & detection rules** (`examples/security-demo/`) — new MITRE ATT&CK detections, evasion-resistant rules, Sigma-comparison pairs, MORDOR/APT dataset coverage.
 - **LSP / MCP** (`crates/varpulis-lsp/`, `crates/varpulis-mcp/`) — diagnostics, completion, AI-assisted authoring.
 - **Documentation** (`docs/`, examples, READMEs, tutorials, ADRs).
@@ -48,8 +47,6 @@ Varpulis is open-source under MIT/Apache-2.0 and we welcome contributions across
 
 **Out of scope for OSS contributions:**
 - **Managed cloud control plane** — multi-tenant orchestration, billing, customer onboarding flows.
-- **Enterprise connectors** — proprietary SIEM/EDR vendor integrations developed under commercial agreements.
-- **Hosted SaaS infrastructure** — deployment automation, tenant isolation, and operational tooling for varpulis-cep.com.
 
 PRs touching those areas will be redirected — usually to a discussion about whether the same need can be met by an OSS extension point (a connector trait, a webhook, a plugin), which we are happy to add. Open an issue first if you're unsure where a change lands.
 
@@ -98,8 +95,6 @@ cargo test -p varpulis-runtime test_name
 |-------|----------|------------|
 | **Unit** | Inline `#[cfg(test)]` modules | `cargo test --workspace` |
 | **Integration** | `crates/*/tests/` | `cargo test --workspace` |
-| **E2E** | `tests/e2e-*/` | Require a running cluster; see test READMEs |
-| **Chaos** | `crates/varpulis-cluster/tests/chaos/` | `cargo test -p varpulis-cluster --test chaos -- --ignored --test-threads=1` |
 
 Chaos tests are inherently flaky and run with `continue-on-error` in CI. They require a release binary built beforehand (`cargo build --release -p varpulis-cli`).
 
@@ -112,12 +107,12 @@ feat(engine): add sliding window support
 fix(parser): handle escaped quotes in string literals
 refactor(runtime): extract connector trait into separate module
 docs(guides): add SASE+ pattern examples
-test(cluster): add coordinator lease takeover tests
+test(sase): add Kleene closure restore tests
 ci: add cargo-deny advisory check
 perf(sase): optimize NFA state transitions
 ```
 
-Scopes are optional but encouraged. Common scopes: `engine`, `parser`, `runtime`, `cluster`, `cli`, `lsp`, `mcp`, `zdd`, `web-ui`, `security`, `docs`.
+Scopes are optional but encouraged. Common scopes: `engine`, `parser`, `runtime`, `cli`, `lsp`, `zdd`, `web-ui`, `security`, `docs`.
 
 ## Pull Request Process
 
@@ -206,29 +201,32 @@ If a fuzzer finds a crash, the reproducing input is saved to `fuzz/artifacts/`. 
 
 ## Architecture Overview
 
-The workspace contains 8 Rust crates and a web frontend:
+The workspace is the engine and what serves it:
 
 ```
 crates/
-  varpulis-core/       AST, types, values, semantic validation
+  varpulis-engine/     The engine as a library: Program::compile / feed / snapshot / restore
+  varpulis-core/       AST, types, values, events, the payload decoder
   varpulis-parser/     Pest PEG parser for the VPL language
-  varpulis-runtime/    Execution engine, SASE+ pattern matching, Hamlet
-                       trend aggregation, PST forecasting, connectors
-  varpulis-cluster/    Coordinator/worker architecture, JetStream KV control plane
-  varpulis-cli/        CLI binary and REST API server
+  varpulis-runtime/    Execution: SASE+ pattern matching, windows, joins, Hamlet
+                       trend aggregation, PST forecasting, checkpoints
+  varpulis-sase/       SASE+ runs, Kleene closures (over varpulis-zdd)
+  varpulis-zdd/        Zero-suppressed Decision Diagrams
+  varpulis-pst/        Prediction suffix trees (forecasting)
+  varpulis-hamlet/     Multi-query trend aggregation
+  varpulis-simd/       SIMD kernels
+  varpulis-dead-letter/ Dead-letter records
+  varpulis-cli/        varpulis check / parse / simulate
   varpulis-lsp/        Language Server Protocol implementation
-  varpulis-mcp/        Model Context Protocol server
-  varpulis-zdd/        Zero-suppressed Decision Diagrams (research)
-web-ui/                Vue 3 + Vuetify 3 control plane dashboard
+  varpulis-wasm/       The parser for WebAssembly
+  varpulis-engine-wasm/ The engine for WebAssembly
 ```
 
-Data flows: **VPL source** -> `varpulis-parser` -> **AST** (`varpulis-core`) -> `varpulis-runtime` compiles to **RuntimeOps** -> engine executes against event streams via connectors.
-
-The cluster layer (`varpulis-cluster`) coordinates multiple workers, handles pipeline group assignment, and decides leadership with a lease on a JetStream KV key.
+Data flows: **VPL source** -> `varpulis-parser` -> **AST** (`varpulis-core`) -> `varpulis-runtime` compiles to **RuntimeOps** -> the engine executes against the events a host feeds it. The host that owns the bus is [Vejas](https://github.com/cpoder/vejas) ([ADR-008](docs/adr/008-engine-only-platform-retired.md)).
 
 ## Feature Flags
 
-Connectors and optional subsystems are gated behind feature flags. CI tests each flag independently.
+Optional subsystems are gated behind feature flags; `scripts/feature-matrix.py` derives the CI matrix from the manifests and tests each flag independently.
 
 | Flag | Description |
 |------|-------------|
