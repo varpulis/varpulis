@@ -614,6 +614,5 @@ stream AllSignals = merge(
     SpreadWidening,
     MomentumUp
 )
-.tap(counter: "trading_signals_total", labels: [signal_type, direction])
 .emit()
 

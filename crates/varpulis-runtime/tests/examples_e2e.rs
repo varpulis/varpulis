@@ -450,33 +450,6 @@ const LOAD_EXEMPT: &[(&str, &str)] = &[
         "examples/enrich_refdata.vpl",
         "needs the `database` cargo feature for its .enrich() provider; this          test crate is built without it. Not a defect in the example.",
     ),
-    // ENGINE GAP: `.tap()` is not implemented — the engine rejects it at load
-    // with "`.tap()` is not yet implemented — use .print() or .log()". It
-    // appears in no page under docs/language/, so these five shipped examples
-    // demonstrate an operator that does not exist. Left as-is rather than
-    // rewritten: turning `.tap(counter: ..., labels: [...])` into `.print()`
-    // would change what each example claims to show, and the operator is an
-    // engine decision, not a docs one.
-    (
-        "examples/financial_markets.vpl",
-        "ENGINE: uses `.tap()`, which is not implemented (line 617)",
-    ),
-    (
-        "examples/forecast_cybersecurity.vpl",
-        "ENGINE: uses `.tap()`, which is not implemented",
-    ),
-    (
-        "examples/forecast_fraud.vpl",
-        "ENGINE: uses `.tap()`, which is not implemented (line 249)",
-    ),
-    (
-        "examples/forecast_iot.vpl",
-        "ENGINE: uses `.tap()`, which is not implemented",
-    ),
-    (
-        "examples/hvac_demo.vpl",
-        "ENGINE: uses `.tap()`, which is not implemented (line 400)",
-    ),
 ];
 
 #[test]

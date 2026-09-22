@@ -397,9 +397,5 @@ stream AllAlerts = merge(
         EnergyTempCorrelation,
         CompressorShortCycle
     )
-    .tap(
-        counter: "hvac_alerts_total",
-        labels: [alert_type, severity, zone]
-    )
     .emit()
 

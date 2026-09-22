@@ -246,5 +246,4 @@ stream AllFraudForecasts = merge(
     SimSwapForecast,
     CrossBorderForecast
 )
-.tap(counter: "fraud_forecasts_total", labels: [alert_type, severity])
 .emit()

@@ -140,7 +140,7 @@ stream_op       ::= '.context' '(' IDENTIFIER ')'
                   | '.distinct' '(' expr? ')'
                   | '.map' '(' lambda ')'
                   | '.filter' '(' lambda ')'
-                  | '.tap' '(' tap_args ')'
+                  | '.tap' '(' tap_args ')'   (* parsed, refused by the engine: counters belong to the host *)
                   | '.emit' '(' emit_args? ')'
                   | '.to' '(' connector_target ')'
                   | '.pattern' '(' pattern_def ')'

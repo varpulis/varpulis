@@ -18,7 +18,6 @@ varpulis-engine = { version = "0.11.0", path = "../varpulis-engine" }
 varpulis-parser = { version = "0.11.0", path = "../varpulis-parser" }
 varpulis-runtime = { version = "0.11.0", path = "../varpulis-runtime", default-features = false }
 clap = { workspace = true }
-serde_json = { workspace = true }
 
 [lints]
 workspace = true
