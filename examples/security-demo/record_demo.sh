@@ -80,12 +80,12 @@ echo -e "${DIM}# 50,000 Sysmon events from a real APT29 (Cozy Bear) emulation${N
 echo ""
 pause 1
 
-type_cmd "$VARPULIS simulate -p examples/security-demo/detect_full_killchain.vpl -e mordor/apt29_day1_50k.jsonl -w 1 -v"
+type_cmd "$VARPULIS simulate -p examples/security-demo/detect_full_killchain.vpl -e mordor/apt29_day1_50k.jsonl"
 
 $VARPULIS simulate \
     -p "$DEMO_DIR/detect_full_killchain.vpl" \
     -e "$DEMO_DIR/data/mordor/apt29_day1_50k.jsonl" \
-    -w 1 -v 2>&1 | tail -20
+    2>/dev/null | tail -20
 
 pause 4
 
@@ -94,12 +94,12 @@ pause 4
 # =========================================================================
 section "3. Credential Dumping — LSASS Memory Access (T1003.001)"
 
-type_cmd "$VARPULIS simulate -p examples/security-demo/detect_credential_dumping.vpl -e mordor/apt29_day1_50k.jsonl -w 1 -v"
+type_cmd "$VARPULIS simulate -p examples/security-demo/detect_credential_dumping.vpl -e mordor/apt29_day1_50k.jsonl"
 
 $VARPULIS simulate \
     -p "$DEMO_DIR/detect_credential_dumping.vpl" \
     -e "$DEMO_DIR/data/mordor/apt29_day1_50k.jsonl" \
-    -w 1 -v 2>&1 | tail -15
+    2>/dev/null | tail -15
 
 pause 3
 
@@ -115,13 +115,13 @@ echo ""
 pause 2
 
 echo -e "${YELLOW}Test 1: Sigma-style rule (filename matching)${NC}"
-type_cmd "$VARPULIS simulate -p examples/security-demo/sigma_comparison/sigma_only.vpl -e examples/security-demo/sigma_comparison/evasion_dataset.jsonl -v -w 1"
+type_cmd "$VARPULIS simulate -p examples/security-demo/sigma_comparison/sigma_only.vpl -e examples/security-demo/sigma_comparison/evasion_dataset.jsonl"
 
 result=$($VARPULIS simulate \
     -p "$DEMO_DIR/sigma_comparison/sigma_only.vpl" \
     -e "$DEMO_DIR/sigma_comparison/evasion_dataset.jsonl" \
-    -v -w 1 2>&1)
-count=$(echo "$result" | grep -c "OUTPUT EVENT" || true)
+    2>/dev/null)
+count=$(echo "$result" | grep -c '^{' || true)
 echo "$result" | tail -5
 echo ""
 if [ "$count" -eq 0 ]; then
@@ -133,13 +133,13 @@ pause 4
 
 echo ""
 echo -e "${YELLOW}Test 2: VPL behavioral rule (sequence pattern matching)${NC}"
-type_cmd "$VARPULIS simulate -p examples/security-demo/sigma_comparison/vpl_behavioral.vpl -e examples/security-demo/sigma_comparison/evasion_dataset.jsonl -v -w 1"
+type_cmd "$VARPULIS simulate -p examples/security-demo/sigma_comparison/vpl_behavioral.vpl -e examples/security-demo/sigma_comparison/evasion_dataset.jsonl"
 
 result=$($VARPULIS simulate \
     -p "$DEMO_DIR/sigma_comparison/vpl_behavioral.vpl" \
     -e "$DEMO_DIR/sigma_comparison/evasion_dataset.jsonl" \
-    -v -w 1 2>&1)
-count=$(echo "$result" | grep -c "OUTPUT EVENT" || true)
+    2>/dev/null)
+count=$(echo "$result" | grep -c '^{' || true)
 echo "$result" | tail -10
 echo ""
 if [ "$count" -gt 0 ]; then

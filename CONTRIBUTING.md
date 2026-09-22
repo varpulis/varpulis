@@ -39,7 +39,7 @@ Varpulis is open-source under MIT/Apache-2.0 and we welcome contributions across
 **PRs welcome:**
 - **Runtime** (`crates/varpulis-runtime/`, `crates/varpulis-sase/`, `crates/varpulis-zdd/`) — engine, SASE+ pattern matching, Hamlet, PST forecasting, optimizations.
 - **VPL language** (`crates/varpulis-parser/`, `crates/varpulis-core/`) — grammar, AST, type/semantic checks, new operators.
-- **CLI** (`crates/varpulis-cli/`) — commands, output formats, ergonomics, `varpulis interactive`.
+- **CLI** (`crates/varpulis-cli/`) — commands, output formats, ergonomics.
 - **Security demo & detection rules** (`examples/security-demo/`) — new MITRE ATT&CK detections, evasion-resistant rules, Sigma-comparison pairs, MORDOR/APT dataset coverage.
 - **LSP / MCP** (`crates/varpulis-lsp/`, `crates/varpulis-mcp/`) — diagnostics, completion, AI-assisted authoring.
 - **Documentation** (`docs/`, examples, READMEs, tutorials, ADRs).
