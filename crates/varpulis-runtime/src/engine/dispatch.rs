@@ -7,7 +7,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-#[cfg(feature = "async-runtime")]
 use chrono::{DateTime, Utc};
 use rustc_hash::FxHashMap;
 use tracing::debug;
@@ -19,6 +18,25 @@ use super::types::{
 use super::{evaluator, pipeline, Engine};
 use crate::event::{Event, SharedEvent};
 use crate::sequence::SequenceContext;
+
+/// When windows close on the event clock. A time window used to close only
+/// when a later event reached it; now it closes once the clock of the event
+/// types feeding it has passed its end, on any event of those types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CloseAt {
+    /// After a batch of input: every window the clocks of its sources have
+    /// passed, with the stream's declared out-of-orderness.
+    Clock,
+    /// The end of a bounded input: every window, as far as it goes.
+    EndOfInput,
+}
+
+/// A stream holding a time window, and the input event types that feed it
+/// (through any chain of streams): its window closes on their clocks.
+pub(crate) struct WindowCloser {
+    stream: String,
+    sources: Box<[String]>,
+}
 
 impl Engine {
     /// Process an incoming event (async-runtime only).
@@ -505,6 +523,7 @@ impl Engine {
             if self.pre_dispatch_watermark(&shared) {
                 continue;
             }
+            self.observe_source_clock(&shared);
             pending_events.push_back((shared, 0));
         }
 
@@ -522,80 +541,17 @@ impl Engine {
                 );
                 continue;
             }
-
-            // Get stream names (Arc clone is O(1))
-            let stream_names: Arc<[String]> = self
-                .router
-                .get_routes(&current_event.event_type)
-                .cloned()
-                .unwrap_or_else(|| Arc::from([]));
-
-            for stream_name in stream_names.iter() {
-                if let Some(stream) = self.streams.get_mut(stream_name) {
-                    // Record trace: event routed to stream
-                    if self.trace_collector.is_enabled() {
-                        self.trace_collector.record(TraceEntry::StreamMatched {
-                            stream_name: stream_name.clone(),
-                            event_type: current_event.event_type.to_string(),
-                        });
-                    }
-
-                    // Skip output clone+rename when stream has no downstream routes.
-                    // When skipped, output_events keep their original event_type, so
-                    // they MUST NOT be queued for downstream routing (they would
-                    // loop back to the same streams that just processed them).
-                    let skip_rename = self.router.get_routes(stream_name).is_none();
-                    let result = Self::process_stream_sync(
-                        stream,
-                        Arc::clone(&current_event),
-                        &self.functions,
-                        skip_rename,
-                    )?;
-
-                    // Record trace: pipeline result
-                    if self.trace_collector.is_enabled() {
-                        Self::record_trace_for_result(
-                            &mut self.trace_collector,
-                            stream_name,
-                            stream,
-                            &result,
-                        );
-                    }
-
-                    // Collect emitted events for batch sending
-                    self.output_events_emitted += result.emitted_events.len() as u64;
-                    let has_emitted = !result.emitted_events.is_empty();
-                    emitted_batch.extend(result.emitted_events);
-
-                    // If .process() or .to() was used but no .emit(), send output_events
-                    // to the output channel so they appear in the live event stream.
-                    let forward_outputs = !has_emitted
-                        && stream
-                            .operations
-                            .iter()
-                            .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
-                    if forward_outputs {
-                        self.output_events_emitted += result.output_events.len() as u64;
-                        emitted_batch.extend(result.output_events.iter().map(Arc::clone));
-                    }
-
-                    // Count sink events only when not already counted via forwarded outputs
-                    if !forward_outputs {
-                        self.output_events_emitted += result.sink_events_sent;
-                    }
-
-                    // Queue output events for downstream routing.
-                    // Skip when skip_rename is true: those events still carry the
-                    // original event_type and would re-enter the same streams,
-                    // causing an infinite loop until MAX_CHAIN_DEPTH.
-                    if !skip_rename {
-                        for output_event in result.output_events {
-                            pending_events.push_back((output_event, depth + 1));
-                        }
-                    }
-                }
-            }
+            self.dispatch_sync_event(
+                current_event,
+                depth,
+                &mut pending_events,
+                &mut emitted_batch,
+            )?;
         }
+
+        // Then every window the batch moved the clocks past closes, upstream
+        // first, whichever stream or partition its last event belonged to.
+        self.close_windows_into(CloseAt::Clock, &mut emitted_batch)?;
 
         // Send all emitted events in batch (non-blocking to avoid async overhead)
         // PERF: Use send_output_shared to avoid cloning in benchmark mode
@@ -603,10 +559,392 @@ impl Engine {
             self.send_output_shared(emitted);
         }
 
-        // C2b: graduate any event-time windows the watermark passed during
-        // this batch (sync sibling of the async batch-tail flush).
-        self.flush_watermark_sync()?;
+        Ok(())
+    }
 
+    /// Move the clock of an input event's type to its timestamp when later.
+    fn observe_source_clock(&mut self, event: &SharedEvent) {
+        match self.source_clocks.get_mut(&*event.event_type) {
+            Some(clock) => {
+                if event.timestamp > *clock {
+                    *clock = event.timestamp;
+                }
+            }
+            None => {
+                self.source_clocks
+                    .insert(event.event_type.to_string(), event.timestamp);
+            }
+        }
+    }
+
+    /// The streams holding a time window, upstream first, so that what a
+    /// window emits reaches the windows below it before they close, each
+    /// with the input event types that feed it. Worked out once per set of
+    /// streams: a stream's output is routed under the stream's name, so the
+    /// routes are the edges.
+    fn window_close_order(&mut self) -> Arc<[WindowCloser]> {
+        if let Some(order) = &self.window_close_order {
+            return Arc::clone(order);
+        }
+        let routes = self.router.all_routes();
+        let mut inputs: FxHashMap<&str, Vec<&str>> = FxHashMap::default();
+        for (key, streams) in routes {
+            for stream in streams.iter() {
+                inputs
+                    .entry(stream.as_str())
+                    .or_default()
+                    .push(key.as_str());
+            }
+        }
+
+        fn downstream_first<'a>(
+            name: &'a str,
+            routes: &'a FxHashMap<String, Arc<[String]>>,
+            seen: &mut rustc_hash::FxHashSet<&'a str>,
+            post: &mut Vec<&'a str>,
+        ) {
+            if !seen.insert(name) {
+                return;
+            }
+            if let Some(children) = routes.get(name) {
+                for child in children.iter() {
+                    downstream_first(child, routes, seen, post);
+                }
+            }
+            post.push(name);
+        }
+
+        fn sources<'a>(
+            name: &'a str,
+            inputs: &FxHashMap<&'a str, Vec<&'a str>>,
+            streams: &FxHashMap<String, StreamDefinition>,
+            seen: &mut rustc_hash::FxHashSet<&'a str>,
+            out: &mut Vec<String>,
+        ) {
+            for &input in inputs.get(name).into_iter().flatten() {
+                if streams.contains_key(input) {
+                    if seen.insert(input) {
+                        sources(input, inputs, streams, seen, out);
+                    }
+                } else if !out.iter().any(|known| known == input) {
+                    out.push(input.to_string());
+                }
+            }
+        }
+
+        let mut names: Vec<&str> = self.streams.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut post = Vec::with_capacity(names.len());
+        for name in names {
+            downstream_first(name, routes, &mut seen, &mut post);
+        }
+        let order: Arc<[WindowCloser]> = post
+            .into_iter()
+            .rev()
+            .filter(|name| {
+                self.streams
+                    .get(*name)
+                    .is_some_and(|stream| stream.operations.iter().any(Self::is_time_window))
+            })
+            .map(|name| {
+                let mut found = Vec::new();
+                let mut seen = rustc_hash::FxHashSet::default();
+                sources(name, &inputs, &self.streams, &mut seen, &mut found);
+                WindowCloser {
+                    stream: name.to_string(),
+                    sources: found.into_boxed_slice(),
+                }
+            })
+            .collect();
+        self.window_close_order = Some(Arc::clone(&order));
+        order
+    }
+
+    /// Whether an op holds events for a span of event time.
+    fn is_time_window(op: &RuntimeOp) -> bool {
+        match op {
+            RuntimeOp::Window(w) => {
+                !matches!(w, WindowType::Count(_) | WindowType::SlidingCount(_))
+            }
+            #[cfg(feature = "arrow")]
+            RuntimeOp::WindowedColumnarAggregate(_)
+            | RuntimeOp::PartitionedWindowedColumnarAggregate(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Close the windows `at` calls for, send what they emit, and pass what
+    /// they output to the streams below. See [`CloseAt`].
+    pub(super) fn close_windows_sync(
+        &mut self,
+        at: CloseAt,
+    ) -> Result<(), super::error::EngineError> {
+        let mut emitted_batch = Vec::new();
+        self.close_windows_into(at, &mut emitted_batch)?;
+        for emitted in &emitted_batch {
+            self.send_output_shared(emitted);
+        }
+        Ok(())
+    }
+
+    /// [`Self::close_windows_sync`], collecting what is emitted into
+    /// `emitted_batch` so it goes out in order with the batch's own output.
+    fn close_windows_into(
+        &mut self,
+        at: CloseAt,
+        emitted_batch: &mut Vec<SharedEvent>,
+    ) -> Result<(), super::error::EngineError> {
+        const MAX_CHAIN_DEPTH: usize = 10;
+        let order = self.window_close_order();
+        for closer in order.iter() {
+            let wm = match at {
+                CloseAt::EndOfInput => DateTime::<Utc>::MAX_UTC,
+                CloseAt::Clock => {
+                    // The slowest of the sources feeding it; one never seen
+                    // does not hold it back.
+                    let Some(clock) = closer
+                        .sources
+                        .iter()
+                        .filter_map(|source| self.source_clocks.get(source.as_str()))
+                        .min()
+                        .copied()
+                    else {
+                        continue;
+                    };
+                    match self.window_out_of_order.get(&closer.stream) {
+                        Some(out_of_order) => clock - *out_of_order,
+                        None => clock,
+                    }
+                }
+            };
+            let stream_name = &closer.stream;
+            let Some(stream) = self.streams.get_mut(stream_name) else {
+                continue;
+            };
+            let Some((window_idx, emissions)) = Self::collect_clock_closes(stream, wm) else {
+                continue;
+            };
+            let forwards = stream
+                .operations
+                .iter()
+                .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
+            let routed = self.router.get_routes(stream_name).is_some();
+            for expired in emissions {
+                let Some(stream) = self.streams.get_mut(stream_name) else {
+                    break;
+                };
+                let result = pipeline::execute_pipeline_sync(
+                    stream,
+                    expired,
+                    window_idx + 1,
+                    pipeline::SkipFlags::for_post_window(),
+                    &self.functions,
+                    false,
+                )?;
+                self.output_events_emitted += result.emitted_events.len() as u64;
+                let has_emitted = !result.emitted_events.is_empty();
+                emitted_batch.extend(result.emitted_events);
+                // Outputs reach the output channel as on the dispatch path
+                // (`.process()` / `.to()` streams without an `.emit()`), and, at
+                // the end of the input, from any stream that emits nothing, as
+                // the end-of-input drain always sent them.
+                let forward_outputs = !has_emitted
+                    && match at {
+                        CloseAt::EndOfInput => !forwards,
+                        CloseAt::Clock => forwards,
+                    };
+                if forward_outputs {
+                    self.output_events_emitted += result.output_events.len() as u64;
+                    emitted_batch.extend(result.output_events.iter().map(Arc::clone));
+                } else {
+                    self.output_events_emitted += result.sink_events_sent;
+                }
+                if routed {
+                    let mut downstream: VecDeque<(SharedEvent, usize)> =
+                        result.output_events.into_iter().map(|e| (e, 1)).collect();
+                    while let Some((event, depth)) = downstream.pop_front() {
+                        if depth >= MAX_CHAIN_DEPTH {
+                            continue;
+                        }
+                        self.dispatch_sync_event(event, depth, &mut downstream, emitted_batch)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Take from a stream's first time window what event time `wm` has closed:
+    /// one emission per window and partition, and the index of the window op.
+    /// A window closes as an event of its own arriving at `wm` would close it;
+    /// a sliding window emits at each slide `wm` reaches.
+    fn collect_clock_closes(
+        stream: &mut StreamDefinition,
+        wm: DateTime<Utc>,
+    ) -> Option<(usize, Vec<Vec<SharedEvent>>)> {
+        let wm_ms = wm.timestamp_millis();
+        let unkeyed = |closed: Vec<(String, Vec<SharedEvent>)>| -> Vec<Vec<SharedEvent>> {
+            closed.into_iter().map(|(_, events)| events).collect()
+        };
+        for (idx, op) in stream.operations.iter_mut().enumerate() {
+            let emissions: Vec<Vec<SharedEvent>> = match op {
+                RuntimeOp::Window(window) => match window {
+                    WindowType::Tumbling(w) => w.close_through(wm).into_iter().collect(),
+                    WindowType::PartitionedTumbling(w) => unkeyed(w.close_through(wm)),
+                    WindowType::Session(w) if w.is_watermark_driven() => w
+                        .drain_watermark(wm)
+                        .into_iter()
+                        .map(|(_, events)| events)
+                        .collect(),
+                    WindowType::Session(w) => w.close_past(wm).into_iter().collect(),
+                    WindowType::PartitionedSession(w) if w.is_watermark_driven() => w
+                        .drain_watermark(wm)
+                        .into_iter()
+                        .map(|(_, _, events)| events)
+                        .collect(),
+                    WindowType::PartitionedSession(w) => unkeyed(w.close_past(wm)),
+                    WindowType::BinnedSliding(w) if w.is_watermark_driven() => w
+                        .drain_watermark(wm_ms)
+                        .into_iter()
+                        .map(|(_, events)| events)
+                        .collect(),
+                    WindowType::BinnedSliding(w) if w.slide_due(wm) => {
+                        w.advance_watermark(wm).into_iter().collect()
+                    }
+                    WindowType::PartitionedBinnedSliding(w) if w.is_watermark_driven() => w
+                        .drain_watermark(wm_ms)
+                        .into_iter()
+                        .map(|(_, _, events)| events)
+                        .collect(),
+                    WindowType::PartitionedBinnedSliding(w) => unkeyed(w.advance_due(wm)),
+                    WindowType::Sliding(w) if w.slide_due(wm) => {
+                        w.advance_watermark(wm).into_iter().collect()
+                    }
+                    WindowType::PartitionedSliding(w) => unkeyed(w.advance_due(wm)),
+                    _ => Vec::new(),
+                },
+                #[cfg(feature = "arrow")]
+                RuntimeOp::WindowedColumnarAggregate(state) => {
+                    let bin_ms = state.bin_duration_ms;
+                    state
+                        .flush_through(wm_ms)
+                        .into_iter()
+                        .map(|(bin_start_ms, result)| {
+                            vec![Self::aggregation_result_event(
+                                bin_start_ms + bin_ms,
+                                result,
+                            )]
+                        })
+                        .collect()
+                }
+                #[cfg(feature = "arrow")]
+                RuntimeOp::PartitionedWindowedColumnarAggregate(state) => {
+                    let bin_ms = state.bin_duration_ms;
+                    let partition_key = state.partition_key.clone();
+                    state
+                        .flush_through(wm_ms)
+                        .into_iter()
+                        .map(|(bin_start_ms, key, mut result)| {
+                            result.insert(
+                                partition_key.clone(),
+                                varpulis_core::Value::Str(key.into()),
+                            );
+                            vec![Self::aggregation_result_event(
+                                bin_start_ms + bin_ms,
+                                result,
+                            )]
+                        })
+                        .collect()
+                }
+                _ => continue,
+            };
+            return (!emissions.is_empty()).then_some((idx, emissions));
+        }
+        None
+    }
+
+    /// Route one event to the streams that read its type, run each of them,
+    /// and queue what they output for the streams below.
+    fn dispatch_sync_event(
+        &mut self,
+        current_event: SharedEvent,
+        depth: usize,
+        pending_events: &mut VecDeque<(SharedEvent, usize)>,
+        emitted_batch: &mut Vec<SharedEvent>,
+    ) -> Result<(), super::error::EngineError> {
+        // Get stream names (Arc clone is O(1))
+        let stream_names: Arc<[String]> = self
+            .router
+            .get_routes(&current_event.event_type)
+            .cloned()
+            .unwrap_or_else(|| Arc::from([]));
+
+        for stream_name in stream_names.iter() {
+            if let Some(stream) = self.streams.get_mut(stream_name) {
+                // Record trace: event routed to stream
+                if self.trace_collector.is_enabled() {
+                    self.trace_collector.record(TraceEntry::StreamMatched {
+                        stream_name: stream_name.clone(),
+                        event_type: current_event.event_type.to_string(),
+                    });
+                }
+
+                // Skip output clone+rename when stream has no downstream routes.
+                // When skipped, output_events keep their original event_type, so
+                // they MUST NOT be queued for downstream routing (they would
+                // loop back to the same streams that just processed them).
+                let skip_rename = self.router.get_routes(stream_name).is_none();
+                let result = Self::process_stream_sync(
+                    stream,
+                    Arc::clone(&current_event),
+                    &self.functions,
+                    skip_rename,
+                )?;
+
+                // Record trace: pipeline result
+                if self.trace_collector.is_enabled() {
+                    Self::record_trace_for_result(
+                        &mut self.trace_collector,
+                        stream_name,
+                        stream,
+                        &result,
+                    );
+                }
+
+                // Collect emitted events for batch sending
+                self.output_events_emitted += result.emitted_events.len() as u64;
+                let has_emitted = !result.emitted_events.is_empty();
+                emitted_batch.extend(result.emitted_events);
+
+                // If .process() or .to() was used but no .emit(), send output_events
+                // to the output channel so they appear in the live event stream.
+                let forward_outputs = !has_emitted
+                    && stream
+                        .operations
+                        .iter()
+                        .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
+                if forward_outputs {
+                    self.output_events_emitted += result.output_events.len() as u64;
+                    emitted_batch.extend(result.output_events.iter().map(Arc::clone));
+                }
+
+                // Count sink events only when not already counted via forwarded outputs
+                if !forward_outputs {
+                    self.output_events_emitted += result.sink_events_sent;
+                }
+
+                // Queue output events for downstream routing.
+                // Skip when skip_rename is true: those events still carry the
+                // original event_type and would re-enter the same streams,
+                // causing an infinite loop until MAX_CHAIN_DEPTH.
+                if !skip_rename {
+                    for output_event in result.output_events {
+                        pending_events.push_back((output_event, depth + 1));
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

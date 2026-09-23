@@ -351,6 +351,32 @@ impl StreamingPartitionedWindow {
         output
     }
 
+    /// Flush the bins event time `wm_ms` has closed (end at or below it),
+    /// as an event at `wm_ms` would: the running watermark moves up to it,
+    /// so a bin already flushed is never started again.
+    pub(crate) fn flush_through(
+        &mut self,
+        wm_ms: i64,
+    ) -> Vec<(i64, String, IndexMap<String, Value>)> {
+        self.max_ts_ms = Some(self.max_ts_ms.map_or(wm_ms, |max| max.max(wm_ms)));
+        let to_flush: Vec<i64> = self
+            .bins
+            .keys()
+            .copied()
+            .take_while(|s| s.saturating_add(self.bin_duration_ms) <= wm_ms)
+            .collect();
+        let mut output: Vec<(i64, String, IndexMap<String, Value>)> = Vec::new();
+        for flushed_bin in to_flush {
+            let agg = self.bins.remove(&flushed_bin).expect("present");
+            let results = agg.drain_fast();
+            self.group_count_hint = self.group_count_hint.max(results.len());
+            for (key, result) in results {
+                output.push((flushed_bin, key, result));
+            }
+        }
+        output
+    }
+
     /// Force-flush every remaining bin regardless of watermark.
     /// Called on engine shutdown / end-of-stream so we don't lose the
     /// final partial windows.
@@ -512,6 +538,25 @@ impl StreamingWindow {
             .keys()
             .copied()
             .take_while(|s| s + self.bin_duration_ms <= max_ts)
+            .collect();
+        let mut output: Vec<(i64, IndexMap<String, Value>)> = Vec::new();
+        for bin_start in to_flush {
+            let agg = self.bins.remove(&bin_start).expect("present");
+            output.push((bin_start, agg.drain_fast()));
+        }
+        output
+    }
+
+    /// Flush the bins event time `wm_ms` has closed (end at or below it),
+    /// as an event at `wm_ms` would: the running watermark moves up to it,
+    /// so a bin already flushed is never started again.
+    pub(crate) fn flush_through(&mut self, wm_ms: i64) -> Vec<(i64, IndexMap<String, Value>)> {
+        self.max_ts_ms = Some(self.max_ts_ms.map_or(wm_ms, |max| max.max(wm_ms)));
+        let to_flush: Vec<i64> = self
+            .bins
+            .keys()
+            .copied()
+            .take_while(|s| s.saturating_add(self.bin_duration_ms) <= wm_ms)
             .collect();
         let mut output: Vec<(i64, IndexMap<String, Value>)> = Vec::new();
         for bin_start in to_flush {

@@ -79,6 +79,9 @@ impl Engine {
                             }
                         }
                     }
+                    // The stream's windows close this much later on the
+                    // program's event clock.
+                    self.window_out_of_order.insert(name.to_string(), max_ooo);
                     let source_et = match source {
                         StreamSource::Ident(s) => Some(s.as_str()),
                         StreamSource::IdentWithAlias { name: et, .. }
@@ -390,6 +393,7 @@ impl Engine {
             }
         };
 
+        self.window_close_order = None;
         self.streams.insert(
             name.to_string(),
             StreamDefinition {

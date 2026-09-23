@@ -834,6 +834,11 @@ impl WindowedColumnarAggregateState {
     pub fn flush_all(&mut self) -> Vec<(i64, IndexMap<String, Value>)> {
         self.inner.flush_all()
     }
+
+    /// Flush the bins the event clock `wm_ms` has closed.
+    pub fn flush_through(&mut self, wm_ms: i64) -> Vec<(i64, IndexMap<String, Value>)> {
+        self.inner.flush_through(wm_ms)
+    }
 }
 
 /// State for the phase-2 fused tumbling-window + partitioned columnar
@@ -905,6 +910,11 @@ impl PartitionedWindowedColumnarAggregateState {
     #[allow(dead_code)]
     pub fn flush_all(&mut self) -> Vec<(i64, String, IndexMap<String, Value>)> {
         self.inner.flush_all()
+    }
+
+    /// Flush the bins the event clock `wm_ms` has closed.
+    pub fn flush_through(&mut self, wm_ms: i64) -> Vec<(i64, String, IndexMap<String, Value>)> {
+        self.inner.flush_through(wm_ms)
     }
 }
 

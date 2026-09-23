@@ -127,6 +127,17 @@ pub struct Engine {
     pub(super) watermark_tracker: Option<PerSourceWatermarkTracker>,
     /// Last applied watermark (for detecting advances)
     pub(super) last_applied_watermark: Option<DateTime<Utc>>,
+    /// Each input event type's clock: the latest timestamp read of that type.
+    /// A time window closes once the clocks of the types feeding it have
+    /// passed its end (plus the out-of-orderness its stream declares), on any
+    /// event of those types, not only one that reaches the window.
+    pub(super) source_clocks: FxHashMap<String, DateTime<Utc>>,
+    /// The streams holding a time window, upstream first, with the types
+    /// feeding them; `None` once the streams have changed.
+    pub(super) window_close_order: Option<Arc<[dispatch::WindowCloser]>>,
+    /// What a stream declared with `.watermark(out_of_order: X)`: its windows
+    /// close that much later on the clock.
+    pub(super) window_out_of_order: FxHashMap<String, Duration>,
     /// Late data configurations per stream
     pub(super) late_data_configs: FxHashMap<String, types::LateDataConfig>,
     /// Context name when running inside a context thread (used for unique connector IDs)
@@ -309,6 +320,9 @@ impl Engine {
             context_map: ContextMap::new(),
             watermark_tracker: None,
             last_applied_watermark: None,
+            source_clocks: FxHashMap::default(),
+            window_close_order: None,
+            window_out_of_order: FxHashMap::default(),
             late_data_configs: FxHashMap::default(),
             context_name: None,
             topic_prefix: None,
@@ -361,6 +375,9 @@ impl Engine {
                 output_events_emitted: 0,
                 watermark_tracker: None,
                 last_applied_watermark: None,
+                source_clocks: FxHashMap::default(),
+                window_close_order: None,
+                window_out_of_order: FxHashMap::default(),
                 late_data_configs: FxHashMap::default(),
                 context_name: None,
                 topic_prefix: None,
@@ -1774,6 +1791,8 @@ impl Engine {
         // (every event type → stream) routes for exactly the reloaded set,
         // built by the same pattern/join analysis as the initial compile.
         self.router = std::mem::take(&mut new_engine.router);
+        self.window_out_of_order = std::mem::take(&mut new_engine.window_out_of_order);
+        self.window_close_order = None;
 
         self.functions = new_engine.functions;
         self.patterns = new_engine.patterns;
@@ -2474,7 +2493,11 @@ impl Engine {
 
     /// Sync sibling of [`Self::flush_end_of_input`], for the synchronous
     /// dispatch path that `simulate`, `detect` and `analyze` take by default.
+    ///
+    /// Every time window closes, upstream first, and what it emits reaches the
+    /// streams below before their own windows close, as on the event clock.
     pub fn flush_end_of_input_sync(&mut self) -> Result<(), error::EngineError> {
+        self.close_windows_sync(dispatch::CloseAt::EndOfInput)?;
         self.apply_watermark_to_windows_sync_inner(
             chrono::DateTime::<chrono::Utc>::MAX_UTC,
             false,

@@ -6,7 +6,8 @@
 //! - Partitioned windows
 //! - Delay buffers (rstream equivalent)
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
@@ -145,6 +146,20 @@ impl TumblingWindow {
         }
         None
     }
+
+    /// Close the window once event time `wm` has reached its end, as an event
+    /// of this window arriving at `wm` would: its events come back, and the
+    /// next event opens the next window. Nothing comes back while the window
+    /// is still running or holds nothing.
+    pub fn close_through(&mut self, wm: DateTime<Utc>) -> Option<Vec<SharedEvent>> {
+        let start = self.window_start?;
+        if wm < start + self.duration {
+            return None;
+        }
+        self.window_start = None;
+        let events = self.columnar.take_all();
+        (!events.is_empty()).then_some(events)
+    }
 }
 
 impl ColumnarAccess for TumblingWindow {
@@ -250,6 +265,16 @@ impl SlidingWindow {
             .collect::<Vec<_>>()
             .into();
         self.last_emit = cp.last_emit_ms.and_then(DateTime::from_timestamp_millis);
+    }
+
+    /// Whether event time `wm` has reached the window's next slide, so that
+    /// [`Self::advance_watermark`] would emit: the cheap test that spares a
+    /// scan of the window on every tick of the clock.
+    pub fn slide_due(&self, wm: DateTime<Utc>) -> bool {
+        !self.events.is_empty()
+            && self
+                .last_emit
+                .is_none_or(|last| wm >= last + self.slide_interval)
     }
 
     /// Advance watermark — emit window if slide interval has passed relative to watermark.
@@ -705,6 +730,18 @@ impl SessionWindow {
         }
         None
     }
+
+    /// Close the session once event time `wm` is more than the gap past its
+    /// last event, exactly as an event arriving at `wm` would: an event right
+    /// at the gap still belongs to the session.
+    pub fn close_past(&mut self, wm: DateTime<Utc>) -> Option<Vec<SharedEvent>> {
+        let last = self.last_event_time?;
+        if wm - last <= self.gap {
+            return None;
+        }
+        let events = self.flush_shared();
+        (!events.is_empty()).then_some(events)
+    }
 }
 
 impl ColumnarAccess for SessionWindow {
@@ -723,6 +760,9 @@ pub struct PartitionedSessionWindow {
     partition_key: String,
     gap: Duration,
     windows: FxHashMap<String, SessionWindow>,
+    /// No session ends before this (a lower bound, exact after each scan):
+    /// until the event clock reaches it, there is nothing to scan.
+    next_due: Option<DateTime<Utc>>,
     /// C2b event-time mode: per-key sessions are created watermark-driven
     /// and close only via [`Self::drain_watermark`].
     watermark_driven: bool,
@@ -734,6 +774,7 @@ impl PartitionedSessionWindow {
             partition_key,
             gap,
             windows: FxHashMap::default(),
+            next_due: None,
             watermark_driven: false,
         }
     }
@@ -769,7 +810,35 @@ impl PartitionedSessionWindow {
             }
         });
 
-        window.add_shared(event)
+        let out = window.add_shared(event);
+        if let Some(due) = window.last_event_time.map(|last| last + gap) {
+            self.next_due = Some(self.next_due.map_or(due, |current| current.min(due)));
+        }
+        out
+    }
+
+    /// [`SessionWindow::close_past`] for every partition, by partition key;
+    /// before the earliest possible end nothing is scanned. A closed
+    /// partition is dropped until its next event.
+    pub fn close_past(&mut self, wm: DateTime<Utc>) -> Vec<(String, Vec<SharedEvent>)> {
+        if self.next_due.is_some_and(|due| wm <= due) {
+            return Vec::new();
+        }
+        let mut closed: Vec<(String, Vec<SharedEvent>)> = self
+            .windows
+            .iter_mut()
+            .filter_map(|(key, window)| window.close_past(wm).map(|events| (key.clone(), events)))
+            .collect();
+        self.windows
+            .retain(|_, window| window.last_event_time.is_some());
+        let gap = self.gap;
+        self.next_due = self
+            .windows
+            .values()
+            .filter_map(|window| window.last_event_time.map(|last| last + gap))
+            .min();
+        closed.sort_by(|a, b| a.0.cmp(&b.0));
+        closed
     }
 
     /// Add an event (wraps in Arc).
@@ -918,6 +987,10 @@ pub struct PartitionedTumblingWindow {
     partition_key: String,
     duration: Duration,
     windows: FxHashMap<String, TumblingWindow>,
+    /// Each open window's end with its partition key, earliest first, so the
+    /// event clock closes the windows it reached without visiting the others.
+    /// An entry can be stale (its window moved on); closing re-files it.
+    ends: BTreeSet<(DateTime<Utc>, String)>,
 }
 
 impl PartitionedTumblingWindow {
@@ -932,6 +1005,7 @@ impl PartitionedTumblingWindow {
             partition_key,
             duration,
             windows: FxHashMap::default(),
+            ends: BTreeSet::new(),
         }
     }
 
@@ -947,13 +1021,46 @@ impl PartitionedTumblingWindow {
             || "default".to_string(),
             |v| v.to_partition_key().into_owned(),
         );
+        let duration = self.duration;
+        match self.windows.entry(key) {
+            Entry::Occupied(mut entry) => {
+                let before = entry.get().window_start;
+                let out = entry.get_mut().add_shared(event);
+                let after = entry.get().window_start;
+                if before != after {
+                    let key = entry.key().clone();
+                    if let Some(start) = before {
+                        self.ends.remove(&(start + duration, key.clone()));
+                    }
+                    if let Some(start) = after {
+                        self.ends.insert((start + duration, key));
+                    }
+                }
+                out
+            }
+            Entry::Vacant(entry) => {
+                let key = entry.key().clone();
+                let window = entry.insert(TumblingWindow::new(duration));
+                let out = window.add_shared(event);
+                if let Some(start) = window.window_start {
+                    self.ends.insert((start + duration, key));
+                }
+                out
+            }
+        }
+    }
 
-        let window = self
+    fn rebuild_ends(&mut self) {
+        let duration = self.duration;
+        self.ends = self
             .windows
-            .entry(key)
-            .or_insert_with(|| TumblingWindow::new(self.duration));
-
-        window.add_shared(event)
+            .iter()
+            .filter_map(|(key, window)| {
+                window
+                    .window_start
+                    .map(|start| (start + duration, key.clone()))
+            })
+            .collect();
     }
 
     /// Add an event (wraps in Arc).
@@ -1024,6 +1131,7 @@ impl PartitionedTumblingWindow {
                 .and_then(DateTime::from_timestamp_millis);
             self.windows.insert(key.clone(), window);
         }
+        self.rebuild_ends();
     }
 
     /// Advance watermark across all partitions.
@@ -1040,7 +1148,39 @@ impl PartitionedTumblingWindow {
         // re-creates its window — no data is lost. Mirrors the eviction the
         // partitioned session window already performs.
         self.windows.retain(|_, window| !window.is_empty());
+        self.rebuild_ends();
         results
+    }
+
+    /// [`TumblingWindow::close_through`] for every partition whose window
+    /// event time `wm` has reached: one entry per closed window, earliest end
+    /// first. Only those windows are visited. A closed partition is dropped
+    /// until its next event, so a high-cardinality `partition_by` does not
+    /// grow the map.
+    pub fn close_through(&mut self, wm: DateTime<Utc>) -> Vec<(String, Vec<SharedEvent>)> {
+        let mut closed = Vec::new();
+        while self.ends.first().is_some_and(|(end, _)| *end <= wm) {
+            let Some((_, key)) = self.ends.pop_first() else {
+                break;
+            };
+            let Some(window) = self.windows.get_mut(&key) else {
+                continue;
+            };
+            let events = window.close_through(wm);
+            match window.window_start {
+                // A stale entry: the window moved on, and ends after `wm`.
+                Some(start) => {
+                    self.ends.insert((start + self.duration, key.clone()));
+                }
+                None => {
+                    self.windows.remove(&key);
+                }
+            }
+            if let Some(events) = events {
+                closed.push((key, events));
+            }
+        }
+        closed
     }
 }
 
@@ -1051,6 +1191,9 @@ pub struct PartitionedSlidingWindow {
     window_size: Duration,
     slide_interval: Duration,
     windows: FxHashMap<String, SlidingWindow>,
+    /// No partition's next slide comes before this (a lower bound, exact after
+    /// each scan): until the event clock reaches it, there is nothing to scan.
+    next_due: Option<DateTime<Utc>>,
 }
 
 impl PartitionedSlidingWindow {
@@ -1066,6 +1209,7 @@ impl PartitionedSlidingWindow {
             window_size,
             slide_interval,
             windows: FxHashMap::default(),
+            next_due: None,
         }
     }
 
@@ -1081,7 +1225,11 @@ impl PartitionedSlidingWindow {
             .entry(key)
             .or_insert_with(|| SlidingWindow::new(self.window_size, self.slide_interval));
 
-        window.add_shared(event)
+        let out = window.add_shared(event);
+        if let Some(due) = window.last_emit.map(|last| last + self.slide_interval) {
+            self.next_due = Some(self.next_due.map_or(due, |current| current.min(due)));
+        }
+        out
     }
 
     /// Add an event (wraps in Arc).
@@ -1167,6 +1315,34 @@ impl PartitionedSlidingWindow {
         // re-creates its window — no data is lost. Mirrors the eviction the
         // partitioned session window already performs.
         self.windows.retain(|_, window| !window.is_empty());
+        results
+    }
+
+    /// [`SlidingWindow::advance_watermark`] for the partitions whose next
+    /// slide event time `wm` has reached, by partition key. Nothing is scanned
+    /// before the earliest next slide.
+    pub fn advance_due(&mut self, wm: DateTime<Utc>) -> Vec<(String, Vec<SharedEvent>)> {
+        if self.next_due.is_some_and(|due| wm < due) {
+            return Vec::new();
+        }
+        let mut results: Vec<(String, Vec<SharedEvent>)> = self
+            .windows
+            .iter_mut()
+            .filter(|(_, window)| window.slide_due(wm))
+            .filter_map(|(key, window)| {
+                window
+                    .advance_watermark(wm)
+                    .map(|events| (key.clone(), events))
+            })
+            .collect();
+        self.windows.retain(|_, window| !window.is_empty());
+        let slide = self.slide_interval;
+        self.next_due = self
+            .windows
+            .values()
+            .filter_map(|window| window.last_emit.map(|last| last + slide))
+            .min();
+        results.sort_by(|a, b| a.0.cmp(&b.0));
         results
     }
 }
@@ -1876,6 +2052,15 @@ impl BinnedSlidingWindow {
         }
     }
 
+    /// Whether event time `wm` is in a later bin than the last emission, so
+    /// that [`Self::advance_watermark`] would emit.
+    pub fn slide_due(&self, wm: DateTime<Utc>) -> bool {
+        !self.bins.is_empty()
+            && self
+                .last_emit_bin
+                .is_none_or(|last| self.bin_key(wm.timestamp_millis()) > last)
+    }
+
     /// Advance watermark — emit window if slide interval has passed.
     pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Option<Vec<SharedEvent>> {
         let wm_ms = wm.timestamp_millis();
@@ -1990,6 +2175,9 @@ pub struct PartitionedBinnedSlidingWindow {
     watermark_driven: bool,
     /// C2b: lateness slack forwarded to per-key windows.
     allowed_lateness: Duration,
+    /// The slide bin of the clock at the last scan: partitions only come due
+    /// when the clock enters a later bin.
+    last_due_bin: Option<i64>,
 }
 
 impl PartitionedBinnedSlidingWindow {
@@ -2007,6 +2195,7 @@ impl PartitionedBinnedSlidingWindow {
             windows: FxHashMap::default(),
             watermark_driven: false,
             allowed_lateness: Duration::zero(),
+            last_due_bin: None,
         }
     }
 
@@ -2140,6 +2329,20 @@ impl PartitionedBinnedSlidingWindow {
         // partitioned session window already performs.
         self.windows.retain(|_, window| !window.is_empty());
         results
+    }
+
+    /// [`Self::advance_watermark`] once per slide bin of event time `wm`,
+    /// by partition key: within a bin, no partition can come due again.
+    pub fn advance_due(&mut self, wm: DateTime<Utc>) -> Vec<(String, Vec<SharedEvent>)> {
+        let slide_ms = self.slide_interval.num_milliseconds().max(1);
+        let bin = wm.timestamp_millis().div_euclid(slide_ms);
+        if self.last_due_bin.is_some_and(|last| bin <= last) {
+            return Vec::new();
+        }
+        self.last_due_bin = Some(bin);
+        let mut due = self.advance_watermark(wm);
+        due.sort_by(|a, b| a.0.cmp(&b.0));
+        due
     }
 
     /// Drain graduated grid windows across all partitions (C2b event-time
