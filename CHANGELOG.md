@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed — rules that ran and never fired
 
+- A Kleene closure followed by another step (`A -> all B -> C`) matched
+  before C. Under the default `.each()` the engine emitted a complete match at
+  every B, as if the closure ended the pattern, then dropped the run when C
+  arrived. The shipped brute-force rule raised 6 critical "brute force
+  succeeded" alerts for 4 failed logins and no success, and none for the
+  success; the card-testing example alerted on small purchases before any
+  large one. `.each()` now emits once per closure event when C arrives, each
+  match holding the closure as it stood at that event; a closure that ends the
+  pattern still emits as it grows. The rule itself now uses `.longest()`, one
+  alert per failure that could have opened the attack.
 - A program that evaluated `arr.filter(x => ...)` or `arr.map(x => ...)`
   (both documented), `a?.b` or a timestamp literal
   aborted the whole process with a stack overflow: the evaluator's fallback

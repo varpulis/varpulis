@@ -43,32 +43,44 @@ fn seq_a_bplus_c() -> SasePattern {
 
 #[test]
 fn test_each_emits_one_per_kleene_event() {
-    // Default mode (Each): SEQ(A, B+, C) with 3 Bs should emit 3 matches,
-    // one per B event. The terminator C consumes the run silently.
+    // Default mode (Each): SEQ(A, B+, C) with 3 Bs emits 3 matches, one per
+    // B event, and it emits them when C arrives: a run that has not reached
+    // C is not a match of SEQ(A, B+, C). This test used to assert the
+    // opposite, one match at each B and nothing at C, which is how the
+    // brute-force rule raised "brute force succeeded" on failures alone.
     let mut engine = SaseEngine::new(seq_a_bplus_c());
     // Default mode is Each (since no greedy Kleene)
 
     let r_a = engine.process(&make_event("A", vec![]));
     assert_eq!(r_a.len(), 0, "A alone produces no match");
 
-    let r_b1 = engine.process(&make_event("B", vec![("n", Value::Int(1))]));
-    assert_eq!(r_b1.len(), 1, "B1 emits one match (Each mode)");
-
-    let r_b2 = engine.process(&make_event("B", vec![("n", Value::Int(2))]));
-    assert_eq!(r_b2.len(), 1, "B2 emits one match");
-
-    let r_b3 = engine.process(&make_event("B", vec![("n", Value::Int(3))]));
-    assert_eq!(r_b3.len(), 1, "B3 emits one match");
+    for n in 1..=3 {
+        let r_b = engine.process(&make_event("B", vec![("n", Value::Int(n))]));
+        assert_eq!(r_b.len(), 0, "B{n} does not complete SEQ(A, B+, C)");
+    }
 
     let r_c = engine.process(&make_event("C", vec![]));
-    assert_eq!(
-        r_c.len(),
-        0,
-        "Terminator C drains silently — matches were already emitted"
-    );
+    assert_eq!(r_c.len(), 3, "C completes the run: one match per B");
+    let bound: Vec<i64> = r_c
+        .iter()
+        .map(|m| match m.captured.get("b").and_then(|e| e.get("n")) {
+            Some(Value::Int(n)) => *n,
+            other => panic!("b not bound: {other:?}"),
+        })
+        .collect();
+    assert_eq!(bound, vec![1, 2, 3], "each match binds b to its own B");
+}
 
-    let total = r_a.len() + r_b1.len() + r_b2.len() + r_b3.len() + r_c.len();
-    assert_eq!(total, 3, "Total emissions = number of Kleene events");
+#[test]
+fn test_each_without_the_terminator_emits_nothing() {
+    let mut engine = SaseEngine::new(seq_a_bplus_c());
+    let mut total = engine.process(&make_event("A", vec![])).len();
+    for n in 1..=3 {
+        total += engine
+            .process(&make_event("B", vec![("n", Value::Int(n))]))
+            .len();
+    }
+    assert_eq!(total, 0, "no C, no match");
 }
 
 #[test]

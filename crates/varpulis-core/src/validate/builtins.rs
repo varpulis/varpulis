@@ -1,10 +1,12 @@
 //! Static registries of builtin and aggregate functions.
 
-/// Builtin scalar functions available in VPL expressions: exactly the names
-/// the engine evaluates (`eval_builtin_function` in varpulis-runtime, plus the
-/// functions over a sequence's captured events). A name listed here and not
-/// evaluated there would check "ok" and answer nothing at run time; a test in
-/// varpulis-runtime (`builtin_names.rs`) keeps the two in step.
+/// Builtin scalar functions available in VPL expressions.
+///
+/// Exactly the names the engine evaluates (`eval_builtin_function` in
+/// varpulis-runtime, plus the functions over a sequence's captured events). A
+/// name listed here and not evaluated there would check "ok" and answer
+/// nothing at run time; a test in varpulis-runtime (`builtin_names.rs`) keeps
+/// the two in step.
 pub static BUILTIN_FUNCTIONS: &[&str] = &[
     // Math
     "abs",

@@ -18,6 +18,12 @@
 # thing you want to know about — but the *count* is a floor, not a total.
 # Earlier revisions of this header claimed "3, 15, or 1000 failures
 # identically". The 1000 was never true.
+#
+# EMISSION: `.longest()` gives one alert per failure that could have opened
+# the attack, when the success arrives; the first carries the whole count.
+# Before 2026-09-23 the default mode alerted on the failures themselves, as
+# they came, with or without a success: 4 failed logins and no success made 6
+# "brute force succeeded" alerts, and the success made none.
 
 event AuthEvent:
     source_ip: str
@@ -33,6 +39,7 @@ pattern BruteForceChain = AuthEvent where status == "failed" as first
     within 30m partition by source_ip
 
 stream BruteForceTakeover = BruteForceChain
+    .longest()
     .emit(
         event_type: "KillChainAlert",
         rule: "brute_force_takeover",
