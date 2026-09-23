@@ -97,6 +97,26 @@ Combine selection and emission into one enum. Rejected because they're genuinely
 
 Have the engine pick the mode based on whether the Kleene is followed by a terminator. Rejected as too magical — users can't predict the behavior without reading the engine source.
 
+### Amendment (2026-09-23)
+
+Two corrections, both found by running shipped detection rules.
+
+- **`Each` emits when the pattern completes.** For a closure that ends the
+  pattern (`A -> all B`) that is at every event the closure takes, as above.
+  For a closure followed by another step (`A -> all B -> C`) the one match per
+  closure event is now produced when C arrives, each match holding the closure
+  as it stood at its event. It used to be produced at each B, before C and
+  whether or not C ever came, and the run was then dropped at C: the
+  brute-force rule (`failed -> all failed -> success`) alerted on failed
+  logins alone and never on the success. "React to every step" is kept for
+  closures that end a pattern; a step that has not happened is not a match.
+- **`SkipTillNextMatch` does not start a run on an event a run took.** The
+  non-overlapping behaviour this ADR describes had not been implemented: every
+  event that could open the pattern opened a run under every strategy, so
+  `.stnm()` changed nothing. Under `.stnm()` an event that extends a run now
+  opens no other one; with `.longest()` a brute force of any length is one
+  alert.
+
 ## Consequences
 
 ### Positive

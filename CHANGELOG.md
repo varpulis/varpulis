@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed — rules that ran and never fired
 
+- `.stnm()` changed nothing. ADR-006 and the patterns guide promise that
+  under skip-till-next-match an event takes part in at most one match, and
+  every event that could open the pattern opened a run under every strategy.
+  An event that extends a run now opens no other one under `.stnm()`, so
+  `.stnm().longest()` makes one alert of a brute force of any length; the
+  shipped rule uses it (one alert where it made one per failure).
 - A Kleene closure followed by another step (`A -> all B -> C`) matched
   before C. Under the default `.each()` the engine emitted a complete match at
   every B, as if the closure ended the pattern, then dropped the run when C
