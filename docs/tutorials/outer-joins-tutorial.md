@@ -2,6 +2,22 @@
 
 This tutorial teaches you to use LEFT, RIGHT, and FULL outer joins in VPL for stream processing. You'll start with an inner join recap, then build progressively through each outer join type, null handling, and a complete reconciliation example.
 
+> **Joins do not run in the engine as it ships.** They parse and pass
+> `varpulis check`, but `varpulis simulate` and a Vejas detect unit run the
+> engine's synchronous path, which refuses a join when it loads the program:
+> `stream 'X' is a join, which the synchronous execution path does not
+> implement`. No shipped command runs the asynchronous path since the platform
+> was retired ([ADR-008](../adr/008-engine-only-platform-retired.md)). To correlate two event types today, use a
+> sequence, which runs everywhere: `A as a -> B where key == a.key as b` with
+> `.within(5m)`.
+
+> The expected-output tables below were written for that asynchronous path and
+> cannot be reproduced with a shipped command. The join buffer's unit tests
+> (`crates/varpulis-runtime/src/join.rs`) show one difference from them: in a
+> left join, a left event with no match is emitted at once with the right side
+> `null`, and a match that arrives later is emitted as a second event, so an
+> order paid after it was placed appears twice, not once.
+
 ## Prerequisites
 
 - Varpulis built and on your `PATH` (see [Getting Started](getting-started.md))
@@ -16,8 +32,7 @@ Before learning outer joins, recall how inner joins work. An inner join only pro
 ```vpl
 stream EnrichedOrders = join(
     stream Orders = OrderEvent,
-    stream Customers = CustomerEvent
-        on Orders.customer_id == Customers.id
+    stream Customers = CustomerEvent.on(Orders.customer_id == Customers.id)
 )
 .window(5m)
 .emit(
@@ -38,8 +53,7 @@ A LEFT JOIN keeps all events from the left stream, filling in `null` for unmatch
 ```vpl
 stream OrdersWithPayments = left_join(
     stream Orders = OrderEvent,
-    stream Payments = PaymentEvent
-        on Orders.order_id == Payments.order_id
+    stream Payments = PaymentEvent.on(Orders.order_id == Payments.order_id)
 )
 .window(5m)
 .emit(
@@ -86,8 +100,7 @@ A RIGHT JOIN is the mirror of LEFT JOIN. All right-side events are preserved:
 ```vpl
 stream PaymentReconciliation = right_join(
     stream Orders = OrderEvent,
-    stream Payments = PaymentEvent
-        on Orders.order_id == Payments.order_id
+    stream Payments = PaymentEvent.on(Orders.order_id == Payments.order_id)
 )
 .window(5m)
 .emit(
@@ -116,8 +129,7 @@ A FULL JOIN keeps all events from both sides, with nulls where either side is mi
 ```vpl
 stream FullReconciliation = full_join(
     stream Orders = OrderEvent,
-    stream Payments = PaymentEvent
-        on Orders.order_id == Payments.order_id
+    stream Payments = PaymentEvent.on(Orders.order_id == Payments.order_id)
 )
 .window(5m)
 .emit(
@@ -151,8 +163,7 @@ When outer joins produce null fields, you can filter and handle them:
 # Find orders that have NO matching payment (null payment)
 stream UnpaidOrders = left_join(
     stream Orders = OrderEvent,
-    stream Payments = PaymentEvent
-        on Orders.order_id == Payments.order_id
+    stream Payments = PaymentEvent.on(Orders.order_id == Payments.order_id)
 )
 .window(5m)
 .where(Payments.status == null)
@@ -170,8 +181,7 @@ Use conditional expressions to provide defaults for null fields:
 ```vpl
 stream SafeJoin = left_join(
     stream Orders = OrderEvent,
-    stream Payments = PaymentEvent
-        on Orders.order_id == Payments.order_id
+    stream Payments = PaymentEvent.on(Orders.order_id == Payments.order_id)
 )
 .window(5m)
 .emit(
@@ -186,16 +196,10 @@ stream SafeJoin = left_join(
 ## Part 6: Complete Example — Order-Payment Reconciliation
 
 ```vpl
-connector KafkaBroker = kafka (
-    brokers: ["broker:9092"],
-    group_id: "reconciliation"
-)
-
 # Full reconciliation across orders and payments
 stream Reconciliation = full_join(
-    stream Orders = OrderEvent.from(KafkaBroker, topic: "orders"),
-    stream Payments = PaymentEvent.from(KafkaBroker, topic: "payments")
-        on Orders.order_id == Payments.order_id
+    stream Orders = OrderEvent,
+    stream Payments = PaymentEvent.on(Orders.order_id == Payments.order_id)
 )
 .window(10m)
 .emit(
@@ -220,14 +224,21 @@ stream Mismatches = Reconciliation
         payment_ref: payment_ref
     )
 
-# Reconciliation summary per window
-stream Summary = Reconciliation
+# Reconciliation summary per window, one count per status
+stream MatchedPerWindow = Reconciliation
+    .where(match_status == "matched")
     .window(10m)
-    .aggregate(
-        matched: count() where match_status == "matched",
-        unmatched_orders: count() where match_status == "order_no_payment",
-        orphan_payments: count() where match_status == "payment_no_order"
-    )
+    .aggregate(matched: count())
+
+stream UnmatchedOrdersPerWindow = Reconciliation
+    .where(match_status == "order_no_payment")
+    .window(10m)
+    .aggregate(unmatched_orders: count())
+
+stream OrphanPaymentsPerWindow = Reconciliation
+    .where(match_status == "payment_no_order")
+    .window(10m)
+    .aggregate(orphan_payments: count())
 ```
 
 ---

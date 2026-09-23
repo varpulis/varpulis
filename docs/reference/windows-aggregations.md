@@ -48,6 +48,7 @@ Overlapping windows that slide at a specified interval, providing a rolling view
 ```vpl
 stream Name = EventType
     .window(<size>, sliding: <slide>)
+    .aggregate(...)
 ```
 
 **Parameters:**
@@ -115,6 +116,7 @@ Count-based windows with overlap.
 ```vpl
 stream Name = EventType
     .window(<size>, sliding: <slide>)
+    .aggregate(...)
 ```
 
 **Parameters:**
@@ -168,7 +170,7 @@ stream PerDeviceStats = SensorReading
     .partition_by(device_id)
     .window(1m)
     .aggregate(
-        device: device_id,
+        device: last(device_id),
         avg_reading: avg(value),
         readings: count()
     )
@@ -516,7 +518,7 @@ stream SensorAlerts = SensorReading
     .partition_by(sensor_id)
     .window(1m)
     .aggregate(
-        sensor: sensor_id,
+        sensor: last(sensor_id),
         avg_value: avg(value),
         max_value: max(value),
         readings: count()
@@ -549,7 +551,7 @@ stream BatchReport = Transaction
         avg_value: avg(amount),
         unique_customers: count(distinct(customer_id))
     )
-    .print("Processed batch: {batch_num} txns, ${total_value:.2} total")
+    .print("Processed batch:", batch_num, "txns,", total_value, "total")
 ```
 
 ### Latency Percentiles
@@ -559,7 +561,7 @@ stream ApiLatency = RequestEvent
     .partition_by(endpoint)
     .window(1m)
     .aggregate(
-        endpoint: endpoint,
+        endpoint: last(endpoint),
         median: median(latency_ms),
         p95: p95(latency_ms),
         p99: p99(latency_ms),
@@ -583,7 +585,7 @@ stream DeviceMinutes = SensorReading
     .partition_by(device_id)
     .window(1m)
     .aggregate(
-        device: device_id,
+        device: last(device_id),
         minute_avg: avg(value)
     )
 

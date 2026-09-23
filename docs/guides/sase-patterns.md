@@ -9,7 +9,7 @@ SASE+ (Sequence Algebra for Stream Events) is a pattern matching algorithm for C
 ### Key Features
 
 - **NFA-based matching**: Efficient finite automaton execution
-- **Kleene closures**: Match one or more (`+`) or zero or more (`*`) events
+- **Kleene closures**: Match one or more events of a type (`all`)
 - **Negation**: Detect absence of events within time windows
 - **Logical operators**: AND (any order), OR (either)
 - **Partition-by optimization**: Independent matching per partition key
@@ -90,7 +90,7 @@ Selection controls **how runs are spawned and which events extend them** when mu
 
 #### `.strict()` — Strict Contiguity
 
-Events must be **adjacent in the stream**, with no irrelevant events between them. Use for regex-like matching where order and adjacency both matter.
+Each step must take the **very next event the pattern receives**. A pattern receives only the event types it names, so contiguity is judged among those: in `A -> B`, a `C` between the A and the B does not break it, while a B that fails the step's condition does. Use for regex-like matching where order and adjacency both matter.
 
 ```vpl
 # Match only when A is immediately followed by B (no events between)
@@ -98,19 +98,27 @@ pattern AdjacentAB = A -> B
 stream Strict = AdjacentAB.strict().emit(...)
 ```
 
-If events arrive `A, X, B`, the `X` breaks contiguity and the pattern fails. Useful for parsing log lines, network protocol parsing, DNA sequence matching.
+If events arrive `A, X, B` and `X` is of a type the pattern names but does not match the step, it breaks contiguity and the run fails. Useful for parsing log lines, network protocol parsing, DNA sequence matching.
 
 #### `.stnm()` — Skip-Till-Next-Match
 
-Skip irrelevant events until the **next** matching event. Each event participates in **at most one** match (no overlapping runs). The most "intuitive" mode for first-match-wins detection.
+An event that a run takes, to extend it or to complete it, does **not also open a new run**. That is the only difference from the default. Runs that were already open can still take the same later event: with `A -> B` and events A1, A2, B1, both runs complete with B1 and give two matches.
+
+It matters when one event type both starts and extends a pattern, as failed logins do in a brute-force rule. Under the default every failure also opens a run of its own; under `.stnm()` a failure that a run takes does not, so with `.longest()` an attack gives one alert:
 
 ```vpl
-# Skip irrelevant events; one maximal match per anchor
-stream FirstMatch = Login -> Action -> Logout
+# One alert per attack, carrying all its failures
+stream BruteForce = LoginFailed as first
+    -> all LoginFailed where user_id == first.user_id as fails
+    -> LoginSuccess where user_id == first.user_id as success
+    .within(10m)
+    .partition_by(user_id)
     .stnm()
-    .within(1h)
-    .emit(...)
+    .longest()
+    .emit(user: first.user_id, failures: count(fails) + 1)
 ```
+
+Four failures and a success give one alert with `failures: 4`; two attacks give two alerts. Without `.stnm()` each failure but the last also starts a run, and the same four failures and a success give three alerts, with 4, 3 and 2 failures.
 
 #### `.stam()` — Skip-Till-Any-Match (default)
 
@@ -143,14 +151,14 @@ stream FailedAttempt = LoginFailed as fail
     .emit(alert: "Login failed", user: fail.user_id)
 ```
 
-For `Start -> all B as b -> End` with 5 Bs, `.each()` emits **5 matches** as the Bs arrive (the `End` terminator confirms but doesn't add an extra emit).
+For `Start -> all B as b -> End` with 5 Bs, `.each()` emits **5 matches** when `End` arrives, one per B: each binds `b` to its own B and holds the closure as it stood at that B. If `End` never arrives, there is no match. A closure that ends the pattern (`Start -> all B as b`, no step after it) is the case that emits as it grows: one match each time it takes a B.
 
 #### `.longest()` — Emit Once at Completion
 
 Emit **one consolidated match** when the pattern completes (terminator arrives or Kleene self-loop breaks). The match contains the longest captured sequence; the alias is bound to the **last** captured event of that sequence.
 
 ```vpl
-# Brute force: one alert when login finally succeeds, with the full failure history
+# Brute force: alerts when the login finally succeeds, with the failure history
 pattern BruteForce = LoginFailed as first
     -> all LoginFailed as fails
     -> LoginSuccess as success
@@ -161,7 +169,7 @@ stream Alert = BruteForce
     .emit(user: first.user_id, num_fails: count(fails) + 1)
 ```
 
-For `Start -> all B as b -> End` with 5 Bs, `.longest()` emits **1 match** at `End` with `b` bound to B5.
+For `Start -> all B as b -> End` with 5 Bs, `.longest()` emits **1 match** at `End` with `b` bound to B5. That is one match per run: in `BruteForce` every failure can start a run (skip-till-any-match, the default), so three failures then a success give two alerts at the success, with `num_fails` 3 and 2, and failures with no success give none. Add `.stnm()` for one alert per attack: a failure that a run takes then opens no run of its own (see [Selection Strategies](#selection-strategies)).
 
 > **Auto-resolved for monotonic patterns**: `.increasing()` and `.decreasing()` automatically use `.longest()` because users want one "rising sequence ended" alert, not one per data point. Override with `.increasing(temp).each()`.
 
@@ -176,10 +184,14 @@ stream PaperMode = A -> all B as b -> C
     .emit(...)
 ```
 
-For `SEQ(A, B+, C)` with 3 Bs, `.subsets()` produces **2³ − 1 = 7 matches**:
+For `A -> all B -> C` with 3 Bs, `.subsets()` produces **2³ − 1 = 7 matches**, one per non-empty subset of the Bs:
 - `{B1}`, `{B2}`, `{B3}`
 - `{B1, B2}`, `{B1, B3}`, `{B2, B3}`
 - `{B1, B2, B3}`
+
+In the engine today the seven matches do not carry their subsets: each one
+binds all three Bs (`count(bs)` is 3 and `collect(bs.k)` lists all three in
+every match). The number of matches is right; what each contains is not.
 
 **Cost**: exponential in the number of Kleene events. Capped at `MAX_ENUMERATION_RESULTS = 10_000` to prevent memory blowup. Use only when you specifically need formal SASE+ verbose semantics or to feed downstream consumers expecting subset enumeration.
 
@@ -230,11 +242,11 @@ stream X = Start -> all Reading as b -> End
 
 ### Comparison Table
 
-For pattern `SEQ(A, B+, C)` with events `A, B1, B2, B3, C`:
+For pattern `A -> all B -> C` with events `A, B1, B2, B3, C`:
 
 | Mode | # matches | Bindings |
 |---|---|---|
-| `.each()` (default) | **3** | `b=B1`, `b=B2`, `b=B3` (one per B) |
+| `.each()` (default) | **3** | `b=B1`, `b=B2`, `b=B3` (one per B, all emitted when C arrives) |
 | `.longest()` | **1** | `b=B3` (last captured) |
 | `.subsets()` | **7** | one per non-empty subset of `{B1,B2,B3}` |
 
@@ -255,7 +267,7 @@ For pattern `Start -> all B as b -> End` with 9 Bs and an `End` terminator:
 | "Detect rising/falling trends" | `.increasing()` / `.decreasing()` | Auto-resolves to `.longest()` |
 | "Enumerate every match per SASE+ paper" | `.subsets()` | Spec-compliant verbose mode |
 | "Strict log line parsing" | `.strict()` selection | No skipping allowed |
-| "First match wins" | `.stnm()` selection | One non-overlapping match per anchor |
+| "One alert per attack, not per event that could start one" | `.stnm().longest()` | An event a run takes opens no run of its own |
 
 ---
 
@@ -277,9 +289,10 @@ stream ThreeStep = A -> B -> C .within(5m)
 [Start] -> [Match A] -> [Match B] -> [Match C] -> [Accept]
 ```
 
-### Kleene Plus (`+` / `all`)
+### Kleene Plus (`all`)
 
-One or more occurrences of an event type.
+One or more occurrences of an event type. `all X` is the only closure: there is
+no postfix `X+` or `X*`.
 
 ```vpl
 # Named pattern syntax
@@ -288,12 +301,20 @@ pattern BruteForce = all LoginFailed as fails
     within 10m partition by user_id
 
 # Stream expression syntax (same `all` keyword)
-stream BruteForce = LoginFailed as first
+stream BruteForceAlerts = LoginFailed as first
     -> all LoginFailed as fails
     -> LoginSuccess as success
     .within(10m)
     .partition_by(user_id)
+    .longest()
+    .emit(user: first.user_id, failures: count(fails) + 1)
 ```
+
+A closure that another step follows produces its matches when that step
+arrives, and none if it never does: failed logins that no success follows raise
+no alert. Under the default `.each()` the success brings one match per failure
+in the closure; `.longest()` brings one per run, carrying the whole closure. See
+[Emission Modes](#emission-modes) for both.
 
 **NFA Structure:**
 ```
@@ -305,36 +326,59 @@ stream BruteForce = LoginFailed as first
 **Implementation Notes:**
 - Uses a stack to track Kleene state
 - Each match pushes to the stack
-- Non-greedy by default (first complete match)
+- At most 20 events per closure (see [the Kleene event cap](../language/operators.md#the-kleene-event-cap))
 
-### Kleene Star (`*`)
+### Zero or More
 
-Zero or more occurrences.
+There is no `X*`. Under the default skip-till-any-match, a step skips whatever
+comes before its event, so `SessionStart -> SessionEnd` already matches a
+session with or without activity in between. Add `-> all Activity as acts` when
+you need the activity itself, and then at least one is required.
 
 ```vpl
-# Start, any events, then end
-pattern Session = SessionStart -> Activity* -> SessionEnd
+# Start then end, whatever came in between
+pattern Session =
+    SessionStart as start
+    -> SessionEnd where user_id == start.user_id
+    within 1h
 
-# Optional middleware
-pattern Request = ClientRequest -> Middleware* -> ServerResponse
+# The same, with the activity captured: at least one Activity
+pattern ActiveSession =
+    SessionStart as start
+    -> all Activity where user_id == start.user_id as acts
+    -> SessionEnd where user_id == start.user_id
+    within 1h
+
+stream ActiveSessions = ActiveSession
+    .longest()
+    .emit(user: start.user_id, activities: count(acts))
 ```
 
-**Key Difference from `+`:**
-- `A*` accepts immediately (zero matches allowed)
-- `A+` requires at least one match
+A session with two activities matches both patterns; a session with none
+matches only `Session`.
 
 ### Negation (`NOT`)
 
-Detect the absence of an event within a time window.
+Detect the absence of an event within a time window. The step is `-> NOT X`,
+uppercase and without parentheses, in a `pattern` declaration:
 
 ```vpl
 # Order not confirmed within 1 hour
 pattern UnconfirmedOrder =
-    OrderPlaced -> NOT(OrderConfirmed) within 1h
+    OrderPlaced as o
+    -> NOT OrderConfirmed where order_id == o.order_id
+    within 1h
+    partition by order_id
 
 # Payment started but never completed
 pattern AbandonedPayment =
-    PaymentStart -> NOT(PaymentComplete) within 5m
+    PaymentStart as p
+    -> NOT PaymentComplete where payment_id == p.payment_id
+    within 5m
+    partition by payment_id
+
+stream Unconfirmed = UnconfirmedOrder
+    .emit(order: o.order_id)
 ```
 
 **How Negation Works:**
@@ -344,40 +388,52 @@ pattern AbandonedPayment =
 3. If the negated event occurs before timeout, the pattern fails
 4. If timeout expires without the event, the pattern succeeds
 
-**Implementation:** See `NegationInfo` and `StateType::Negation` in `sase.rs:108`
+The timeout is judged against the watermark, which moves when an event
+arrives. Orders o1 at 10:00 and o2 at 10:05, a confirmation for o2 at 10:10,
+then another order at 11:30: the alert for o1 comes out with that 11:30 event,
+nothing comes out for o2, and nothing for the 11:30 order either, whose hour
+has not passed when the input ends. See [Absence](../language/operators.md#absence-not-b)
+for what this means on a stream that goes silent.
 
-### AND (Any Order)
+**Implementation:** See `NegationInfo` in `crates/varpulis-sase/src/and_op.rs`
 
-Both patterns must match, but order doesn't matter.
+### Any Order
+
+There is no `AND(A, B)`. The sequence engine has an AND state (`AndConfig`,
+`StateType::And` in `crates/varpulis-sase`), but no VPL syntax reaches it. For
+"both, in either order", declare one sequence per order:
 
 ```vpl
-# Both documents required (any order)
-pattern BothDocs =
-    AND(DocumentA, DocumentB) within 1h
+# Both documents for the same case, in either order
+stream BothDocsAB = DocumentA as a
+    -> DocumentB where case_id == a.case_id as b
+    .within(1h)
+    .emit(case_id: a.case_id)
 
-# Application complete when both submitted
-pattern ApplicationComplete =
-    AND(FormSubmitted, PaymentReceived) within 24h
+stream BothDocsBA = DocumentB as b
+    -> DocumentA where case_id == b.case_id as a
+    .within(1h)
+    .emit(case_id: b.case_id)
 ```
 
-**Implementation:**
-- Creates an AND state that tracks which branches have matched
-- Accepts when all branches are satisfied
-- See `AndConfig` and `StateType::And` in `sase.rs`
+A then B for one case fires `BothDocsAB`, B then A for another fires
+`BothDocsBA`, and a case with only one of the two fires nothing. With three
+events there are six orders, so past two this gets long.
 
-### OR (Either)
+### Either
 
-Either pattern matches.
+There is no `OR(A, B)` either. A sequence step names one event type; for
+"either of these types", merge them into one stream:
 
 ```vpl
 # Accept either payment method
-pattern PaymentReceived =
-    OR(CreditCard, BankTransfer)
-
-# Multiple termination conditions
-pattern SessionEnd =
-    OR(Logout, Timeout, ForceDisconnect)
+stream PaymentReceived = merge(CreditCard, BankTransfer)
+    .emit(order_id: order_id)
 ```
+
+A `CreditCard` and a `BankTransfer` each come out of `PaymentReceived`; any
+other event type does not. Where a sequence must accept either type at one
+step, write the sequence once per type.
 
 ---
 
@@ -385,12 +441,15 @@ pattern SessionEnd =
 
 ### Field Comparisons
 
+A predicate follows its event type after `where`; there is no bracket form
+(`Transaction[amount > 10000]`).
+
 ```vpl
 pattern HighValue =
-    Transaction[amount > 10000]
+    Transaction where amount > 10000 as t
 
 pattern SpecificUser =
-    Login[user_id == "admin" and ip != "10.0.0.1"]
+    Login where user_id == "admin" and ip != "10.0.0.1" as login
 ```
 
 **Operators:** `==`, `!=`, `<`, `<=`, `>`, `>=`
@@ -402,8 +461,8 @@ Reference fields from earlier events using aliases:
 ```vpl
 pattern SameUser =
     Login as login
-    -> Activity[user_id == login.user_id] as activity
-    -> Logout[user_id == login.user_id]
+    -> Activity where user_id == login.user_id as activity
+    -> Logout where user_id == login.user_id
     within 1h
 ```
 
@@ -411,7 +470,7 @@ pattern SameUser =
 
 ```vpl
 pattern Complex =
-    Event[(value > 100 and status == "active") or priority == "high"]
+    Event where (value > 100 and status == "active") or priority == "high" as e
 ```
 
 ---
@@ -430,14 +489,10 @@ pattern MustBeQuick =
 
 ### Per-Transition Constraints
 
-Different timeouts for different steps:
-
-```vpl
-pattern VariableTiming =
-    FastEvent
-    -> SlowEvent within 1h
-    -> FinalEvent within 5m
-```
+Not available: a pattern takes one `within`, and it bounds the whole sequence,
+counted from its first event. In `MustBeQuick` above, Start at 10:00, Middle at
+10:04 and End at 10:06 do not match; the same three steps at 10:10, 10:12 and
+10:14:30 do.
 
 ### Timeout Handling
 
@@ -523,6 +578,11 @@ stream EscalationAlert = Escalation
 
 When you need **statistics** (count, average) over rising trends rather than individual matches, use `.trend_aggregate()` with the Hamlet engine for O(n) performance:
 
+> The counts `.trend_aggregate()` produces today are wrong: they ignore the
+> closure's predicate and the partition. See the
+> [trend aggregation tutorial](../tutorials/trend-aggregation-tutorial.md)
+> before relying on one.
+
 ```vpl
 stream TrendStats = StockTick as first
     -> all StockTick where price > first.price as rising
@@ -544,7 +604,8 @@ Process patterns independently per key:
 
 ```vpl
 pattern PerUser =
-    Login+ -> Logout
+    all Login as logins
+    -> Logout
     within 1h
     partition by user_id
 ```
@@ -576,32 +637,42 @@ SASE+ supports different strategies for selecting events when multiple matches a
 
 ### Skip-Till-Any-Match (Default)
 
-Match as many patterns as possible, potentially with overlapping events.
-
-```vpl
-# Given events: A1, B1, A2, B2
-# Pattern: A -> B
-# Matches: (A1, B1), (A1, B2), (A2, B2)
-```
-
-### Skip-Till-Next-Match
-
-Each event participates in at most one match.
+Every event that can start the pattern opens a run, including one that an open run also takes. A run that has completed is closed.
 
 ```vpl
 # Given events: A1, B1, A2, B2
 # Pattern: A -> B
 # Matches: (A1, B1), (A2, B2)
+#   B2 does not also complete (A1, B2): that run closed with B1
+
+# Given events: A1, A2, B1
+# Matches: (A1, B1), (A2, B1)
 ```
+
+### Skip-Till-Next-Match
+
+An event that a run takes does not open a new run. With `A -> B` that changes nothing, since a B never starts the pattern and an A is never taken by a run waiting for a B:
+
+```vpl
+# Given events: A1, A2, B1
+# Pattern: A -> B (stnm)
+# Matches: (A1, B1), (A2, B1): both runs were open, and both take B1
+```
+
+The difference shows when one event type starts and extends the pattern; see [Selection Strategies](#selection-strategies).
 
 ### Strict Contiguity
 
-Events must be immediately adjacent (no skipping).
+Each step takes the very next event of the types the pattern names.
 
 ```vpl
+# Given events: A1, B0, B1
+# Pattern: A -> B where id != "B0" (strict)
+# Matches: none: B0, a B that fails the condition, breaks contiguity
+
 # Given events: A1, C1, B1
 # Pattern: A -> B (strict)
-# Matches: none (C1 breaks contiguity)
+# Matches: (A1, B1): the pattern never receives C events
 ```
 
 ---
@@ -639,7 +710,7 @@ RUST_LOG=varpulis_runtime::sase=trace varpulis simulate ...
 pattern Debug1 = A -> B within 1h
 
 # Add predicates back one at a time
-pattern Debug2 = A[field > 0] -> B within 1h
+pattern Debug2 = A where field > 0 -> B within 1h
 ```
 
 #### 2. Too Many Matches
@@ -661,18 +732,22 @@ pattern Isolated =
 #### 3. Memory Growth
 
 **Possible causes:**
-- Unbounded Kleene closure (`+` or `*`)
+- Kleene closures (`all`) over busy streams: each holds up to 20 events
 - Too many partitions
 - Timeout too long
 
 **Solutions:**
 ```vpl
-# Limit Kleene matches
+# Bound a closure in time
 pattern Limited =
-    Event+ within 5m  # Natural bound via timeout
+    all Event as events
+    within 5m
 
-# Reduce partition cardinality
-partition by category  # Use low-cardinality field
+# Partition on a low-cardinality field
+pattern PerCategory =
+    all Event as events
+    within 5m
+    partition by category
 ```
 
 #### 4. Negation Not Triggering
@@ -686,7 +761,9 @@ partition by category  # Use low-cardinality field
 ```vpl
 # Ensure event types match exactly
 pattern Debug =
-    Start -> NOT(Exactly_This_Type) within 10m
+    Start as s
+    -> NOT Exactly_This_Type
+    within 10m
 ```
 
 ---
@@ -699,9 +776,8 @@ pattern Debug =
 |---------|--------|-------------|
 | `A -> B` | 3 | 2 |
 | `A -> B -> C` | 4 | 3 |
-| `A+` | 2 | 2 (with self-loop) |
-| `AND(A, B)` | 4 | 4 |
-| `A -> B+ -> C` | 4 | 4 |
+| `all A` | 2 | 2 (with self-loop) |
+| `A -> all B -> C` | 4 | 4 |
 
 ### Memory Usage
 
@@ -725,7 +801,7 @@ Typical throughput on modern hardware:
 
 ## ZDD Optimization
 
-Varpulis uses Zero-suppressed Decision Diagrams (ZDD) to represent Kleene capture combinations during SASE+ pattern matching. When a Kleene pattern like `A -> B+ -> C` matches many B events, ZDD compactly encodes all possible subsets — e.g., 100 matching B events produce ~100 ZDD nodes instead of 2^100 explicit combinations.
+Varpulis uses Zero-suppressed Decision Diagrams (ZDD) to represent Kleene capture combinations during SASE+ pattern matching. When a Kleene pattern like `A -> all B -> C` matches many B events, ZDD compactly encodes all possible subsets — e.g., 100 matching B events produce ~100 ZDD nodes instead of 2^100 explicit combinations.
 
 ### Benefits
 
@@ -795,6 +871,11 @@ stream OfflineAlerts = DeviceOffline
 
 For patterns where you need **statistics over trends** (COUNT, SUM, AVG) rather than individual matches, use `.trend_aggregate()` instead of the default detection mode:
 
+> The counts `.trend_aggregate()` produces today are wrong: they ignore the
+> closure's predicate and the partition. See the
+> [trend aggregation tutorial](../tutorials/trend-aggregation-tutorial.md)
+> before relying on one.
+
 ```vpl
 # Instead of detecting each rising price pattern individually...
 # Count how many rising trends exist (without enumerating them)
@@ -818,8 +899,8 @@ Use `.forecast()` to predict whether a partially-matched pattern will complete, 
 
 ```vpl
 stream FraudForecast = Transaction as t1
-    -> Transaction as t2 where t2.amount > t1.amount * 5
-    -> Transaction as t3 where t3.location != t1.location
+    -> Transaction where amount > t1.amount * 5 as t2
+    -> Transaction where location != t1.location as t3
     .within(5m)
     .forecast(confidence: 0.7, horizon: 2m, warmup: 500)
     .where(forecast_probability > 0.8)

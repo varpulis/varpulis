@@ -2,6 +2,15 @@
 
 Complete reference for stream join types in VPL.
 
+> **Joins do not run in the engine as it ships.** They parse and pass
+> `varpulis check`, but `varpulis simulate` and a Vejas detect unit run the
+> engine's synchronous path, which refuses a join when it loads the program:
+> `stream 'X' is a join, which the synchronous execution path does not
+> implement`. No shipped command runs the asynchronous path since the platform
+> was retired ([ADR-008](../adr/008-engine-only-platform-retired.md)). To correlate two event types today, use a
+> sequence, which runs everywhere: `A as a -> B where key == a.key as b` with
+> `.within(5m)`.
+
 ## Join Types
 
 | Type | Syntax | Left Preserved | Right Preserved | Null Fill |
@@ -21,8 +30,7 @@ Produces output only when both sides have matching events within the window.
 ```vpl
 stream Result = join(
     stream Left = LeftEvent,
-    stream Right = RightEvent
-        on Left.key == Right.key
+    stream Right = RightEvent.on(Left.key == Right.key)
 )
 .window(5m)
 .emit(...)
@@ -44,8 +52,7 @@ All left-side events produce output. Right-side fields are `null` when no match 
 ```vpl
 stream Result = left_join(
     stream Left = LeftEvent,
-    stream Right = RightEvent
-        on Left.key == Right.key
+    stream Right = RightEvent.on(Left.key == Right.key)
 )
 .window(5m)
 .emit(...)
@@ -72,8 +79,7 @@ All right-side events produce output. Left-side fields are `null` when no match 
 ```vpl
 stream Result = right_join(
     stream Left = LeftEvent,
-    stream Right = RightEvent
-        on Left.key == Right.key
+    stream Right = RightEvent.on(Left.key == Right.key)
 )
 .window(5m)
 .emit(...)
@@ -95,8 +101,7 @@ All events from both sides produce output.
 ```vpl
 stream Result = full_join(
     stream Left = LeftEvent,
-    stream Right = RightEvent
-        on Left.key == Right.key
+    stream Right = RightEvent.on(Left.key == Right.key)
 )
 .window(5m)
 .emit(...)
@@ -119,14 +124,14 @@ stream Result = full_join(
 ### Simple Equality
 
 ```vpl
-on Left.key == Right.key
+.on(Left.key == Right.key)
 ```
 
 ### Composite Keys
 
 ```vpl
-on Left.customer_id == Right.customer_id
-    and Left.region == Right.region
+.on(Left.customer_id == Right.customer_id
+    and Left.region == Right.region)
 ```
 
 ### Multi-Stream Joins
@@ -134,10 +139,8 @@ on Left.customer_id == Right.customer_id
 ```vpl
 stream Result = join(
     stream A = EventA,
-    stream B = EventB
-        on A.id == B.a_id,
-    stream C = EventC
-        on A.id == C.a_id
+    stream B = EventB.on(A.id == B.a_id),
+    stream C = EventC.on(A.id == C.a_id)
 )
 .window(5m)
 .emit(...)
@@ -195,25 +198,22 @@ Null comparisons follow SQL semantics:
 ## Performance Notes
 
 - **Buffer size**: Each side buffers events within the window. Memory is `O(events_per_window × 2)`
-- **Match complexity**: Per-event match is `O(buffered_events)` for equality joins
-- **Partitioning**: Use `.partition_by()` before the join to reduce match space
+- **Match complexity**: each side's buffer is keyed by the join key's value, so a new event is compared only with the buffered events that share its key
 - **Window size**: Smaller windows reduce memory and improve match latency
 
-### Optimization: Partition Before Join
+### No Partitioning Needed
+
+A join clause takes nothing but `.on(...)`, so `.partition_by()` cannot be put
+inside `join(...)`, and it would not help: the buffers are already keyed by the
+join key, as the match complexity above says.
 
 ```vpl
-# Without partitioning: scans all buffered events
 stream Result = join(
     stream A = EventA,
-    stream B = EventB on A.key == B.key
-).window(5m)
-
-# With partitioning: matches only within the same partition
-stream Result = join(
-    stream A = EventA.partition_by(key),
-    stream B = EventB.partition_by(key)
-        on A.key == B.key
-).window(5m)
+    stream B = EventB.on(A.key == B.key)
+)
+.window(5m)
+.emit(key: A.key, a_value: A.value, b_value: B.value)
 ```
 
 ---

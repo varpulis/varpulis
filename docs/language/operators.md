@@ -95,8 +95,8 @@ See [SASE+ Patterns Guide](../guides/sase-patterns.md#selection-and-emission-mod
 
 | Operator | Description | Example |
 |----------|-------------|---------|
-| `.strict()` | Strict contiguity — events must be adjacent | `stream X = A -> B.strict().emit(...)` |
-| `.stnm()` | Skip-till-next-match — non-overlapping maximal matches | `stream X = A -> B.stnm().emit(...)` |
+| `.strict()` | Strict contiguity — each step takes the very next event of the pattern's types | `stream X = A -> B.strict().emit(...)` |
+| `.stnm()` | Skip-till-next-match — an event a run takes does not open a new run | `stream X = A -> B.stnm().emit(...)` |
 | `.stam()` | Skip-till-any-match — overlapping runs (default) | `stream X = A -> B.stam().emit(...)` |
 
 ### Emission mode (how matches are produced)
@@ -109,7 +109,7 @@ See [SASE+ Patterns Guide](../guides/sase-patterns.md#selection-and-emission-mod
 
 ### The Kleene event cap
 
-A Kleene closure (`all X`, `X+`, `X*`) accumulates **at most 20 events per
+A Kleene closure (`all X`) accumulates **at most 20 events per
 match**. With n accumulated events the engine's ZDD enumerates up to 2^n − 1
 combinations, so the bound is what keeps an unbounded closure from exhausting
 memory.

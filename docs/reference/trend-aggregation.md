@@ -2,9 +2,17 @@
 
 Reference for `.trend_aggregate()`, the stream operation that computes aggregations over matching event trends without constructing them individually.
 
+> **What `.trend_aggregate()` computes today is not what this page
+> describes.** The count ignores the closure's predicate, the stream's start
+> condition and its `partition_by`, and it comes out after every event as a
+> running total; `min`/`max` return the trend count. See the
+> [tutorial's warning](../tutorials/trend-aggregation-tutorial.md) for the
+> cases that show it. Detection mode, without `.trend_aggregate()`, is not
+> affected.
+
 ## Overview
 
-Standard pattern matching in Varpulis operates in **detection mode**: the SASE+ NFA identifies individual pattern matches and emits each one. This works well when you need the matched events themselves, but becomes expensive when patterns contain Kleene closures (`+` / `*`), since the number of matching trends can grow exponentially with the number of events.
+Standard pattern matching in Varpulis operates in **detection mode**: the SASE+ NFA identifies individual pattern matches and emits each one. This works well when you need the matched events themselves, but becomes expensive when patterns contain Kleene closures (`all`), since the number of matching trends can grow exponentially with the number of events.
 
 `.trend_aggregate()` switches a stream into **aggregation mode**. Instead of enumerating every matching trend, the engine computes aggregate values (COUNT, SUM, AVG, etc.) directly over the set of all matching trends. Internally, this uses the GRETA graph-based propagation algorithm, extended by the Hamlet engine for multi-query sharing.
 
@@ -35,8 +43,8 @@ The `.trend_aggregate()` block replaces the normal match output with computed ag
 **Constraints:**
 
 - `.trend_aggregate()` and `.select()` are mutually exclusive on the same stream. Use `.emit()` to project the aggregation results.
-- The pattern must contain at least one Kleene closure (`+` or `*`) for trend aggregation to be meaningful. Patterns without Kleene closures produce at most one trend per start event, so detection mode is already efficient.
-- `.within()` is required. Trend aggregation results are emitted at window boundaries.
+- The pattern must contain at least one Kleene closure (`all`) for trend aggregation to be meaningful. Patterns without Kleene closures produce at most one trend per start event, so detection mode is already efficient.
+- `.within()` is required. The engine currently emits a running result after every event rather than at window boundaries (see the warning above).
 
 ## Aggregation Functions
 

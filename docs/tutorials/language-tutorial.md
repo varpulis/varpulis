@@ -116,17 +116,21 @@ Use `.emit()` and `.print()` to output data when conditions are met:
 # Emit an alert
 stream TempAlerts = TemperatureReading
     .where(temperature > 100)
-    .emit(alert_type: "HighTemperature", message: "Sensor {sensor_id} reading {temperature}°F")
+    .emit(alert_type: "HighTemperature", sensor_id: sensor_id, temperature: temperature)
 
 # Print to log
 stream TempLog = TemperatureReading
-    .print("Received: {sensor_id} = {temperature}")
+    .print("Received:", sensor_id, temperature)
 
 # Emit with severity
 stream CriticalAlerts = TemperatureReading
     .where(temperature > 150)
-    .emit(alert_type: "CriticalTemperature", message: "DANGER: {sensor_id} at {temperature}°F", severity: "critical")
+    .emit(alert_type: "CriticalTemperature", sensor_id: sensor_id, temperature: temperature, severity: "critical")
 ```
+
+Neither `.emit()` nor `.print()` fills in `{sensor_id}` inside a string: the
+braces come out as written. Emit values as fields, and give `.print()` the
+values as arguments, as here.
 
 ### Variables and Constants
 
@@ -142,11 +146,17 @@ var counter = 0
 const MAX_TEMP = 200
 const API_KEY = "secret123"
 
-# Use in streams
+# Use in streams: a literal, see below
 stream Alerts = TemperatureReading
-    .where(temperature > threshold)
-    .emit(alert_type: "High", message: "Above threshold")
+    .where(temperature > 100)
+    .emit(alert_type: "High", temperature: temperature)
 ```
+
+A top-level `let`, `const` or `var` passes `varpulis check` but is not visible
+inside a stream expression today: in `.where(temperature > threshold)` the name
+is read from the event, not from the `let`. On events without a `threshold`
+field the condition never holds; on an event that has one, it compares with
+that field. Write the value where the stream uses it.
 
 ### Comments
 
@@ -266,7 +276,7 @@ stream PerSensorStats = TemperatureReading
     .partition_by(sensor_id)
     .window(1m)
     .aggregate(
-        sensor: sensor_id,
+        sensor: last(sensor_id),
         avg_temp: avg(temperature),
         readings: count()
     )
@@ -276,7 +286,7 @@ stream CustomerTotals = Transaction
     .partition_by(customer_id)
     .window(1h)
     .aggregate(
-        customer: customer_id,
+        customer: last(customer_id),
         hourly_spend: sum(amount)
     )
 ```
@@ -312,7 +322,7 @@ stream HighVolumeMinutes = Transaction
         count: count()
     )
     .having(total > 10000 or count > 100)
-    .emit(alert_type: "HighVolume", message: "Minute had {count} transactions totaling {total}")
+    .emit(alert_type: "HighVolume", transactions: count, total: total)
 ```
 
 ---
@@ -339,19 +349,22 @@ stream Sessions = Login as l -> Logout where user_id == l.user_id
 ### Sequences with Conditions
 
 ```vpl
-# Events must match conditions
+# Events must match conditions: `where` follows the event type
 pattern FailedLogin =
-    LoginAttempt[status == "failed"] as first
-    -> LoginAttempt[status == "failed" and user_id == first.user_id] as second
-    -> LoginAttempt[status == "failed" and user_id == first.user_id] as third
+    LoginAttempt where status == "failed" as first
+    -> LoginAttempt where status == "failed" and user_id == first.user_id as second
+    -> LoginAttempt where status == "failed" and user_id == first.user_id as third
     within 5m
 
-stream BruteForceDetection = LoginAttempt[status == "failed"] as first
-    -> LoginAttempt[status == "failed" and user_id == first.user_id] as second
-    -> LoginAttempt[status == "failed" and user_id == first.user_id] as third
+stream BruteForceDetection = LoginAttempt where status == "failed" as first
+    -> LoginAttempt where status == "failed" and user_id == first.user_id as second
+    -> LoginAttempt where status == "failed" and user_id == first.user_id as third
     .within(5m)
-    .emit(alert_type: "BruteForce", message: "3 failed attempts for {first.user_id}")
+    .emit(alert_type: "BruteForce", user_id: first.user_id, attempts: 3)
 ```
+
+`.emit()` does not fill in `{first.user_id}` inside a string; emit the value as
+a field of its own, as here.
 
 ### Referencing Previous Events
 
@@ -360,14 +373,17 @@ Use aliases to reference earlier events in the sequence:
 ```vpl
 pattern PriceSpike =
     Trade as t1
-    -> Trade[symbol == t1.symbol and price > t1.price * 1.1] as t2
+    -> Trade where symbol == t1.symbol and price > t1.price * 1.1 as t2
     within 1m
 
 stream Spikes = Trade as t1
-    -> Trade[symbol == t1.symbol and price > t1.price * 1.1] as t2
+    -> Trade where symbol == t1.symbol and price > t1.price * 1.1 as t2
     .within(1m)
-    .emit(alert_type: "PriceSpike", message: "{t1.symbol} jumped from {t1.price} to {t2.price}")
+    .emit(alert_type: "PriceSpike", symbol: t1.symbol, from_price: t1.price, to_price: t2.price)
 ```
+
+AAPL at 100, 105, then 112 gives one spike, from 100 to 112: 112 is not 10%
+above 105.
 
 ### Temporal Constraints
 
@@ -378,107 +394,143 @@ Constrain how quickly events must occur:
 pattern QuickCheckout =
     CartAdd -> PaymentStart -> PaymentComplete
     within 5m
-
-# Different timeouts per step
-pattern SlowThenFast =
-    SlowEvent
-    -> FastEvent within 10s
-    -> FinalEvent within 5s
 ```
+
+`within` bounds the whole sequence, counted from its first event. A deadline
+per step is not available.
 
 ---
 
 ## Part 4: SASE+ Advanced
 
-SASE+ extends basic patterns with Kleene closures, negation, and logical operators.
+SASE+ extends basic patterns with Kleene closures and negation. VPL writes a
+closure `all X` and an absence `-> NOT X`; there is no `X+`, `X*`, `AND(...)` or
+`OR(...)` syntax, and the sections below show what to write instead.
 
-### Kleene Plus (`+`) - One or More
+### Kleene Plus (`all`) - One or More
 
 ```vpl
 # One or more failed logins followed by success
 pattern BruteForceSuccess =
-    LoginFailed+ -> LoginSuccess
+    all LoginFailed as fails
+    -> LoginSuccess as success
     within 10m
+    partition by user_id
 
-stream Attacks = LoginFailed+ -> LoginSuccess
-    .within(10m)
-    .emit(alert_type: "BruteForce", message: "Multiple failures followed by success")
+stream Attacks = BruteForceSuccess
+    .longest()
+    .emit(alert_type: "BruteForce", user: success.user_id, failures: count(fails))
 ```
 
-### Kleene Star (`*`) - Zero or More
+Matches come when the success arrives, and none come if it never does. With
+`.longest()` there is one per run, carrying the run's failures: each failure can
+start a run, so two failures then a success give two alerts, with 2 and 1
+failures. Under the default `.each()` the success brings one match per failure
+in each run instead. Add `.stnm()` before `.longest()` for one alert per attack:
+a failure that a run takes then opens no run of its own.
+
+### Zero or More
+
+There is no `X*`. A step skips the events before it, so `SessionStart ->
+SessionEnd` matches a session whether or not activity came in between; add
+`-> all Activity as acts` when you need that activity, and then at least one is
+required.
 
 ```vpl
-# Start, any number of middle events, then end
+# Start then end, whatever came in between
 pattern FullSession =
-    SessionStart -> Activity* -> SessionEnd
+    SessionStart as start
+    -> SessionEnd where user_id == start.user_id
     within 1h
-
-# Optional retries before success
-pattern WithRetries =
-    Request -> Retry* -> Success
-    within 30s
 ```
 
 ### Negation (`NOT`) - Absence of Event
 
+The negated step is `-> NOT X`, in a `pattern`, with its own `where`:
+
 ```vpl
 # Payment started but not completed
 pattern AbandonedPayment =
-    PaymentStart -> NOT(PaymentComplete) within 5m
+    PaymentStart as p
+    -> NOT PaymentComplete where payment_id == p.payment_id
+    within 5m
+    partition by payment_id
 
-stream Abandoned = PaymentStart -> NOT(PaymentComplete)
-    .within(5m)
-    .emit(alert_type: "Abandoned", message: "Payment started but not completed")
+stream Abandoned = AbandonedPayment
+    .emit(alert_type: "Abandoned", payment_id: p.payment_id)
 
 # Order without confirmation
 pattern UnconfirmedOrder =
-    OrderPlaced -> NOT(OrderConfirmed) within 1h
+    OrderPlaced as o
+    -> NOT OrderConfirmed where order_id == o.order_id
+    within 1h
+    partition by order_id
 ```
 
-### AND - Both Events (Any Order)
+The alert comes out when a later event moves the stream's time past the
+deadline, not on a wall clock; see
+[Absence](../language/operators.md#absence-not-b).
+
+### Both, in Any Order
+
+There is no `AND(A, B)`: write one sequence per order.
 
 ```vpl
-# Both A and B must occur (order doesn't matter)
-pattern BothRequired =
-    AND(DocumentUploaded, SignatureProvided)
-    within 1h
-
-stream Complete = AND(DocumentUploaded, SignatureProvided)
+stream UploadThenSign = DocumentUploaded as d
+    -> SignatureProvided where doc_id == d.doc_id as s
     .within(1h)
-    .emit(message: "Both document and signature received")
+    .emit(doc_id: d.doc_id)
+
+stream SignThenUpload = SignatureProvided as s
+    -> DocumentUploaded where doc_id == s.doc_id as d
+    .within(1h)
+    .emit(doc_id: s.doc_id)
 ```
 
-### OR - Either Event
+### Either Event
+
+There is no `OR(A, B)`: merge the two event types into one stream.
 
 ```vpl
 # Either payment method
-pattern PaymentReceived =
-    OR(CreditCardPayment, BankTransfer)
-
-stream Payments = OR(CreditCardPayment, BankTransfer)
-    .emit(message: "Payment received via {match.event_type}")
+stream Payments = merge(CreditCardPayment, BankTransfer)
+    .emit(order_id: order_id, amount: amount)
 ```
 
-### Complex Combinations
+### Combinations
+
+A sequence that must not see an event in between uses `.not()`, which cancels a
+run when that event arrives:
 
 ```vpl
-# (A followed by B) AND (C or D), all within 10 minutes
-pattern ComplexFlow =
-    (Start -> Middle) AND (OR(OptionA, OptionB))
-    within 10m
+# Order placed, items added, then shipped, with no cancellation in between
+stream SuccessfulOrder = OrderPlaced as o
+    -> all ItemAdded where order_id == o.order_id as items
+    -> OrderShipped where order_id == o.order_id as shipped
+    .within(24h)
+    .not(OrderCancelled where order_id == o.order_id)
+    .longest()
+    .emit(order_id: o.order_id, items: count(items))
+```
 
-# Multiple failures, then either success or lockout
-pattern AuthResult =
-    LoginFailed+ -> OR(LoginSuccess, AccountLocked)
+An order placed, given two items and shipped raises one alert with `items: 2`;
+the same order cancelled before shipping raises none.
+
+A step that accepts either of two outcomes is written once per outcome:
+
+```vpl
+# Multiple failures, then a success or a lockout
+pattern FailedThenSuccess =
+    all LoginFailed as fails
+    -> LoginSuccess as outcome
     within 15m
+    partition by user_id
 
-# Order placed, items added, no cancellation, then shipped
-pattern SuccessfulOrder =
-    OrderPlaced
-    -> ItemAdded+
-    -> NOT(OrderCancelled)
-    -> OrderShipped
-    within 24h
+pattern FailedThenLocked =
+    all LoginFailed as fails
+    -> AccountLocked as outcome
+    within 15m
+    partition by user_id
 ```
 
 ### Partition-By for Patterns
@@ -502,13 +554,21 @@ stream UserAttacks = UserFailures
 
 Join multiple event streams based on conditions.
 
+> **Joins do not run in the engine as it ships.** They parse and pass
+> `varpulis check`, but `varpulis simulate` and a Vejas detect unit run the
+> engine's synchronous path, which refuses a join when it loads the program:
+> `stream 'X' is a join, which the synchronous execution path does not
+> implement`. No shipped command runs the asynchronous path since the platform
+> was retired ([ADR-008](../adr/008-engine-only-platform-retired.md)). To correlate two event types today, use a
+> sequence, which runs everywhere: `A as a -> B where key == a.key as b` with
+> `.within(5m)`.
+
 ### Basic Join
 
 ```vpl
 stream EnrichedOrders = join(
     stream Orders = OrderEvent,
-    stream Customers = CustomerEvent
-        on Orders.customer_id == Customers.id
+    stream Customers = CustomerEvent.on(Orders.customer_id == Customers.id)
 )
 .window(5m)
 .select(
@@ -523,12 +583,9 @@ stream EnrichedOrders = join(
 ```vpl
 stream FullOrderDetails = join(
     stream Orders = OrderEvent,
-    stream Customers = CustomerEvent
-        on Orders.customer_id == Customers.id,
-    stream Products = ProductEvent
-        on Orders.product_id == Products.id,
-    stream Inventory = InventoryEvent
-        on Orders.product_id == Inventory.product_id
+    stream Customers = CustomerEvent.on(Orders.customer_id == Customers.id),
+    stream Products = ProductEvent.on(Orders.product_id == Products.id),
+    stream Inventory = InventoryEvent.on(Orders.product_id == Inventory.product_id)
 )
 .window(10m)
 .select(
@@ -544,8 +601,7 @@ stream FullOrderDetails = join(
 ```vpl
 stream CustomerStats = join(
     stream Orders = OrderEvent,
-    stream Customers = CustomerEvent
-        on Orders.customer_id == Customers.id
+    stream Customers = CustomerEvent.on(Orders.customer_id == Customers.id)
 )
 .window(1h)
 .aggregate(
@@ -578,6 +634,14 @@ stream AllSensors = merge(
 ## Part 6: Contexts
 
 Contexts let you run streams on dedicated OS threads for true multi-core parallelism.
+
+> **Contexts have no effect in the engine as it ships.** `context`
+> declarations and `.context(...)` parse and pass `varpulis check`, but the
+> threads and channels behind them belong to the engine's asynchronous runtime,
+> which neither `varpulis simulate` nor a Vejas detect unit includes (see
+> [ADR-008](../adr/008-engine-only-platform-retired.md)). A program with
+> contexts runs on one thread, exactly like the same program without them. In
+> Vejas, work runs in parallel as separate detect units.
 
 ### Declaring Contexts
 
@@ -674,7 +738,7 @@ stream DeviceAlerts = SensorReading
     .partition_by(device_id)
     .window(1m)
     .aggregate(avg_val: avg(value))
-    .having(avg_val > threshold)
+    .having(avg_val > 100)
 ```
 
 ### 3. Set Appropriate Timeouts
@@ -683,16 +747,16 @@ stream DeviceAlerts = SensorReading
 # Don't wait forever for patterns
 pattern QuickMatch = A -> B -> C within 5m
 
-# Different timeouts for different patterns
-pattern SlowProcess = Start -> Middle within 1h -> End within 10m
+# Different timeouts for different patterns (one `within` per pattern)
+pattern SlowProcess = Start -> Middle -> End within 1h
 ```
 
 ### 4. Use Aliases for Clarity
 
 ```vpl
 pattern ClearPattern =
-    LoginFailed[user_id == "admin"] as failed_login
-    -> LoginSuccess[user_id == failed_login.user_id] as success
+    LoginFailed where user_id == "admin" as failed_login
+    -> LoginSuccess where user_id == failed_login.user_id as success
     within 10m
 ```
 
@@ -730,12 +794,14 @@ varpulis simulate -p program.vpl -e test_events.evt --verbose
 | Operator | Meaning | Example |
 |----------|---------|---------|
 | `->` | Followed by | `A -> B -> C` |
-| `+` | One or more | `A+` |
-| `*` | Zero or more | `A*` |
-| `NOT` | Absence | `NOT(A)` |
-| `AND` | Both (any order) | `AND(A, B)` |
-| `OR` | Either | `OR(A, B)` |
-| `within` | Time constraint | `within 5m` |
+| `all` | One or more | `A -> all B as bs -> C` |
+| `-> NOT` | Absence before the deadline (in a `pattern`) | `A as a -> NOT B where id == a.id within 1h` |
+| `.not()` | Cancel the run if this event arrives | `.not(B where id == a.id)` |
+| `where` | Condition on a step | `A where amount > 100 as a` |
+| `within` | Time constraint for the whole sequence | `within 5m` |
+
+There is no `A+`, `A*`, `AND(A, B)` or `OR(A, B)`; see
+[SASE+ Advanced](#part-4-sase-advanced) for what to write instead.
 
 ### Duration Units
 
