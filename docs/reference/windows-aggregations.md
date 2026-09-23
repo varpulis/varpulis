@@ -26,9 +26,15 @@ which after a successful logon may never happen.
   longer, for events that arrive late.
 - At the end of a bounded input (`varpulis simulate`), every window closes.
 
-A window whose types no later event follows stays open: nothing tells the
-program that time has passed. If a source can go quiet, have it send a
-periodic heartbeat event of the same type.
+A live host can also let time pass when a source goes quiet: with an idle
+grace set (`Program::set_idle_grace`; a Vejas detect unit sets
+`VEJAS_IDLE_CLOSE_SECS`, 60 seconds by default), a type that has sent
+nothing for the grace has its event time move on with the wall clock, less
+the grace, and the host calls `Program::tick()` while nothing arrives. A
+brute force on a sparse source is then raised about a grace after its window
+ends. The type's clock is kept in the program's snapshot, so a restarted
+host picks up where it was. `varpulis simulate` sets no grace: a replay is
+judged in event time alone, and gives the same alerts however fast it runs.
 
 This is the synchronous engine, the one `varpulis simulate` and a Vejas
 detect unit run. The legacy asynchronous runtime still closes a window when

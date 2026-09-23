@@ -1283,6 +1283,12 @@ pub struct EngineCheckpoint {
     /// 2PC'd sink output and the re-consumed input are aligned end-to-end.
     #[serde(default)]
     pub source_offsets: HashMap<String, HashMap<i32, i64>>,
+    /// Each input event type's event-time clock (nanoseconds since the
+    /// epoch): the latest timestamp read of that type. Restored, it lets the
+    /// windows the snapshot holds close on time even when their sources have
+    /// nothing more to say.
+    #[serde(default)]
+    pub source_clocks: HashMap<String, i64>,
 }
 
 impl EngineCheckpoint {

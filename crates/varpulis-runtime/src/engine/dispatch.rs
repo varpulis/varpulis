@@ -550,7 +550,11 @@ impl Engine {
         }
 
         // Then every window the batch moved the clocks past closes, upstream
-        // first, whichever stream or partition its last event belonged to.
+        // first, whichever stream or partition its last event belonged to;
+        // with an idle grace, a type gone quiet has moved on too.
+        if self.idle_grace.is_some() {
+            self.advance_quiet_sources(std::time::Instant::now());
+        }
         self.close_windows_into(CloseAt::Clock, &mut emitted_batch)?;
 
         // Send all emitted events in batch (non-blocking to avoid async overhead)
@@ -575,6 +579,96 @@ impl Engine {
                     .insert(event.event_type.to_string(), event.timestamp);
             }
         }
+        if self.idle_grace.is_some() {
+            let now = std::time::Instant::now();
+            match self.source_seen.get_mut(&*event.event_type) {
+                Some((latest, seen_at)) => {
+                    if event.timestamp > *latest {
+                        *latest = event.timestamp;
+                    }
+                    *seen_at = now;
+                }
+                None => {
+                    self.source_seen
+                        .insert(event.event_type.to_string(), (event.timestamp, now));
+                }
+            }
+        }
+    }
+
+    /// For a live host: once an input event type has sent nothing for
+    /// `grace` of wall-clock time, its event time moves on with the wall
+    /// clock, less the grace (events still in flight may be that late), so
+    /// the windows it feeds close even when it has nothing more to say. A
+    /// brute force on a sparse source is then raised about a grace after its
+    /// window ends, instead of whenever that source speaks again.
+    ///
+    /// `None`, the default, judges a program in event time alone, which a
+    /// replay needs: the same events give the same alerts however fast they
+    /// are fed. [`Self::tick_sync_at`] applies it while nothing arrives.
+    pub fn set_idle_grace(&mut self, grace: Option<std::time::Duration>) {
+        self.idle_grace = grace;
+        if grace.is_none() {
+            self.source_seen.clear();
+        }
+        self.seed_quiet_sources();
+    }
+
+    /// Start counting silence from now for every type whose clock is known
+    /// but that has not been read since (a restored snapshot, a grace just
+    /// set).
+    pub(super) fn seed_quiet_sources(&mut self) {
+        if self.idle_grace.is_none() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        for (source, clock) in &self.source_clocks {
+            self.source_seen
+                .entry(source.clone())
+                .or_insert((*clock, now));
+        }
+    }
+
+    /// Move the clock of every type that has been quiet past the grace to
+    /// its latest event time plus the silence beyond the grace, as of `now`.
+    fn advance_quiet_sources(&mut self, now: std::time::Instant) {
+        let Some(grace) = self.idle_grace else {
+            return;
+        };
+        for (source, (latest, seen_at)) in &self.source_seen {
+            let silent = now.saturating_duration_since(*seen_at);
+            let Some(beyond) = silent.checked_sub(grace) else {
+                continue;
+            };
+            let Ok(beyond) = chrono::Duration::from_std(beyond) else {
+                continue;
+            };
+            let moved = *latest + beyond;
+            match self.source_clocks.get_mut(source) {
+                Some(clock) => {
+                    if moved > *clock {
+                        *clock = moved;
+                    }
+                }
+                None => {
+                    self.source_clocks.insert(source.clone(), moved);
+                }
+            }
+        }
+    }
+
+    /// Close, as of `now`, the windows that time has closed while nothing
+    /// arrived: with an idle grace set, a quiet type's event time has moved
+    /// on (see [`Self::set_idle_grace`]). A live host calls it when it has
+    /// had nothing to feed for a while; without a grace it only closes what
+    /// the clocks already passed. What is emitted is collected like the
+    /// output of a batch.
+    pub fn tick_sync_at(
+        &mut self,
+        now: std::time::Instant,
+    ) -> Result<(), super::error::EngineError> {
+        self.advance_quiet_sources(now);
+        self.close_windows_sync(CloseAt::Clock)
     }
 
     /// The streams holding a time window, upstream first, so that what a

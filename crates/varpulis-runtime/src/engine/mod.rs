@@ -132,6 +132,12 @@ pub struct Engine {
     /// passed its end (plus the out-of-orderness its stream declares), on any
     /// event of those types, not only one that reaches the window.
     pub(super) source_clocks: FxHashMap<String, DateTime<Utc>>,
+    /// For a live host: how long a source may send nothing before its event
+    /// time moves on with the wall clock (see [`Self::set_idle_grace`]).
+    pub(super) idle_grace: Option<std::time::Duration>,
+    /// Per input event type, the latest event time read and the wall-clock
+    /// instant it was read at; kept only while an idle grace is set.
+    pub(super) source_seen: FxHashMap<String, (DateTime<Utc>, std::time::Instant)>,
     /// The streams holding a time window, upstream first, with the types
     /// feeding them; `None` once the streams have changed.
     pub(super) window_close_order: Option<Arc<[dispatch::WindowCloser]>>,
@@ -321,6 +327,8 @@ impl Engine {
             watermark_tracker: None,
             last_applied_watermark: None,
             source_clocks: FxHashMap::default(),
+            idle_grace: None,
+            source_seen: FxHashMap::default(),
             window_close_order: None,
             window_out_of_order: FxHashMap::default(),
             late_data_configs: FxHashMap::default(),
@@ -376,6 +384,8 @@ impl Engine {
                 watermark_tracker: None,
                 last_applied_watermark: None,
                 source_clocks: FxHashMap::default(),
+                idle_grace: None,
+                source_seen: FxHashMap::default(),
                 window_close_order: None,
                 window_out_of_order: FxHashMap::default(),
                 late_data_configs: FxHashMap::default(),
@@ -2103,6 +2113,13 @@ impl Engine {
             distinct_states,
             limit_states,
             source_offsets,
+            source_clocks: self
+                .source_clocks
+                .iter()
+                .filter_map(|(source, clock)| {
+                    clock.timestamp_nanos_opt().map(|ns| (source.clone(), ns))
+                })
+                .collect(),
         }
     }
 
@@ -2220,6 +2237,15 @@ impl Engine {
                     .and_then(DateTime::from_timestamp_millis);
             }
         }
+
+        for (source, ns) in &cp.source_clocks {
+            let clock = DateTime::from_timestamp_nanos(*ns);
+            let known = self.source_clocks.entry(source.clone()).or_insert(clock);
+            if clock > *known {
+                *known = clock;
+            }
+        }
+        self.seed_quiet_sources();
 
         info!(
             "Engine restored: {} events processed, {} streams with state (schema v{})",
