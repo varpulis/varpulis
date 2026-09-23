@@ -1458,3 +1458,39 @@ fn e052_a_pattern_the_engine_compiles_is_not_reported() {
     let d = validate_vpl(src);
     assert!(!has_code(&d, "E052"), "{d:?}");
 }
+
+#[test]
+fn a_backticked_field_name_is_a_field_like_any_other() {
+    let src = "stream WebShell = Proxy\n    .where(`cs-method` == 'POST' and contains(lower(`cs-uri-query`), 'cmd='))\n    .emit(query: `cs-uri-query`)\n\nstream Seq = Login as l\n    -> Proxy where `c-ip` == l.ip as p\n    .within(1m)\n    .emit(q: p.`cs-uri-query`)\n";
+    let d = validate_vpl(src);
+    assert!(has_no_errors(&d), "{d:?}");
+}
+
+// =============================================================================
+// E050 in the expressions a stream evaluates
+// =============================================================================
+
+#[test]
+fn e050_an_unknown_function_is_reported_where_rules_are_written() {
+    // A misspelled function answers nothing at run time: the rule loads,
+    // runs and never fires. The check used to look only at `let` values.
+    for src in [
+        "stream R = T\n    .where(ends_wiht(lower(Image), '\\\\x.exe'))\n    .emit(i: Image)\n",
+        "stream R = T\n    .where(Image == 'x')\n    .emit(i: to_lower(Image))\n",
+        "stream R = S as s\n    -> T where regexp_match(Image, 'x') as t\n    .within(1m)\n    .emit(i: t.Image)\n",
+        "stream R = T\n    .window(5)\n    .aggregate(n: count())\n    .having(countt() > 3)\n    .emit(n: n)\n",
+    ] {
+        let d = validate_vpl(src);
+        assert!(has_error(&d, "E050"), "no E050 for:\n{src}\n{d:?}");
+    }
+}
+
+#[test]
+fn e050_every_function_the_engine_evaluates_is_known() {
+    let src = "fn twice(x: int) -> int:\n    return x * 2\n\nstream R = T\n    .where(ends_with(lower(Image), '\\\\x.exe') and not is_null(User) and regex_match(CommandLine, 'a+') and contains(upper(Image), 'X'))\n    .emit(i: coalesce(Image, 'none'), n: len(split(CommandLine, ' ')), t: twice(to_int(Pid)), s: substring(Image, 0, 3), r: round(abs(to_float(Pid))))\n";
+    let d = validate_vpl(src);
+    assert!(!has_code(&d, "E050"), "{d:?}");
+    let src = "stream R = T\n    .window(5)\n    .aggregate(n: count(), u: count_distinct(User), a: avg(Size))\n    .having(n > 3)\n    .emit(n: n, u: u)\n";
+    let d = validate_vpl(src);
+    assert!(!has_code(&d, "E050"), "{d:?}");
+}

@@ -464,6 +464,7 @@ fn check_stream_ops(
 
     if let StreamSource::IdentWithFilterAndAlias { filter, .. } = source {
         check_regex_literals(v, filter, span);
+        check_expr_functions(v, filter, span);
     }
 
     for (op_idx, op) in ops.iter().enumerate() {
@@ -471,6 +472,9 @@ fn check_stream_ops(
         let op_span = op_spans.get(op_idx).copied().unwrap_or(span);
         for expr in op_expressions(op) {
             check_regex_literals(v, expr, op_span);
+            // A function the engine does not know answers nothing: the rule
+            // would load, run and never fire (E050).
+            check_expr_functions(v, expr, op_span);
         }
         match op {
             // --- Unimplemented operations (E090) ---

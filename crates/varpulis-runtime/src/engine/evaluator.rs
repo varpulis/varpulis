@@ -870,6 +870,9 @@ fn eval_args(
 ) -> Vec<Value> {
     args.iter()
         .map(|arg| match arg {
+            // A lambda is read by the method that takes it, from the raw
+            // arguments; as a value it is nothing.
+            varpulis_core::ast::Arg::Positional(Expr::Lambda { .. }) => Value::Null,
             varpulis_core::ast::Arg::Positional(e) | varpulis_core::ast::Arg::Named(_, e) => {
                 eval_expr_with_functions(e, event, ctx, functions, bindings).unwrap_or(Value::Null)
             }
@@ -1506,7 +1509,38 @@ pub fn eval_expr_with_functions(
                 eval_expr_with_functions(else_branch, event, ctx, functions, bindings)
             }
         }
-        _ => eval_filter_expr(expr, event, ctx),
+        Expr::Timestamp(ns) => Some(Value::Timestamp(*ns)),
+        // `a?.b` is `a.b`: member access here already answers nothing, rather
+        // than failing, when `a` is missing or null.
+        Expr::OptionalMember {
+            expr: object,
+            member,
+        } => eval_expr_with_functions(
+            &Expr::Member {
+                expr: object.clone(),
+                member: member.clone(),
+            },
+            event,
+            ctx,
+            functions,
+            bindings,
+        ),
+        Expr::Block { stmts, result } => {
+            let mut local = bindings.clone();
+            for (name, _ty, value, _mutable) in stmts {
+                if let Some(v) = eval_expr_with_functions(value, event, ctx, functions, &local) {
+                    local.insert(name.clone(), v);
+                }
+            }
+            eval_expr_with_functions(result, event, ctx, functions, &local)
+        }
+        // A lambda is not a value: `filter` and `map` read it from their raw
+        // arguments. This match lists every kind of expression and has no
+        // fallback on purpose; the one it had called the evaluator again with
+        // the same expression, so any kind not listed recursed until the
+        // stack overflowed and the process aborted (`arr.filter(x => ...)`,
+        // `a?.b` and timestamp literals all did).
+        Expr::Lambda { .. } => None,
     }
 }
 

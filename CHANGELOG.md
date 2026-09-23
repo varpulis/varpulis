@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed — rules that ran and never fired
 
+- A Kleene closure followed by another step (`A -> all B -> C`) matched
+  before C. Under the default `.each()` the engine emitted a complete match at
+  every B, as if the closure ended the pattern, then dropped the run when C
+  arrived. The shipped brute-force rule raised 6 critical "brute force
+  succeeded" alerts for 4 failed logins and no success, and none for the
+  success; the card-testing example alerted on small purchases before any
+  large one. `.each()` now emits once per closure event when C arrives, each
+  match holding the closure as it stood at that event; a closure that ends the
+  pattern still emits as it grows. The rule itself now uses `.longest()`, one
+  alert per failure that could have opened the attack.
+- A program that evaluated `arr.filter(x => ...)` or `arr.map(x => ...)`
+  (both documented), `a?.b` or a timestamp literal
+  aborted the whole process with a stack overflow: the evaluator's fallback
+  for a kind of expression it did not list called the evaluator again with the
+  same expression. An abort is not a panic, so a host running several units
+  (Vejas) went down with all of them. A lambda whose body is a block
+  (`x => { let y = x * 2 ... }`) now evaluates too. Every kind is now listed, with no
+  fallback, so a new one is a compile error instead.
 - A condition on a field the event does not carry is false in `.where()`, as
   it always was in a `->` sequence step. `a == "x" or ends_with(b, "y")` used
   to fire only on events that had a `b`, `selection and not filter` dropped
@@ -33,6 +51,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `coalesce`, `unique` and `clamp` were documented as implemented and were
   not; they are now. `now()` was documented and never existed; the table no
   longer lists it (a rule runs on the time its events carry).
+- `varpulis check` reports a function it does not know wherever a stream
+  evaluates one (**E050**): `.where()`, `.emit()`, `.having()`, a `->` step's
+  filter. It only looked at `let` values, so `ends_wiht(Image, ...)` checked
+  "ok" and never matched. Its list of built-ins is now the evaluator's, kept
+  so by a test in both directions: it listed `to_lower`, `concat`, `now`,
+  which the engine never evaluated, and did not know `lower`, `is_null`,
+  `substring` or `regex_match`. Three shipped examples called `now()` and
+  `str()`, which never existed; they now use the event's own timestamp and
+  `to_string()`.
+- The builtins table no longer lists `flatten` and `arr.min()`/`arr.max()`
+  as implemented; outside `.pattern()` lambdas they answered nothing.
 
 ### Added
 
@@ -40,6 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backslash, even last (`'\AppData\Local\Temp\'`, which a double-quoted
   string cannot end with), and `''` is one quote. The type documentation had
   listed `'world'` as a string all along; the parser refused it.
+- A field whose name is not an identifier is written between backticks,
+  wherever an expression reads a field: `` `cs-uri-query` ``, `` p.`sc-status` ``.
+  Web and proxy logs name their fields that way (W3C extended format), and a
+  rule over them could not be written before.
 - `regex_match(s, pattern)` / `s.regex_match(pattern)`, with Rust `regex`
   syntax: linear time, no look-around or back-references, each pattern
   compiled once per thread. `varpulis check` reports a literal pattern that

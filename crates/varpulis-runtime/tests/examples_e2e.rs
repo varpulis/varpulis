@@ -227,7 +227,9 @@ const EXAMPLE_CASES: &[(&str, &str, usize)] = &[
     (
         "examples/vpl-by-example/16_partition_by_patterns.vpl",
         "examples/vpl-by-example/16_partition_by_patterns.evt",
-        4,
+        // Was 4: the fourth alerted on bob, who never logged in successfully
+        // (a closure followed by a step emitted before the step arrived).
+        3,
     ),
     (
         "examples/vpl-by-example/17_reusable_patterns.vpl",

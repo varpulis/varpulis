@@ -708,8 +708,9 @@ impl SaseEngine {
             }
         }
 
-        // For Each mode, emit immediately with current bindings
-        if mode == EmissionMode::Each {
+        // For Each mode, emit immediately with current bindings, when the
+        // closure ends the pattern
+        if mode == EmissionMode::Each && state.has_epsilon_to_accept {
             return Some(MatchResult {
                 captured: run.captured.clone(),
                 stack: run.stack.clone(),

@@ -7,7 +7,7 @@ use super::enumeration::enumerate_with_filter;
 use super::kleene::{KleeneCapture, KleeneLimits};
 use super::nfa::{Nfa, State, StateType};
 use super::predicate::{eval_predicate, event_matches_state, predicate_references_alias};
-use super::types::Predicate;
+use super::types::{Predicate, StackEntry};
 
 /// Checks whether `prev` carries every field referenced by `alias.X` in `pred`.
 /// Used to decide whether to fall back to "skip predicate" semantics on the
@@ -143,7 +143,10 @@ fn complete_run(
     limits: KleeneLimits,
     evaluator: Option<&dyn ExprEvaluator>,
     mode: EmissionMode,
+    nfa: &Nfa,
 ) -> RunAdvanceResult {
+    // Only a closure that ends the pattern emits while it accumulates.
+    let emitted_while_accumulating = nfa.has_final_kleene();
     // Deferred predicate forces enumeration regardless of mode.
     if let Some(ref kc) = run.kleene_capture {
         if kc.deferred_predicate.is_some() {
@@ -162,7 +165,15 @@ fn complete_run(
         // CompleteAndContinue during accumulation — drain silently to avoid
         // duplicating. If there was no Kleene (regular sequence pattern),
         // emit the single final match normally.
-        EmissionMode::Each if has_kleene_capture => RunAdvanceResult::Drained,
+        // Only a closure that ends the pattern emits while it accumulates;
+        // after `A -> all B -> C` the match exists once C has arrived, and
+        // it is emitted then, once per closure event.
+        EmissionMode::Each if has_kleene_capture && emitted_while_accumulating => {
+            RunAdvanceResult::Drained
+        }
+        EmissionMode::Each if has_kleene_capture => {
+            RunAdvanceResult::CompleteMulti(each_closure_event(run, nfa.followed_closure_alias()))
+        }
         EmissionMode::Each => RunAdvanceResult::Complete(MatchResult {
             kleene_truncated: kleene_truncated_count(run),
             enumeration_truncated: false,
@@ -191,6 +202,61 @@ fn complete_run(
             duration: run.started_at.elapsed(),
         }),
     }
+}
+
+/// `.each()` for a closure followed by another step (`A -> all B -> C`): one
+/// match per closure event, emitted when the pattern completes, each with the
+/// closure as it stood at that event (so `count(b)` is 1, 2, ... n) and every
+/// step after it. It used to emit these while the closure accumulated, before
+/// C had arrived or whether it ever would.
+///
+/// The closure's alias comes from the NFA, not from the capture: a capture
+/// restored from a snapshot does not carry it, and a restored run must emit
+/// what the live one would have.
+fn each_closure_event(run: &mut Run, closure_alias: Option<&str>) -> Vec<MatchResult> {
+    let alias = closure_alias.map(str::to_string);
+    let kleene_truncated = kleene_truncated_count(run);
+    let duration = run.started_at.elapsed();
+    let stack = std::mem::take(&mut run.stack);
+    let captured = std::mem::take(&mut run.captured);
+    let closure: Vec<usize> = match &alias {
+        Some(a) => stack
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.alias.as_deref() == Some(a.as_str()))
+            .map(|(i, _)| i)
+            .collect(),
+        None => Vec::new(),
+    };
+    let (Some(alias), false) = (alias, closure.is_empty()) else {
+        return vec![MatchResult {
+            kleene_truncated,
+            enumeration_truncated: false,
+            captured,
+            stack,
+            duration,
+        }];
+    };
+    closure
+        .iter()
+        .map(|&upto| {
+            let stack_upto: Vec<StackEntry> = stack
+                .iter()
+                .enumerate()
+                .filter(|(i, e)| e.alias.as_deref() != Some(alias.as_str()) || *i <= upto)
+                .map(|(_, e)| e.clone())
+                .collect();
+            let mut captured_upto = captured.clone();
+            captured_upto.insert(alias.clone(), Arc::clone(&stack[upto].event));
+            MatchResult {
+                kleene_truncated,
+                enumeration_truncated: false,
+                captured: captured_upto,
+                stack: stack_upto,
+                duration,
+            }
+        })
+        .collect()
 }
 
 /// PERF-01: Optimized version that takes SharedEvent to avoid redundant cloning.
@@ -243,7 +309,7 @@ pub(crate) fn advance_run_shared(
 
     // Check if we're at an accept state
     if current_state.state_type == StateType::Accept {
-        return complete_run(run, limits, evaluator, mode);
+        return complete_run(run, limits, evaluator, mode, nfa);
     }
 
     // KLEENE SELF-LOOP: accumulate additional events matching the Kleene state.
@@ -319,10 +385,12 @@ pub(crate) fn advance_run_shared(
         }
 
         // Dispatch on emission mode:
-        // - Each: emit immediately with current bindings (one match per Kleene event)
+        // - Each: emit immediately with current bindings (one match per Kleene
+        //   event), when the closure ends the pattern; a closure followed by
+        //   another step is no match until that step arrives
         // - Longest/Subsets: silent — emit at terminator/break
         match mode {
-            EmissionMode::Each => {
+            EmissionMode::Each if current_state.has_epsilon_to_accept => {
                 return RunAdvanceResult::CompleteAndContinue(MatchResult {
                     kleene_truncated: kleene_truncated_count(run),
                     enumeration_truncated: false,
@@ -331,7 +399,7 @@ pub(crate) fn advance_run_shared(
                     duration: run.started_at.elapsed(),
                 });
             }
-            EmissionMode::Longest | EmissionMode::Subsets => {
+            EmissionMode::Each | EmissionMode::Longest | EmissionMode::Subsets => {
                 return RunAdvanceResult::Continue;
             }
         }
@@ -346,7 +414,7 @@ pub(crate) fn advance_run_shared(
         && current_state.has_epsilon_to_accept
         && !run.captured.is_empty()
     {
-        return complete_run(run, limits, evaluator, mode);
+        return complete_run(run, limits, evaluator, mode, nfa);
     }
 
     // Check transitions
@@ -433,7 +501,7 @@ pub(crate) fn advance_run_shared(
             run.push_at(Arc::clone(&event), next_state.alias.clone(), now);
 
             if next_state.state_type == StateType::Accept {
-                return complete_run(run, limits, evaluator, mode);
+                return complete_run(run, limits, evaluator, mode, nfa);
             }
 
             // Arrive at a negated step now rather than on the next event.
@@ -475,9 +543,10 @@ pub(crate) fn advance_run_shared(
                     }
                 }
 
-                // Dispatch on emission mode for the first Kleene entry
+                // Dispatch on emission mode for the first Kleene entry (Each
+                // emits only when the closure ends the pattern)
                 match mode {
-                    EmissionMode::Each => {
+                    EmissionMode::Each if next_state.has_epsilon_to_accept => {
                         return RunAdvanceResult::CompleteAndContinue(MatchResult {
                             kleene_truncated: kleene_truncated_count(run),
                             enumeration_truncated: false,
@@ -486,7 +555,7 @@ pub(crate) fn advance_run_shared(
                             duration: run.started_at.elapsed(),
                         });
                     }
-                    EmissionMode::Longest | EmissionMode::Subsets => {
+                    EmissionMode::Each | EmissionMode::Longest | EmissionMode::Subsets => {
                         return RunAdvanceResult::Continue;
                     }
                 }
@@ -501,7 +570,7 @@ pub(crate) fn advance_run_shared(
         let eps_state = &nfa.states[eps_id];
 
         if eps_state.state_type == StateType::Accept {
-            return complete_run(run, limits, evaluator, mode);
+            return complete_run(run, limits, evaluator, mode, nfa);
         }
 
         for &next_id in &eps_state.transitions {
@@ -511,7 +580,7 @@ pub(crate) fn advance_run_shared(
                 run.push_at(Arc::clone(&event), next_state.alias.clone(), now);
 
                 if next_state.state_type == StateType::Accept {
-                    return complete_run(run, limits, evaluator, mode);
+                    return complete_run(run, limits, evaluator, mode, nfa);
                 }
 
                 enter_negation_if_next(nfa, run);
@@ -602,7 +671,7 @@ fn advance_and_state(
             // Check if join state is accept
             let join_state = &nfa.states[config.join_state];
             if join_state.state_type == StateType::Accept {
-                return complete_run(run, limits, evaluator, mode);
+                return complete_run(run, limits, evaluator, mode, nfa);
             }
         }
 

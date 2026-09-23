@@ -51,6 +51,26 @@ stream FilteredTrades = Trades
     .where(exchange == "NYSE" or exchange == "NASDAQ")
 ```
 
+### Field names that are not identifiers
+
+A field is read by its name, and a name is letters, digits and underscores. Web
+servers and proxies log in the W3C extended format, whose fields are called
+`cs-uri-query` or `sc-status`; write such a name between backticks, wherever
+an expression reads a field, bare or after a dot:
+
+```vpl
+stream WebShellProbe = Proxy
+    .where(`cs-method` == 'POST' and contains(lower(`cs-uri-query`), 'cmd='))
+    .emit(client: `c-ip`, query: `cs-uri-query`)
+
+stream LoginThenProbe = Login as l
+    -> Proxy where `c-ip` == l.ip as p
+    .within(10m)
+    .emit(user: l.user, query: p.`cs-uri-query`)
+```
+
+The names you give (streams, emitted fields, aggregates) stay identifiers.
+
 ### Stream with Projection
 
 ```varpulis

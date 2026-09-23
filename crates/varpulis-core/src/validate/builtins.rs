@@ -1,6 +1,12 @@
 //! Static registries of builtin and aggregate functions.
 
 /// Builtin scalar functions available in VPL expressions.
+///
+/// Exactly the names the engine evaluates (`eval_builtin_function` in
+/// varpulis-runtime, plus the functions over a sequence's captured events). A
+/// name listed here and not evaluated there would check "ok" and answer
+/// nothing at run time; a test in varpulis-runtime (`builtin_names.rs`) keeps
+/// the two in step.
 pub static BUILTIN_FUNCTIONS: &[&str] = &[
     // Math
     "abs",
@@ -9,48 +15,64 @@ pub static BUILTIN_FUNCTIONS: &[&str] = &[
     "ceil",
     "round",
     "log",
+    "log10",
+    "exp",
+    "pow",
+    "sin",
+    "cos",
+    "tan",
     "min",
     "max",
     "clamp",
     // String
     "len",
     "trim",
-    "to_upper",
-    "to_lower",
+    "lower",
+    "lowercase",
+    "upper",
+    "uppercase",
     "contains",
     "starts_with",
     "ends_with",
+    "regex_match",
     "replace",
     "split",
     "join",
-    "concat",
+    "substring",
+    "reverse",
     // Collection
     "first",
     "last",
     "push",
     "pop",
-    "reverse",
     "sort",
     "unique",
-    "flatten",
-    "zip",
     "range",
     "keys",
     "values",
-    // Type conversion
+    "get",
+    "set",
+    "sum",
+    "avg",
+    // Type conversion and checks
     "to_string",
     "to_int",
     "to_float",
     "type_of",
-    // Time
-    "now",
-    "timestamp",
-    "format",
-    "parse",
+    "is_null",
+    "is_int",
+    "is_float",
+    "is_string",
+    "is_bool",
+    "is_array",
+    "is_map",
     // Utility
-    "print",
     "coalesce",
-    "if_null",
+    // Over a sequence's captured events: count(alias), distinct_count(a.f),
+    // collect(a.f); first/last/sum/avg/min/max above take an alias too
+    "count",
+    "distinct_count",
+    "collect",
 ];
 
 /// Aggregate functions used in `.aggregate()` operations.
