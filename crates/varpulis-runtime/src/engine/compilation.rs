@@ -37,6 +37,15 @@ use crate::window::{
 /// real detection window and still only tens of megabytes if genuinely filled.
 const MAX_COUNT_WINDOW_EVENTS: u64 = 10_000_000;
 
+/// Whether a sequence step naming this stream can read the stream's source
+/// directly, with the stream's filter as the step's predicate: only when the
+/// stream does nothing but filter, once. Read that way, a window or an
+/// aggregate would give the step its raw events instead of its results, and
+/// a second `.where()` would be lost.
+fn filters_only(stream: &StreamDefinition) -> bool {
+    matches!(stream.operations.as_slice(), [] | [RuntimeOp::WhereExpr(_)])
+}
+
 impl Engine {
     pub(super) fn register_stream(
         &mut self,
@@ -502,16 +511,17 @@ impl Engine {
 
         // Helper closure to resolve a stream/event name to the underlying event type
         let resolve_event_type = |name: &str| -> String {
-            if let Some(stream_def) = self.streams.get(name) {
-                // This is a registered stream - get its underlying event type
-                match &stream_def.source {
+            match self.streams.get(name) {
+                // A stream that only filters is read at its source, its
+                // filter becoming the step's predicate.
+                Some(stream_def) if filters_only(stream_def) => match &stream_def.source {
                     RuntimeSource::EventType(et) => et.clone(),
                     RuntimeSource::Stream(s) => s.clone(),
                     _ => name.to_string(),
-                }
-            } else {
-                // Not a registered stream - use as-is (it's an event type)
-                name.to_string()
+                },
+                // Any other stream is read by what it outputs, under its own
+                // name; an event type is itself.
+                _ => name.to_string(),
             }
         };
 
@@ -1827,6 +1837,12 @@ impl Engine {
             // Create stream resolver for derived streams
             let stream_resolver = |name: &str| -> Option<compiler::DerivedStreamInfo> {
                 let stream_def = self.streams.get(name)?;
+                // Only a stream that does nothing but filter can be read at
+                // its source; any other (a window, an aggregate, a second
+                // filter...) is read by what it outputs, under its own name.
+                if !filters_only(stream_def) {
+                    return None;
+                }
 
                 // Extract event type from the stream source
                 let event_type = match &stream_def.source {
