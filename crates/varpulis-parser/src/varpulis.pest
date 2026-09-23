@@ -524,8 +524,11 @@ literal = {
 
 integer = @{ ASCII_DIGIT+ }
 float = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)? }
-string = @{ "\"" ~ string_content ~ "\"" }
+string = @{ "\"" ~ string_content ~ "\"" | "'" ~ raw_string_content ~ "'" }
 string_content = { (!("\"" | "\\") ~ ANY | "\\" ~ ANY)* }
+// Single-quoted strings are raw, as in Sigma's YAML: a backslash is only a
+// backslash, even last ('\Temp\'), and '' stands for one quote.
+raw_string_content = { ("''" | !"'" ~ ANY)* }
 // Duration must match before integer to avoid "5" being parsed as int leaving "s" orphaned
 duration = @{ ASCII_DIGIT+ ~ ("ns" | "us" | "ms" | "s" | "m" | "h" | "d") }
 timestamp = @{ "@" ~ ASCII_DIGIT{4} ~ "-" ~ ASCII_DIGIT{2} ~ "-" ~ ASCII_DIGIT{2} ~ 

@@ -379,17 +379,30 @@ fn format_includes_error_info() {
 
 #[test]
 fn undeclared_event_type_warning() {
+    // A program that declares its event types is closed: an undeclared name
+    // is an error (E033, promoted from W030).
+    let diags = validate_vpl(
+        r"
+        event Declared:
+            value: int
+
+        stream S = NonExistentEvent
+            .where(value > 0)
+    ",
+    );
+    assert!(
+        has_error(&diags, "E033"),
+        "Undeclared event error: {diags:?}"
+    );
+
+    // One that declares none is open, as the engine is.
     let diags = validate_vpl(
         r"
         stream S = NonExistentEvent
             .where(value > 0)
     ",
     );
-    // E033 errors on undeclared event types (promoted from W030)
-    assert!(
-        has_error(&diags, "E033"),
-        "Undeclared event error: {diags:?}"
-    );
+    assert!(!has_error(&diags, "E033"), "open program: {diags:?}");
 }
 
 // =============================================================================

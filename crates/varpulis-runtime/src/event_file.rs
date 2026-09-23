@@ -454,11 +454,13 @@ impl EventFileParser {
 
     /// Parse a JSONL line.
     ///
-    /// Supports two formats:
+    /// Supports three formats, tried in this order:
     /// 1. **Varpulis native**: `{"event_type": "X", "data": {...}}`
-    /// 2. **Sysmon / flat JSONL**: `{"EventID": 1, "Channel": "...", "Image": "...", ...}`
-    ///    Auto-detected when `event_type` is absent but `EventID` + `Channel` are present.
-    ///    Also supports generic flat JSONL with a `type` field as event_type.
+    /// 2. **Flat JSONL with a `type`**: `{"type": "Login", "user": "..."}`.
+    /// 3. **Sysmon / Windows event log**: `{"EventID": 1, "Channel": "...", ...}`,
+    ///    typed from the EventID when no `event_type` or `type` says otherwise
+    ///    (`SysmonProcessCreate`, ..., `WinEvent4624`); EventID and Channel
+    ///    remain fields of the event.
     fn parse_jsonl_line(line: &str) -> Result<Event, String> {
         // Enforce payload size limit before parsing
         if line.len() > crate::limits::MAX_EVENT_PAYLOAD_BYTES {
@@ -490,7 +492,17 @@ impl EventFileParser {
             return Ok(event);
         }
 
-        // 2. Sysmon / Windows Event Log format: {"EventID": N, "Channel": "...", ...}
+        // 2. Generic flat JSONL with a "type" field. An explicit type wins over
+        //    the EventID guess below, so a Windows line can be tagged with the
+        //    type the program reads (`{"type": "WindowsSecurity", "EventID": 4625}`).
+        if let Some(event_type) = json.get("type").and_then(|v| v.as_str()) {
+            let mut event = Event::new(event_type);
+            Self::apply_json_timestamp(&json, &mut event);
+            Self::promote_flat_json_fields(&json, &mut event);
+            return Ok(event);
+        }
+
+        // 3. Sysmon / Windows Event Log format: {"EventID": N, "Channel": "...", ...}
         if let Some(event_id) = json.get("EventID").and_then(|v| v.as_i64()) {
             let channel = json.get("Channel").and_then(|v| v.as_str()).unwrap_or("");
             let event_type = if channel.contains("Sysmon") {
@@ -524,14 +536,6 @@ impl EventFileParser {
             // Promote all top-level fields except metadata
             Self::promote_flat_json_fields(&json, &mut event);
 
-            return Ok(event);
-        }
-
-        // 3. Generic flat JSONL with "type" field
-        if let Some(event_type) = json.get("type").and_then(|v| v.as_str()) {
-            let mut event = Event::new(event_type);
-            Self::apply_json_timestamp(&json, &mut event);
-            Self::promote_flat_json_fields(&json, &mut event);
             return Ok(event);
         }
 
@@ -574,14 +578,9 @@ impl EventFileParser {
     /// `Value::Int` so VPL comparisons like `DestinationPort == 445` work with
     /// data sources that serialize numbers as strings (e.g. NXLog/MORDOR).
     fn promote_flat_json_fields(json: &serde_json::Value, event: &mut Event) {
-        static SKIP_KEYS: &[&str] = &[
-            "EventID",
-            "Channel",
-            "@timestamp",
-            "@version",
-            "type",
-            "event_type",
-        ];
+        // Routing keys only. `EventID` and `Channel` stay: rules test them, and
+        // the decoder a live source uses (`varpulis_core::decode`) keeps them.
+        static SKIP_KEYS: &[&str] = &["@timestamp", "@version", "type", "event_type"];
 
         if let Some(obj) = json.as_object() {
             for (key, value) in obj.iter().take(crate::limits::MAX_FIELDS_PER_EVENT) {
@@ -1214,9 +1213,27 @@ mod tests {
         assert_eq!(event.get_str("User"), Some("CORP\\admin"));
         assert_eq!(event.get_str("Hostname"), Some("WS01"));
         assert_eq!(event.get_int("ProcessId"), Some(1234));
-        // Metadata keys should NOT be promoted
-        assert!(event.data.get("EventID").is_none());
-        assert!(event.data.get("Channel").is_none());
+        // EventID and Channel type the event and stay fields of it: detection
+        // rules test them (`EventID == 4625`, Sigma's `EventID: 4625`), and
+        // the engine's own JSON decoder, the one Vejas feeds, keeps them. They
+        // used to be dropped here, so such a rule fired on the bus and never
+        // in `varpulis simulate`.
+        assert_eq!(event.get_int("EventID"), Some(1));
+        assert_eq!(
+            event.get_str("Channel"),
+            Some("Microsoft-Windows-Sysmon/Operational")
+        );
+    }
+
+    #[test]
+    fn an_explicit_type_wins_over_the_event_id_guess() {
+        // A Windows Security line tagged with the type the program reads.
+        let line = r#"{"type": "WindowsSecurity", "EventID": 4625, "Channel": "Security", "IpAddress": "10.0.0.66"}"#;
+        let event = EventFileParser::parse_jsonl_line(line).unwrap();
+        assert_eq!(event.event_type.as_ref(), "WindowsSecurity");
+        assert_eq!(event.get_int("EventID"), Some(4625));
+        assert_eq!(event.get_str("Channel"), Some("Security"));
+        assert!(event.data.get("type").is_none(), "the type is not a field");
     }
 
     #[test]

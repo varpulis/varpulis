@@ -67,6 +67,10 @@ pub enum Error {
     /// The VPL did not parse.
     #[error("VPL does not parse: {0}")]
     Parse(String),
+    /// The VPL parsed but the semantic validator found errors: one line per
+    /// diagnostic, `line:col: error[CODE] message`, with its hint.
+    #[error("{0}")]
+    Invalid(String),
     /// The program parsed but the engine refused to load it, or failed while
     /// processing.
     #[error("engine: {0}")]
@@ -157,7 +161,27 @@ impl Program {
 
     /// [`Program::compile`] without keeping the result. Same verdict.
     pub fn check(vpl: &str) -> Result<(), Error> {
-        Self::compile(vpl).map(|_| ())
+        Self::check_with_warnings(vpl).map(|_| ())
+    }
+
+    /// [`Program::check`], returning the validator's warnings as formatted
+    /// lines (`line:col: warning[CODE] message`, then its hint).
+    ///
+    /// A check is the parse, the semantic validator (unknown event types when
+    /// the program declares its events, unbounded closures, regular
+    /// expressions that do not compile, ...) and a load into the engine.
+    /// [`Program::compile`] skips the validator: a host decides whether to
+    /// check first.
+    pub fn check_with_warnings(vpl: &str) -> Result<Vec<String>, Error> {
+        let program = varpulis_parser::parse(vpl).map_err(|e| Error::Parse(e.to_string()))?;
+        let validation = varpulis_core::validate::validate(vpl, &program);
+        if validation.has_errors() {
+            return Err(Error::Invalid(
+                validation.format(vpl).trim_end().to_string(),
+            ));
+        }
+        Self::compile(vpl)?;
+        Ok(validation.format(vpl).lines().map(str::to_string).collect())
     }
 
     /// The `.from()` bindings: what the host must subscribe to, and the event

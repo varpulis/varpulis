@@ -736,6 +736,10 @@ fn eval_builtin_function(func_name: &str, args: &[Value]) -> Option<Value> {
             (Value::Str(s), Value::Str(suffix)) => Some(Value::Bool(s.ends_with(&**suffix))),
             _ => None,
         },
+        "regex_match" if args.len() == 2 => match (&args[0], &args[1]) {
+            (Value::Str(s), Value::Str(pattern)) => regex_is_match(pattern, s).map(Value::Bool),
+            _ => None,
+        },
         "substring" if args.len() >= 2 => match &args[0] {
             Value::Str(s) => {
                 let start = match &args[1] {
@@ -793,9 +797,84 @@ fn eval_builtin_function(func_name: &str, args: &[Value]) -> Option<Value> {
         "is_map" => args
             .first()
             .map(|v| Value::Bool(matches!(v, Value::Map(_)))),
+        "coalesce" => args.iter().find(|v| !matches!(v, Value::Null)).cloned(),
+        "unique" => args.first().and_then(|v| match v {
+            Value::Array(arr) => {
+                let mut kept: Vec<Value> = Vec::with_capacity(arr.len());
+                for item in arr.iter() {
+                    if !kept.iter().any(|seen| seen.vpl_eq(item)) {
+                        kept.push(item.clone());
+                    }
+                }
+                Some(Value::array(kept))
+            }
+            _ => None,
+        }),
+        "clamp" if args.len() == 3 => match (&args[0], &args[1], &args[2]) {
+            (Value::Int(x), Value::Int(lo), Value::Int(hi)) if lo <= hi => {
+                Some(Value::Int(*x.clamp(lo, hi)))
+            }
+            (x, lo, hi) => {
+                let number = |v: &Value| match v {
+                    Value::Int(n) => Some(*n as f64),
+                    Value::Float(f) => Some(*f),
+                    _ => None,
+                };
+                let (x, lo, hi) = (number(x)?, number(lo)?, number(hi)?);
+                (lo <= hi).then(|| Value::Float(x.clamp(lo, hi)))
+            }
+        },
 
         _ => None,
     }
+}
+
+/// Compiled `regex_match` patterns, per thread. A rule's patterns are
+/// literals, so the working set is small and each compiles once; the bound is
+/// for a pattern built from event data, which would otherwise grow the cache
+/// with every distinct value.
+const REGEX_CACHE_CAPACITY: usize = 256;
+
+thread_local! {
+    static REGEX_CACHE: std::cell::RefCell<hashlink::LruCache<Box<str>, Option<regex::Regex>>> =
+        std::cell::RefCell::new(hashlink::LruCache::new(REGEX_CACHE_CAPACITY));
+}
+
+/// Whether `pattern` matches anywhere in `haystack`, with Rust's `regex`
+/// syntax (linear time, no look-around, no back-references). A pattern that
+/// does not compile answers nothing, which a `.where()` reads as false;
+/// `varpulis check` reports a literal one as E052 before it ever runs.
+fn regex_is_match(pattern: &str, haystack: &str) -> Option<bool> {
+    REGEX_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(compiled) = cache.get(pattern) {
+            return compiled.as_ref().map(|re| re.is_match(haystack));
+        }
+        let compiled = regex::Regex::new(pattern).ok();
+        let answer = compiled.as_ref().map(|re| re.is_match(haystack));
+        cache.insert(pattern.into(), compiled);
+        answer
+    })
+}
+
+/// Evaluate a call's arguments in order. An argument that yields no value, a
+/// field the event does not carry, is `null` in its own position: dropping it
+/// made `is_null(b)` see no argument at all and shifted every later argument
+/// of a user function one place to the left.
+fn eval_args(
+    args: &[varpulis_core::ast::Arg],
+    event: &Event,
+    ctx: &SequenceContext,
+    functions: &FxHashMap<String, UserFunction>,
+    bindings: &FxHashMap<String, Value>,
+) -> Vec<Value> {
+    args.iter()
+        .map(|arg| match arg {
+            varpulis_core::ast::Arg::Positional(e) | varpulis_core::ast::Arg::Named(_, e) => {
+                eval_expr_with_functions(e, event, ctx, functions, bindings).unwrap_or(Value::Null)
+            }
+        })
+        .collect()
 }
 
 /// Evaluate a method call on a value: `receiver.method(args)`.
@@ -888,17 +967,7 @@ pub fn eval_expr_with_udfs(
     if let E::Call { func, args } = expr {
         if let E::Ident(func_name) = func.as_ref() {
             if let Some(udf) = udf_registry.get_scalar(func_name) {
-                let arg_values: Vec<Value> = args
-                    .iter()
-                    .filter_map(|arg| match arg {
-                        varpulis_core::ast::Arg::Positional(e) => {
-                            eval_expr_with_functions(e, event, ctx, functions, bindings)
-                        }
-                        varpulis_core::ast::Arg::Named(_, e) => {
-                            eval_expr_with_functions(e, event, ctx, functions, bindings)
-                        }
-                    })
-                    .collect();
+                let arg_values = eval_args(args, event, ctx, functions, bindings);
                 return udf.evaluate(&arg_values);
             }
         }
@@ -1213,17 +1282,7 @@ pub fn eval_expr_with_functions(
                 }
 
                 // Evaluate arguments
-                let arg_values: Vec<Value> = args
-                    .iter()
-                    .filter_map(|arg| match arg {
-                        varpulis_core::ast::Arg::Positional(e) => {
-                            eval_expr_with_functions(e, event, ctx, functions, bindings)
-                        }
-                        varpulis_core::ast::Arg::Named(_, e) => {
-                            eval_expr_with_functions(e, event, ctx, functions, bindings)
-                        }
-                    })
-                    .collect();
+                let arg_values = eval_args(args, event, ctx, functions, bindings);
 
                 // Check user-defined functions first - use full statement evaluation
                 if let Some(user_fn) = functions.get(func_name) {
@@ -1238,19 +1297,12 @@ pub fn eval_expr_with_functions(
             } = func.as_ref()
             {
                 // Method call: receiver.method(args)
+                // A receiver the event does not carry is `null`, as a missing
+                // argument is: `b.is_null()` holds for an event without `b`.
                 let receiver_val =
-                    eval_expr_with_functions(receiver, event, ctx, functions, bindings)?;
-                let arg_values: Vec<Value> = args
-                    .iter()
-                    .filter_map(|arg| match arg {
-                        varpulis_core::ast::Arg::Positional(e) => {
-                            eval_expr_with_functions(e, event, ctx, functions, bindings)
-                        }
-                        varpulis_core::ast::Arg::Named(_, e) => {
-                            eval_expr_with_functions(e, event, ctx, functions, bindings)
-                        }
-                    })
-                    .collect();
+                    eval_expr_with_functions(receiver, event, ctx, functions, bindings)
+                        .unwrap_or(Value::Null);
+                let arg_values = eval_args(args, event, ctx, functions, bindings);
                 eval_method_call(
                     member,
                     receiver_val,
@@ -1264,6 +1316,29 @@ pub fn eval_expr_with_functions(
             } else {
                 None
             }
+        }
+        // Logic is two-valued, as in a `->` sequence step (varpulis-sase's
+        // `eval_predicate`): an operand that yields no boolean, typically a
+        // condition on a field the event does not carry, counts as false, and
+        // `and`/`or` stop at the first operand that decides. Propagating "no
+        // value" instead made `a == "x" or ends_with(b, "y")` miss every event
+        // without a `b`, and the same predicate answer differently in
+        // `.where()` and in a sequence step.
+        Expr::Binary {
+            op: op @ (BinOp::And | BinOp::Or | BinOp::Xor),
+            left,
+            right,
+        } => {
+            let holds = |e: &Expr| {
+                eval_expr_with_functions(e, event, ctx, functions, bindings)
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            };
+            Some(Value::Bool(match op {
+                BinOp::And => holds(left) && holds(right),
+                BinOp::Or => holds(left) || holds(right),
+                _ => holds(left) ^ holds(right),
+            }))
         }
         Expr::Binary { op, left, right } => {
             let left_val = eval_expr_with_functions(left, event, ctx, functions, bindings)?;
@@ -1388,24 +1463,22 @@ pub fn eval_expr_with_functions(
                     (Value::Str(sub), Value::Str(s)) => Some(Value::Bool(!s.contains(&**sub))),
                     _ => None,
                 },
-                BinOp::And => {
-                    let a = left_val.as_bool()?;
-                    let b = right_val.as_bool()?;
-                    Some(Value::Bool(a && b))
-                }
-                BinOp::Or => {
-                    let a = left_val.as_bool()?;
-                    let b = right_val.as_bool()?;
-                    Some(Value::Bool(a || b))
-                }
-                BinOp::Xor => {
-                    let a = left_val.as_bool()?;
-                    let b = right_val.as_bool()?;
-                    Some(Value::Bool(a ^ b))
-                }
                 _ => None,
             }
         }
+
+        // `not` of a condition that yields no value (a field the event does
+        // not carry) holds, as `Predicate::Not` does in a sequence step: the
+        // filter of `selection and not filter` must not exclude every event
+        // that lacks the filter's field.
+        Expr::Unary {
+            op: varpulis_core::ast::UnaryOp::Not,
+            expr: inner,
+        } => match eval_expr_with_functions(inner, event, ctx, functions, bindings) {
+            Some(Value::Bool(b)) => Some(Value::Bool(!b)),
+            None | Some(Value::Null) => Some(Value::Bool(true)),
+            Some(_) => None,
+        },
 
         // Unary operations
         Expr::Unary { op, expr: inner } => {
@@ -1414,10 +1487,6 @@ pub fn eval_expr_with_functions(
                 varpulis_core::ast::UnaryOp::Neg => match val {
                     Value::Int(n) => Some(Value::Int(-n)),
                     Value::Float(f) => Some(Value::Float(-f)),
-                    _ => None,
-                },
-                varpulis_core::ast::UnaryOp::Not => match val {
-                    Value::Bool(b) => Some(Value::Bool(!b)),
                     _ => None,
                 },
                 _ => None,

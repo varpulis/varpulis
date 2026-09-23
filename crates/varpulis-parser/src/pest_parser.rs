@@ -121,6 +121,20 @@ const MAX_NESTING_DEPTH: usize = 10;
 /// (unmatched brackets are always parse errors anyway).
 const MAX_UNMATCHED_OPEN_BRACKETS: usize = 6;
 
+/// The value of a string literal as the source writes it. A double-quoted
+/// literal is taken verbatim between its quotes: a backslash stays a
+/// backslash, and `\"` keeps both characters. A single-quoted literal is raw
+/// the way Sigma's YAML is: nothing escapes, so a Windows path may end in a
+/// backslash (`'\Temp\'`), and `''` stands for one quote.
+pub(crate) fn string_literal_value(literal: &str) -> String {
+    let inner = || &literal[1..literal.len() - 1];
+    match literal.as_bytes() {
+        [b'\'', .., b'\''] if literal.len() >= 2 => inner().replace("''", "'"),
+        [b'"', .., b'"'] if literal.len() >= 2 => inner().to_string(),
+        _ => literal.to_string(),
+    }
+}
+
 /// O(n) pre-scan that rejects inputs with bracket nesting deeper than
 /// `MAX_NESTING_DEPTH` or too many unmatched open brackets. Respects string
 /// literals and comments so that brackets inside `"..."`, `# ...`, or
@@ -163,6 +177,23 @@ fn check_nesting_depth(source: &str) -> ParseResult<()> {
                     continue;
                 }
                 if bytes[i] == b'"' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        // Skip single-quoted (raw) strings: nothing escapes, `''` is a quote
+        if b == b'\'' {
+            i += 1;
+            while i < len {
+                if bytes[i] == b'\'' {
+                    if i + 1 < len && bytes[i + 1] == b'\'' {
+                        i += 2;
+                        continue;
+                    }
                     i += 1;
                     break;
                 }
@@ -1376,8 +1407,7 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                             let value_pair = inner.expect_next("score param value")?;
                             match name {
                                 "model" => {
-                                    let raw = value_pair.as_str();
-                                    model_path = raw.trim_matches('"').to_string();
+                                    model_path = string_literal_value(value_pair.as_str());
                                 }
                                 "inputs" if value_pair.as_rule() == Rule::score_field_list => {
                                     for field in value_pair.into_inner() {
@@ -1815,8 +1845,7 @@ fn parse_config_value(pair: pest::iterators::Pair<Rule>) -> ParseResult<ConfigVa
                     let inner_atom = atom.into_inner().next().expect("config_atom child");
                     match inner_atom.as_rule() {
                         Rule::string => {
-                            let s = inner_atom.as_str();
-                            Ok(ConfigValue::Str(s[1..s.len() - 1].to_string()))
+                            Ok(ConfigValue::Str(string_literal_value(inner_atom.as_str())))
                         }
                         Rule::identifier => Ok(ConfigValue::Ident(inner_atom.as_str().to_string())),
                         _ => Ok(ConfigValue::Ident(inner_atom.as_str().to_string())),
@@ -1834,10 +1863,7 @@ fn parse_config_value(pair: pest::iterators::Pair<Rule>) -> ParseResult<ConfigVa
         }
         Rule::integer => Ok(ConfigValue::Int(inner.as_str().parse().unwrap_or(0))),
         Rule::float => Ok(ConfigValue::Float(inner.as_str().parse().unwrap_or(0.0))),
-        Rule::string => {
-            let s = inner.as_str();
-            Ok(ConfigValue::Str(s[1..s.len() - 1].to_string()))
-        }
+        Rule::string => Ok(ConfigValue::Str(string_literal_value(inner.as_str()))),
         Rule::duration => Ok(ConfigValue::Duration(
             parse_duration(inner.as_str()).map_err(ParseError::InvalidDuration)?,
         )),
@@ -1853,8 +1879,7 @@ fn parse_import_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
         Rule::import_module => {
             let mut inner = inner_pair.into_inner();
             let path_pair = inner.expect_next("import path")?;
-            let path = path_pair.as_str();
-            let path = path[1..path.len() - 1].to_string();
+            let path = string_literal_value(path_pair.as_str());
             let alias = inner.next().map(|p| p.as_str().to_string());
             Ok(Stmt::Import { path, alias })
         }
@@ -1884,8 +1909,7 @@ fn parse_import_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
                         ret = Some(parse_type(p)?);
                     }
                     Rule::string => {
-                        let s = p.as_str();
-                        wasm_path = s[1..s.len() - 1].to_string();
+                        wasm_path = string_literal_value(p.as_str());
                     }
                     _ => {}
                 }
@@ -1900,9 +1924,7 @@ fn parse_import_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
         }
         _ => {
             // Fallback: shouldn't happen with well-formed grammar
-            let path_pair = inner_pair;
-            let path = path_pair.as_str();
-            let path = path[1..path.len() - 1].to_string();
+            let path = string_literal_value(inner_pair.as_str());
             Ok(Stmt::Import { path, alias: None })
         }
     }
@@ -2801,10 +2823,7 @@ fn parse_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
             .parse::<f64>()
             .map(Expr::Float)
             .map_err(|e| ParseError::InvalidNumber(format!("'{}': {}", inner.as_str(), e))),
-        Rule::string => {
-            let s = inner.as_str();
-            Ok(Expr::Str(s[1..s.len() - 1].to_string()))
-        }
+        Rule::string => Ok(Expr::Str(string_literal_value(inner.as_str()))),
         Rule::duration => Ok(Expr::Duration(
             parse_duration(inner.as_str()).map_err(ParseError::InvalidDuration)?,
         )),
@@ -2833,12 +2852,7 @@ fn parse_map_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
         if p.as_rule() == Rule::map_entry_list {
             for entry in p.into_inner() {
                 let mut inner = entry.into_inner();
-                let key = inner.expect_next("map key")?.as_str().to_string();
-                let key = if key.starts_with('"') {
-                    key[1..key.len() - 1].to_string()
-                } else {
-                    key
-                };
+                let key = string_literal_value(inner.expect_next("map key")?.as_str());
                 let value = parse_expr(inner.expect_next("map value")?)?;
                 entries.push((key, value));
             }

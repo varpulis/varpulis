@@ -12,6 +12,7 @@ description = "Core types and AST for VPL"
 serde = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }
+regex = { workspace = true }
 schemars = { workspace = true }
 indexmap = { workspace = true }
 rustc-hash = { workspace = true }

@@ -42,7 +42,8 @@ INT FLOAT BOOL STR TIMESTAMP DURATION
 ```
 INTEGER     : [0-9]+
 FLOAT       : [0-9]+ '.' [0-9]+ ([eE] [+-]? [0-9]+)?
-STRING      : '"' [^"]* '"' | "'" [^']* "'"
+STRING      : '"' ([^"\\] | '\\' ANY)* '"'     # verbatim; \x pairs, so no trailing \
+            | "'" ([^'] | "''")* "'"          # raw; '' is one quote
 DURATION    : [0-9]+ ('ns' | 'us' | 'ms' | 's' | 'm' | 'h' | 'd')
 TIMESTAMP   : '@' ISO8601_DATE
 IDENTIFIER  : [a-zA-Z_][a-zA-Z0-9_]*

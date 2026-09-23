@@ -335,6 +335,7 @@ fn connector_secret_params(source: &str) -> Vec<SecretParamSpan> {
     while pos < len {
         match bytes[pos] {
             b'"' => pos = string_literal_end(bytes, pos),
+            b'\'' => pos = raw_string_literal_end(bytes, pos),
             b'#' => pos = line_end(bytes, pos),
             b'/' if pos + 1 < len && bytes[pos + 1] == b'/' => pos = line_end(bytes, pos),
             b'(' | b'[' | b'{' => {
@@ -389,6 +390,8 @@ fn connector_secret_params(source: &str) -> Vec<SecretParamSpan> {
 
                 let value_end = if bytes[value_start] == b'"' {
                     string_literal_end(bytes, value_start)
+                } else if bytes[value_start] == b'\'' {
+                    raw_string_literal_end(bytes, value_start)
                 } else {
                     // A bare literal — `to_vpl_declaration` emits numeric
                     // parameter values unquoted — runs to the next separator.
@@ -433,6 +436,24 @@ fn string_literal_end(bytes: &[u8], start: usize) -> usize {
             b'"' => return pos + 1,
             _ => pos += 1,
         }
+    }
+    bytes.len()
+}
+
+/// Index just past the closing quote of the single-quoted (raw) literal
+/// starting at `start`, where `''` is a quote and nothing else escapes, or
+/// `bytes.len()` when the literal is unterminated.
+fn raw_string_literal_end(bytes: &[u8], start: usize) -> usize {
+    let mut pos = start + 1;
+    while pos < bytes.len() {
+        if bytes[pos] == b'\'' {
+            if bytes.get(pos + 1) == Some(&b'\'') {
+                pos += 2;
+                continue;
+            }
+            return pos + 1;
+        }
+        pos += 1;
     }
     bytes.len()
 }
@@ -490,6 +511,20 @@ mod vpl_redaction_tests {
         assert_eq!(
             out,
             "connector c = kafka(api_key: \"[REDACTED]\", token: \"[REDACTED]\")\n"
+        );
+    }
+
+    #[test]
+    fn a_single_quoted_secret_is_redacted_whole() {
+        // Raw literal: `''` is a quote, and a comma inside is text, so the
+        // span must not stop at it and leave the tail of the secret behind.
+        let src = "connector c = kafka(sasl_password: 'pa,ss''w\\', brokers: 'b:9092')\n";
+        let out = redact_vpl_secrets(src);
+        assert!(!out.contains("pa,ss"), "{out}");
+        assert!(!out.contains("w\\"), "{out}");
+        assert_eq!(
+            out,
+            "connector c = kafka(sasl_password: \"[REDACTED]\", brokers: 'b:9092')\n"
         );
     }
 

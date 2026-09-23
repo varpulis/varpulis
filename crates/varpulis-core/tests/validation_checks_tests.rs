@@ -963,8 +963,26 @@ fn w002_partition_before_window_ok() {
 
 #[test]
 fn e033_undeclared_event_type() {
-    let diags = validate_vpl("stream S = UndeclaredEvent\n    .where(x > 0)");
+    // Declaring one event type closes the program: other names are checked.
+    let diags = validate_vpl(
+        "event Declared:\n    x: int\n\nstream S = UndeclaredEvent\n    .where(x > 0)",
+    );
     assert!(has_error(&diags, "E033"), "Expected E033: {diags:?}");
+}
+
+#[test]
+fn e033_a_program_that_declares_no_event_type_is_open() {
+    // The engine takes any name it does not know as an event type, and a
+    // program with no declarations (a converted Sigma rule, a rule over
+    // whatever a bus carries) has nothing to check the name against.
+    let diags = validate_vpl(
+        "stream S = SysmonProcessCreate\n    .where(Image == 'x')\n    .emit(i: Image)",
+    );
+    assert!(!has_code(&diags, "E033"), "{diags:?}");
+    let diags = validate_vpl(
+        "stream S = A as a\n    -> B where k == a.k as b\n    .within(1m)\n    .emit(k: a.k)",
+    );
+    assert!(!has_code(&diags, "E033"), "{diags:?}");
 }
 
 #[test]
@@ -1124,7 +1142,8 @@ fn e050_nested_unknown_function() {
 
 #[test]
 fn pattern_with_undeclared_event_refs() {
-    let diags = validate_vpl("pattern P = UndeclaredA -> UndeclaredB");
+    let diags =
+        validate_vpl("event Declared:\n    x: int\n\npattern P = UndeclaredA -> UndeclaredB");
     // E033 should be emitted for undeclared event types in patterns
     assert!(
         has_error(&diags, "E033"),
@@ -1307,7 +1326,8 @@ fn myFunc(a: int) -> int:
 
 #[test]
 fn e033_undeclared_source_produces_error() {
-    let diags = validate_vpl("stream S = UndeclaredEvent\n    .emit()");
+    let diags =
+        validate_vpl("event Declared:\n    x: int\n\nstream S = UndeclaredEvent\n    .emit()");
     assert!(
         has_error(&diags, "E033"),
         "Expected E033 for undeclared source: {diags:?}"
@@ -1411,4 +1431,30 @@ fn valid_nested_expressions_in_where() {
         !has_error(&diags, "E090"),
         "Valid where should not produce E090: {diags:?}"
     );
+}
+
+// =============================================================================
+// E052: a regex_match pattern the engine cannot compile
+// =============================================================================
+
+#[test]
+fn e052_a_pattern_with_look_around_is_reported_where_it_is_written() {
+    // PCRE look-ahead, as in many Sigma rules: Rust's regex refuses it, and at
+    // run time the call would answer nothing, so the rule would never fire.
+    for src in [
+        "stream R = T\n    .where(regex_match(CommandLine, '(?i)powershell(?!.*-nop)'))\n    .emit(c: CommandLine)\n",
+        "stream R = T\n    .where(CommandLine.regex_match('(a)\\1'))\n    .emit(c: CommandLine)\n",
+        "stream R = Start as s\n    -> T where regex_match(CommandLine, '(?<=x)y') as t\n    .within(1m)\n    .emit(c: t.CommandLine)\n",
+        "stream R = T\n    .where(Image == 'x')\n    .emit(hit: regex_match(CommandLine, '[unclosed'))\n",
+    ] {
+        let d = validate_vpl(src);
+        assert!(has_error(&d, "E052"), "no E052 for:\n{src}\n{d:?}");
+    }
+}
+
+#[test]
+fn e052_a_pattern_the_engine_compiles_is_not_reported() {
+    let src = "stream R = T\n    .where(regex_match(Image, '(?i)^.*\\\\svc[a-z]+\\.exe$') and not regex_match(CommandLine, '-nop'))\n    .emit(i: Image)\n";
+    let d = validate_vpl(src);
+    assert!(!has_code(&d, "E052"), "{d:?}");
 }

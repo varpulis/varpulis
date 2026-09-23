@@ -56,6 +56,7 @@ varpulis-simd = { version = "0.11.0", path = "../varpulis-simd" }
 varpulis-dead-letter = { version = "0.11.0", path = "../varpulis-dead-letter" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+regex = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }

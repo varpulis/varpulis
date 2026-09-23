@@ -38,8 +38,15 @@ stream LateralMovement = SmbConnect as smb
 varpulis check lateral.vpl
 ```
 
-`ok` means the parser and the engine both accept it. Anything else is the
-reason, with the line.
+`ok` means the program parses, the validator finds no error in it, and the
+engine loads it. Anything else is the reason, with the line and a hint;
+warnings (an unbounded closure, say) are printed and do not fail the check.
+
+The `event` declarations above are optional. With them, `varpulis check`
+knows every event type the program may read, so `SmbConect` is an error
+instead of a stream that waits forever for an event type nobody sends.
+Without any, the program is open: the engine takes a name it does not know as
+an event type, and so does the check.
 
 ## Feed it events
 
