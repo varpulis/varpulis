@@ -226,6 +226,33 @@ impl Program {
         self.feed(event)
     }
 
+    /// For a live host: once an event type has sent nothing for `grace` of
+    /// wall-clock time, its event time moves on with the wall clock, less the
+    /// grace, so the windows it feeds close even when it has nothing more to
+    /// say. A brute force on a sparse source is then raised about a grace
+    /// after its window ends, instead of whenever the source speaks again.
+    ///
+    /// `None`, the default, judges the program in event time alone, as a
+    /// replay needs: the same events give the same alerts however fast they
+    /// are fed. A host that sets a grace calls [`Program::tick`] when it has
+    /// nothing to feed.
+    pub fn set_idle_grace(&mut self, grace: Option<std::time::Duration>) {
+        self.engine.set_idle_grace(grace);
+    }
+
+    /// Close what time has closed while nothing arrived, and return what that
+    /// emits. See [`Program::set_idle_grace`].
+    pub fn tick(&mut self) -> Result<Vec<Emit>, Error> {
+        self.tick_at(std::time::Instant::now())
+    }
+
+    /// [`Program::tick`] as of `now`.
+    pub fn tick_at(&mut self, now: std::time::Instant) -> Result<Vec<Emit>, Error> {
+        self.engine.tick_sync_at(now)?;
+        let out = self.engine.take_collected_outputs();
+        Ok(self.route(out))
+    }
+
     /// Close every open window as if no further event will ever arrive, and
     /// return what that emits.
     ///

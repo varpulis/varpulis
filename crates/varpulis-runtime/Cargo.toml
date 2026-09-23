@@ -38,6 +38,7 @@ categories = ["science", "development-tools", "data-structures"]
 # red the moment the version moves past 0.11.x, which is when this whole
 # block must be deleted.
 [package.metadata.cargo-semver-checks.lints]
+constructible_struct_adds_field = "allow"
 enum_variant_added = "allow"
 enum_marked_non_exhaustive = "allow"
 feature_missing = "allow"

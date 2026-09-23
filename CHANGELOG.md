@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed — rules that ran and never fired
 
+- A window fed by a source that went quiet never closed: only an event of
+  that source moves its event time, so a brute force on a sparse source (VPN
+  logons, one application's log) was raised whenever the source spoke again.
+  A live host now sets an idle grace (`Program::set_idle_grace`): once a
+  source has sent nothing for the grace, its event time moves on with the
+  wall clock, less the grace, both at the end of each batch and on
+  `Program::tick()`, which the host calls while nothing arrives. Each
+  source's clock is kept in the snapshot (`EngineCheckpoint::source_clocks`),
+  so the windows a restarted host restores close on time too. Without a
+  grace, the default, a program is judged in event time alone, as a replay
+  needs.
 - A sequence step that names a derived stream (`Burst as b -> ...`) was
   compiled onto that stream's source type, with the stream's first
   `.where()` as the step's predicate. For a stream that only filters that is

@@ -34,6 +34,7 @@ fn make_engine_checkpoint() -> EngineCheckpoint {
         distinct_states: HashMap::new(),
         limit_states: HashMap::new(),
         source_offsets: HashMap::new(),
+        source_clocks: Default::default(),
     }
 }
 
