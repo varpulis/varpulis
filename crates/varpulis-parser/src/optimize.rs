@@ -142,7 +142,7 @@ fn fold_stream_op(op: StreamOp) -> StreamOp {
 }
 
 /// Recursively fold constant expressions.
-fn fold_expr(expr: Expr) -> Expr {
+pub(crate) fn fold_expr(expr: Expr) -> Expr {
     match expr {
         // Recurse into binary expressions
         Expr::Binary { op, left, right } => {

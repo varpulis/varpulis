@@ -76,6 +76,8 @@
 //! - [`varpulis_runtime`](../varpulis_runtime): Executing parsed programs
 
 /// Parse error types with source location information.
+/// Top-level constants substituted into the expressions streams evaluate.
+mod constants;
 pub mod error;
 /// Compile-time expansion of top-level `for` loops in VPL source.
 pub mod expand;
