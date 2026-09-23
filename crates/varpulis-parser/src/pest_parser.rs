@@ -361,7 +361,12 @@ fn parse_inner(source: &str) -> ParseResult<Program> {
         }
     }
 
-    Ok(crate::optimize::fold_program(Program { statements }))
+    // Fold, put the program's constants where streams read them, fold again
+    // (a substituted constant can make an expression constant).
+    let program = crate::optimize::fold_program(Program { statements });
+    Ok(crate::optimize::fold_program(crate::constants::propagate(
+        program,
+    )))
 }
 
 fn convert_pest_error(e: pest::error::Error<Rule>) -> ParseError {

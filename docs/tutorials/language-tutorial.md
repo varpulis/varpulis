@@ -146,17 +146,16 @@ var counter = 0
 const MAX_TEMP = 200
 const API_KEY = "secret123"
 
-# Use in streams: a literal, see below
+# Use in streams
 stream Alerts = TemperatureReading
-    .where(temperature > 100)
+    .where(temperature > threshold)
     .emit(alert_type: "High", temperature: temperature)
 ```
 
-A top-level `let`, `const` or `var` passes `varpulis check` but is not visible
-inside a stream expression today: in `.where(temperature > threshold)` the name
-is read from the event, not from the `let`. On events without a `threshold`
-field the condition never holds; on an event that has one, it compares with
-that field. Write the value where the stream uses it.
+A top-level `let` or `const` whose value is a literal is what a stream reads
+under that name, even when an event carries a field called `threshold`. A
+`var` is not visible to streams: its value can change, so
+`.where(temperature > counter)` reads the event's `counter` field.
 
 ### Comments
 

@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An event that extends a run now opens no other one under `.stnm()`, so
   `.stnm().longest()` makes one alert of a brute force of any length; the
   shipped rule uses it (one alert where it made one per failure).
+- A top-level `let` or `const` is what a stream reads under that name.
+  `.where(x > threshold)` read a field `threshold` from the event (stream
+  expressions had no program values in scope, and `const` was not loaded at
+  all), so a rule with a named threshold compared against nothing, or against
+  whatever an event carried under that name. Constants that fold to a literal
+  are now substituted at parse time, wherever the program declares them;
+  aliases, lambda parameters and a block's own `let` shadow them. A `var`
+  stays invisible to streams, as documented.
 - A Kleene closure followed by another step (`A -> all B -> C`) matched
   before C. Under the default `.each()` the engine emitted a complete match at
   every B, as if the closure ended the pattern, then dropped the run when C

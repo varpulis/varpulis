@@ -248,10 +248,10 @@ stream OverheatAlerts = ZoneStats
     .emit(alert_type: "ZoneOverheat", message: "Zone overheated")
 ```
 
-The threshold is written as a literal on purpose. A top-level `let`, `const`
-or `var` passes `varpulis check` but is not visible inside a stream expression
-today: `.where(max_value > threshold)` with `let threshold = 150` never fires,
-while `.where(max_value > 150)` does.
+The threshold could as well be a named constant: with `let threshold = 150` at
+the top of the program, `.where(max_value > threshold)` compares with 150. (A
+`var` would not do: streams do not see `var`s, and would read an event field
+named `threshold` instead.)
 
 ### Running It
 

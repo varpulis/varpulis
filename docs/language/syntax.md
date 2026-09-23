@@ -27,6 +27,28 @@ const MAX_RETRIES = 3
 const API_URL = "https://api.example.com"
 ```
 
+A top-level `let` or `const` whose value is a literal (or folds to one, like
+`let limit = base * 2`) is what a stream reads under that name, anywhere in
+the program, above or below its declaration:
+
+```vpl
+const FAILURES = 5
+
+stream ManyFailures = AuthEvent
+    .where(status == "failed")
+    .partition_by(source_ip)
+    .window(5m)
+    .aggregate(ip: last(source_ip), n: count())
+    .where(n >= FAILURES)
+    .emit(ip: ip, failures: n)
+```
+
+A field the event carries under the same name does not change it. What binds
+the name closer wins: a sequence alias (`as a`), a lambda parameter, a
+block's own `let`; and `lower(x)` stays a call to `lower` even next to a
+`let lower`. A `var` is not visible to streams: its value can change, and a
+stream reads the event's field of that name instead.
+
 ## Stream Declaration
 
 ### Simple Stream
