@@ -527,10 +527,11 @@ impl SaseEngine {
                 .map(|v| v.to_partition_key().into_owned())
                 .unwrap_or_default();
 
-            completed
-                .extend(self.process_partition_shared(&partition_key, Arc::clone(&shared_event)));
+            let (advanced, consumed) =
+                self.process_partition_shared(&partition_key, Arc::clone(&shared_event));
+            completed.extend(advanced);
 
-            if let Some(run) = self.try_start_run_shared(Arc::clone(&shared_event)) {
+            if let Some(run) = self.try_start_run_after(Arc::clone(&shared_event), consumed) {
                 let (added, _) = self.handle_backpressure_partitioned(&partition_key, run);
                 if added {
                     self.total_runs_created += 1;
@@ -540,9 +541,10 @@ impl SaseEngine {
                 }
             }
         } else {
-            completed.extend(self.process_runs_shared(Arc::clone(&shared_event)));
+            let (advanced, consumed) = self.process_runs_shared(Arc::clone(&shared_event));
+            completed.extend(advanced);
 
-            if let Some(run) = self.try_start_run_shared(Arc::clone(&shared_event)) {
+            if let Some(run) = self.try_start_run_after(Arc::clone(&shared_event), consumed) {
                 let (added, _) = self.handle_backpressure(run);
                 if added {
                     self.total_runs_created += 1;
@@ -624,10 +626,12 @@ impl SaseEngine {
                 .map(|v| v.to_partition_key().into_owned())
                 .unwrap_or_default();
 
-            completed.extend(self.process_partition_shared(&partition_key, Arc::clone(&event)));
+            let (advanced, consumed) =
+                self.process_partition_shared(&partition_key, Arc::clone(&event));
+            completed.extend(advanced);
 
             // Try to start new run with backpressure
-            if let Some(mut run) = self.try_start_run_shared(Arc::clone(&event)) {
+            if let Some(mut run) = self.try_start_run_after(Arc::clone(&event), consumed) {
                 if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
                     completed.push(m);
                 }
@@ -641,10 +645,11 @@ impl SaseEngine {
                 }
             }
         } else {
-            completed.extend(self.process_runs_shared(Arc::clone(&event)));
+            let (advanced, consumed) = self.process_runs_shared(Arc::clone(&event));
+            completed.extend(advanced);
 
             // Try to start new run with backpressure
-            if let Some(mut run) = self.try_start_run_shared(Arc::clone(&event)) {
+            if let Some(mut run) = self.try_start_run_after(Arc::clone(&event), consumed) {
                 if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
                     completed.push(m);
                 }
@@ -759,7 +764,9 @@ impl SaseEngine {
                 .unwrap_or_default();
 
             // Process partitioned runs
-            completed.extend(self.process_partition_shared(&partition_key, Arc::clone(&event)));
+            let (advanced, consumed) =
+                self.process_partition_shared(&partition_key, Arc::clone(&event));
+            completed.extend(advanced);
 
             // For greedy mode, skip starting a new run if an active run already
             // exists in this partition — it captures the full rising sequence.
@@ -771,7 +778,7 @@ impl SaseEngine {
 
             if !has_active {
                 // Try to start new run in partition with backpressure
-                if let Some(mut run) = self.try_start_run_shared(Arc::clone(&event)) {
+                if let Some(mut run) = self.try_start_run_after(Arc::clone(&event), consumed) {
                     if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
                         completed.push(m);
                     }
@@ -783,7 +790,8 @@ impl SaseEngine {
             }
         } else {
             // Non-partitioned processing
-            completed.extend(self.process_runs_shared(Arc::clone(&event)));
+            let (advanced, consumed) = self.process_runs_shared(Arc::clone(&event));
+            completed.extend(advanced);
 
             // For greedy mode and Kleene-final-from-start patterns, skip
             // starting a new run if any active run exists (avoids duplicate
@@ -792,7 +800,7 @@ impl SaseEngine {
 
             if !has_active {
                 // Try to start new run with backpressure
-                if let Some(mut run) = self.try_start_run_shared(Arc::clone(&event)) {
+                if let Some(mut run) = self.try_start_run_after(Arc::clone(&event), consumed) {
                     if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
                         completed.push(m);
                     }
@@ -1030,8 +1038,9 @@ impl SaseEngine {
         &mut self,
         partition_key: &str,
         event: SharedEvent,
-    ) -> Vec<MatchResult> {
+    ) -> (Vec<MatchResult>, bool) {
         let mut completed = Vec::with_capacity(4);
+        let mut consumed = false;
         let limits = self.kleene_limits();
         let now = Timestamp::now();
         let mode = self.resolved_emission_mode();
@@ -1066,21 +1075,28 @@ impl SaseEngine {
                     self.evaluator.as_deref(),
                     mode,
                 ) {
-                    RunAdvanceResult::Continue => i += 1,
+                    RunAdvanceResult::Continue => {
+                        consumed = true;
+                        i += 1;
+                    }
                     RunAdvanceResult::Complete(result) => {
+                        consumed = true;
                         completed.push(result);
                         runs.swap_remove(i);
                     }
                     RunAdvanceResult::CompleteAndContinue(result) => {
+                        consumed = true;
                         // Each mode: emit result but keep run active
                         completed.push(result);
                         i += 1;
                     }
                     RunAdvanceResult::CompleteMulti(results) => {
+                        consumed = true;
                         completed.extend(results);
                         runs.swap_remove(i);
                     }
                     RunAdvanceResult::Drained => {
+                        consumed = true;
                         // Each mode: matches were already emitted; drop the run silently
                         runs.swap_remove(i);
                     }
@@ -1092,11 +1108,12 @@ impl SaseEngine {
             }
         }
 
-        completed
+        (completed, consumed)
     }
 
-    fn process_runs_shared(&mut self, event: SharedEvent) -> Vec<MatchResult> {
+    fn process_runs_shared(&mut self, event: SharedEvent) -> (Vec<MatchResult>, bool) {
         let mut completed = Vec::with_capacity(4);
+        let mut consumed = false;
         let limits = self.kleene_limits();
         let now = Timestamp::now();
         let mode = self.resolved_emission_mode();
@@ -1130,21 +1147,28 @@ impl SaseEngine {
                 self.evaluator.as_deref(),
                 mode,
             ) {
-                RunAdvanceResult::Continue => i += 1,
+                RunAdvanceResult::Continue => {
+                    consumed = true;
+                    i += 1;
+                }
                 RunAdvanceResult::Complete(result) => {
+                    consumed = true;
                     completed.push(result);
                     self.runs.swap_remove(i);
                 }
                 RunAdvanceResult::CompleteAndContinue(result) => {
+                    consumed = true;
                     // Each mode: emit result but keep run active
                     completed.push(result);
                     i += 1;
                 }
                 RunAdvanceResult::CompleteMulti(results) => {
+                    consumed = true;
                     completed.extend(results);
                     self.runs.swap_remove(i);
                 }
                 RunAdvanceResult::Drained => {
+                    consumed = true;
                     // Each mode: matches were already emitted; drop the run silently
                     self.runs.swap_remove(i);
                 }
@@ -1155,7 +1179,7 @@ impl SaseEngine {
             }
         }
 
-        completed
+        (completed, consumed)
     }
 
     /// Create a run parked on `state_id`, under the engine's time semantics and
@@ -1184,6 +1208,18 @@ impl SaseEngine {
         }
 
         run
+    }
+
+    /// Start a run for `event` unless, under skip-till-next-match, a run
+    /// already took it: `.stnm()` promises that an event participates in at
+    /// most one match, and every event that could open the pattern used to
+    /// open a run whatever the strategy (four failed logins and a success
+    /// made one alert per failure under `.stnm()` as under the default).
+    fn try_start_run_after(&self, event: SharedEvent, consumed: bool) -> Option<Run> {
+        if consumed && self.strategy == SelectionStrategy::SkipTillNextMatch {
+            return None;
+        }
+        self.try_start_run_shared(event)
     }
 
     /// Start a run for `event`, entering a negated step straight away if the

@@ -123,9 +123,11 @@ does not do this quietly:
 - Under `.longest()` and `.subsets()`, the match itself carries
   **`_kleene_truncated`**: the number of events dropped. It is absent when
   nothing was dropped, so you can emit it directly. Under `.each()` (the
-  default) the run simply stops producing matches once the cap is reached —
-  there is no later match to carry the mark — so the warning and the log are
-  the signal there.
+  default) it depends on where the closure is. One followed by another step
+  emits its matches when that step arrives, and each of them carries the mark.
+  One that ends the pattern emits as it grows, so once the cap is reached the
+  run simply stops producing matches, and the warning and the log are the
+  signal there.
 
 ```varpulis
 stream BruteForce = AuthEvent where status == "failed" as first
