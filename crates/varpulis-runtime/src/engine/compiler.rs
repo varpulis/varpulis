@@ -278,9 +278,15 @@ pub fn compile_to_sase_pattern_with_resolver(
             } else {
                 (name.clone(), None)
             };
-            // The inline filter takes precedence / merges with derived stream filter
+            // The step's own filter applies on top of the stream's: both hold,
+            // as they do for a later step.
             if let Some(inline_pred) = expr_to_sase_predicate(filter) {
-                predicate = Some(inline_pred);
+                predicate = Some(match predicate {
+                    Some(stream_pred) => {
+                        Predicate::And(Box::new(stream_pred), Box::new(inline_pred))
+                    }
+                    None => inline_pred,
+                });
             }
             steps.push(SasePattern::Event {
                 event_type,

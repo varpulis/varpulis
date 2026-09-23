@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed — rules that ran and never fired
 
+- A sequence step that names a derived stream (`Burst as b -> ...`) was
+  compiled onto that stream's source type, with the stream's first
+  `.where()` as the step's predicate. For a stream that only filters that is
+  the same thing; for any other it was not. Over an aggregate the step
+  matched the raw events instead of the results, so `Burst as b -> Logout`
+  never fired when the aggregate had a `.where()` and `b.n` was null when it
+  had none; a stream with two `.where()` lost the second; and a stream with
+  an `.emit()` gave the step its input instead of what it emits, unlike any
+  other stream below it. Only a stream that does nothing but filter, once,
+  is still read at its source; any other is read by what it outputs. A first
+  step's own filter (`Uploads where host == "a" as u`) now applies on top of
+  the stream's filter instead of replacing it, as it already did for later
+  steps.
 - A time window closed only when a later event reached that same window. A
   window over a filtered stream waited for the next event that passed the
   filter, a partitioned window for the next event of the same partition: a
