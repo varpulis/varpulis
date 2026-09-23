@@ -315,6 +315,12 @@
         </div>
       </div>
       <div class="claim">
+        <h3>Your Sigma rules come with you</h3>
+        <div>
+          <p><code>sigma convert -t varpulis</code> turns Sigma rules into VPL, correlation rules included: a <code>temporal_ordered</code> correlation becomes a sequence matched as the events arrive, rather than a query over what was stored. All <span class="num">3 760</span> rules of the SigmaHQ repository convert (keyword searches once you name the field that holds the log line), and every program produced passes the engine's checker. <a href="https://github.com/varpulis/pySigma-backend-varpulis">The backend is on GitHub</a>.</p>
+        </div>
+      </div>
+      <div class="claim">
         <h3>Small enough to put next to anything</h3>
         <div>
           <p>One <span class="num">8 MB</span> binary and about <span class="num">10 MB</span> of memory per rule set, no JVM. A correlation rule handles up to about <span class="num">25 000</span> events per second on an ordinary eight-core machine, and <a href="https://github.com/cpoder/vejas/blob/master/bench/README.md#detect-units-benchdetectsh">the sizing is published</a>: what costs is the number of attacks half-seen at once, not the number of events.</p>
