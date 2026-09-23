@@ -2,11 +2,43 @@
 
 Complete reference for window types and aggregation functions in VPL.
 
+## When windows close
+
+Time windows are judged in the time the events carry. A program keeps a
+clock per input event type, the latest timestamp read of that type, and a
+window closes once the clocks of the types feeding it (through any chain of
+streams) have passed its end, whichever stream or partition moved them. A
+brute force counted per address on Security events raises its alert on the
+next Security event of any kind, not when the same address fails again,
+which after a successful logon may never happen.
+
+- A window fed by several types waits for the slowest of them, so a source
+  that delivers late does not see its windows closed by a faster one. A type
+  that never arrived does not hold anything back, and a quiet type only holds
+  back the windows it feeds.
+- Windows close after each batch of input (for `varpulis simulate` and a
+  Vejas detect unit, after each event), as an event of their own arriving at
+  that time would close them. A sliding window emits at each slide reached.
+- What a window emits reaches the streams below it before their own windows
+  close, so a count over a count, or a correlation over a count, sees it in
+  the right window.
+- `.watermark(out_of_order: 30s)` on a stream holds its windows 30 seconds
+  longer, for events that arrive late.
+- At the end of a bounded input (`varpulis simulate`), every window closes.
+
+A window whose types no later event follows stays open: nothing tells the
+program that time has passed. If a source can go quiet, have it send a
+periodic heartbeat event of the same type.
+
+This is the synchronous engine, the one `varpulis simulate` and a Vejas
+detect unit run. The legacy asynchronous runtime still closes a window when
+one of its own events arrives, or on `.watermark()`.
+
 ## Window Types
 
 ### Tumbling Windows
 
-Non-overlapping, fixed-duration windows. When the duration expires, the window emits and resets.
+Non-overlapping, fixed-duration windows. When the duration has passed in event time, the window emits and resets.
 
 **Syntax:**
 ```vpl
@@ -19,10 +51,11 @@ stream Name = EventType
 - `<duration>`: Window length (e.g., `5s`, `1m`, `1h`)
 
 **Behavior:**
-- Events accumulate until window duration elapses
-- When first event arrives, window start time is set
-- When an event's timestamp exceeds `window_start + duration`, window emits
-- Window resets with the triggering event
+- The window opens with its first event and lasts `<duration>` of event time
+- It closes once event time reaches `window_start + duration`: when any
+  later event of the types feeding it arrives, from any stream or partition,
+  not only one of its own (see [When windows close](#when-windows-close))
+- The next event of the stream opens the next window
 
 **Example:**
 ```vpl

@@ -279,14 +279,30 @@ fn no_double_emit_across_flush_drivers() {
 }
 
 // =============================================================================
-// (h) Multi-source min-watermark
+// (h) Several sources: a window waits for the sources that feed it
 // =============================================================================
 
-/// Two watermarked sources: the effective watermark is the MIN across
-/// sources, so a fast source must not prematurely close windows a slow
-/// source still feeds.
+fn collect_counts(rx: &mut mpsc::Receiver<Event>, fields: &[&str]) -> Vec<(String, i64)> {
+    let mut got: Vec<(String, i64)> = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        for field in fields {
+            if let Some(v) = e.data.get(*field) {
+                got.push((field.to_string(), v.as_int().unwrap_or(-1)));
+            }
+        }
+    }
+    got.sort();
+    got
+}
+
+/// A window closes on the clocks of the sources that feed it. A fast source
+/// must not prematurely close a window a slow source still feeds; it no
+/// longer holds back a window the slow source does not feed. (The effective
+/// watermark used to be the minimum over every watermarked source of the
+/// program, so one source that fell behind or went quiet stopped every
+/// window from closing.)
 #[test]
-fn multi_source_min_watermark_gates_window_close() {
+fn a_window_waits_for_the_sources_that_feed_it_and_no_other() {
     let program = parse(
         r"
         stream A = EvA
@@ -300,6 +316,12 @@ fn multi_source_min_watermark_gates_window_close() {
             .window(1s)
             .aggregate(nb: count())
             .emit(nb: nb)
+
+        stream Both = merge(EvA, EvB)
+            .watermark(out_of_order: 0s)
+            .window(1s)
+            .aggregate(nab: count())
+            .emit(nab: nab)
         ",
     )
     .expect("parse");
@@ -318,34 +340,26 @@ fn multi_source_min_watermark_gates_window_close() {
             .with_timestamp(ts(off))
     };
 
-    // EvA races ahead to 5s, EvB sits at 0.5s → effective watermark 0.5s:
-    // A's window [0s,1s) must NOT close yet.
+    // EvA races ahead to 5s, EvB sits at 0.5s. A is fed by EvA alone: its
+    // [0s,1s) window closes. B, and the window fed by both, wait for EvB.
     engine
         .process_batch_sync(vec![evb(500), eva(200), eva(800), eva(5_000)])
         .expect("process");
-    assert!(
-        rx.try_recv().is_err(),
-        "effective watermark is min(5s, 0.5s) = 0.5s — no window may close"
+    assert_eq!(
+        collect_counts(&mut rx, &["na", "nb", "nab"]),
+        vec![("na".to_string(), 2)],
+        "only the window EvB does not feed may close"
     );
 
-    // EvB advances to 2s → effective watermark 2s → both [0s,1s) windows close.
+    // EvB advances to 2s: B's [0s,1s) window closes, and so does the window
+    // fed by both, holding EvB's 0.5s and EvA's 0.2s and 0.8s.
     engine
         .process_batch_sync(vec![evb(2_000)])
         .expect("process");
-    let mut got: Vec<(String, i64)> = Vec::new();
-    while let Ok(e) = rx.try_recv() {
-        if let Some(v) = e.data.get("na") {
-            got.push(("na".into(), v.as_int().unwrap_or(-1)));
-        }
-        if let Some(v) = e.data.get("nb") {
-            got.push(("nb".into(), v.as_int().unwrap_or(-1)));
-        }
-    }
-    got.sort();
     assert_eq!(
-        got,
-        vec![("na".to_string(), 2), ("nb".to_string(), 1)],
-        "min watermark passage must close both streams' [0s,1s) windows"
+        collect_counts(&mut rx, &["na", "nb", "nab"]),
+        vec![("nab".to_string(), 3), ("nb".to_string(), 1)],
+        "EvB's passage closes the windows it feeds"
     );
 }
 

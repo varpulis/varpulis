@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed — rules that ran and never fired
 
+- A time window closed only when a later event reached that same window. A
+  window over a filtered stream waited for the next event that passed the
+  filter, a partitioned window for the next event of the same partition: a
+  brute force counted per address, followed by a successful logon, never
+  raised its count on a live stream (`simulate` hid it by closing every
+  window at the end of the file). The engine now keeps a clock per input
+  event type and, after each batch, closes every window the clocks of the
+  types feeding it have passed, whatever stream or partition moved them;
+  windows close upstream first, so what one emits reaches the windows below
+  before they close (window results closed by a watermark or at the end of
+  the input used to reach the output only, never the streams below). With
+  `.watermark()` the window closed on the slowest event type of the whole
+  program, so one type that went quiet held back every other window; a
+  window now waits only for the types that feed it, and `out_of_order` holds
+  it that much longer. Partitioned windows keep their deadlines in order, so
+  the clock visits only the windows it closes. The synchronous engine
+  (`simulate`, Vejas detect units) only; the legacy asynchronous runtime is
+  unchanged.
 - `.stnm()` changed nothing. ADR-006 and the patterns guide promise that
   under skip-till-next-match an event takes part in at most one match, and
   every event that could open the pattern opened a run under every strategy.
