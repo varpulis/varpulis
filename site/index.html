@@ -317,7 +317,8 @@
       <div class="claim">
         <h3>Your Sigma rules come with you</h3>
         <div>
-          <p><code>sigma convert -t varpulis</code> turns Sigma rules into VPL, correlation rules included: a <code>temporal_ordered</code> correlation becomes a sequence matched as the events arrive, rather than a query over what was stored. All <span class="num">3 760</span> rules of the SigmaHQ repository convert (keyword searches once you name the field that holds the log line), and every program produced passes the engine's checker. <a href="https://github.com/varpulis/pySigma-backend-varpulis">The backend is on GitHub</a>.</p>
+          <p><code>sigma convert -t varpulis</code> turns Sigma rules into VPL, correlation rules included: a <code>temporal_ordered</code> correlation becomes a sequence matched as the events arrive, rather than a query over what was stored.</p>
+          <p>We ran every Windows rule of the SigmaHQ repository that converts, <span class="num">2 398</span> of <span class="num">2 410</span>, as one program over the <span class="num">196 081</span> events of MITRE's APT29 evaluation. It raises <span class="num">2 824</span> alerts from <span class="num">81</span> rules, on exactly the events an independent Sigma engine flags, in <span class="num">23</span> seconds on one laptop core. <a href="https://github.com/varpulis/pySigma-backend-varpulis/tree/main/bench">How it was checked, and how to run it yourself</a>.</p>
         </div>
       </div>
       <div class="claim">
@@ -395,7 +396,7 @@ e2e/detect-demo/run.sh            <span class="c"># PAUSE=manual walks it step b
       <div class="tier lead-tier">
         <div>
           <h3>Detection proof of concept</h3>
-          <p class="price">€10 000<small>fixed price, four weeks</small></p>
+          <p class="price">€10 000<small>fixed price excl. VAT, four weeks</small></p>
         </div>
         <div>
           <p>We take three to five of your detection scenarios from your current SIEM to running Varpulis rules on your own event stream.</p>
@@ -411,7 +412,7 @@ e2e/detect-demo/run.sh            <span class="c"># PAUSE=manual walks it step b
       <div class="tier">
         <div>
           <h3>Support and detection library</h3>
-          <p class="price">From €25 000<small>per year</small></p>
+          <p class="price">From €25 000<small>per year, excl. VAT</small></p>
         </div>
         <div>
           <p>Your deployment, self-hosted with a support agreement or run for you on a dedicated instance, and a curated library of rules kept current against ATT&amp;CK.</p>
