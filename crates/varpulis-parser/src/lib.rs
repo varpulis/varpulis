@@ -15,7 +15,7 @@
 //!
 //! ## Modules
 //!
-//! - [`pest_parser`]: Main parser implementation using Pest PEG grammar
+//! - [`parse`]: the parser, a Pest PEG grammar behind one function
 //! - [`lexer`]: Token definitions (used for syntax highlighting)
 //! - [`error`]: Parse error types with location information
 //! - [`helpers`]: Parsing utility functions
