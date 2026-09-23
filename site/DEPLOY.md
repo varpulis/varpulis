@@ -26,6 +26,13 @@ its route exists and the edge keeps answering 404 for a few minutes. Assets
 are therefore referenced with a version query string (`?v=3.17.0`), which
 also makes each update visible at once.
 
+Cloudflare also rewrites every `mailto:` link and visible address into a
+`/cdn-cgi/l/email-protection` link that only its script decodes, so without
+JavaScript the contact buttons led nowhere and the address read "[email
+protected]". Each mail link on the page is therefore wrapped in
+`<!--email_off-->` ... `<!--/email_off-->`, which Cloudflare leaves alone. Keep
+new ones wrapped too.
+
 The front door routes only what the landing replaced, and leaves the rest of
 the old application where it was (the blog, the docs, the API behind it):
 
