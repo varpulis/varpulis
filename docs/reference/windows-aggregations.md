@@ -36,6 +36,11 @@ ends. The type's clock is kept in the program's snapshot, so a restarted
 host picks up where it was. `varpulis simulate` sets no grace: a replay is
 judged in event time alone, and gives the same alerts however fast it runs.
 
+An absence (`-> NOT B within 4h`, see
+[Absence](../language/operators.md#absence-not-b)) completes on the same
+clocks, once they pass its deadline, and the idle grace raises it on a quiet
+source too. The end of the input completes none.
+
 This is the synchronous engine, the one `varpulis simulate` and a Vejas
 detect unit run. The legacy asynchronous runtime still closes a window when
 one of its own events arrives, or on `.watermark()`.

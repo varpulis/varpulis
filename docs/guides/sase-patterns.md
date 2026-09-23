@@ -388,12 +388,12 @@ stream Unconfirmed = UnconfirmedOrder
 3. If the negated event occurs before timeout, the pattern fails
 4. If timeout expires without the event, the pattern succeeds
 
-The timeout is judged against the watermark, which moves when an event
-arrives. Orders o1 at 10:00 and o2 at 10:05, a confirmation for o2 at 10:10,
-then another order at 11:30: the alert for o1 comes out with that 11:30 event,
-nothing comes out for o2, and nothing for the 11:30 order either, whose hour
-has not passed when the input ends. See [Absence](../language/operators.md#absence-not-b)
-for what this means on a stream that goes silent.
+The timeout is judged in event time. Orders o1 at 10:00 and o2 at 10:05, a
+confirmation for o2 at 10:10, then another order at 11:30: the alert for o1
+comes out with that 11:30 event, nothing comes out for o2, and nothing for the
+11:30 order either, whose hour has not passed when the input ends. On a live
+stream that goes silent, a host with an idle grace raises the alert without
+waiting for an event; see [Absence](../language/operators.md#absence-not-b).
 
 **Implementation:** See `NegationInfo` in `crates/varpulis-sase/src/and_op.rs`
 

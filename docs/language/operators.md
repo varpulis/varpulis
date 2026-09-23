@@ -195,13 +195,23 @@ It cannot fire on an absence, because with no event to trigger it there is
 nothing for the engine to emit. `-> NOT B` is the opposite: the deadline
 passing is what produces the match.
 
-**The alert arrives with the next event, not on a wall clock.** The deadline is
-checked against the watermark, and the watermark moves when an event arrives —
-any event of a type the pattern references. On a stream that keeps flowing this
-is a few seconds of lag; on a stream that goes completely silent after the
-trigger, the alert does not fire at all, because nothing tells the engine that
-time has passed. If you need the alert on a dead stream, emit a periodic
-heartbeat event of a type the pattern references.
+**The deadline is judged in event time**, the time the events carry, as a
+window's end is (see [When windows close](../reference/windows-aggregations.md#when-windows-close)).
+The alert comes with the first event that takes the event time of the types
+feeding the pattern past the deadline: an event of any of those types, even
+one the pattern never reads because a stream in between filtered it out.
+
+- On a live stream that goes silent after the trigger, the alert comes all
+  the same where the host sets an idle grace (a Vejas detect unit does, 60
+  seconds by default): a quiet type's event time then moves on with the wall
+  clock, less the grace, and "no acknowledgement within 4h" is raised about a
+  grace after the four hours, with nothing arriving at all. Without a grace
+  (`varpulis simulate`, a replay) only events move time.
+- The end of a replayed file confirms no absence. Where a log stops says
+  nothing about what came after, so an order placed in the file's last four
+  hours raises no alert.
+- A program restored from its snapshot keeps the absences it was waiting
+  out: its acknowledgement still cancels one, its deadline still raises it.
 
 ### Monotonic pattern shortcuts
 

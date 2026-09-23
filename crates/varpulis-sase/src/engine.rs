@@ -349,6 +349,42 @@ impl SaseEngine {
         self.cleanup_by_watermark()
     }
 
+    /// Give each run waiting out a negated step its constraint back.
+    ///
+    /// A checkpoint records the state a run is in, not the constraint that
+    /// entering the negated step attached to it, so a restored run had none:
+    /// the forbidden event no longer cancelled it, and at its deadline it was
+    /// dropped instead of completing. The constraint is the step's, with the
+    /// run's deadline, as entering the step built it.
+    pub fn restore_pending_negations(&mut self) {
+        let nfa = &self.nfa;
+        for run in self
+            .runs
+            .iter_mut()
+            .chain(self.partitioned_runs.values_mut().flatten())
+        {
+            if !run.pending_negations.is_empty() {
+                continue;
+            }
+            let Some(neg_info) = nfa
+                .states
+                .get(run.current_state)
+                .filter(|state| state.state_type == StateType::Negation)
+                .and_then(|state| state.negation_info.as_ref())
+            else {
+                continue;
+            };
+            run.pending_negations
+                .push(super::negation::NegationConstraint {
+                    forbidden_type: neg_info.forbidden_type.clone(),
+                    predicate: neg_info.predicate.clone(),
+                    deadline: run.deadline,
+                    event_time_deadline: run.event_time_deadline,
+                    next_state: neg_info.continue_state,
+                });
+        }
+    }
+
     /// Add a global negation condition that invalidates active runs
     pub fn add_negation(&mut self, event_type: String, predicate: Option<Predicate>) {
         self.global_negations.push(GlobalNegation {

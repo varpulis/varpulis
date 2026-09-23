@@ -21,21 +21,27 @@ use crate::sequence::SequenceContext;
 
 /// When windows close on the event clock. A time window used to close only
 /// when a later event reached it; now it closes once the clock of the event
-/// types feeding it has passed its end, on any event of those types.
+/// types feeding it has passed its end, on any event of those types. An
+/// absence (`-> NOT B within X`) completes the same way, once that clock has
+/// passed its deadline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CloseAt {
     /// After a batch of input: every window the clocks of its sources have
-    /// passed, with the stream's declared out-of-orderness.
+    /// passed, with the stream's declared out-of-orderness, and every absence
+    /// whose deadline they have passed.
     Clock,
-    /// The end of a bounded input: every window, as far as it goes.
+    /// The end of a bounded input: every window, as far as it goes. No
+    /// absence: where a log stops says nothing about the time after it.
     EndOfInput,
 }
 
-/// A stream holding a time window, and the input event types that feed it
-/// (through any chain of streams): its window closes on their clocks.
+/// A stream holding a time window or an absence, and the input event types
+/// that feed it (through any chain of streams): it closes on their clocks.
 pub(crate) struct WindowCloser {
     stream: String,
     sources: Box<[String]>,
+    /// Its pattern has a negated step, which time alone completes.
+    absences: bool,
 }
 
 impl Engine {
@@ -671,11 +677,11 @@ impl Engine {
         self.close_windows_sync(CloseAt::Clock)
     }
 
-    /// The streams holding a time window, upstream first, so that what a
-    /// window emits reaches the windows below it before they close, each
-    /// with the input event types that feed it. Worked out once per set of
-    /// streams: a stream's output is routed under the stream's name, so the
-    /// routes are the edges.
+    /// The streams holding a time window or an absence, upstream first, so
+    /// that what one emits reaches the streams below it before they close,
+    /// each with the input event types that feed it. Worked out once per set
+    /// of streams: a stream's output is routed under the stream's name, so
+    /// the routes are the edges.
     fn window_close_order(&mut self) -> Arc<[WindowCloser]> {
         if let Some(order) = &self.window_close_order {
             return Arc::clone(order);
@@ -736,18 +742,23 @@ impl Engine {
         let order: Arc<[WindowCloser]> = post
             .into_iter()
             .rev()
-            .filter(|name| {
-                self.streams
-                    .get(*name)
-                    .is_some_and(|stream| stream.operations.iter().any(Self::is_time_window))
+            .filter_map(|name| {
+                let stream = self.streams.get(name)?;
+                let absences = stream.sase_engine.as_ref().is_some_and(|sase| {
+                    sase.time_semantics() == crate::sase::TimeSemantics::EventTime
+                        && sase.nfa().has_negation()
+                });
+                (absences || stream.operations.iter().any(Self::is_time_window))
+                    .then_some((name, absences))
             })
-            .map(|name| {
+            .map(|(name, absences)| {
                 let mut found = Vec::new();
                 let mut seen = rustc_hash::FxHashSet::default();
                 sources(name, &inputs, &self.streams, &mut seen, &mut found);
                 WindowCloser {
                     stream: name.to_string(),
                     sources: found.into_boxed_slice(),
+                    absences,
                 }
             })
             .collect();
@@ -789,7 +800,6 @@ impl Engine {
         at: CloseAt,
         emitted_batch: &mut Vec<SharedEvent>,
     ) -> Result<(), super::error::EngineError> {
-        const MAX_CHAIN_DEPTH: usize = 10;
         let order = self.window_close_order();
         for closer in order.iter() {
             let wm = match at {
@@ -816,57 +826,132 @@ impl Engine {
             let Some(stream) = self.streams.get_mut(stream_name) else {
                 continue;
             };
+            // Only event time confirms an absence; the end of the input
+            // confirms none.
+            if closer.absences && at == CloseAt::Clock {
+                if let Some((sequence_idx, matches)) = Self::collect_absences(stream, wm) {
+                    self.run_closed(
+                        stream_name,
+                        matches,
+                        sequence_idx + 1,
+                        pipeline::SkipFlags::none(),
+                        at,
+                        emitted_batch,
+                    )?;
+                }
+            }
+            let Some(stream) = self.streams.get_mut(stream_name) else {
+                continue;
+            };
             let Some((window_idx, emissions)) = Self::collect_clock_closes(stream, wm) else {
                 continue;
             };
-            let forwards = stream
-                .operations
-                .iter()
-                .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
-            let routed = self.router.get_routes(stream_name).is_some();
             for expired in emissions {
-                let Some(stream) = self.streams.get_mut(stream_name) else {
-                    break;
-                };
-                let result = pipeline::execute_pipeline_sync(
-                    stream,
+                self.run_closed(
+                    stream_name,
                     expired,
                     window_idx + 1,
                     pipeline::SkipFlags::for_post_window(),
-                    &self.functions,
-                    false,
+                    at,
+                    emitted_batch,
                 )?;
-                self.output_events_emitted += result.emitted_events.len() as u64;
-                let has_emitted = !result.emitted_events.is_empty();
-                emitted_batch.extend(result.emitted_events);
-                // Outputs reach the output channel as on the dispatch path
-                // (`.process()` / `.to()` streams without an `.emit()`), and, at
-                // the end of the input, from any stream that emits nothing, as
-                // the end-of-input drain always sent them.
-                let forward_outputs = !has_emitted
-                    && match at {
-                        CloseAt::EndOfInput => !forwards,
-                        CloseAt::Clock => forwards,
-                    };
-                if forward_outputs {
-                    self.output_events_emitted += result.output_events.len() as u64;
-                    emitted_batch.extend(result.output_events.iter().map(Arc::clone));
-                } else {
-                    self.output_events_emitted += result.sink_events_sent;
-                }
-                if routed {
-                    let mut downstream: VecDeque<(SharedEvent, usize)> =
-                        result.output_events.into_iter().map(|e| (e, 1)).collect();
-                    while let Some((event, depth)) = downstream.pop_front() {
-                        if depth >= MAX_CHAIN_DEPTH {
-                            continue;
-                        }
-                        self.dispatch_sync_event(event, depth, &mut downstream, emitted_batch)?;
-                    }
-                }
             }
         }
         Ok(())
+    }
+
+    /// Run what a close took from a stream through the rest of its pipeline,
+    /// from `start_idx`: send what it emits, and pass what it outputs to the
+    /// streams below.
+    fn run_closed(
+        &mut self,
+        stream_name: &str,
+        events: Vec<SharedEvent>,
+        start_idx: usize,
+        skip_flags: pipeline::SkipFlags,
+        at: CloseAt,
+        emitted_batch: &mut Vec<SharedEvent>,
+    ) -> Result<(), super::error::EngineError> {
+        const MAX_CHAIN_DEPTH: usize = 10;
+        let routed = self.router.get_routes(stream_name).is_some();
+        let Some(stream) = self.streams.get_mut(stream_name) else {
+            return Ok(());
+        };
+        let forwards = stream
+            .operations
+            .iter()
+            .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
+        let result = pipeline::execute_pipeline_sync(
+            stream,
+            events,
+            start_idx,
+            skip_flags,
+            &self.functions,
+            false,
+        )?;
+        self.output_events_emitted += result.emitted_events.len() as u64;
+        let has_emitted = !result.emitted_events.is_empty();
+        emitted_batch.extend(result.emitted_events);
+        // Outputs reach the output channel as on the dispatch path
+        // (`.process()` / `.to()` streams without an `.emit()`), and, at
+        // the end of the input, from any stream that emits nothing, as
+        // the end-of-input drain always sent them.
+        let forward_outputs = !has_emitted
+            && match at {
+                CloseAt::EndOfInput => !forwards,
+                CloseAt::Clock => forwards,
+            };
+        if forward_outputs {
+            self.output_events_emitted += result.output_events.len() as u64;
+            emitted_batch.extend(result.output_events.iter().map(Arc::clone));
+        } else {
+            self.output_events_emitted += result.sink_events_sent;
+        }
+        if routed {
+            let mut downstream: VecDeque<(SharedEvent, usize)> =
+                result.output_events.into_iter().map(|e| (e, 1)).collect();
+            while let Some((event, depth)) = downstream.pop_front() {
+                if depth >= MAX_CHAIN_DEPTH {
+                    continue;
+                }
+                self.dispatch_sync_event(event, depth, &mut downstream, emitted_batch)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// What event time `wm` has completed in a stream's pattern: each run
+    /// whose negated step saw no forbidden event before its deadline, as the
+    /// event the pattern emits for it, stamped `wm`, and the index of the
+    /// pattern's op.
+    fn collect_absences(
+        stream: &mut StreamDefinition,
+        wm: DateTime<Utc>,
+    ) -> Option<(usize, Vec<SharedEvent>)> {
+        let sase = stream.sase_engine.as_mut()?;
+        // Where the pattern's own events have already taken it there is
+        // nothing new to confirm, and its watermark does not move back.
+        if sase.watermark().is_some_and(|own| own >= wm) {
+            return None;
+        }
+        let completed = sase.advance_watermark(wm);
+        if completed.is_empty() {
+            return None;
+        }
+        let (sequence_idx, seq_cfg) =
+            stream
+                .operations
+                .iter()
+                .enumerate()
+                .find_map(|(idx, op)| match op {
+                    RuntimeOp::Sequence(seq_cfg) => Some((idx, seq_cfg)),
+                    _ => None,
+                })?;
+        let matches = completed
+            .iter()
+            .map(|m| pipeline::sequence_match_event(&stream.name_arc, seq_cfg, m, wm))
+            .collect();
+        Some((sequence_idx, matches))
     }
 
     /// Take from a stream's first time window what event time `wm` has closed:
