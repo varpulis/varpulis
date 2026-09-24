@@ -174,7 +174,7 @@ impl SaseCheckpointExt for SaseEngine {
         self.total_runs_completed = cp.total_runs_completed;
         self.total_runs_dropped = cp.total_runs_dropped;
         self.total_runs_evicted = cp.total_runs_evicted;
-        // Not in the checkpoint: rebuilt from the state each run is in.
-        self.restore_pending_negations();
+        // Not in the checkpoint: rebuilt from the runs.
+        self.resume_after_restore();
     }
 }
