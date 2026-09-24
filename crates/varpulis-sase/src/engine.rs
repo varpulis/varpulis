@@ -1,5 +1,6 @@
 //! SASE+ Engine
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
@@ -25,6 +26,10 @@ use super::types::{
 use crate::clock::Timestamp;
 use crate::ExprEvaluator;
 
+/// Below this many entries the deadline index of the partitioned runs is
+/// never rebuilt.
+const MIN_DEADLINES_COMPACT_AT: usize = 1024;
+
 /// PERF: Static empty captured map to avoid allocations in try_start_run
 static EMPTY_CAPTURED: LazyLock<FxHashMap<String, SharedEvent>> = LazyLock::new(FxHashMap::default);
 
@@ -46,6 +51,17 @@ pub struct SaseEngine {
     partition_by: Option<String>,
     /// Partitioned runs for SASEXT
     pub partitioned_runs: FxHashMap<String, Vec<Run>>,
+    /// The event-time deadline of each partitioned run, with its partition,
+    /// in order: the watermark sweep visits the partitions holding a run it
+    /// has made due, instead of every partition on every event. An entry can
+    /// outlive its run (one that completed or was cancelled first); visiting
+    /// it then finds nothing to do.
+    partition_deadlines: BTreeSet<(DateTime<Utc>, String)>,
+    /// Size at which `partition_deadlines` is rebuilt from the live runs:
+    /// twice what the last rebuild left. Entries of runs that completed
+    /// early would otherwise stay until their deadline, a day of them with
+    /// `within 24h`.
+    partition_deadlines_compact_at: usize,
     /// Global negation conditions that invalidate active runs
     global_negations: Vec<GlobalNegation>,
     /// Time semantics (processing time vs event time)
@@ -168,6 +184,8 @@ impl SaseEngine {
             strategy: SelectionStrategy::SkipTillAnyMatch,
             partition_by: None,
             partitioned_runs: FxHashMap::default(),
+            partition_deadlines: BTreeSet::new(),
+            partition_deadlines_compact_at: MIN_DEADLINES_COMPACT_AT,
             global_negations: Vec::new(),
             // WITHIN measures the distance between the events themselves, not
             // the distance between their arrivals. Defaulting to event time is
@@ -349,6 +367,44 @@ impl SaseEngine {
         self.cleanup_by_watermark()
     }
 
+    /// Rebuild what a checkpoint does not keep, after its runs were put back:
+    /// the constraint of each run waiting out a negated step, and the order
+    /// of the partitioned runs' deadlines.
+    pub fn resume_after_restore(&mut self) {
+        self.restore_pending_negations();
+        self.rebuild_partition_deadlines();
+    }
+
+    /// Drop the entries whose run is gone: completed or cancelled before its
+    /// deadline.
+    fn purge_partition_deadlines(&mut self) {
+        let partitions = &self.partitioned_runs;
+        self.partition_deadlines.retain(|(deadline, key)| {
+            partitions.get(key).is_some_and(|runs| {
+                runs.iter()
+                    .any(|run| run.event_time_deadline == Some(*deadline))
+            })
+        });
+        self.partition_deadlines_compact_at =
+            (2 * self.partition_deadlines.len()).max(MIN_DEADLINES_COMPACT_AT);
+    }
+
+    /// Index the deadlines of the partitioned runs there are now, and no
+    /// others.
+    fn rebuild_partition_deadlines(&mut self) {
+        self.partition_deadlines = self
+            .partitioned_runs
+            .iter()
+            .flat_map(|(key, runs)| {
+                runs.iter()
+                    .filter_map(|run| run.event_time_deadline)
+                    .map(|deadline| (deadline, key.clone()))
+            })
+            .collect();
+        self.partition_deadlines_compact_at =
+            (2 * self.partition_deadlines.len()).max(MIN_DEADLINES_COMPACT_AT);
+    }
+
     /// Give each run waiting out a negated step its constraint back.
     ///
     /// A checkpoint records the state a run is in, not the constraint that
@@ -356,7 +412,7 @@ impl SaseEngine {
     /// the forbidden event no longer cancelled it, and at its deadline it was
     /// dropped instead of completing. The constraint is the step's, with the
     /// run's deadline, as entering the step built it.
-    pub fn restore_pending_negations(&mut self) {
+    fn restore_pending_negations(&mut self) {
         let nfa = &self.nfa;
         for run in self
             .runs
@@ -960,6 +1016,13 @@ impl SaseEngine {
         partition_key: &str,
         run: Run,
     ) -> (bool, Option<ProcessWarning>) {
+        if let Some(deadline) = run.event_time_deadline {
+            if self.partition_deadlines.len() >= self.partition_deadlines_compact_at {
+                self.purge_partition_deadlines();
+            }
+            self.partition_deadlines
+                .insert((deadline, partition_key.to_string()));
+        }
         let partition_runs = self
             .partitioned_runs
             .entry(partition_key.to_string())
@@ -1141,6 +1204,11 @@ impl SaseEngine {
                     }
                     RunAdvanceResult::NoMatch => i += 1,
                 }
+            }
+            // A partition whose runs are all gone leaves the map now: the
+            // watermark sweep only visits the partitions with a deadline due.
+            if runs.is_empty() {
+                self.partitioned_runs.remove(partition_key);
             }
         }
 
@@ -1482,41 +1550,49 @@ impl SaseEngine {
 
     /// Cleanup runs based on watermark (for event-time processing)
     fn cleanup_by_watermark(&mut self) -> Vec<MatchResult> {
+        let Some(watermark) = self.watermark else {
+            return Vec::new();
+        };
+        // NEG-01: Confirm negations based on watermark.
+        //
+        // Collected before the retain below, which drops every run whose
+        // deadline has passed. A run completed by that same deadline is
+        // exactly such a run, so confirming and then discarding would
+        // throw away the match the confirmation just produced.
         let mut completed = Vec::new();
-        if let Some(watermark) = self.watermark {
-            // NEG-01: Confirm negations based on watermark.
-            //
-            // Collected before the retain below, which drops every run whose
-            // deadline has passed. A run completed by that same deadline is
-            // exactly such a run, so confirming and then discarding would
-            // throw away the match the confirmation just produced.
-            completed = self.confirm_negations_event_time(watermark);
-
-            self.runs
-                .retain(|r| !r.is_timed_out_event_time(watermark) && !r.invalidated);
-            retain_and_evict_empty_partitions(&mut self.partitioned_runs, |r| {
-                !r.is_timed_out_event_time(watermark) && !r.invalidated
-            });
-        }
-        completed
-    }
-
-    /// NEG-01: Confirm negations based on event-time watermark
-    fn confirm_negations_event_time(&mut self, watermark: DateTime<Utc>) -> Vec<MatchResult> {
-        let mut out = Vec::new();
         for run in &mut self.runs {
-            out.extend(Self::confirm_run_negations_event_time_static(
+            completed.extend(Self::confirm_run_negations_event_time_static(
                 run, &self.nfa, watermark,
             ));
         }
-        for runs in self.partitioned_runs.values_mut() {
+        self.runs
+            .retain(|r| !r.is_timed_out_event_time(watermark) && !r.invalidated);
+
+        // Partitioned runs: only the partitions holding a run whose deadline
+        // the watermark has passed. Sweeping every partition on every event
+        // made an absence over many open keys (orders awaiting an
+        // acknowledgement) cost the number of open keys per event.
+        while let Some((deadline, _)) = self.partition_deadlines.first() {
+            if watermark <= *deadline {
+                break;
+            }
+            let Some((_, key)) = self.partition_deadlines.pop_first() else {
+                break;
+            };
+            let Some(runs) = self.partitioned_runs.get_mut(&key) else {
+                continue;
+            };
             for run in runs.iter_mut() {
-                out.extend(Self::confirm_run_negations_event_time_static(
+                completed.extend(Self::confirm_run_negations_event_time_static(
                     run, &self.nfa, watermark,
                 ));
             }
+            runs.retain(|r| !r.is_timed_out_event_time(watermark) && !r.invalidated);
+            if runs.is_empty() {
+                self.partitioned_runs.remove(&key);
+            }
         }
-        out
+        completed
     }
 
     fn confirm_run_negations_event_time_static(
@@ -1722,5 +1798,81 @@ mod tests {
             "an emptied partition must be evicted, not kept as an empty Vec"
         );
         assert_eq!(parts.len(), 1);
+    }
+
+    fn keyed(event_type: &str, key: &str, secs: i64) -> varpulis_core::Event {
+        let mut event = varpulis_core::Event::new(event_type).with_field("k", key);
+        event.timestamp = DateTime::<Utc>::from_timestamp(1_790_000_000 + secs, 0).unwrap();
+        event
+    }
+
+    fn a_then_b_within_a_minute() -> SaseEngine {
+        use crate::builder::PatternBuilder;
+        SaseEngine::new(PatternBuilder::within(
+            PatternBuilder::seq(vec![
+                PatternBuilder::event_as("A", "a"),
+                PatternBuilder::event("B"),
+            ]),
+            Duration::from_mins(1),
+        ))
+        .with_partition_by("k".to_string())
+    }
+
+    #[test]
+    fn a_partition_whose_runs_completed_leaves_the_map() {
+        // The watermark sweep no longer visits every partition, so a
+        // partition emptied by its own events must go when they empty it.
+        let mut engine = a_then_b_within_a_minute();
+        for i in 0..100 {
+            let key = format!("key-{i}");
+            let _ = engine.process(&keyed("A", &key, i));
+            assert_eq!(engine.process(&keyed("B", &key, i)).len(), 1);
+        }
+        assert_eq!(engine.stats().partitions, 0);
+    }
+
+    #[test]
+    fn the_deadline_index_does_not_outgrow_the_runs() {
+        // Runs that complete long before their deadline leave entries behind
+        // until it passes; the index is rebuilt before they pile up.
+        use crate::builder::PatternBuilder;
+        let mut engine = SaseEngine::new(PatternBuilder::within(
+            PatternBuilder::seq(vec![
+                PatternBuilder::event_as("A", "a"),
+                PatternBuilder::event("B"),
+            ]),
+            Duration::from_hours(24),
+        ))
+        .with_partition_by("k".to_string());
+        for i in 0..20_000 {
+            let key = format!("key-{i}");
+            let _ = engine.process(&keyed("A", &key, i));
+            assert_eq!(engine.process(&keyed("B", &key, i)).len(), 1);
+        }
+        assert_eq!(engine.stats().partitions, 0);
+        assert!(
+            engine.partition_deadlines.len() <= 2 * MIN_DEADLINES_COMPACT_AT,
+            "{} entries for no open run",
+            engine.partition_deadlines.len()
+        );
+    }
+
+    #[test]
+    fn a_partition_whose_runs_expired_leaves_the_map() {
+        let at = |secs: i64| DateTime::<Utc>::from_timestamp(1_790_000_000 + secs, 0).unwrap();
+        let mut engine = a_then_b_within_a_minute();
+        // Half the keys open at 0 s (due at 60 s), half at 30 s (due at 90 s).
+        for i in 0..100 {
+            let _ = engine.process(&keyed(
+                "A",
+                &format!("key-{i}"),
+                if i < 50 { 0 } else { 30 },
+            ));
+        }
+        assert_eq!(engine.stats().partitions, 100);
+        let _ = engine.advance_watermark(at(61));
+        assert_eq!(engine.stats().partitions, 50);
+        let _ = engine.advance_watermark(at(91));
+        assert_eq!(engine.stats().partitions, 0);
     }
 }

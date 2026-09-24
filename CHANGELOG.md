@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — an absence over many open keys no longer costs them all per event
+
+- In event time, the sequence engine swept every partition's runs on each
+  event it received, to confirm absences and drop the runs past their
+  deadline. An absence partitioned by a key with many open at once ("orders
+  not acknowledged within 4h", one order a second, about 14 000 open) paid for
+  all of them on every event: 95 000 events took 38 s. The engine now keeps
+  the partitioned runs' deadlines in order and visits only the partitions
+  with one due: the same 95 000 events take 0.45 s, with the same alerts, and
+  950 000 events with about 144 000 open take under 8 s (`main` did not
+  finish them in ten minutes). A partition whose runs are all gone leaves
+  the map when its own events empty it, and the index drops the entries of
+  runs that completed early each time it doubles, so a long `within` does
+  not keep a day of them.
+- `SaseEngine::resume_after_restore` rebuilds, after a restore, what a
+  checkpoint does not keep: the negated steps' constraints and the order of
+  the deadlines.
+
 ### Fixed — a cancellation that did not cancel
 
 - `.not(C)` on a stream that reads a named pattern (`stream X = AThenB.not(C)`)
@@ -32,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   negated step attached to it, and the run came back without one. The
   forbidden event no longer cancelled it and, at its deadline, it was dropped
   instead of completing. The constraint is rebuilt from the step on restore
-  (`SaseEngine::restore_pending_negations`).
+  (`SaseEngine::resume_after_restore`).
 - A window fed by a source that went quiet never closed: only an event of
   that source moves its event time, so a brute force on a sparse source (VPN
   logons, one application's log) was raised whenever the source spoke again.
