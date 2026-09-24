@@ -195,6 +195,12 @@ It cannot fire on an absence, because with no event to trigger it there is
 nothing for the engine to emit. `-> NOT B` is the opposite: the deadline
 passing is what produces the match.
 
+The two combine: `stream Alerts = Unacked.not(Cancel)` raises an order that
+was neither acknowledged nor cancelled within the four hours. On a stream that
+reads a named pattern, `.not()` cancels the pattern's runs as it does an inline
+sequence's; with `partition by`, an event cancels the runs of its own
+partition only (a `Cancel` for `o-1` leaves `o-2` open).
+
 **The deadline is judged in event time**, the time the events carry, as a
 window's end is (see [When windows close](../reference/windows-aggregations.md#when-windows-close)).
 The alert comes with the first event that takes the event time of the types

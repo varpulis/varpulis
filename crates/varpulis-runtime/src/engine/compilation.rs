@@ -1946,6 +1946,16 @@ impl Engine {
                 // Apply explicit selection / emission mode operators
                 engine = apply_sase_modes(engine, selection_mode, emission_mode);
 
+                // `.not(C)` on the stream cancels the pattern's runs, as it
+                // does an inline sequence's.
+                for clause in negation_clauses {
+                    let predicate = clause
+                        .filter
+                        .as_ref()
+                        .and_then(compiler::expr_to_sase_predicate);
+                    engine.add_negation(clause.event_type.clone(), predicate);
+                }
+
                 info!("Created SASE+ engine from named pattern '{}'", pattern_name);
                 Some(engine)
             } else {

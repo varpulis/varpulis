@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a cancellation that did not cancel
+
+- `.not(C)` on a stream that reads a named pattern (`stream X = AThenB.not(C)`)
+  was parsed, and `C` was routed to the stream, but the pattern was never
+  given the cancellation: A, C, B raised the alert as if `.not(C)` were not
+  there. It now cancels the pattern's runs as it does an inline sequence's,
+  per partition when the pattern has one.
+
 ### Fixed — rules that ran and never fired
 
 - An absence (`-> NOT B within X`) completed only when an event reached the
