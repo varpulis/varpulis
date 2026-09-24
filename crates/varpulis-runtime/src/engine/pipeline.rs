@@ -490,6 +490,228 @@ async fn execute_op(
     )
 }
 
+/// The event a completed match becomes, at `timestamp`: the time of the
+/// event that completed it, or the event time that confirmed an absence.
+pub(super) fn sequence_match_event(
+    stream_name: &Arc<str>,
+    seq_cfg: &SequenceMatchConfig,
+    match_result: &crate::sase::MatchResult,
+    timestamp: chrono::DateTime<chrono::Utc>,
+) -> SharedEvent {
+    let mut seq_event = Event::new("SequenceMatch");
+    seq_event.timestamp = timestamp;
+    seq_event
+        .data
+        .insert("stream".into(), Value::str(stream_name.as_ref()));
+    let match_count = match_result.stack.len() as i64;
+
+    // Compute duration from event timestamps (not wall-clock)
+    let event_duration_ms = if match_result.stack.len() >= 2 {
+        let first_ts = match_result.stack.first().unwrap().event.timestamp;
+        let last_ts = match_result.stack.last().unwrap().event.timestamp;
+        (last_ts - first_ts).num_milliseconds().max(0)
+    } else {
+        0
+    };
+
+    seq_event
+        .data
+        .insert("match_duration_ms".into(), Value::Int(event_duration_ms));
+    seq_event
+        .data
+        .insert("match_count".into(), Value::Int(match_count));
+
+    // A Kleene closure that hit its event cap dropped
+    // matching events on the floor. Say so on the match
+    // itself: `count(alias)` and `_count_{alias}` below are
+    // then visibly a floor, not the truth. Absent — as it is
+    // for every match that was not truncated — nothing
+    // changes.
+    if match_result.kleene_truncated > 0 {
+        seq_event.data.insert(
+            "_kleene_truncated".into(),
+            Value::Int(i64::from(match_result.kleene_truncated)),
+        );
+    }
+
+    // A different truncation, and one that used to happen
+    // in silence: the enumeration stopped at its result cap
+    // with combinations still unexplored, so these matches
+    // are the first N of an unknown number rather than all
+    // of them. Absent when the enumeration completed.
+    if match_result.enumeration_truncated {
+        seq_event
+            .data
+            .insert("_enumeration_truncated".into(), Value::Bool(true));
+    }
+
+    // match_rate: events per second (based on event timestamps)
+    let duration_secs = event_duration_ms as f64 / 1000.0;
+    if duration_secs > 0.0 {
+        seq_event.data.insert(
+            "match_rate".into(),
+            Value::Float(match_count as f64 / duration_secs),
+        );
+    }
+
+    // Group stack entries by alias for Kleene aggregates
+    let mut alias_events: FxHashMap<&str, Vec<&Event>> = FxHashMap::default();
+    for entry in &match_result.stack {
+        if let Some(ref alias) = entry.alias {
+            alias_events
+                .entry(alias.as_str())
+                .or_default()
+                .push(entry.event.as_ref());
+        }
+    }
+
+    // For each alias group, inject first/last maps and aggregates
+    for (alias, events) in &alias_events {
+        let count = events.len();
+        seq_event
+            .data
+            .insert(format!("_count_{alias}").into(), Value::Int(count as i64));
+
+        // _events_alias: Value::Array of Value::Map (one map
+        // per captured event). The evaluator reads it only for
+        // positional access (`alias[i]`) and `collect(alias…)`,
+        // so build it only when the compile-time analysis found
+        // this alias referenced that way. Building it for every
+        // match is O(events) memory per match and O(events²)
+        // over a Kleene run — the OOM this gate prevents.
+        if seq_cfg.aliases_needing_events.contains(*alias) {
+            // Cap the materialized array so a runaway Kleene
+            // closure cannot allocate without bound. The true
+            // count is still reported via `_count_{alias}`;
+            // only positional access / collect is truncated.
+            let cap = crate::limits::MAX_ARRAY_ELEMENTS;
+            if count > cap {
+                tracing::warn!(
+                    alias = %alias,
+                    count,
+                    cap,
+                    "Kleene alias captured more events than the per-match \
+                     array cap; positional access / collect(...) is truncated \
+                     to the cap (the _count_ field still reports the true count)"
+                );
+            }
+            seq_event.data.insert(
+                format!("_events_{alias}").into(),
+                Value::array(build_events_array(events, cap)),
+            );
+        }
+
+        // first(alias) and last(alias) as Value::Map (cheap:
+        // one map each) — always built.
+        if let Some(first_ev) = events.first() {
+            let mut map = IndexMap::with_hasher(FxBuildHasher);
+            for (k, v) in &first_ev.data {
+                map.insert(k.clone(), v.clone());
+            }
+            seq_event
+                .data
+                .insert(format!("_first_{alias}").into(), Value::Map(Box::new(map)));
+        }
+        if let Some(last_ev) = events.last() {
+            let mut map = IndexMap::with_hasher(FxBuildHasher);
+            for (k, v) in &last_ev.data {
+                map.insert(k.clone(), v.clone());
+            }
+            seq_event
+                .data
+                .insert(format!("_last_{alias}").into(), Value::Map(Box::new(map)));
+        }
+
+        // Numeric aggregates (sum/avg/min/max) and the distinct
+        // count are read only by
+        // `sum|avg|min|max|distinct_count(alias.field)`, so
+        // build them only when the compile-time analysis found
+        // this alias referenced that way. The all_fields +
+        // per-field loop is itself O(events) per match, so
+        // skipping it removes a big part of the O(events²).
+        if seq_cfg.aliases_needing_aggs.contains(*alias) {
+            // Collect all unique field names across events
+            let mut all_fields: Vec<Arc<str>> = Vec::new();
+            for ev in events {
+                for (k, _) in &ev.data {
+                    if !all_fields.iter().any(|f| f == k) {
+                        all_fields.push(k.clone());
+                    }
+                }
+            }
+
+            // Pre-compute aggregates for each field
+            for field in &all_fields {
+                // Numeric aggregates (sum, avg, min, max)
+                let numeric_vals: Vec<f64> = events
+                    .iter()
+                    .filter_map(|ev| ev.get(field.as_ref()))
+                    .filter_map(|v| match v {
+                        Value::Float(f) => Some(*f),
+                        Value::Int(i) => Some(*i as f64),
+                        _ => None,
+                    })
+                    .collect();
+
+                if !numeric_vals.is_empty() {
+                    let sum: f64 = numeric_vals.iter().sum();
+                    let avg = sum / numeric_vals.len() as f64;
+                    let min = numeric_vals.iter().copied().fold(f64::INFINITY, f64::min);
+                    let max = numeric_vals
+                        .iter()
+                        .copied()
+                        .fold(f64::NEG_INFINITY, f64::max);
+
+                    seq_event.data.insert(
+                        format!("_agg_sum_{alias}_{field}").into(),
+                        Value::Float(sum),
+                    );
+                    seq_event.data.insert(
+                        format!("_agg_avg_{alias}_{field}").into(),
+                        Value::Float(avg),
+                    );
+                    seq_event.data.insert(
+                        format!("_agg_min_{alias}_{field}").into(),
+                        Value::Float(min),
+                    );
+                    seq_event.data.insert(
+                        format!("_agg_max_{alias}_{field}").into(),
+                        Value::Float(max),
+                    );
+                }
+
+                // Distinct count (works for all value types).
+                // `Value` implements a consistent `Hash + Eq`
+                // (NaN==NaN, -0.0==0.0), so borrow each value
+                // into a `HashSet<&Value>` rather than
+                // allocating a `format!("{v:?}")` String per
+                // value.
+                let mut distinct: std::collections::HashSet<&Value> =
+                    std::collections::HashSet::new();
+                for ev in events {
+                    if let Some(v) = ev.get(field.as_ref()) {
+                        distinct.insert(v);
+                    }
+                }
+                seq_event.data.insert(
+                    format!("_agg_distinct_{alias}_{field}").into(),
+                    Value::Int(distinct.len() as i64),
+                );
+            }
+        }
+    }
+
+    // Flatten captured events (backward-compatible alias_field access)
+    for (alias, captured) in &match_result.captured {
+        for (k, v) in &captured.data {
+            seq_event
+                .data
+                .insert(format!("{alias}_{k}").into(), v.clone());
+        }
+    }
+    Arc::new(seq_event)
+}
+
 /// Shared implementation of all RuntimeOps except `To` (which requires async).
 ///
 /// Used by both the async [`execute_op`] and the sync [`execute_op_sync`].
@@ -904,224 +1126,13 @@ fn execute_op_common(
                 for event in current_events.iter() {
                     let matches = sase.process_shared(Arc::clone(event));
                     for match_result in matches {
-                        let mut seq_event = Event::new("SequenceMatch");
-                        // Use the triggering event's timestamp (the event that completed the match)
-                        seq_event.timestamp = event.timestamp;
-                        seq_event
-                            .data
-                            .insert("stream".into(), Value::str(stream_name.as_ref()));
-                        let match_count = match_result.stack.len() as i64;
-
-                        // Compute duration from event timestamps (not wall-clock)
-                        let event_duration_ms = if match_result.stack.len() >= 2 {
-                            let first_ts = match_result.stack.first().unwrap().event.timestamp;
-                            let last_ts = match_result.stack.last().unwrap().event.timestamp;
-                            (last_ts - first_ts).num_milliseconds().max(0)
-                        } else {
-                            0
-                        };
-
-                        seq_event
-                            .data
-                            .insert("match_duration_ms".into(), Value::Int(event_duration_ms));
-                        seq_event
-                            .data
-                            .insert("match_count".into(), Value::Int(match_count));
-
-                        // A Kleene closure that hit its event cap dropped
-                        // matching events on the floor. Say so on the match
-                        // itself: `count(alias)` and `_count_{alias}` below are
-                        // then visibly a floor, not the truth. Absent — as it is
-                        // for every match that was not truncated — nothing
-                        // changes.
-                        if match_result.kleene_truncated > 0 {
-                            seq_event.data.insert(
-                                "_kleene_truncated".into(),
-                                Value::Int(i64::from(match_result.kleene_truncated)),
-                            );
-                        }
-
-                        // A different truncation, and one that used to happen
-                        // in silence: the enumeration stopped at its result cap
-                        // with combinations still unexplored, so these matches
-                        // are the first N of an unknown number rather than all
-                        // of them. Absent when the enumeration completed.
-                        if match_result.enumeration_truncated {
-                            seq_event
-                                .data
-                                .insert("_enumeration_truncated".into(), Value::Bool(true));
-                        }
-
-                        // match_rate: events per second (based on event timestamps)
-                        let duration_secs = event_duration_ms as f64 / 1000.0;
-                        if duration_secs > 0.0 {
-                            seq_event.data.insert(
-                                "match_rate".into(),
-                                Value::Float(match_count as f64 / duration_secs),
-                            );
-                        }
-
-                        // Group stack entries by alias for Kleene aggregates
-                        let mut alias_events: FxHashMap<&str, Vec<&Event>> = FxHashMap::default();
-                        for entry in &match_result.stack {
-                            if let Some(ref alias) = entry.alias {
-                                alias_events
-                                    .entry(alias.as_str())
-                                    .or_default()
-                                    .push(entry.event.as_ref());
-                            }
-                        }
-
-                        // For each alias group, inject first/last maps and aggregates
-                        for (alias, events) in &alias_events {
-                            let count = events.len();
-                            seq_event
-                                .data
-                                .insert(format!("_count_{alias}").into(), Value::Int(count as i64));
-
-                            // _events_alias: Value::Array of Value::Map (one map
-                            // per captured event). The evaluator reads it only for
-                            // positional access (`alias[i]`) and `collect(alias…)`,
-                            // so build it only when the compile-time analysis found
-                            // this alias referenced that way. Building it for every
-                            // match is O(events) memory per match and O(events²)
-                            // over a Kleene run — the OOM this gate prevents.
-                            if seq_cfg.aliases_needing_events.contains(*alias) {
-                                // Cap the materialized array so a runaway Kleene
-                                // closure cannot allocate without bound. The true
-                                // count is still reported via `_count_{alias}`;
-                                // only positional access / collect is truncated.
-                                let cap = crate::limits::MAX_ARRAY_ELEMENTS;
-                                if count > cap {
-                                    tracing::warn!(
-                                        alias = %alias,
-                                        count,
-                                        cap,
-                                        "Kleene alias captured more events than the per-match \
-                                         array cap; positional access / collect(...) is truncated \
-                                         to the cap (the _count_ field still reports the true count)"
-                                    );
-                                }
-                                seq_event.data.insert(
-                                    format!("_events_{alias}").into(),
-                                    Value::array(build_events_array(events, cap)),
-                                );
-                            }
-
-                            // first(alias) and last(alias) as Value::Map (cheap:
-                            // one map each) — always built.
-                            if let Some(first_ev) = events.first() {
-                                let mut map = IndexMap::with_hasher(FxBuildHasher);
-                                for (k, v) in &first_ev.data {
-                                    map.insert(k.clone(), v.clone());
-                                }
-                                seq_event.data.insert(
-                                    format!("_first_{alias}").into(),
-                                    Value::Map(Box::new(map)),
-                                );
-                            }
-                            if let Some(last_ev) = events.last() {
-                                let mut map = IndexMap::with_hasher(FxBuildHasher);
-                                for (k, v) in &last_ev.data {
-                                    map.insert(k.clone(), v.clone());
-                                }
-                                seq_event.data.insert(
-                                    format!("_last_{alias}").into(),
-                                    Value::Map(Box::new(map)),
-                                );
-                            }
-
-                            // Numeric aggregates (sum/avg/min/max) and the distinct
-                            // count are read only by
-                            // `sum|avg|min|max|distinct_count(alias.field)`, so
-                            // build them only when the compile-time analysis found
-                            // this alias referenced that way. The all_fields +
-                            // per-field loop is itself O(events) per match, so
-                            // skipping it removes a big part of the O(events²).
-                            if seq_cfg.aliases_needing_aggs.contains(*alias) {
-                                // Collect all unique field names across events
-                                let mut all_fields: Vec<Arc<str>> = Vec::new();
-                                for ev in events {
-                                    for (k, _) in &ev.data {
-                                        if !all_fields.iter().any(|f| f == k) {
-                                            all_fields.push(k.clone());
-                                        }
-                                    }
-                                }
-
-                                // Pre-compute aggregates for each field
-                                for field in &all_fields {
-                                    // Numeric aggregates (sum, avg, min, max)
-                                    let numeric_vals: Vec<f64> = events
-                                        .iter()
-                                        .filter_map(|ev| ev.get(field.as_ref()))
-                                        .filter_map(|v| match v {
-                                            Value::Float(f) => Some(*f),
-                                            Value::Int(i) => Some(*i as f64),
-                                            _ => None,
-                                        })
-                                        .collect();
-
-                                    if !numeric_vals.is_empty() {
-                                        let sum: f64 = numeric_vals.iter().sum();
-                                        let avg = sum / numeric_vals.len() as f64;
-                                        let min = numeric_vals
-                                            .iter()
-                                            .copied()
-                                            .fold(f64::INFINITY, f64::min);
-                                        let max = numeric_vals
-                                            .iter()
-                                            .copied()
-                                            .fold(f64::NEG_INFINITY, f64::max);
-
-                                        seq_event.data.insert(
-                                            format!("_agg_sum_{alias}_{field}").into(),
-                                            Value::Float(sum),
-                                        );
-                                        seq_event.data.insert(
-                                            format!("_agg_avg_{alias}_{field}").into(),
-                                            Value::Float(avg),
-                                        );
-                                        seq_event.data.insert(
-                                            format!("_agg_min_{alias}_{field}").into(),
-                                            Value::Float(min),
-                                        );
-                                        seq_event.data.insert(
-                                            format!("_agg_max_{alias}_{field}").into(),
-                                            Value::Float(max),
-                                        );
-                                    }
-
-                                    // Distinct count (works for all value types).
-                                    // `Value` implements a consistent `Hash + Eq`
-                                    // (NaN==NaN, -0.0==0.0), so borrow each value
-                                    // into a `HashSet<&Value>` rather than
-                                    // allocating a `format!("{v:?}")` String per
-                                    // value.
-                                    let mut distinct: std::collections::HashSet<&Value> =
-                                        std::collections::HashSet::new();
-                                    for ev in events {
-                                        if let Some(v) = ev.get(field.as_ref()) {
-                                            distinct.insert(v);
-                                        }
-                                    }
-                                    seq_event.data.insert(
-                                        format!("_agg_distinct_{alias}_{field}").into(),
-                                        Value::Int(distinct.len() as i64),
-                                    );
-                                }
-                            }
-                        }
-
-                        // Flatten captured events (backward-compatible alias_field access)
-                        for (alias, captured) in &match_result.captured {
-                            for (k, v) in &captured.data {
-                                seq_event
-                                    .data
-                                    .insert(format!("{alias}_{k}").into(), v.clone());
-                            }
-                        }
-                        sequence_results.push(Arc::new(seq_event));
+                        // Stamped with the event that completed the match.
+                        sequence_results.push(sequence_match_event(
+                            stream_name,
+                            seq_cfg,
+                            &match_result,
+                            event.timestamp,
+                        ));
                     }
                 }
             }

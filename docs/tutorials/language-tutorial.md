@@ -466,9 +466,10 @@ pattern UnconfirmedOrder =
     partition by order_id
 ```
 
-The alert comes out when a later event moves the stream's time past the
-deadline, not on a wall clock; see
-[Absence](../language/operators.md#absence-not-b).
+The deadline is judged in event time: the alert comes out once a later event
+takes the time of the pattern's sources past it or, in a live host with an
+idle grace, once a quiet source's time has moved past it with the wall clock;
+see [Absence](../language/operators.md#absence-not-b).
 
 ### Both, in Any Order
 

@@ -191,6 +191,14 @@ impl Nfa {
             .any(|s| s.state_type == StateType::Kleene && s.self_loop && s.has_epsilon_to_accept)
     }
 
+    /// Whether the pattern has a negated step (`-> NOT B`), the one step that
+    /// time alone completes: its deadline passing without B.
+    pub fn has_negation(&self) -> bool {
+        self.states
+            .iter()
+            .any(|s| s.state_type == StateType::Negation)
+    }
+
     /// The alias of the last Kleene closure that another step follows
     /// (`B` in `A -> all B as b -> C`), if the pattern has one.
     pub fn followed_closure_alias(&self) -> Option<&str> {

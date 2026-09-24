@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed — rules that ran and never fired
 
+- An absence (`-> NOT B within X`) completed only when an event reached the
+  pattern: its deadline was checked against the pattern's own watermark,
+  which nothing else moved. On a live stream that went quiet after the
+  trigger ("no acknowledgement within 4h", "no heartbeat within 5 minutes")
+  the alert never came, and a pattern that read a derived stream never saw
+  the events that stream filtered out. An absence now completes on the clocks
+  of the types feeding the pattern, as a window closes: after any batch that
+  takes them past its deadline, and with an idle grace on a quiet source too.
+  The end of the input confirms none. The completed match is stamped with
+  the event time that confirmed it.
+- A restored program lost every absence it was waiting out: a snapshot keeps
+  the run and the state it is in, not the constraint that entering the
+  negated step attached to it, and the run came back without one. The
+  forbidden event no longer cancelled it and, at its deadline, it was dropped
+  instead of completing. The constraint is rebuilt from the step on restore
+  (`SaseEngine::restore_pending_negations`).
 - A window fed by a source that went quiet never closed: only an event of
   that source moves its event time, so a brute force on a sparse source (VPN
   logons, one application's log) was raised whenever the source spoke again.
