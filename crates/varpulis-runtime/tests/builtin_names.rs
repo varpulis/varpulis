@@ -12,7 +12,9 @@ use varpulis_core::validate::builtins::BUILTIN_FUNCTIONS;
 
 /// The names `eval_builtin_function` matches, read from its source.
 fn evaluated() -> BTreeSet<String> {
-    let src = include_str!("../src/engine/evaluator.rs");
+    // A Windows checkout may hand include_str! a CRLF file; the searches
+    // below are written for LF.
+    let src = include_str!("../src/engine/evaluator.rs").replace("\r\n", "\n");
     let start = src
         .find("fn eval_builtin_function")
         .expect("eval_builtin_function is in evaluator.rs");

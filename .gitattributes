@@ -1,0 +1,3 @@
+# Rust, docs and scripts are LF everywhere, on Windows checkouts too:
+# a test reads a source file with include_str! and looks for "\n}\n".
+* text=auto eol=lf
