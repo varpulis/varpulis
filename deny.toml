@@ -65,6 +65,13 @@ ignore = [
     # fix requires >=0.41. Never parses attacker-controlled XML here.
     { id = "RUSTSEC-2026-0194", reason = "dev-only transitive via pprof/inferno flamegraphs" },
     { id = "RUSTSEC-2026-0195", reason = "dev-only transitive via pprof/inferno flamegraphs" },
+
+    # unsafe-libyaml: unmaintained (repository archived 2024-03), no safe
+    # upgrade. Transitive via serde_yaml 0.9, which varpulis-connectors uses
+    # only to parse a credentials file (CredentialsStore::from_yaml, 0600
+    # checked); nothing in the workspace loads one since ADR-008. Leaves with
+    # varpulis-connectors when `async-runtime` is removed (ADR-008's next change).
+    { id = "RUSTSEC-2024-0449", reason = "via serde_yaml, credentials file only; leaves with async-runtime (ADR-008)" },
 ]
 
 # ---------------------------------------------------------------------------

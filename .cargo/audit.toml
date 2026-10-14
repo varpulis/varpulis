@@ -61,4 +61,9 @@ ignore = [
     # transitive via iai-callgrind-macros (benchmarks) — same tree as
     # the bincode ignore above. Mirrored in deny.toml.
     "RUSTSEC-2026-0173",
+
+    # RUSTSEC-2024-0449: unsafe-libyaml unmaintained. Transitive via
+    # serde_yaml 0.9, used only to parse a connectors credentials file;
+    # leaves with `async-runtime` (ADR-008). Mirrored from deny.toml.
+    "RUSTSEC-2024-0449",
 ]
