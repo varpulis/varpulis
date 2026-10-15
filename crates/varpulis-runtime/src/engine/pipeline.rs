@@ -149,8 +149,6 @@ pub async fn execute_pipeline(
             op,
             &stream.name_arc,
             &mut stream.sase_engine,
-            &mut stream.hamlet_aggregator,
-            &stream.shared_hamlet_ref,
             &mut stream.pst_forecaster,
             &stream.last_raw_event,
             &stream.enrichment,
@@ -215,11 +213,10 @@ const fn should_skip_op(op: &RuntimeOp, flags: SkipFlags) -> bool {
         // Print/Log skipping
         RuntimeOp::Print(_) | RuntimeOp::Log(_) => flags.print_log,
 
-        // Sequence/Pattern/TrendAggregate/Forecast skipping
-        RuntimeOp::Sequence(_)
-        | RuntimeOp::Pattern(_)
-        | RuntimeOp::TrendAggregate(_)
-        | RuntimeOp::Forecast(_) => flags.sequence_pattern,
+        // Sequence/TrendAggregate/Forecast skipping
+        RuntimeOp::Sequence(_) | RuntimeOp::TrendAggregate(_) | RuntimeOp::Forecast(_) => {
+            flags.sequence_pattern
+        }
 
         // WhereClosure skipping
         RuntimeOp::WhereClosure(_) => flags.where_closure,
@@ -239,8 +236,6 @@ async fn execute_op(
     op: &mut RuntimeOp,
     stream_name: &Arc<str>,
     sase_engine: &mut Option<crate::sase::SaseEngine>,
-    hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
-    shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     pst_forecaster: &mut Option<crate::pst::PatternMarkovChain>,
     last_raw_event: &Option<SharedEvent>,
     enrichment: &Option<(
@@ -480,8 +475,6 @@ async fn execute_op(
         op,
         stream_name,
         sase_engine,
-        hamlet_aggregator,
-        shared_hamlet_ref,
         pst_forecaster,
         last_raw_event,
         current_events,
@@ -720,8 +713,6 @@ fn execute_op_common(
     op: &mut RuntimeOp,
     stream_name: &Arc<str>,
     sase_engine: &mut Option<crate::sase::SaseEngine>,
-    hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
-    shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     pst_forecaster: &mut Option<crate::pst::PatternMarkovChain>,
     last_raw_event: &Option<SharedEvent>,
     current_events: &mut Vec<SharedEvent>,
@@ -1145,138 +1136,17 @@ fn execute_op_common(
         }
 
         RuntimeOp::TrendAggregate(config) => {
-            let mut trend_results = Vec::new();
-
-            let mut shared_guard;
-            let effective_hamlet: Option<&mut crate::hamlet::HamletAggregator> =
-                if let Some(ref mut h) = hamlet_aggregator {
-                    Some(h)
-                } else if let Some(ref shared) = shared_hamlet_ref {
-                    shared_guard = shared.lock().unwrap_or_else(|e| e.into_inner());
-                    Some(&mut *shared_guard)
-                } else {
-                    None
-                };
-
-            // Hard backstop against a pathological high-rate stream filling the
-            // window with more events than fit in memory. Well above any real
-            // WITHIN window's worth; only trips in abuse/runaway cases.
-            const MAX_TREND_ACCUMULATED: usize = 1_000_000;
-
-            if let Some(hamlet) = effective_hamlet {
-                for event in current_events.iter() {
-                    config.accumulated.push(Arc::clone(event));
-
-                    // Bound `accumulated` so it cannot grow without limit (audit:
-                    // unbounded growth → O(n²) re-scan + OOM). The trend aggregate
-                    // is windowed, so the correct bound is the WITHIN window: drop
-                    // events that have aged out of it in event-time, measured from
-                    // the event now being processed. Mirrors Hamlet's own windowing
-                    // (both share `window_ms`), so the count/sum below stay scoped
-                    // to exactly the window Hamlet reports trends over.
-                    if config.window_ms > 0 {
-                        let cutoff = event.timestamp
-                            - chrono::Duration::milliseconds(config.window_ms as i64);
-                        config.accumulated.retain(|e| e.timestamp >= cutoff);
-                    }
-                    if config.accumulated.len() > MAX_TREND_ACCUMULATED {
-                        let overflow = config.accumulated.len() - MAX_TREND_ACCUMULATED;
-                        config.accumulated.drain(0..overflow);
-                        warn!(
-                            "TrendAggregate: accumulated events hit the {} cap; \
-                             dropped {} oldest (window_ms={}). Narrow the WITHIN \
-                             window or reduce the event rate.",
-                            MAX_TREND_ACCUMULATED, overflow, config.window_ms
-                        );
-                    }
-
-                    let results = hamlet.process(Arc::clone(event));
-                    for agg_result in results {
-                        // Only handle results for THIS stream's query
-                        if agg_result.query_id != config.query_id {
-                            continue;
-                        }
-                        let mut trend_event = Event::new("TrendAggregateResult");
-                        trend_event.timestamp = event.timestamp;
-                        trend_event
-                            .data
-                            .insert("stream".into(), Value::str(stream_name.as_ref()));
-                        trend_event
-                            .data
-                            .insert("query_id".into(), Value::Int(agg_result.query_id as i64));
-
-                        // Populate count-based fields
-                        for (alias, agg_type) in &config.fields {
-                            let value = match agg_type {
-                                crate::greta::GretaAggregate::CountTrends => {
-                                    Some(Value::Int(agg_result.trend_count as i64))
-                                }
-                                crate::greta::GretaAggregate::CountEvents(type_idx) => {
-                                    // Count from accumulated events using type index → name map
-                                    let count = if let Some(type_name) =
-                                        config.type_index_to_name.get(*type_idx as usize)
-                                    {
-                                        config
-                                            .accumulated
-                                            .iter()
-                                            .filter(|e| *e.event_type == *type_name)
-                                            .count()
-                                    } else {
-                                        config.accumulated.len()
-                                    };
-                                    Some(Value::Int(count as i64))
-                                }
-                                // Field-based aggregates handled below
-                                _ => None,
-                            };
-                            if let Some(v) = value {
-                                trend_event.data.insert(alias.clone().into(), v);
-                            }
-                        }
-
-                        // Compute field-based aggregates from accumulated events
-                        for info in &config.field_aggregates {
-                            let values: Vec<f64> = config
-                                .accumulated
-                                .iter()
-                                .filter(|e| *e.event_type == info.event_type)
-                                .filter_map(|e| e.get(&info.field_name))
-                                .filter_map(|v| match v {
-                                    Value::Float(f) => Some(*f),
-                                    Value::Int(i) => Some(*i as f64),
-                                    _ => None,
-                                })
-                                .collect();
-
-                            if !values.is_empty() {
-                                let result = match info.func.as_str() {
-                                    "sum" => values.iter().sum::<f64>(),
-                                    "avg" => values.iter().sum::<f64>() / values.len() as f64,
-                                    "min" => values.iter().copied().fold(f64::INFINITY, f64::min),
-                                    "max" => {
-                                        values.iter().copied().fold(f64::NEG_INFINITY, f64::max)
-                                    }
-                                    _ => 0.0,
-                                };
-                                trend_event
-                                    .data
-                                    .insert(info.output_alias.clone().into(), Value::Float(result));
-                            }
-                        }
-
-                        trend_event
-                            .data
-                            .insert("is_final".into(), Value::Bool(agg_result.is_final));
-                        trend_results.push(Arc::new(trend_event));
-                    }
+            // Each event goes to its partition's window. A window the event
+            // closes comes back as its result and goes on down the pipeline;
+            // the event clock and the end of the input close the others
+            // (`Engine::close_windows_into`).
+            let mut results = Vec::new();
+            for event in current_events.drain(..) {
+                if let Some(result) = config.add(event) {
+                    results.push(result);
                 }
             }
-
-            if trend_results.is_empty() {
-                current_events.clear();
-            } else {
-                *current_events = trend_results;
-            }
+            *current_events = results;
         }
 
         RuntimeOp::Score(config) => {
@@ -1408,41 +1278,6 @@ fn execute_op_common(
             }
         }
 
-        RuntimeOp::Pattern(config) => {
-            let events_value = Value::array(
-                current_events
-                    .iter()
-                    .map(|e| {
-                        let mut map: IndexMap<Arc<str>, Value, FxBuildHasher> =
-                            IndexMap::with_hasher(FxBuildHasher);
-                        map.insert(
-                            "event_type".into(),
-                            Value::Str(e.event_type.to_string().into()),
-                        );
-                        for (k, v) in &e.data {
-                            map.insert(k.clone(), v.clone());
-                        }
-                        Value::map(map)
-                    })
-                    .collect(),
-            );
-
-            let mut pattern_vars = FxHashMap::default();
-            pattern_vars.insert("events".into(), events_value);
-
-            if let Some(result) = evaluator::eval_pattern_expr(
-                &config.matcher,
-                current_events,
-                SequenceContext::empty(),
-                functions,
-                &pattern_vars,
-            ) {
-                if !result.as_bool().unwrap_or(false) {
-                    current_events.clear();
-                }
-            }
-        }
-
         RuntimeOp::Process(expr) => {
             let mut all_emitted = Vec::with_capacity(current_events.len());
             for event in current_events.iter() {
@@ -1554,8 +1389,6 @@ pub fn execute_pipeline_sync(
             op,
             &stream.name_arc,
             &mut stream.sase_engine,
-            &mut stream.hamlet_aggregator,
-            &stream.shared_hamlet_ref,
             &mut stream.pst_forecaster,
             &stream.last_raw_event,
             &mut current_events,
@@ -1604,8 +1437,6 @@ fn execute_op_sync(
     op: &mut RuntimeOp,
     stream_name: &Arc<str>,
     sase_engine: &mut Option<crate::sase::SaseEngine>,
-    hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
-    shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     pst_forecaster: &mut Option<crate::pst::PatternMarkovChain>,
     last_raw_event: &Option<SharedEvent>,
     current_events: &mut Vec<SharedEvent>,
@@ -1616,8 +1447,6 @@ fn execute_op_sync(
         op,
         stream_name,
         sase_engine,
-        hamlet_aggregator,
-        shared_hamlet_ref,
         pst_forecaster,
         last_raw_event,
         current_events,

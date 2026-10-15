@@ -1706,8 +1706,9 @@ async fn test_engine_merge_streams() {
 // ==========================================================================
 
 #[tokio::test]
-async fn test_engine_import_statement() {
-    // Import statements are logged but not yet fully implemented
+async fn test_engine_import_statement_is_refused() {
+    // There is no module system. An import used to be logged and ignored,
+    // and the program ran without whatever it expected from it.
     let source = r#"
         import "some/path.vpl"
         import "another/module" as mod
@@ -1717,14 +1718,13 @@ async fn test_engine_import_statement() {
     "#;
 
     let program = parse_program(source);
-    let (tx, mut rx) = mpsc::channel(100);
+    let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
-    // load() should succeed even with import statements (they are no-ops for now)
-    engine.load(&program).unwrap();
-
-    engine.process(Event::new("EventA")).await.unwrap();
-    let output = rx.try_recv().expect("Should have output");
-    assert_eq!(output.data.get("ok"), Some(&Value::Str("yes".into())));
+    let err = engine.load(&program).unwrap_err().to_string();
+    assert!(
+        err.contains("imports are not supported") && err.contains("some/path.vpl"),
+        "{err}"
+    );
 }
 
 #[tokio::test]
@@ -2948,7 +2948,7 @@ async fn test_batch_sequence_processing() {
 }
 
 // ===========================================================================
-// Trend Aggregation (Hamlet) Integration Tests
+// Trend Aggregation Integration Tests
 // ===========================================================================
 
 #[tokio::test]
@@ -2964,17 +2964,17 @@ async fn test_trend_aggregate_loads_without_error() {
     let program = parse_program(source);
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
-
-    // Should load without error and create a Hamlet aggregator
     engine.load(&program).unwrap();
 
-    // Verify the stream exists
     let metrics = engine.metrics();
     assert_eq!(metrics.streams_count, 1);
 }
 
 #[tokio::test]
 async fn test_trend_aggregate_processes_events() {
+    // Three ticks with no condition: from the first, the subsets of the two
+    // later ones (3 trends); from the second, the last (1); 4 in all, once
+    // the window closes at the end of the input.
     let source = r"
         stream RisingTrend = StockTick as first
             -> all StockTick as rising
@@ -2988,32 +2988,20 @@ async fn test_trend_aggregate_processes_events() {
     let mut engine = Engine::new(tx);
     engine.load(&program).unwrap();
 
-    // Process A -> B+ pattern events
-    engine
-        .process(Event::new("StockTick").with_field("price", 100.0))
-        .await
-        .unwrap();
-
-    engine
-        .process(Event::new("StockTick").with_field("price", 110.0))
-        .await
-        .unwrap();
-
-    engine
-        .process(Event::new("StockTick").with_field("price", 120.0))
-        .await
-        .unwrap();
-
-    // Events should be processed without panicking
-    // Output depends on Hamlet aggregator incremental emission
-    let mut outputs = Vec::new();
-    while let Ok(output) = rx.try_recv() {
-        outputs.push(output);
+    for price in [100.0, 110.0, 120.0] {
+        engine
+            .process(Event::new("StockTick").with_field("price", price))
+            .await
+            .unwrap();
     }
-    // The aggregator is in incremental mode, so we may get results
-    // Main assertion: no panics, events processed cleanly
-    let metrics = engine.metrics();
-    assert!(metrics.events_processed > 0);
+    assert!(rx.try_recv().is_err(), "nothing before the window closes");
+    engine.flush_end_of_input().await.unwrap();
+
+    let output = rx.try_recv().expect("the window's result");
+    assert_eq!(&*output.event_type, "RisingTrend");
+    assert_eq!(output.data.get("trends"), Some(&Value::Int(4)));
+    assert!(rx.try_recv().is_err(), "one result per window");
+    assert_eq!(engine.metrics().events_processed, 3);
 }
 
 #[tokio::test]
@@ -3051,51 +3039,45 @@ async fn test_trend_aggregate_with_partition() {
             .within(60s)
             .partition_by(symbol)
             .trend_aggregate(count: count_trends())
-            .emit(trends: count)
+            .emit(symbol: symbol, trends: count)
     ";
 
     let program = parse_program(source);
-    let (tx, _rx) = mpsc::channel(100);
+    let (tx, mut rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
-
-    // Should load with partition + trend_aggregate
     engine.load(&program).unwrap();
 
-    // Process some events
-    engine
-        .process(
-            Event::new("StockTick")
-                .with_field("symbol", "AAPL")
-                .with_field("price", 100.0),
-        )
-        .await
-        .unwrap();
-    engine
-        .process(
-            Event::new("StockTick")
-                .with_field("symbol", "AAPL")
-                .with_field("price", 110.0),
-        )
-        .await
-        .unwrap();
-    engine
-        .process(
-            Event::new("StockTick")
-                .with_field("symbol", "GOOG")
-                .with_field("price", 200.0),
-        )
-        .await
-        .unwrap();
+    for (symbol, price) in [("AAPL", 100.0), ("AAPL", 110.0), ("GOOG", 200.0)] {
+        engine
+            .process(
+                Event::new("StockTick")
+                    .with_field("symbol", symbol)
+                    .with_field("price", price),
+            )
+            .await
+            .unwrap();
+    }
+    engine.flush_end_of_input().await.unwrap();
 
-    // No panic = success
-    let metrics = engine.metrics();
-    assert_eq!(metrics.events_processed, 3);
+    let mut results = Vec::new();
+    while let Ok(output) = rx.try_recv() {
+        results.push((
+            output.data.get("symbol").cloned(),
+            output.data.get("trends").cloned(),
+        ));
+    }
+    results.sort_by_key(|(symbol, _)| format!("{symbol:?}"));
+    assert_eq!(
+        results,
+        vec![
+            (Some(Value::str("AAPL")), Some(Value::Int(1))),
+            (Some(Value::str("GOOG")), Some(Value::Int(0))),
+        ]
+    );
 }
 
 #[tokio::test]
-async fn test_trend_aggregate_multi_query_sharing() {
-    // Two streams using .trend_aggregate() on overlapping patterns
-    // The engine should detect the sharing opportunity
+async fn test_trend_aggregate_two_streams_partition_the_same_ticks_differently() {
     let source = r"
         stream TrendsBySymbol = StockTick as first
             -> all StockTick as rising
@@ -3113,47 +3095,59 @@ async fn test_trend_aggregate_multi_query_sharing() {
     ";
 
     let program = parse_program(source);
-    let (tx, _rx) = mpsc::channel(100);
+    let (tx, mut rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
     engine.load(&program).unwrap();
+    assert_eq!(engine.metrics().streams_count, 2);
 
-    // Both streams should be registered
-    let metrics = engine.metrics();
-    assert_eq!(metrics.streams_count, 2);
+    for (symbol, price) in [("AAPL", 100.0), ("AAPL", 110.0), ("MSFT", 50.0)] {
+        engine
+            .process(
+                Event::new("StockTick")
+                    .with_field("symbol", symbol)
+                    .with_field("exchange", "NYSE")
+                    .with_field("price", price),
+            )
+            .await
+            .unwrap();
+    }
+    engine.flush_end_of_input().await.unwrap();
 
-    // Process some events - should not panic even with sharing
-    engine
-        .process(
-            Event::new("StockTick")
-                .with_field("symbol", "AAPL")
-                .with_field("exchange", "NYSE")
-                .with_field("price", 100.0),
-        )
-        .await
-        .unwrap();
-
-    engine
-        .process(
-            Event::new("StockTick")
-                .with_field("symbol", "AAPL")
-                .with_field("exchange", "NYSE")
-                .with_field("price", 110.0),
-        )
-        .await
-        .unwrap();
-
-    engine
-        .process(
-            Event::new("StockTick")
-                .with_field("symbol", "GOOG")
-                .with_field("exchange", "NASDAQ")
-                .with_field("price", 200.0),
-        )
-        .await
-        .unwrap();
-
-    let metrics = engine.metrics();
-    assert_eq!(metrics.events_processed, 3);
+    let mut results = Vec::new();
+    while let Ok(output) = rx.try_recv() {
+        let key = output
+            .data
+            .get("symbol")
+            .or_else(|| output.data.get("exchange"))
+            .cloned();
+        results.push((
+            output.event_type.to_string(),
+            key,
+            output.data.get("count").cloned(),
+        ));
+    }
+    results.sort_by_key(|row| format!("{row:?}"));
+    assert_eq!(
+        results,
+        vec![
+            (
+                "TrendsByExchange".to_string(),
+                Some(Value::str("NYSE")),
+                // From 100: the subsets of {110, 50}; from 110: {50}.
+                Some(Value::Int(4))
+            ),
+            (
+                "TrendsBySymbol".to_string(),
+                Some(Value::str("AAPL")),
+                Some(Value::Int(1))
+            ),
+            (
+                "TrendsBySymbol".to_string(),
+                Some(Value::str("MSFT")),
+                Some(Value::Int(0))
+            ),
+        ]
+    );
 }
 
 // =============================================================================
@@ -3453,8 +3447,8 @@ fn test_builder_default() {
 
 #[tokio::test]
 async fn test_transaction_monitoring_trend_aggregate() {
-    // Multi-type Kleene pattern: TransactionOpen -> ProcessingStep+ -> TransactionClose
-    // with trend_aggregate computing statistics over the Kleene matches.
+    // TransactionOpen -> ProcessingStep+ -> TransactionClose: three steps
+    // give 7 trends, each step in 4 of them.
     let source = r#"
         stream TransactionStats = TransactionOpen as open
             -> all ProcessingStep as steps
@@ -3470,6 +3464,7 @@ async fn test_transaction_monitoring_trend_aggregate() {
             .emit(
                 event_type: "TransactionSummary",
                 tx_id: open.tx_id,
+                status: close.final_status,
                 avg_duration: avg_dur,
                 max_error_count: max_errors,
                 steps: step_count,
@@ -3478,14 +3473,11 @@ async fn test_transaction_monitoring_trend_aggregate() {
     "#;
 
     let program = parse_program(source);
-    let (tx, _rx) = mpsc::channel(100);
+    let (tx, mut rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
-
-    // Should load without error — Hamlet aggregator created for 3-type pattern
     engine.load(&program).unwrap();
     assert_eq!(engine.metrics().streams_count, 1);
 
-    // Transaction 1: Open -> 3 steps -> Close
     engine
         .process(
             Event::new("TransactionOpen")
@@ -3494,43 +3486,23 @@ async fn test_transaction_monitoring_trend_aggregate() {
         )
         .await
         .unwrap();
-
-    engine
-        .process(
-            Event::new("ProcessingStep")
-                .with_field("tx_id", "TX-001")
-                .with_field("step_name", "validation")
-                .with_field("duration", 1200.0)
-                .with_field("error_count", 0i64)
-                .with_field("throughput", 850.0),
-        )
-        .await
-        .unwrap();
-
-    engine
-        .process(
-            Event::new("ProcessingStep")
-                .with_field("tx_id", "TX-001")
-                .with_field("step_name", "enrichment")
-                .with_field("duration", 3400.0)
-                .with_field("error_count", 1i64)
-                .with_field("throughput", 620.0),
-        )
-        .await
-        .unwrap();
-
-    engine
-        .process(
-            Event::new("ProcessingStep")
-                .with_field("tx_id", "TX-001")
-                .with_field("step_name", "risk_check")
-                .with_field("duration", 7800.0)
-                .with_field("error_count", 0i64)
-                .with_field("throughput", 340.0),
-        )
-        .await
-        .unwrap();
-
+    for (name, duration, errors) in [
+        ("validation", 1200.0, 0i64),
+        ("enrichment", 3400.0, 1),
+        ("risk_check", 7800.0, 0),
+    ] {
+        engine
+            .process(
+                Event::new("ProcessingStep")
+                    .with_field("tx_id", "TX-001")
+                    .with_field("step_name", name)
+                    .with_field("duration", duration)
+                    .with_field("error_count", errors)
+                    .with_field("throughput", 850.0),
+            )
+            .await
+            .unwrap();
+    }
     engine
         .process(
             Event::new("TransactionClose")
@@ -3539,9 +3511,25 @@ async fn test_transaction_monitoring_trend_aggregate() {
         )
         .await
         .unwrap();
-
-    // All 5 events processed without panics
     assert_eq!(engine.metrics().events_processed, 5);
+    engine.flush_end_of_input().await.unwrap();
+
+    let output = rx.try_recv().expect("the transaction's summary");
+    assert_eq!(&*output.event_type, "TransactionStats");
+    assert_eq!(
+        output.data.get("event_type"),
+        Some(&Value::str("TransactionSummary"))
+    );
+    assert_eq!(output.data.get("tx_id"), Some(&Value::str("TX-001")));
+    assert_eq!(output.data.get("status"), Some(&Value::str("completed")));
+    assert_eq!(output.data.get("trends"), Some(&Value::Int(7)));
+    assert_eq!(output.data.get("steps"), Some(&Value::Int(12)));
+    assert_eq!(
+        output.data.get("avg_duration"),
+        Some(&Value::Float(4.0 * (1200.0 + 3400.0 + 7800.0) / 7.0))
+    );
+    assert_eq!(output.data.get("max_error_count"), Some(&Value::Float(1.0)));
+    assert!(rx.try_recv().is_err());
 }
 
 #[tokio::test]
@@ -3607,15 +3595,15 @@ async fn test_transaction_monitoring_detection_mode() {
 }
 
 #[tokio::test]
-async fn test_transaction_monitoring_multi_query_sharing() {
-    // Two trend_aggregate streams on overlapping Kleene patterns.
-    // Engine should detect sharing opportunity.
+async fn test_transaction_monitoring_two_streams_over_the_same_transaction() {
+    // Two trend aggregates over the same pattern, each emitting a field of
+    // the start: both report the same single-step transaction.
     let source = r"
         stream TxStatsByCustomer = TransactionOpen as open
             -> all ProcessingStep as steps
             -> TransactionClose as close
             .within(30m)
-            .partition_by(customer_id)
+            .partition_by(tx_id)
             .trend_aggregate(
                 trend_count: count_trends(),
                 step_count: count_events(steps)
@@ -3630,7 +3618,7 @@ async fn test_transaction_monitoring_multi_query_sharing() {
             -> all ProcessingStep as steps
             -> TransactionClose as close
             .within(30m)
-            .partition_by(channel)
+            .partition_by(tx_id)
             .trend_aggregate(
                 trend_count: count_trends(),
                 step_count: count_events(steps)
@@ -3643,14 +3631,11 @@ async fn test_transaction_monitoring_multi_query_sharing() {
     ";
 
     let program = parse_program(source);
-    let (tx, _rx) = mpsc::channel(100);
+    let (tx, mut rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
-
-    // Both streams should load — sharing detected for ProcessingStep+ sub-pattern
     engine.load(&program).unwrap();
     assert_eq!(engine.metrics().streams_count, 2);
 
-    // Process events across both partitions
     engine
         .process(
             Event::new("TransactionOpen")
@@ -3660,7 +3645,6 @@ async fn test_transaction_monitoring_multi_query_sharing() {
         )
         .await
         .unwrap();
-
     engine
         .process(
             Event::new("ProcessingStep")
@@ -3670,7 +3654,6 @@ async fn test_transaction_monitoring_multi_query_sharing() {
         )
         .await
         .unwrap();
-
     engine
         .process(
             Event::new("TransactionClose")
@@ -3679,9 +3662,41 @@ async fn test_transaction_monitoring_multi_query_sharing() {
         )
         .await
         .unwrap();
-
-    // All 3 events processed without panics across both shared streams
     assert_eq!(engine.metrics().events_processed, 3);
+    engine.flush_end_of_input().await.unwrap();
+
+    let mut results = Vec::new();
+    while let Ok(output) = rx.try_recv() {
+        let key = output
+            .data
+            .get("customer")
+            .or_else(|| output.data.get("channel"))
+            .cloned();
+        results.push((
+            output.event_type.to_string(),
+            key,
+            output.data.get("trends").cloned(),
+            output.data.get("steps").cloned(),
+        ));
+    }
+    results.sort_by_key(|row| format!("{row:?}"));
+    assert_eq!(
+        results,
+        vec![
+            (
+                "TxStatsByChannel".to_string(),
+                Some(Value::str("web")),
+                Some(Value::Int(1)),
+                Some(Value::Int(1))
+            ),
+            (
+                "TxStatsByCustomer".to_string(),
+                Some(Value::str("CUST-42")),
+                Some(Value::Int(1)),
+                Some(Value::Int(1))
+            ),
+        ]
+    );
 }
 
 // =============================================================================

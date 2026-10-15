@@ -24,7 +24,7 @@ features:
   - title: State that survives a crash
     details: "A program's open sequences, windows and joins can be snapshotted with the stream position they stand for and restored into a fresh engine — the half-matched attack is not lost."
   - title: Trend aggregation
-    details: "Hamlet shares work across many trend queries over bursty streams, where evaluating each query alone does not scale."
+    details: "Trend aggregation counts every trend a Kleene pattern matches in a window — 2^n of them — without enumerating one."
   - title: Forecasting
     details: "Prediction suffix trees estimate which pattern is completing, and how likely it is, with sub-microsecond inference."
   - title: A library, not a platform

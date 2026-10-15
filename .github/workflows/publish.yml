@@ -17,7 +17,6 @@ on:
           - varpulis-pst
           - varpulis-parser
           - varpulis-simd
-          - varpulis-hamlet
           - varpulis-dead-letter
           - varpulis-sase
           - varpulis-connector-api
@@ -110,7 +109,6 @@ jobs:
             "varpulis-pst"
             "varpulis-parser"
             "varpulis-simd"
-            "varpulis-hamlet"
             "varpulis-dead-letter"
             "varpulis-sase"
             "varpulis-connector-api"

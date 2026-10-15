@@ -61,7 +61,7 @@ Detection rules on event sequences.
 Reduction functions on windows (sum, avg, count, etc.).
 
 ### Contexts
-Named execution domains that run on dedicated OS threads. Enable multi-core parallelism with CPU affinity and cross-context communication via bounded channels.
+Named execution domains of the retired asynchronous runtime. The engine as it ships refuses them; a host runs one program per thread.
 
 ## See Also
 

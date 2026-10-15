@@ -19,7 +19,7 @@ unit ([ADR-008](adr/008-engine-only-platform-retired.md)).
   [SASE patterns](guides/sase-patterns.md).
 - [Windows and aggregations](reference/windows-aggregations.md), [joins](reference/joins.md),
   [outer joins](tutorials/outer-joins-tutorial.md).
-- [Trend aggregation](reference/trend-aggregation.md) (Hamlet, [ADR-005](adr/005-hamlet-trend-aggregation.md)),
+- [Trend aggregation](reference/trend-aggregation.md) (counting on the event graph; [ADR-005](adr/005-hamlet-trend-aggregation.md) is superseded),
   [forecasting](architecture/forecasting.md) (prediction suffix trees).
 - [Contexts and parallelism](guides/contexts.md), [architecture/parallelism](architecture/parallelism.md).
 

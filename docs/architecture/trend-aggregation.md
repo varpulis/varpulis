@@ -2,12 +2,20 @@
 
 ## Overview
 
-The Varpulis CEP engine supports two mutually exclusive processing modes for temporal event patterns:
+The Varpulis CEP engine supports two mutually exclusive processing modes for
+temporal event patterns:
 
-- **Detection mode** -- returns the actual matched event sequences. Uses the SASE+ NFA engine. Activated by the `->` (followed-by) syntax in VPL.
-- **Aggregation mode** -- computes COUNT, SUM, AVG, MIN, or MAX over event trends without materializing individual matches. Uses the Hamlet engine. Activated by `.trend_aggregate()` in VPL.
+- **Detection mode** -- returns the actual matched event sequences. Uses the
+  SASE+ NFA engine. Activated by the `->` (followed-by) syntax in VPL.
+- **Aggregation mode** -- computes COUNT, SUM, AVG, MIN or MAX over event
+  trends without materializing individual matches. Counts the trends on the
+  graph of a window's events (GRETA). Activated by `.trend_aggregate()` in
+  VPL.
 
-A given stream uses one mode or the other, never both. The choice is determined at compile time by the presence of `.trend_aggregate()` in the stream's operator chain. When detected, the compiler builds a `HamletAggregator` instead of a `SaseEngine`.
+A given stream uses one mode or the other, never both. The choice is made at
+compile time by the presence of `.trend_aggregate()` in the stream's
+operator chain. When present, the compiler builds a `TrendAggregateConfig`
+op at the head of the pipeline instead of a `SaseEngine`.
 
 ## Decision Tree
 
@@ -17,182 +25,114 @@ Need actual matched event sequences?
           VPL: A -> all B where B.x > 10 -> C .within(1h) .emit(...)
 
   NO, need aggregate statistics over trends?
-    YES --> Aggregation mode (Hamlet)
+    YES --> Aggregation mode (counting on the event graph)
             VPL: A -> all B -> C .within(1h) .trend_aggregate(count: count_trends())
-
-Multiple queries with overlapping Kleene sub-patterns?
-  YES --> Automatic cross-stream sharing via Hamlet (setup_hamlet_sharing)
-  NO  --> Per-stream Hamlet aggregator
 ```
 
 ## Internal Architecture
 
 ### Compile-Time Pipeline
 
-```
-VPL source
-  |
-  v
-Parser (varpulis-parser)
-  |  StreamOp::TrendAggregate(Vec<TrendAggItem>)  -- AST node
-  v
-Engine::load() --> compile_ops_with_sequences()
-  |
-  |-- Detects StreamOp::TrendAggregate in the op chain
-  |-- Calls pattern_analyzer to extract event types and Kleene positions
-  |-- Builds MergedTemplate via TemplateBuilder
-  |-- Creates HamletAggregator with QueryRegistration
-  |-- Inserts RuntimeOp::TrendAggregate at position 0 (replaces RuntimeOp::Sequence)
-  |-- Returns (runtime_ops, sase_engine=None, ..., hamlet_aggregator=Some(...))
-  |
-  v
-Engine::load() --> setup_hamlet_sharing()
-  |
-  |-- Scans all streams with hamlet_aggregator != None
-  |-- Groups streams by their Kleene event types
-  |-- For groups of 2+ streams, builds a shared MergedTemplate
-  |-- Creates a single shared HamletAggregator with all queries registered
-  |-- Replaces per-stream aggregators with Arc<Mutex<HamletAggregator>>
-  |-- Updates each stream's TrendAggregateConfig.query_id
-```
+`Engine::compile_trend_mode` (`crates/varpulis-runtime/src/engine/compilation.rs`)
+runs when a stream's operators contain `.trend_aggregate()`:
 
-### Runtime Event Flow
+1. **Steps.** The start comes from the stream's source (`EventType as
+   alias`, with its optional `where`), the rest from the `->` clauses; a
+   named `pattern` gives all of them. Each step keeps its event type (a
+   filter-only stream resolves to its source type, as for a sequence), its
+   alias, its condition, whether it is a closure (`all`) and its monotonic
+   operator.
+2. **Refusals.** What the counting cannot honour is refused with the form it
+   honours: no `.within()`, no closure, a closure as the start, a negated
+   step, `.each()`/`.longest()`/`.strict()`/`.stnm()`, `.forecast()`, a
+   condition reading an alias the counting cannot bind, an aggregate that is
+   not one of the six, a bare field, an alias that is not a step.
+3. **Aggregates.** Each `.trend_aggregate()` item becomes a
+   `TrendAggregate`: `CountTrends`, `CountEvents(step)`, `Sum`, `Avg`,
+   `Min`, `Max` over `alias.field`.
+4. **The op.** `TrendAggregateConfig::new(steps, aggregates, within,
+   partition_key)` goes in at index 0 of the runtime ops, replacing the
+   sequence op; the `.where()` and `.emit()` that follow run on its results.
 
-```
-Incoming event
-  |
-  v
-EventRouter --> StreamDefinition
-  |
-  v
-execute_pipeline() / execute_pipeline_sync()
-  |
-  |-- Encounters RuntimeOp::TrendAggregate(config)
-  |-- Calls hamlet_aggregator.process(event)
-  |-- HamletAggregator:
-  |     1. Maps event type name to type_index via MergedTemplate
-  |     2. Closes previous graphlet if event type changed
-  |     3. Adds event to HamletGraph (current graphlet)
-  |     4. Updates query states via template transitions
-  |     5. Returns Vec<AggregationResult> (incremental or empty)
-  |-- Wraps each AggregationResult into a TrendAggregateResult event
-  |-- Pipeline continues with downstream ops (select, emit, to, ...)
-```
+### Run-Time Pipeline
 
-## Key Components
+`crates/varpulis-runtime/src/engine/trend.rs`:
 
-### `pattern_analyzer.rs`
+1. **Windows.** `add(event)` files the event into its partition's window
+   (keyed by the partition field's value, `"default"` without one). The
+   window opens with its first event and ends `within` later. An event at
+   or past the end closes the window first -- its result comes back and
+   goes on down the pipeline -- and opens the next one. The engine's clock
+   pass (`close_windows_into`, after every batch and at the end of the
+   input) calls `close_through(wm)`, which closes every window whose end
+   `wm` has reached, earliest first; the op is a time window for that pass,
+   so a `.watermark(out_of_order:)` delays it like any other.
+2. **Counting.** `close_window` runs the dynamic programme over the window's
+   events, in arrival order:
+   - `reach[step][event]`: the partial trends that reach the event at the
+     step. 1 for a start that satisfies the start's condition; for a later
+     step, the sum over the earlier events from which the event can *enter*
+     the step, plus, for a closure, the sum over the earlier events of the
+     closure it can *extend*.
+   - `complete[step][event]`: the trends completing from there, the
+     symmetric sum over the later events, plus 1 at the last step.
+   - `participations[step][event] = reach · complete`.
+   Whether an event may follow another is the step's condition evaluated by
+   the runtime's expression evaluator (`eval_filter_expr`) against the
+   candidate event with a `SequenceContext` binding the start's alias to the
+   start, the closure's alias to its previous event (on entry, to the step
+   before), the previous step's alias to its event; then the monotonic
+   operator against the previous event. A condition that reads no alias is
+   evaluated once per event. The context is built once per predecessor and
+   reused over its successors.
+   When a condition reads the start's alias the sums depend on the start and
+   the programme runs once per start; otherwise once, seeding every start,
+   as GRETA does.
+3. **The result.** One event (`TrendAggregateResult`, renamed by `.emit()`)
+   stamped with the window's end: the partition field, the aggregates
+   (`count_trends` as the sum of completions over the starts; `count_events`
+   and `sum_trends` as sums of participations, times the field; `avg_trends`
+   as sum over trends; `min`/`max` over the events with participations),
+   `_count_{alias}` (distinct events of the step in a trend) and the fields
+   of the single steps' bound events as `alias.field` (earliest start, latest
+   later-step event). A window past its cap carries `_trend_truncated`.
+4. **Snapshot.** `checkpoint()`/`restore()` keep each partition's events and
+   when its window opened, in the engine's `WindowCheckpoint` shape; the op
+   is part of `Program::snapshot`.
 
-Path: `crates/varpulis-runtime/src/engine/pattern_analyzer.rs`
+### Complexity
 
-Extracts structural information from VPL AST nodes for Hamlet setup:
+Per window of `n` events, `m` steps and `s` starts: O(m · n²) condition
+evaluations when no condition reads the start, O(s · m · n²) when one does.
+Counts are `u64` with saturating arithmetic, emitted as integers clamped to
+`i64::MAX`. A partition's window holds at most `MAX_WINDOW_EVENTS` (5 000)
+events.
 
-- `extract_event_types(source, followed_by)` -- returns event type names in sequence order from the stream source and followed-by chain.
-- `extract_kleene_info(source, followed_by)` -- identifies which positions have Kleene closure (`match_all: true` / the `all` keyword).
-- `extract_within_ms(expr)` -- parses window duration from a `Within` expression.
-- `trend_item_to_greta(item, type_indices)` -- converts a `TrendAggItem` (e.g., `count_trends()`, `sum_trends(b.price)`) to the internal `GretaAggregate` enum.
+## What was removed
 
-### `hamlet/aggregator.rs`
+An earlier implementation fed the events to the `varpulis-hamlet` crate, the
+shared graphlet propagation of Hamlet (Poppe et al., SIGMOD 2021): several
+queries over the same Kleene sub-pattern shared one propagation, resolved per
+query through snapshots. It worked on sequences of event types without
+conditions, which is what let the propagation be shared, and what made every
+count wrong for a pattern with one. The crate, the runtime's GRETA baseline
+module and its ZDD experiment were removed on 2026-10-15; `varpulis-zdd`
+stays, since the sequence engine's Kleene closures live in it.
 
-Path: `crates/varpulis-runtime/src/hamlet/aggregator.rs`
+## Key Source Files
 
-Core executor. `HamletAggregator` combines:
+| File | Role |
+|------|------|
+| `crates/varpulis-runtime/src/engine/trend.rs` | Windows, counting, result |
+| `crates/varpulis-runtime/src/engine/compilation.rs` | `compile_trend_mode`: steps, refusals, aggregates |
+| `crates/varpulis-runtime/src/engine/dispatch.rs` | Clock-driven and end-of-input closes |
+| `crates/varpulis-runtime/src/engine/pipeline.rs` | The op in the pipeline |
+| `crates/varpulis-engine/tests/audit_trend_aggregate.rs` | The counts, step by step |
 
-- A `MergedTemplate` (compiled FSA) for pattern matching.
-- A `HamletGraph` for event storage and graphlet management.
-- A `HamletOptimizer` for runtime sharing decisions.
-- Per-query state tracking (`current_state`, `count`, `snapshot_value`).
+## References
 
-Key methods:
-
-- `register_query(QueryRegistration)` -- registers a query with its event types, Kleene types, and aggregate function.
-- `process(SharedEvent) -> Vec<AggregationResult>` -- main entry point. Manages graphlet lifecycle, updates query states, returns incremental results.
-- `flush() -> Vec<AggregationResult>` -- closes all active graphlets and returns final results at window boundary.
-
-Processing modes within a graphlet:
-
-- **Shared mode** (`process_shared_graphlet`): Computes `PropagationCoefficients` once, resolves per-query using snapshots. Used when multiple queries share a Kleene sub-pattern.
-- **Non-shared mode** (`process_non_shared_graphlet`): Computes Kleene count independently per query. Formula: `count = snapshot_value * (2^n - 1)`.
-
-### `hamlet/template.rs`
-
-Path: `crates/varpulis-runtime/src/hamlet/template.rs`
-
-`MergedTemplate` is a Finite State Automaton where:
-
-- Each event type appears exactly once.
-- Transitions are labeled with the set of queries they apply to.
-- Kleene self-loops are identified and marked as shareable when used by multiple queries.
-
-`TemplateBuilder` provides a fluent API: `add_sequence(query_id, types)`, `add_kleene(query_id, type_name, state)`, `build()`.
-
-### `hamlet/graphlet.rs`
-
-Path: `crates/varpulis-runtime/src/hamlet/graphlet.rs`
-
-A `Graphlet` is a sub-graph containing events of a single type during an interval where no events of other pattern types arrive. It is the atomic unit of sharing in Hamlet.
-
-Key properties:
-
-- `nodes: Vec<GraphletNode>` -- events with predecessor edges, snapshot coefficients, and local sums.
-- `is_shared: bool` -- whether this graphlet is processed in shared mode.
-- `sharing_queries: SmallVec<[QueryId; 8]>` -- queries that share this graphlet.
-
-`add_kleene_edges()` creates predecessor links for all-to-all connectivity within the graphlet (each event preceded by all earlier events). `propagate_shared()` computes `snapshot_coeff` and `local_sum` per node so counts can be resolved for any query by substituting the query-specific snapshot value.
-
-`GraphletPool` provides object reuse to avoid allocation overhead.
-
-### `hamlet/snapshot.rs`
-
-Path: `crates/varpulis-runtime/src/hamlet/snapshot.rs`
-
-Snapshots capture intermediate aggregation state at graphlet boundaries:
-
-- `Snapshot` stores per-query values (`SmallVec<[SnapshotValue; 8]>`), indexed by source and target graphlet.
-- `PropagationCoefficients` enables query-independent computation within a graphlet. For each event `e`: `count(e, q) = coeff(e) * snapshot_value(q) + local_sum(e)`.
-- `compute_kleene()` populates coefficients for Kleene self-loop patterns (all-predecessor connectivity).
-- `resolve_count(snapshot_value)` and `resolve_final_counts(end_indices, snapshot)` produce per-query results by substituting each query's snapshot value.
-- `merge_snapshots()` combines snapshots from multiple predecessor graphlets.
-
-### `hamlet/optimizer.rs`
-
-Path: `crates/varpulis-runtime/src/hamlet/optimizer.rs`
-
-`HamletOptimizer` makes runtime split/merge decisions based on a benefit model:
-
-```
-Benefit = g^2 * (ks - sp) - ks * sp
-```
-
-where `g` = graphlet size, `ks` = number of queries sharing the Kleene sub-pattern, `sp` = number of snapshots. When benefit is positive, shared mode is used; otherwise, non-shared mode is cheaper.
-
-## Shared vs. Non-Shared Complexity
-
-For `k` queries sharing a Kleene pattern of length `n`:
-
-| Mode | Complexity |
-|------|-----------|
-| Non-shared (per-query) | O(k * n^2) |
-| Shared (Hamlet) | O(sp * n^2 + k * sp) |
-
-When `sp << k` (few snapshots relative to queries), Hamlet provides significant speedups because the expensive n^2 graphlet traversal is performed once, and only the lightweight snapshot resolution is done per query.
-
-## Benchmark Results
-
-Run: `cargo bench -p varpulis-runtime --bench hamlet_zdd_benchmark`
-
-| Benchmark | Hamlet | ZDD Unified | Hamlet Speedup |
-|-----------|--------|-------------|----------------|
-| Single query | 6.9 M events/s | 2.4 M events/s | 3x |
-| 5 queries | 2.8 M events/s | 398 K events/s | 7x |
-| 10 queries | 2.1 M events/s | 122 K events/s | 17x |
-| 50 queries | 0.95 M events/s | 9 K events/s | 100x |
-| Shared Kleene | 2.1 M events/s | 140 K events/s | 15x |
-
-Hamlet's explicit graphlet-based sharing with O(1) transitions outperforms ZDD's automatic canonical sharing with O(ZDD size) operations. The advantage grows with query count because Hamlet's shared propagation cost is amortized across all queries, while ZDD processes each query path independently.
-
-## Academic References
-
-- **GRETA** (VLDB 2017): Olga Poppe, Chuan Lei, Elke A. Rundensteiner, David Maier. "Graph-based Real-time Event Trend Aggregation." Proceedings of the VLDB Endowment, Vol. 11, No. 1, pp. 80-92. DOI: [10.14778/3151113.3151120](https://doi.org/10.14778/3151113.3151120)
-
-- **Hamlet** (SIGMOD 2021): Olga Poppe, Allison Rozet, Chuan Lei, Elke A. Rundensteiner, David Maier. "To Share or Not to Share: Online Event Trend Aggregation Over Bursty Event Streams." Proceedings of the 2021 International Conference on Management of Data (SIGMOD '21), pp. 1453-1465. DOI: [10.1145/3448016.3457310](https://doi.org/10.1145/3448016.3457310)
+- **GRETA**: Poppe, Lei, Rundensteiner, Maier. "GRETA: Graph-based
+  Real-time Event Trend Aggregation." PVLDB 11(1), 2017.
+- **Hamlet** (the earlier implementation): Poppe, Lei, Rundensteiner, Maier.
+  "To Share or Not to Share: Online Event Trend Aggregation Over Bursty Event
+  Streams." SIGMOD 2021.

@@ -364,9 +364,9 @@ fn parse_inner(source: &str) -> ParseResult<Program> {
     // Fold, put the program's constants where streams read them, fold again
     // (a substituted constant can make an expression constant).
     let program = crate::optimize::fold_program(Program { statements });
-    Ok(crate::optimize::fold_program(crate::constants::propagate(
-        program,
-    )))
+    let program = crate::optimize::fold_program(crate::constants::propagate(program));
+    // Then the alias a plain stream gives its source reads the event itself.
+    Ok(crate::source_alias::strip(program))
 }
 
 fn convert_pest_error(e: pest::error::Error<Rule>) -> ParseError {
@@ -1600,13 +1600,14 @@ fn parse_window_args(pair: pest::iterators::Pair<Rule>) -> ParseResult<WindowArg
     let mut policy = None;
 
     for p in inner {
-        if p.as_rule() == Rule::expr {
-            // Need to determine if it's sliding or policy based on context
-            if sliding.is_none() {
-                sliding = Some(parse_expr(p)?);
-            } else {
-                policy = Some(parse_expr(p)?);
+        match p.as_rule() {
+            Rule::window_sliding => {
+                sliding = Some(parse_expr(p.into_inner().expect_next("slide")?)?);
             }
+            Rule::window_policy => {
+                policy = Some(parse_expr(p.into_inner().expect_next("policy")?)?);
+            }
+            _ => {}
         }
     }
 
@@ -2068,6 +2069,7 @@ fn parse_expr_inner(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
         Rule::expr => parse_expr(pair),
         Rule::lambda_expr => parse_lambda_expr(pair),
         Rule::range_expr => parse_range_expr(pair),
+        Rule::coalesce_expr => parse_coalesce_expr(pair),
         Rule::or_expr => parse_or_expr(pair),
         Rule::and_expr => parse_and_expr(pair),
         Rule::not_expr => parse_not_expr(pair),
@@ -2257,8 +2259,18 @@ fn parse_pattern_sequence_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseRes
 }
 
 fn parse_filter_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
-    let inner = pair.into_inner().expect_next("filter expression")?;
-    parse_filter_or_expr(inner)
+    let mut inner = pair.into_inner();
+    let mut left = parse_filter_or_expr(inner.expect_next("filter expression")?)?;
+    // `a ?? b ?? c` is `(a ?? b) ?? c`; the `??` tokens themselves are not
+    // in the pair stream.
+    for default_pair in inner {
+        let default = parse_filter_or_expr(default_pair)?;
+        left = Expr::Coalesce {
+            expr: Box::new(left),
+            default: Box::new(default),
+        };
+    }
+    Ok(left)
 }
 
 fn parse_filter_or_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
@@ -2467,6 +2479,7 @@ fn parse_filter_primary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<E
         Rule::literal => parse_literal(inner),
         Rule::identifier => Ok(Expr::Ident(inner.as_str().to_string())),
         Rule::quoted_identifier => Ok(Expr::Ident(identifier_name(inner.as_str()))),
+        Rule::array_literal => parse_array_literal(inner),
         Rule::filter_expr => parse_filter_expr(inner),
         _ => Ok(Expr::Ident(inner.as_str().to_string())),
     }
@@ -2487,6 +2500,21 @@ fn parse_range_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     } else {
         Ok(left)
     }
+}
+
+/// `a ?? b ?? c`: left-associative, the `??` tokens are not in the pair
+/// stream.
+fn parse_coalesce_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
+    let mut inner = pair.into_inner();
+    let mut left = parse_expr_inner(inner.expect_next("coalesce expression operand")?)?;
+    for default_pair in inner {
+        let default = parse_expr_inner(default_pair)?;
+        left = Expr::Coalesce {
+            expr: Box::new(left),
+            default: Box::new(default),
+        };
+    }
+    Ok(left)
 }
 
 fn parse_or_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {

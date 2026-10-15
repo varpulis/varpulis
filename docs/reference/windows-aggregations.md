@@ -205,7 +205,8 @@ window and an unpartitioned pattern engine. Derive the value into a field with
 
 **Behavior:**
 - Creates independent windows per unique partition key
-- Each partition emits separately
+- Each partition emits separately; the result carries the key's value as
+  `_partition` (`.emit(device: _partition, ...)`)
 - Memory scales with number of unique keys
 
 **Example:**

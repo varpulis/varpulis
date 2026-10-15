@@ -61,7 +61,7 @@ varpulis simulate -p <example>.vpl -e <example>.evt -v -w 1
 | # | File | Concept | Key Syntax |
 |---|------|---------|------------|
 | 23 | [forecasting](23_forecasting.vpl) | Predict pattern completion (PST) | `.forecast(confidence:, horizon:, warmup:)` |
-| 24 | [trend_aggregation](24_trend_aggregation.vpl) | Hamlet engine multi-trend stats | `.trend_aggregate()`, `avg_trends()`, `count_trends()` |
+| 24 | [trend_aggregation](24_trend_aggregation.vpl) | Statistics over every trend of a pattern | `.trend_aggregate()`, `avg_trends()`, `count_trends()` |
 | 25 | [watermarks](25_watermarks.vpl) | Out-of-order event handling | `.watermark(out_of_order: 5s)` |
 | 26 | [connectors](26_connectors.vpl) | Source/sink configuration (reference) | `connector Name = mqtt(...)`, `.from()`, `.to()` |
 

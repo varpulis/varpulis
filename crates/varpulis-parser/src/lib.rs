@@ -97,6 +97,7 @@ pub mod optimizer;
 /// outside this crate uses. [`parse`] is the interface.
 #[allow(missing_docs)]
 mod pest_parser;
+mod source_alias;
 
 pub use error::{ParseError, RichParseError};
 pub use lexer::Token;

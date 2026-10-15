@@ -89,6 +89,13 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - run: cargo nextest run --workspace --profile ci
       - run: cargo test --workspace --doc
+      # The engine as it ships: varpulis-runtime with its default features
+      # off (no tokio, no arrow). A workspace run unifies features and tests
+      # the engine against a runtime built with `arrow` and `async-runtime`,
+      # a configuration no host runs; the fused columnar windows that feature
+      # once enabled by default gave the same program different answers
+      # (crates/varpulis-engine/tests/audit_windows.rs).
+      - run: cargo test -p varpulis-engine
 
   cross-platform:
     name: ${{ matrix.os }}

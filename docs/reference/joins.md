@@ -2,14 +2,17 @@
 
 Complete reference for stream join types in VPL.
 
-> **Joins do not run in the engine as it ships.** They parse and pass
-> `varpulis check`, but `varpulis simulate` and a Vejas detect unit run the
-> engine's synchronous path, which refuses a join when it loads the program:
-> `stream 'X' is a join, which the synchronous execution path does not
-> implement`. No shipped command runs the asynchronous path since the platform
-> was retired ([ADR-008](../adr/008-engine-only-platform-retired.md)). To correlate two event types today, use a
-> sequence, which runs everywhere: `A as a -> B where key == a.key as b` with
-> `.within(5m)`.
+A join runs in the engine as it ships (`varpulis simulate`, a Vejas detect
+unit) and its buffers are in the program's snapshot. Each clause reads a
+source under a name of its own — `stream Orders = OrderEvent` — and that name
+is what the `on` condition, the emitted fields (`Orders.order_id`) and the
+buffer use. The condition is written either way the examples show: `on
+Orders.k == Payments.k` in the clause, or `.on(Orders.k == Payments.k)` after
+the join. An outer join emits a pair when the match arrives, and an event of
+a preserved side that found no match once, alone, when its window closes:
+when the event clock of the join's sources passes the window's end, or at the
+end of a bounded input (see the
+[outer joins tutorial](../tutorials/outer-joins-tutorial.md)).
 
 ## Join Types
 
@@ -59,10 +62,11 @@ stream Result = left_join(
 ```
 
 **Behavior:**
-- Every left event is guaranteed to produce at least one output event
-- If a matching right event exists, fields are joined normally
-- If no matching right event exists within the window, right-side fields are `null`
-- Unmatched left events emit at window close (or immediately if configured)
+- Every left event produces exactly one output event
+- If a matching right event arrives within the window, the pair is emitted then
+- If none does, the left event is emitted alone when its window closes, with
+  the right side's join key `null` and its other fields absent
+- A right event alone produces nothing
 
 **Use cases:**
 - Find orders without payments
@@ -86,7 +90,8 @@ stream Result = right_join(
 ```
 
 **Behavior:**
-- Mirror of left join: every right event produces output
+- Mirror of left join: every right event produces exactly one output event,
+  the pair when its match arrives or itself alone when its window closes
 - Left-side fields are `null` when unmatched
 
 **Note:** `right_join(A, B)` is semantically equivalent to `left_join(B, A)` with swapped field references.
@@ -108,9 +113,9 @@ stream Result = full_join(
 ```
 
 **Behavior:**
-- Matched pairs produce output with all fields populated
-- Unmatched left events produce output with null right-side fields
-- Unmatched right events produce output with null left-side fields
+- Matched pairs produce output with all fields populated, when the match arrives
+- An unmatched event of either side produces output when its window closes,
+  with the other side's fields null
 
 **Use cases:**
 - Reconciliation (detect mismatches from either side)
@@ -160,16 +165,13 @@ Joins require a window to bound the match space:
 | Sliding | Events match within the sliding window extent |
 | Count | Match against the last N events from each side |
 
-### Window Policy
+### Late Events
 
-```vpl
-.window(5m, policy: "watermark")
-```
-
-| Policy | Description |
-|--------|-------------|
-| `"time"` (default) | Window based on wall clock |
-| `"watermark"` | Window advances with watermark (for out-of-order events) |
+A join's window runs on event time. An event that arrives after its window
+has closed matches nothing; to hold windows open for a bounded disorder,
+declare `.watermark(out_of_order: 30s)` on the stream (see
+[watermarks](../language/operators.md)). `.window(5m, policy: ...)` is
+refused: it was parsed and ignored.
 
 ---
 
@@ -223,7 +225,7 @@ stream Result = join(
 | Component | Location |
 |-----------|----------|
 | JoinType enum | `varpulis-core/src/ast.rs` |
-| Join execution | `varpulis-runtime/src/engine.rs` |
+| Join execution | `varpulis-runtime/src/engine/dispatch.rs` |
 | Null emission | `varpulis-runtime/src/join.rs` |
 
 ---
