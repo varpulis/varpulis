@@ -150,7 +150,7 @@ stream EnrichedOrders = join(
     stream Inventory = InventoryEvent
         on Orders.product_id == Inventory.product_id
 )
-.window(5m, policy: "watermark")
+.window(5m)
 .emit(
     order_id: Orders.id,
     customer_name: Customers.name,
@@ -192,6 +192,11 @@ stream Reconciliation = full_join(
 See the [Joins Reference](../reference/joins.md) for complete semantics and the [Outer Joins Tutorial](../tutorials/outer-joins-tutorial.md) for step-by-step examples.
 
 ## Contexts (Multi-Threaded Execution)
+
+> The engine as it ships refuses a program with contexts when it loads: the
+> threads behind them belong to the retired asynchronous runtime
+> ([ADR-008](../adr/008-engine-only-platform-retired.md)). A host runs one
+> program per thread; in Vejas, parallel work is separate detect units.
 
 Contexts declare isolated execution domains, each running on a dedicated OS thread.
 
@@ -290,6 +295,11 @@ while condition:
 ```
 
 ## Connectors
+
+> The engine opens no connection: `.from()` and `.to()` are declarations,
+> reported to the host through `Program::sources` and `Program::sinks`, and the
+> host subscribes and publishes ([ADR-008](../adr/008-engine-only-platform-retired.md)).
+> The connector descriptions below are those of the retired runtime.
 
 ### MQTT Connector
 
@@ -463,7 +473,9 @@ Available in `.where()` and `.emit()` after `.enrich()`:
 | `enrich_status` | `str` | `"ok"`, `"error"`, `"cached"`, or `"timeout"` |
 | `enrich_latency_ms` | `int` | Lookup latency in ms (0 for cache hits) |
 
-Enrichment calls out to a provider the host supplies — HTTP, a database, a cache; the engine only sees the values that come back.
+The engine has no lookup provider of its own: a program with `.enrich()`
+is refused when it loads (`varpulis check` says so first). Enrich the events
+before they reach the engine, or look up what it emits.
 
 ## Alert Notifications
 
@@ -485,9 +497,9 @@ stream FraudAlerts = Login as l -> LargeTransfer as t
 | `webhook` | URL to HTTP POST the alert payload (JSON body with event data + message) |
 | `message` | Template string with `{field}` interpolation for event field values |
 
-The alert is fire-and-forget — failed webhooks are logged as warnings but never
-block the pipeline. Works with any HTTP endpoint including Slack webhooks,
-PagerDuty, Datadog, or custom services.
+The engine opens no socket: `.alert(webhook: ...)` is refused when the program
+loads. `.alert(message: ...)` logs the message and passes the event on; to
+deliver an alert, route the stream with `.to()` and let the host post it.
 
 ---
 
@@ -503,9 +515,8 @@ connector AlertKafka = kafka (
 
 stream Alerts = DetectedPatterns
     .emit(
-        alert_id: uuid(),
-        severity: "high",
-        timestamp: now()
+        alert_id: id,
+        severity: "high"
     )
     .to(AlertKafka)
 ```

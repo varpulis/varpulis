@@ -198,18 +198,22 @@ pub fn predicate_references_alias(pred: &Predicate, alias: &str) -> bool {
 
 /// Check whether an inconsistent predicate truly needs deferred evaluation.
 ///
-/// `CompareRef` self-references (e.g., `field > alias.field` where alias is
-/// the Kleene variable) can be evaluated eagerly because `captured[alias]`
-/// is updated to the last matched Kleene event by `push_at_kleene()`.
+/// A self-reference to the closure's own alias — `field > alias.field` as a
+/// `CompareRef`, or `field > alias.field + 0.5` as an `Expr` — is evaluated
+/// eagerly against the previous closure event: `captured[alias]` is updated
+/// to the last matched Kleene event by `push_at_kleene()`, and at the first
+/// entry it is bound to the step before. That is the sliding-window reading
+/// the patterns guide documents, and it holds for an expression as it does
+/// for a bare comparison.
 ///
-/// Only `Expr`-based cross-references need deferred evaluation via ZDD
-/// enumeration, since they may reference arbitrary positions in the closure.
+/// Nothing is deferred to enumeration any more. Deferral existed for an
+/// expression that would read arbitrary positions of the closure, which no
+/// expression can (the closure is not indexable while it matches), and the
+/// deferred path evaluated an `Expr` with the alias unbound, so every
+/// subset failed it.
 pub fn needs_deferred_evaluation(pred: &Predicate) -> bool {
     match pred {
-        // CompareRef self-references: eager evaluation works (sliding window)
-        Predicate::Compare { .. } | Predicate::CompareRef { .. } => false,
-        // Expr-based: may reference arbitrary Kleene positions, must defer
-        Predicate::Expr(_) => true,
+        Predicate::Compare { .. } | Predicate::CompareRef { .. } | Predicate::Expr(_) => false,
         Predicate::And(l, r) | Predicate::Or(l, r) => {
             needs_deferred_evaluation(l) || needs_deferred_evaluation(r)
         }
@@ -217,23 +221,65 @@ pub fn needs_deferred_evaluation(pred: &Predicate) -> bool {
     }
 }
 
-/// Check whether a `varpulis_core::ast::Expr` mentions a given alias.
+/// Check whether a `varpulis_core::ast::Expr` reads a field of `alias`
+/// (`alias.field`, `alias?.field`, `alias[i]`), anywhere inside it.
+///
+/// `alias.field` is a `Member` expression. This used to look for an
+/// identifier spelled `alias.field`, which the parser never produces, so a
+/// self-reference written with any arithmetic (`> rising.temperature + 0.5`)
+/// went unrecognised: the closure's first entry evaluated it with the alias
+/// unbound, it was false, and the closure never opened.
 pub(crate) fn expr_references_alias(expr: &varpulis_core::ast::Expr, alias: &str) -> bool {
-    use varpulis_core::ast::Expr;
+    use varpulis_core::ast::{Arg, Expr};
+    let refs = |e: &Expr| expr_references_alias(e, alias);
     match expr {
         Expr::Ident(name) => {
             name.starts_with(alias) && name.as_bytes().get(alias.len()) == Some(&b'.')
         }
-        Expr::Binary { left, right, .. } => {
-            expr_references_alias(left, alias) || expr_references_alias(right, alias)
+        Expr::Member { expr: object, .. } | Expr::OptionalMember { expr: object, .. } => {
+            matches!(object.as_ref(), Expr::Ident(name) if name == alias) || refs(object)
         }
-        Expr::Unary { expr: inner, .. } => expr_references_alias(inner, alias),
-        Expr::Call { args, .. } => args.iter().any(|a| match a {
-            varpulis_core::ast::Arg::Positional(e) | varpulis_core::ast::Arg::Named(_, e) => {
-                expr_references_alias(e, alias)
-            }
-        }),
-        _ => false,
+        Expr::Index {
+            expr: object,
+            index,
+        } => {
+            matches!(object.as_ref(), Expr::Ident(name) if name == alias)
+                || refs(object)
+                || refs(index)
+        }
+        Expr::Slice {
+            expr: object,
+            start,
+            end,
+        } => refs(object) || start.as_deref().is_some_and(refs) || end.as_deref().is_some_and(refs),
+        Expr::Binary { left, right, .. } => refs(left) || refs(right),
+        Expr::Unary { expr: inner, .. } => refs(inner),
+        Expr::Call { func, args } => {
+            refs(func)
+                || args.iter().any(|a| match a {
+                    Arg::Positional(e) | Arg::Named(_, e) => refs(e),
+                })
+        }
+        Expr::Array(items) => items.iter().any(refs),
+        Expr::Map(entries) => entries.iter().any(|(_, v)| refs(v)),
+        Expr::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => refs(cond) || refs(then_branch) || refs(else_branch),
+        Expr::Coalesce { expr: e, default } => refs(e) || refs(default),
+        Expr::Range { start, end, .. } => refs(start) || refs(end),
+        Expr::Lambda { params, body } => !params.iter().any(|p| p == alias) && refs(body),
+        Expr::Block { stmts, result } => {
+            stmts.iter().any(|(_, _, value, _)| refs(value)) || refs(result)
+        }
+        Expr::Null
+        | Expr::Bool(_)
+        | Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Str(_)
+        | Expr::Duration(_)
+        | Expr::Timestamp(_) => false,
     }
 }
 

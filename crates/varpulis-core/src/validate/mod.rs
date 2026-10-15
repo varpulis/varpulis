@@ -797,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn test_emit_as_undeclared_type() {
+    fn test_emit_as_is_not_supported() {
         let prog = make_program(vec![
             event_decl("X"),
             Stmt::StreamDecl {
@@ -813,8 +813,11 @@ mod tests {
             },
         ]);
         let result = validate("stream S = X.emit as UnknownAlert ()", &prog);
-        // E034 error — undeclared type in emit
+        // E090: the engine never set the type, so `.emit as` is refused.
         assert!(result.has_errors());
-        assert!(result.diagnostics.iter().any(|d| d.code == Some("E034")));
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == Some("E090") && d.message.contains(".emit as UnknownAlert")));
     }
 }

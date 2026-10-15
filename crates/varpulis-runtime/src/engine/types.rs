@@ -159,7 +159,8 @@ pub enum RuntimeSource {
     Join(Vec<String>),
     /// Merge multiple event types with optional filters
     Merge(Vec<MergeSource>),
-    /// Periodic timer source
+    /// Periodic timer source. Only the asynchronous runtime fires one; a
+    /// synchronous engine refuses the stream when it loads.
     Timer(TimerConfig),
 }
 

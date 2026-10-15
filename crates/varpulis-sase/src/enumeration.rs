@@ -56,19 +56,33 @@ pub(crate) fn extract_ref_alias(pred: &Predicate) -> Option<String> {
     }
 }
 
-/// Rebuild the run's stack with a specific Kleene combination.
+/// The run's stack with the closure's events replaced by one combination of
+/// them: the steps before the closure, the combination in order, the steps
+/// after it.
+///
+/// `closure` is every event the closure captured. The entries to replace are
+/// found by identity, not by alias, since an unnamed closure's entries and an
+/// unnamed step's carry the same `None`. This used to copy the whole stack
+/// unchanged, so every one of the 2^n − 1 matches of `.subsets()` carried all
+/// n events: `count(b)` was n in each, which the guide admitted.
 fn rebuild_stack_with_combination(
     original_stack: &[StackEntry],
-    _combination: &[StackEntry],
+    closure: &[SharedEvent],
+    combination: &[StackEntry],
 ) -> Vec<StackEntry> {
-    // The original stack has all events including Kleene-captured ones.
-    // We replace the Kleene portion with the specific combination.
-    // For simplicity, we keep non-Kleene entries and append the combination.
+    let in_closure = |entry: &StackEntry| closure.iter().any(|e| Arc::ptr_eq(e, &entry.event));
     let mut stack = Vec::with_capacity(original_stack.len());
-    // Keep events that are NOT part of the Kleene capture
-    // (they were pushed before the Kleene state was entered)
-    // Heuristic: Kleene events are at the end of the stack
-    stack.extend_from_slice(original_stack);
+    let mut combination_placed = false;
+    for entry in original_stack {
+        if in_closure(entry) {
+            if !combination_placed {
+                stack.extend(combination.iter().cloned());
+                combination_placed = true;
+            }
+        } else {
+            stack.push(entry.clone());
+        }
+    }
     stack
 }
 
@@ -105,7 +119,7 @@ pub(crate) fn enumerate_with_filter(
                         captured.insert(alias.clone(), Arc::clone(&entry.event));
                     }
                 }
-                let stack = rebuild_stack_with_combination(&run.stack, &combo);
+                let stack = rebuild_stack_with_combination(&run.stack, &kc.events, &combo);
                 results.push(MatchResult {
                     captured,
                     stack,
@@ -146,7 +160,7 @@ pub(crate) fn enumerate_with_filter(
                     captured.insert(alias.clone(), Arc::clone(&entry.event));
                 }
             }
-            let stack = rebuild_stack_with_combination(&run.stack, &combo);
+            let stack = rebuild_stack_with_combination(&run.stack, &kc.events, &combo);
             results.push(MatchResult {
                 captured,
                 stack,

@@ -697,9 +697,11 @@ stream S = SensorData as a
     .emit()
 ";
     let diags = get_diagnostics(code);
+    // The alias of a plain stream reads the event itself, so the parser
+    // hands the validator `.where(temperature)`: still not a condition.
     let w061: Vec<_> = diags
         .iter()
-        .filter(|d| d.message.contains("field access"))
+        .filter(|d| d.code == Some(NumberOrString::String("W061".into())))
         .collect();
     assert!(
         !w061.is_empty(),

@@ -99,21 +99,27 @@ async fn the_async_path_produces_join_matches() {
     assert_eq!(emitted.len(), 2, "both symbols must join; got {emitted:?}");
 }
 
-/// Anything genuinely confined to the sync path — the WASM build — must get a
-/// loud error rather than a successful empty result.
-///
-/// Fail-before: this returned `Ok` with an empty result.
+/// The synchronous path — `varpulis simulate`, a Vejas detect unit, the WASM
+/// build — runs the join too: it used to refuse it (and before that, to
+/// return `Ok` with an empty result).
 #[test]
-fn the_sync_path_refuses_a_join_instead_of_dropping_it() {
-    let (mut engine, _rx) = load(JOIN_PROGRAM);
+fn the_sync_path_runs_the_join() {
+    let (mut engine, mut rx) = load(JOIN_PROGRAM);
 
-    let err = engine
-        .process_batch_sync(vec![trade("AAPL", 100.0), quote("AAPL", 99.5)])
-        .expect_err("the sync path must refuse a join, not silently drop it");
+    engine
+        .process_batch_sync(vec![
+            trade("AAPL", 100.0),
+            quote("AAPL", 99.5),
+            trade("MSFT", 200.0),
+        ])
+        .expect("processing must succeed");
 
-    let msg = err.to_string();
-    assert!(
-        msg.contains("join") && msg.contains("synchronous"),
-        "the error must say what is unsupported and why; got: {msg}"
-    );
+    let mut emitted = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        emitted.push(e);
+    }
+    assert_eq!(emitted.len(), 1, "AAPL joins, MSFT waits; got {emitted:?}");
+    assert_eq!(&*emitted[0].event_type, "Alerts");
+    assert_eq!(emitted[0].data.get("sym"), Some(&Value::str("AAPL")));
+    assert_eq!(emitted[0].data.get("px"), Some(&Value::Float(100.0)));
 }

@@ -551,7 +551,9 @@ fn valid_connector_declaration() {
 }
 
 #[test]
-fn unimplemented_distinct_warns() {
+fn distinct_is_implemented_and_checks() {
+    // The engine runs `.distinct()`; the validator refused it as
+    // unimplemented, so a program that worked did not check.
     let diags = validate_vpl(
         r"
         stream S = A
@@ -559,13 +561,13 @@ fn unimplemented_distinct_warns() {
     ",
     );
     assert!(
-        has_error(&diags, "E090"),
-        "Distinct should report E090: {diags:?}"
+        !has_error(&diags, "E090"),
+        "Distinct must not be refused: {diags:?}"
     );
 }
 
 #[test]
-fn unimplemented_limit_warns() {
+fn limit_is_implemented_and_checks() {
     let diags = validate_vpl(
         r"
         stream S = A
@@ -573,8 +575,8 @@ fn unimplemented_limit_warns() {
     ",
     );
     assert!(
-        has_error(&diags, "E090"),
-        "Limit should report E090: {diags:?}"
+        !has_error(&diags, "E090"),
+        "Limit must not be refused: {diags:?}"
     );
 }
 

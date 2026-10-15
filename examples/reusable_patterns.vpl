@@ -74,13 +74,17 @@ pattern LoginThenFailedTx = Login as login
 # Matches transactions over $1000
 pattern HighValueTx = Transaction where amount > 1000 as high_value
 
-# Pattern 4: Negation - Login without a subsequent Logout (potential session leak)
+# Pattern 4: Absence - a Login with no Logout within the hour (a session leak).
+# The negated step is the last one: the absence is decided when the hour
+# passes, so a step after it could never be taken (`varpulis check` refuses
+# one, E093). For "Login then Transaction, unless a Logout came in between",
+# write the sequence without the NOT step and add `.not(Logout)` to the stream
+# that reads it.
 # Note: For matching either of two event types (formerly Login OR Logout) or both
 # in any order (formerly Login AND Transaction), the recommended approach is to
 # use multiple streams + .merge() instead of pattern combinators.
 pattern LoginWithoutLogout = Login as login
     -> NOT Logout
-    -> Transaction as tx
     within 1h partition by user_id
 
 # Pattern 7: Complex fraud detection sequence

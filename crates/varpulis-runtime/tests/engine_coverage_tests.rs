@@ -1218,18 +1218,37 @@ async fn aggregate_min_max_last() {
 // =============================================================================
 
 #[tokio::test]
-async fn aggregate_ema_with_alpha() {
+async fn aggregate_ema_over_a_period() {
+    // ema(x, 3): k = 2 / (3 + 1) = 0.5, so over 10, 20, 30, 40, 50 the
+    // average runs 10, 15, 22.5, 31.25, 40.625. The window of five flushes
+    // on its fifth event.
+    let code = r"
+        stream S = Reading
+            .window(5)
+            .aggregate(e: ema(value, 3))
+            .emit(e: e)
+    ";
+    let events: Vec<Event> = (1..=6)
+        .map(|i| Event::new("Reading").with_field("value", Value::Float(i as f64 * 10.0)))
+        .collect();
+    let out = run_program(code, events).await;
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(out[0].data.get("e"), Some(&Value::Float(40.625)));
+}
+
+#[tokio::test]
+async fn aggregate_ema_with_a_fractional_period_is_refused() {
+    // `ema(value, 0.3)` used to load and take a period of 12 in silence.
     let code = r"
         stream S = Reading
             .window(5)
             .aggregate(e: ema(value, 0.3))
     ";
-    // Send 6 events to trigger window flush
-    let events: Vec<Event> = (1..=6)
-        .map(|i| Event::new("Reading").with_field("value", Value::Float(i as f64 * 10.0)))
-        .collect();
-    let out = run_program(code, events).await;
-    let _ = out;
+    let program = parse(code).expect("parse");
+    let (tx, _rx) = mpsc::channel(8);
+    let mut engine = Engine::new(tx);
+    let err = engine.load(&program).unwrap_err().to_string();
+    assert!(err.contains("period"), "{err}");
 }
 
 // =============================================================================

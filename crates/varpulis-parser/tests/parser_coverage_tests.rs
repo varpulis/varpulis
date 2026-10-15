@@ -928,6 +928,38 @@ fn test_tumbling_window() {
 }
 
 #[test]
+fn window_policy_is_not_read_as_the_slide() {
+    // `.window(5m, policy: "watermark")` parsed as a sliding window whose
+    // slide was the string "watermark": the grammar's labels were silent,
+    // so the parser took the extra expressions in the order they came.
+    fn window_of(src: &str) -> WindowArgs {
+        let program = parse(src).unwrap_or_else(|e| panic!("{src}: {e}"));
+        match &program.statements[0].node {
+            Stmt::StreamDecl { ops, .. } => match &ops[0] {
+                StreamOp::Window(args) => args.clone(),
+                other => panic!("expected a window, got {other:?}"),
+            },
+            other => panic!("expected a stream, got {other:?}"),
+        }
+    }
+    let policy_only = window_of(r#"stream S = E.window(5m, policy: "watermark")"#);
+    assert_eq!(policy_only.sliding, None);
+    assert!(
+        matches!(&policy_only.policy, Some(Expr::Str(s)) if s.as_str() == "watermark"),
+        "{policy_only:?}"
+    );
+    let both = window_of(r#"stream S = E.window(5m, sliding: 1m, policy: "watermark")"#);
+    assert_eq!(both.sliding, Some(Expr::Duration(60_000_000_000)));
+    assert!(
+        matches!(&both.policy, Some(Expr::Str(s)) if s.as_str() == "watermark"),
+        "{both:?}"
+    );
+    let slide_only = window_of("stream S = E.window(5m, sliding: 1m)");
+    assert_eq!(slide_only.sliding, Some(Expr::Duration(60_000_000_000)));
+    assert_eq!(slide_only.policy, None);
+}
+
+#[test]
 fn test_sliding_window() {
     let result = parse("stream S = E.window(5m, sliding: 1m)");
     assert!(result.is_ok(), "Failed: {:?}", result.err());

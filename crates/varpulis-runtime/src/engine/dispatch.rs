@@ -1170,19 +1170,38 @@ impl Engine {
             }
         }
 
-        // Join sources are not implemented on the synchronous path.
-        //
-        // This used to return an empty result, so every match was silently
-        // discarded and the caller saw a successful run that emitted nothing.
-        // Callers that can choose now consult `Engine::requires_async_dispatch`
-        // and take the async path; anything genuinely confined to this path
-        // (the WASM build) gets a loud error instead of wrong results.
+        // A join correlates through its buffer, as on the asynchronous path:
+        // the event joins the buffer of the source it came from, and what
+        // the buffer correlates runs through the stream's own operators. The
+        // path used to refuse a join outright (and before that, to drop
+        // every match in silence).
         if matches!(stream.source, RuntimeSource::Join(_)) {
-            return Err(super::error::EngineError::Compilation(format!(
-                "stream '{}' is a join, which the synchronous execution path \
-                 does not implement; run it on the asynchronous path",
-                stream.name
-            )));
+            let Some(join_buffer) = stream.join_buffer.as_mut() else {
+                return Err(super::error::EngineError::Compilation(format!(
+                    "stream '{}' is a join with no join buffer",
+                    stream.name
+                )));
+            };
+            let source_name = stream
+                .event_type_to_source
+                .get(&*event.event_type)
+                .cloned()
+                .unwrap_or_else(|| event.event_type.to_string());
+            return match join_buffer.add_event(&source_name, (*event).clone()) {
+                Some(correlated) => pipeline::execute_pipeline_sync(
+                    stream,
+                    vec![Arc::new(correlated)],
+                    0,
+                    pipeline::SkipFlags::for_join(),
+                    functions,
+                    skip_output_rename,
+                ),
+                None => Ok(StreamProcessResult {
+                    emitted_events: vec![],
+                    output_events: vec![],
+                    sink_events_sent: 0,
+                }),
+            };
         }
 
         // Use synchronous pipeline execution

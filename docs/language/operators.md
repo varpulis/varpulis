@@ -26,9 +26,15 @@
 All six widen `int` to `float` when the two sides differ in numeric type, so
 `DestinationPort == 445` holds whether the port arrived as `445` or `445.0`, and
 `.having(total == 100)` can be satisfied by an aggregate — every numeric
-aggregate returns a `float`. The same rule applies inside a `->` sequence step
-as in `.where()`. Comparisons between values that are not both numeric (a string
-and an int, say) are neither true nor false: the predicate does not match.
+aggregate returns a `float`. Two strings order as text (`name < "m"`). The same
+rules apply inside a `->` sequence step as in `.where()`. Comparisons between
+values of different kinds (a string and an int, say) are neither true nor
+false: the predicate does not match.
+
+A step's `where` takes every operator `.where()` takes, including `in`,
+`not in`, `is` and a list literal: `-> Process where image in ["cmd.exe",
+"powershell.exe"] as p`. Whatever the operator, the condition is a condition;
+an event that fails it does not take the step.
 
 ## Logical Operators
 
@@ -48,6 +54,9 @@ and an int, say) are neither true nor false: the predicate does not match.
 | `~` | Bitwise NOT | `~a` |
 | `<<` | Left shift | `a << 2` |
 | `>>` | Right shift | `a >> 2` |
+
+On integers only: `(flags & 4) == 4`. A shift by a negative or out-of-range
+count yields nothing, as a division by zero does.
 
 ## Assignment Operators
 
@@ -71,6 +80,16 @@ and an int, say) are neither true nor false: the predicate does not match.
 | `[:]` | Slice | `array[1:3]` |
 | `in` | Membership | `x in list` |
 | `not in` | Non-membership | `x not in list` |
+
+## Type Test
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `is` | Whether a value is of a type | `n is int`, `missing is null` |
+
+The type is one of `int`, `float`, `str`, `bool`, `array`, `map`, `null`,
+`timestamp`, `duration`. A field the event does not carry `is null`, as
+`is_null(field)` says.
 
 ## Range Operators
 

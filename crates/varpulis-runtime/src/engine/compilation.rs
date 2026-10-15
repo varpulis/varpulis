@@ -57,14 +57,20 @@ impl Engine {
         #[allow(unused_variables)]
         for (emit_idx, op) in ops.iter().enumerate() {
             match op {
+                // A context is a thread of the asynchronous runtime. A
+                // synchronous engine has none; the assignment used to be
+                // ignored.
+                StreamOp::Context(ctx_name) if self.sync_only => {
+                    return Err(super::error::EngineError::Compilation(format!(
+                        "stream '{name}' .context({ctx_name}): contexts need the \
+                         asynchronous runtime, which this engine does not have; a host \
+                         runs one program per thread"
+                    )));
+                }
                 #[cfg(feature = "async-runtime")]
                 StreamOp::Context(ctx_name) => {
                     self.context_map
                         .assign_stream(name.to_string(), ctx_name.clone());
-                }
-                #[cfg(not(feature = "async-runtime"))]
-                StreamOp::Context(_) => {
-                    // Context assignments require async-runtime
                 }
                 #[cfg(feature = "async-runtime")]
                 StreamOp::Emit {
@@ -217,54 +223,34 @@ impl Engine {
                 RuntimeSource::EventType(first_type)
             }
             StreamSource::Join(clauses) => {
-                let sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
-                info!(
-                    "Registering join stream {} from sources: {:?}",
-                    name, sources
-                );
-                // For join sources, we register based on whether the source is a derived stream or an event type
-                // - Derived streams (with operations like aggregate, window, etc.) output events with stream name as event_type
-                // - Simple event streams need to receive the raw event type
-                for source in &sources {
-                    if let Some(stream_def) = self.streams.get(source) {
-                        // Source is a registered stream
-                        // Check if it has any transforming operations (aggregate, window, select, etc.)
-                        let has_operations = !stream_def.operations.is_empty();
-
-                        if has_operations {
-                            // Derived stream with operations - register for the stream name
-                            // because its output events have event_type = stream name
-                            info!(
-                                "Join source '{}' is a derived stream, registering for stream name",
-                                source
-                            );
-                            self.router.add_route(source, name);
-                            event_type_to_source.insert(source.clone(), source.clone());
-                        } else {
-                            // Simple passthrough stream - register for underlying event type
-                            let event_type = match &stream_def.source {
+                // Each clause reads a source (an event type or a stream) under
+                // a name of its own: `stream Orders = OrderEvent`. That name
+                // keys the join buffer, prefixes the correlated event's fields
+                // (`Orders.order_id`) and is what the `on` condition says. The
+                // buffer used to be keyed by the source instead, so the
+                // documented form, where the condition and the emit name the
+                // clause, found no key and correlated nothing.
+                let names: Vec<String> = clauses.iter().map(|c| c.name.clone()).collect();
+                info!("Registering join stream {} from {:?}", name, names);
+                for clause in clauses {
+                    // What arrives for the clause: a derived stream's output is
+                    // routed under the stream's name, a stream that only
+                    // filters is read at its event type, anything else is an
+                    // event type itself.
+                    let routed = match self.streams.get(&clause.source) {
+                        Some(stream_def) if stream_def.operations.is_empty() => {
+                            match &stream_def.source {
                                 RuntimeSource::EventType(et) => et.clone(),
                                 RuntimeSource::Stream(s) => s.clone(),
-                                _ => source.clone(),
-                            };
-                            info!(
-                                "Join source '{}' is a passthrough stream, registering for event type '{}'",
-                                source, event_type
-                            );
-                            self.router.add_route(&event_type, name);
-                            event_type_to_source.insert(event_type, source.clone());
+                                _ => clause.source.clone(),
+                            }
                         }
-                    } else {
-                        // Source stream not yet registered, assume it's an event type name
-                        info!(
-                            "Join source '{}' not found as stream, treating as event type",
-                            source
-                        );
-                        self.router.add_route(source, name);
-                        event_type_to_source.insert(source.clone(), source.clone());
-                    }
+                        _ => clause.source.clone(),
+                    };
+                    self.router.add_route(&routed, name);
+                    event_type_to_source.insert(routed, clause.name.clone());
                 }
-                RuntimeSource::Join(sources)
+                RuntimeSource::Join(names)
             }
             StreamSource::Merge(decls) => {
                 let merge_sources: Vec<MergeSource> = decls
@@ -289,6 +275,16 @@ impl Engine {
                 RuntimeSource::Merge(merge_sources)
             }
             StreamSource::Timer(decl) => {
+                // Nothing fires a timer in a synchronous engine: a host feeds
+                // it events, and time is theirs. The stream loaded and never
+                // emitted.
+                if self.sync_only {
+                    return Err(super::error::EngineError::Compilation(format!(
+                        "stream '{name}' reads timer(...), which needs a clock to fire it, \
+                         and this engine has none: feed it a periodic event from the host \
+                         instead"
+                    )));
+                }
                 // Extract interval from duration expression
                 let interval_ns = match &decl.interval {
                     varpulis_core::ast::Expr::Duration(ns) => *ns,
@@ -343,7 +339,22 @@ impl Engine {
 
         // Create JoinBuffer for Join sources
         let join_buffer = if let StreamSource::Join(clauses) = source {
-            let join_sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
+            // The join's window bounds the matching and is not run on the
+            // pairs, so an aggregate written here had nothing to flush on and
+            // emitted nothing. A second stream aggregates the joined stream
+            // under a window of its own.
+            if ops
+                .iter()
+                .any(|op| matches!(op, StreamOp::Aggregate(_) | StreamOp::TrendAggregate(_)))
+            {
+                return Err(super::error::EngineError::Compilation(format!(
+                    "stream '{name}': .aggregate() directly on join(...) emits nothing, since \
+                     the join's .window() bounds the matching and not an aggregation; read the \
+                     joined stream from a second stream with its own .partition_by(), .window() \
+                     and .aggregate()"
+                )));
+            }
+            let join_sources: Vec<String> = clauses.iter().map(|c| c.name.clone()).collect();
             let join_keys = self.extract_join_keys(clauses, ops);
             let window_duration = self.extract_window_duration(ops);
             let join_type = clauses.first().map(|c| c.join_type).unwrap_or_default();
@@ -666,6 +677,17 @@ impl Engine {
                     continue;
                 }
                 StreamOp::Enrich(spec) => {
+                    // The synchronous pipeline skipped the op in silence: the
+                    // events went on without the fields, and a `.where()` on
+                    // them never held.
+                    if self.sync_only {
+                        return Err(super::error::EngineError::Compilation(format!(
+                            ".enrich() looks values up in a provider the host supplies (here \
+                             the connector '{}'), and this engine has none: enrich the events \
+                             before they reach the engine, or look up what it emits",
+                            spec.connector_name
+                        )));
+                    }
                     // Resolve timeout (default 5s = 5_000_000_000 ns)
                     let timeout_ns = match &spec.timeout {
                         Some(varpulis_core::ast::Expr::Duration(ns)) => *ns,
@@ -763,6 +785,43 @@ impl Engine {
             // Handle non-sequence operations
             match op {
                 StreamOp::Window(args) => {
+                    // `policy:` was parsed and ignored. A late event is filed
+                    // by its own time when the stream declares a watermark.
+                    if args.policy.is_some() {
+                        return Err(super::error::EngineError::Compilation(
+                            ".window(policy: ...): the engine has no window policy; declare \
+                             .watermark(out_of_order: ...) on the stream for a late event to be \
+                             filed by its own time"
+                                .to_string(),
+                        ));
+                    }
+                    // A slide that is not of the window's kind used to fall
+                    // back to a minute (or to one event) in silence.
+                    match (&args.duration, &args.sliding) {
+                        (Expr::Duration(_), Some(Expr::Duration(ns))) if *ns == 0 => {
+                            return Err(super::error::EngineError::Compilation(
+                                ".window(sliding: 0): the slide must be positive".to_string(),
+                            ));
+                        }
+                        (Expr::Duration(_), Some(slide)) if !matches!(slide, Expr::Duration(_)) => {
+                            return Err(super::error::EngineError::Compilation(format!(
+                                ".window(sliding: ...): the slide of a time window is a duration \
+                                 such as sliding: 1m, not {slide:?}"
+                            )));
+                        }
+                        (Expr::Int(_), Some(Expr::Int(n))) if *n <= 0 => {
+                            return Err(super::error::EngineError::Compilation(format!(
+                                ".window(sliding: {n}): the slide must be positive"
+                            )));
+                        }
+                        (Expr::Int(_), Some(slide)) if !matches!(slide, Expr::Int(_)) => {
+                            return Err(super::error::EngineError::Compilation(format!(
+                                ".window(sliding: ...): the slide of a count window is a count \
+                                 such as sliding: 10, not {slide:?}"
+                            )));
+                        }
+                        _ => {}
+                    }
                     // Check for session window first
                     if let Some(ref gap_expr) = args.session_gap {
                         let gap_ns = match gap_expr {
@@ -1057,9 +1116,17 @@ impl Engine {
                 StreamOp::Aggregate(items) => {
                     let mut aggregator = Aggregator::new();
                     for item in items {
-                        if let Some((func, field)) = compiler::compile_agg_expr(&item.expr) {
-                            aggregator = aggregator.add(item.alias.clone(), func, field);
-                        }
+                        // An aggregate the engine cannot compute is refused.
+                        // It used to be skipped, and the result simply had no
+                        // such field.
+                        let (func, field) =
+                            compiler::compile_agg_expr(&item.expr).map_err(|e| {
+                                super::error::EngineError::Compilation(format!(
+                                    ".aggregate({}: ...): {e}",
+                                    item.alias
+                                ))
+                            })?;
+                        aggregator = aggregator.add(item.alias.clone(), func, field);
                     }
 
                     // Phase-2 fusion: if the previously pushed op is a
@@ -1081,7 +1148,8 @@ impl Engine {
                         // bins on max-seen event time and would ignore
                         // out_of_order/allowed_lateness entirely.
                         if let Some(ref key) = partition_key {
-                            if !self.checkpoint_planned
+                            if self.columnar_fusion
+                                && !self.checkpoint_planned
                                 && !watermark_driven
                                 && aggregator.supported_for_columnar()
                             {
@@ -1124,7 +1192,8 @@ impl Engine {
                         // classic Window+Aggregate path. Watermark streams
                         // (C2b) never fuse either: the fused op is event-
                         // arrival driven.
-                        if !self.checkpoint_planned
+                        if self.columnar_fusion
+                            && !self.checkpoint_planned
                             && !watermark_driven
                             && partition_key.is_none()
                             && aggregator.supported_for_columnar()
@@ -1285,6 +1354,16 @@ impl Engine {
                     }));
                 }
                 StreamOp::Alert(args) => {
+                    // Without an async runtime there is no HTTP client: the
+                    // webhook was accepted and never posted.
+                    if self.sync_only && args.iter().any(|arg| arg.name == "webhook") {
+                        return Err(super::error::EngineError::Compilation(
+                            ".alert(webhook: ...) posts over HTTP, which this engine does not \
+                             do: keep .alert(message: ...) for the log, and route the stream \
+                             with .to() for the host to deliver"
+                                .into(),
+                        ));
+                    }
                     let mut webhook_url = None;
                     let mut message_template = None;
 
@@ -2133,62 +2212,52 @@ impl Engine {
         Ok(Some(pmc))
     }
 
-    /// Extract join keys from join clauses and operations
-    /// Returns a map of source_name -> join_key_field
+    /// The join key of each clause, by the clause's name, from every
+    /// `A.k == B.k` the clauses' `on` conditions and a stream-level `.on()`
+    /// state. Both sides of a condition name a key: `stream Payments =
+    /// PaymentEvent on Orders.order_id == Payments.order_id` keys `Orders` as
+    /// well as `Payments`. A side written with the clause's source, or the
+    /// event type behind a stream it reads, is the same clause.
     pub(super) fn extract_join_keys(
         &self,
         clauses: &[varpulis_core::ast::JoinClause],
         ops: &[StreamOp],
     ) -> FxHashMap<String, String> {
         let mut join_keys: FxHashMap<String, String> = FxHashMap::default();
-
-        // First check clauses for on conditions
         for clause in clauses {
             if let Some(ref on_expr) = clause.on {
-                if let Some((source, field)) = self.extract_field_from_expr(on_expr, &clause.source)
-                {
-                    join_keys.insert(source, field);
-                }
+                self.extract_join_keys_from_expr(on_expr, &mut join_keys);
             }
         }
-
-        // Then check operations for StreamOp::On
         for op in ops {
             if let StreamOp::On(expr) = op {
-                // Parse expressions like: EMA12.symbol == EMA26.symbol
-                // or: A.key == B.key and B.key == C.key
                 self.extract_join_keys_from_expr(expr, &mut join_keys);
             }
         }
 
-        // Normalize join key source names to match clause source names.
-        // The .on() expression may use event type names (e.g., "Transaction") while
-        // the clause sources use stream names (e.g., "Transactions").
-        let clause_sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
         let mut normalized_keys: FxHashMap<String, String> = FxHashMap::default();
-        for (src, field) in &join_keys {
-            if clause_sources.contains(src) {
-                // Already matches a clause source
-                normalized_keys.insert(src.clone(), field.clone());
-            } else {
-                // Try to find a clause source whose underlying event type matches
-                let mut found = false;
-                for clause in clauses {
-                    if let Some(stream_def) = self.streams.get(&clause.source) {
-                        let matches = match &stream_def.source {
-                            RuntimeSource::EventType(et) => et == src,
-                            RuntimeSource::Stream(s) => s == src,
-                            _ => false,
-                        };
-                        if matches {
-                            normalized_keys.insert(clause.source.clone(), field.clone());
-                            found = true;
-                            break;
-                        }
-                    }
+        for (src, field) in join_keys {
+            let clause = clauses
+                .iter()
+                .find(|c| c.name == src)
+                .or_else(|| clauses.iter().find(|c| c.source == src))
+                .or_else(|| {
+                    clauses.iter().find(|c| {
+                        self.streams
+                            .get(&c.source)
+                            .is_some_and(|def| match &def.source {
+                                RuntimeSource::EventType(et) => *et == src,
+                                RuntimeSource::Stream(s) => *s == src,
+                                _ => false,
+                            })
+                    })
+                });
+            match clause {
+                Some(c) => {
+                    normalized_keys.insert(c.name.clone(), field);
                 }
-                if !found {
-                    normalized_keys.insert(src.clone(), field.clone());
+                None => {
+                    normalized_keys.insert(src, field);
                 }
             }
         }
@@ -2196,7 +2265,7 @@ impl Engine {
         // If no join keys found, use "symbol" as default (common join key)
         if normalized_keys.is_empty() {
             for clause in clauses {
-                normalized_keys.insert(clause.source.clone(), "symbol".to_string());
+                normalized_keys.insert(clause.name.clone(), "symbol".to_string());
             }
         }
 
@@ -2252,36 +2321,6 @@ impl Engine {
                 return Some((String::new(), name.clone()));
             }
             _ => {}
-        }
-        None
-    }
-
-    /// Extract a field from an expression for a specific source
-    fn extract_field_from_expr(
-        &self,
-        expr: &varpulis_core::ast::Expr,
-        source: &str,
-    ) -> Option<(String, String)> {
-        use varpulis_core::ast::{BinOp, Expr};
-
-        if let Expr::Binary {
-            op: BinOp::Eq,
-            left,
-            right,
-        } = expr
-        {
-            // Check left side
-            if let Some((src, field)) = self.extract_source_field(left) {
-                if src == source || src.is_empty() {
-                    return Some((source.to_string(), field));
-                }
-            }
-            // Check right side
-            if let Some((src, field)) = self.extract_source_field(right) {
-                if src == source || src.is_empty() {
-                    return Some((source.to_string(), field));
-                }
-            }
         }
         None
     }
@@ -2733,8 +2772,9 @@ mod arrow_fusion_tests {
 
     fn compile(source: &str) -> Vec<&'static str> {
         // Returns the runtime-op summary names for the first stream in
-        // the program, in declaration order.
-        let mut engine = Engine::builder().build();
+        // the program, in declaration order, for an engine that asked for
+        // columnar fusion.
+        let mut engine = Engine::builder().columnar_fusion(true).build();
         let program =
             varpulis_parser::parse(source).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
         engine
@@ -2790,7 +2830,10 @@ mod arrow_fusion_tests {
     /// Like [`compile`], but declares checkpointing up front via
     /// `plan_checkpointing(true)`.
     fn compile_planned(source: &str) -> Vec<&'static str> {
-        let mut engine = Engine::builder().plan_checkpointing(true).build();
+        let mut engine = Engine::builder()
+            .columnar_fusion(true)
+            .plan_checkpointing(true)
+            .build();
         let program =
             varpulis_parser::parse(source).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
         engine
@@ -3312,7 +3355,7 @@ mod c2b_watermark_compile_tests {
                 .aggregate(s: sum(temperature))
                 .emit(device_id: device_id, s: s)
         ";
-        let mut engine = Engine::builder().build();
+        let mut engine = Engine::builder().columnar_fusion(true).build();
         let program = varpulis_parser::parse(source).expect("parse");
         engine.load(&program).expect("load");
         let stream_names = engine.stream_names();

@@ -86,6 +86,7 @@ pub static AGGREGATE_FUNCTIONS: &[&str] = &[
     "first",
     "last",
     "count_distinct",
+    "collect",
     "ema",
     "median",
     "percentile",
@@ -96,7 +97,7 @@ pub static AGGREGATE_FUNCTIONS: &[&str] = &[
 
 /// Aggregate functions that require at least one field argument.
 pub static AGGREGATE_REQUIRES_FIELD: &[&str] = &[
-    "sum", "avg", "min", "max", "stddev", "median", "p50", "p95", "p99",
+    "sum", "avg", "min", "max", "stddev", "median", "p50", "p95", "p99", "collect",
 ];
 
 /// Aggregate functions that require exactly two arguments (field + period/quantile).

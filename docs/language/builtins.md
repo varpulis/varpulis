@@ -21,6 +21,7 @@ These functions work within `.aggregate()` blocks on windowed streams.
 | `last(expr)` | Last element in window | `last(value)` | Implemented |
 | `stddev(expr)` | Standard deviation | `stddev(values)` | Implemented |
 | `count_distinct(expr)` | Count of distinct values | `count_distinct(user_id)` | Implemented |
+| `collect(expr)` | The window's values, in event order, as an array; an event without the field contributes nothing | `collect(user_id)` | Implemented |
 | `ema(expr, period)` | Exponential moving average | `ema(price, 12)` | Implemented |
 | `median(expr)` | Median (50th percentile) | `median(latency)` | Implemented |
 | `percentile(expr, q)` | Percentile (0.0–1.0) | `percentile(latency, 0.99)` | Implemented |
@@ -97,7 +98,6 @@ The following functions are planned for future versions but are **not currently 
 | Function | Description |
 |----------|-------------|
 | `variance(expr)` | Variance |
-| `collect()` | Collect all values into list |
 
 ### Planned Window Functions
 | Function | Description |
@@ -157,7 +157,7 @@ Available as both functions and methods: `len(s)` or `s.len()`.
 | Function | Description |
 |----------|-------------|
 | `abs(x)` | Absolute value |
-| `round(x, n?)` / `floor(x)` / `ceil(x)` | Rounding |
+| `round(x)` / `round(x, n)` / `floor(x)` / `ceil(x)` | Rounding: `round(x)` is the nearest integer, `round(x, n)` keeps `n` decimals |
 | `sqrt(x)` / `pow(x, y)` | Power functions |
 | `log(x)` / `exp(x)` | Logarithm/exponential |
 | `min(a, b)` / `max(a, b)` | Min/max of two values |

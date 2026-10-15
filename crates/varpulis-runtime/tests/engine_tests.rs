@@ -1706,8 +1706,9 @@ async fn test_engine_merge_streams() {
 // ==========================================================================
 
 #[tokio::test]
-async fn test_engine_import_statement() {
-    // Import statements are logged but not yet fully implemented
+async fn test_engine_import_statement_is_refused() {
+    // There is no module system. An import used to be logged and ignored,
+    // and the program ran without whatever it expected from it.
     let source = r#"
         import "some/path.vpl"
         import "another/module" as mod
@@ -1717,14 +1718,13 @@ async fn test_engine_import_statement() {
     "#;
 
     let program = parse_program(source);
-    let (tx, mut rx) = mpsc::channel(100);
+    let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
-    // load() should succeed even with import statements (they are no-ops for now)
-    engine.load(&program).unwrap();
-
-    engine.process(Event::new("EventA")).await.unwrap();
-    let output = rx.try_recv().expect("Should have output");
-    assert_eq!(output.data.get("ok"), Some(&Value::Str("yes".into())));
+    let err = engine.load(&program).unwrap_err().to_string();
+    assert!(
+        err.contains("imports are not supported") && err.contains("some/path.vpl"),
+        "{err}"
+    );
 }
 
 #[tokio::test]

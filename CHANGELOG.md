@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the audit of 2026-10-14: what checked, loaded and did something else
+
+Found by running every documented construct through the engine as it ships
+and asserting the documented answer. Each item has a test that failed on the
+code before it.
+
+- A step's `where` written with an operator the sequence compiler did not
+  list — `in`, `not in`, `is`, `%`, a `not` around one of them — compiled to
+  **no condition at all**: the step took every event of its type.
+  `pattern P = A -> Process where image in ["cmd.exe"] as p` matched every
+  process. Every operator is now a condition, evaluated at runtime when it
+  is not a native comparison; and a step's filter accepts a list literal,
+  so `-> B where status in ["ok", "done"]` can be written inline as well as
+  in a `pattern` (it was a parse error there).
+- The alias a plain stream gives its source, `stream S = Order as o`,
+  resolved against nothing: `.where(o.total > 100.0)` dropped every event
+  and `.emit(id: o.id)` emitted no `id`, for the form the type reference
+  documents. The alias now reads the event itself, in `.where()`, `.emit()`,
+  `.select()`, `.aggregate()` and `.partition_by()`, nested fields included.
+- `varpulis simulate` read a JSON line with an `event_type` from its `data`
+  object only, so a flat line lost every field, and took the time from
+  `@timestamp` only, so a log stamped in epoch milliseconds (`ts`,
+  `timestamp`) replayed at the wall clock. A JSON line now decodes as
+  `Program::feed_json` decodes a payload, with the same keys and the same
+  priority; the `data` wrapper is still read.
+- A self-referencing closure predicate written with any arithmetic
+  (`-> all TempReading where temperature > rising.temperature + 0.5 as
+  rising`) never opened the closure: the engine looked for the alias as an
+  identifier spelled `rising.temperature`, which the parser never produces,
+  so the first reading was judged with the alias unbound. A reference to
+  the alias is now found wherever it is, and such a predicate compares each
+  reading with the one before, as the bare comparison always did.
+- `Program::compile` skipped the semantic validator, so `varpulis simulate`
+  and a host that compiled without checking ran a program with a misspelled
+  event type as a program that never fires. `compile` now gives the verdict
+  `check` gives. The validator in turn refused `.distinct()`, `.limit()` and
+  `.first()`, which the engine runs; it accepts them.
+- An aggregate function the engine did not know (`collekt(id)`, a typo) was
+  dropped from the result in silence, so the field was missing from every
+  emit; it is refused. `collect(field)`, which the windows reference has
+  described since it was written, exists now: the window's values in event
+  order, as an array. `percentile(x, 95)` quietly computed the median (the
+  quantile is a fraction in 0..=1) and `ema(x)` took a period of 12; both
+  are refused with the signature.
+- The bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`) parsed and
+  evaluated to no value, and every shift was read as a left shift. `??` did
+  not parse. `x is int` read a field called `int`. `round(x, 2)` ignored
+  the 2. A string ordering (`name < "m"`) held in a sequence step and never
+  in `.where()`. All of these now do what the operator reference says.
+- A user function could not read the program's `let` and `const`: `fn
+  over(x: int) -> bool: return x > LIMIT` compared with nothing and the
+  field it computed was missing. Constants are substituted into function
+  bodies as they are into stream expressions; a parameter or a local
+  shadows them.
+- `.subsets()` emitted the right number of matches and each carried the
+  whole closure; each now carries its own subset (`count(b)` is its size).
+- Constructs the engine cannot act on loaded without a word and did
+  nothing: `.enrich()` (no lookup provider), `.alert(webhook: ...)` (no HTTP
+  client), a `timer(...)` source (no clock), `context` declarations and
+  `.context()` (no threads of its own), `import` (no module system) and
+  `.emit as Type` (the emitted event's type is its stream's name). Each is
+  refused when the program loads, naming the alternative; `.alert(message:
+  ...)` still logs. A `pattern` with a negated step that is not its last
+  (`A -> NOT B -> C`) could never fire, since the absence is decided by the
+  deadline that also ends the run: `varpulis check` refuses it (E093).
+- A literal in `.aggregate()` (`pipeline: "device-stats"`, as a shipped
+  example writes) was dropped in silence; it tags every result.
+- `.window(5m, policy: "watermark")`, as the joins reference wrote it, was
+  parsed as a sliding window whose slide was the string: the grammar's
+  argument labels were silent, so the parser took the extra expressions in
+  order. The labels are rules now. A `policy:` is refused, pointing at
+  `.watermark(out_of_order: ...)`, which is how a late event is filed by its
+  own time; a slide that is not of the window's kind (`sliding: 10` on a time
+  window, `sliding: 5s` on a count window) is refused instead of becoming a
+  minute, or one event, in silence.
+- `.aggregate()` written directly on `join(...)` loaded and emitted nothing:
+  the join's window bounds the matching, and the aggregate had no window to
+  flush on. It is refused; the tutorial's Join with Aggregation reads the
+  joined stream from a second stream with `.partition_by()` and a window of
+  its own.
+- `x is int` drew W035 for a field named `int`, and `x is integer`, a type
+  the engine does not know, held for no event: `varpulis check` refuses the
+  unknown type (E094).
+- `examples/enrich_weather.vpl` and `examples/enrich_refdata.vpl` went with
+  the lookup provider; the negated step in `examples/reusable_patterns.vpl`
+  is now its pattern's last.
+- Joins ran on no shipped path: the synchronous engine refused them, and
+  before that the documented form, `stream Orders = OrderEvent on
+  Orders.order_id == Payments.order_id`, did not parse (only `.on(...)`
+  did) and keyed its buffer by the source rather than the clause's name, so
+  the condition and the emit found nothing. A join now runs in the engine
+  as it ships, inner and outer, with both syntaxes, and its buffers are in
+  the snapshot.
+
+### Changed — the engine's tests run against the engine that ships
+
+- `cargo test --workspace` unifies features, so the engine crate's tests
+  ran against a runtime built with `arrow` and `async-runtime`, which no
+  host uses. Under `arrow` the compiler fused `.window(T).aggregate(...)`
+  into a columnar operator whose bins are aligned on the epoch, where a
+  tumbling window opens with its first event, and whose state a snapshot
+  does not keep: the same program gave different answers and lost its
+  window on restore. Fusion is now opt-in (`EngineBuilder::columnar_fusion`,
+  for a benchmark), and CI runs `cargo test -p varpulis-engine` on the
+  engine's own feature set as well.
+
+
 ### Changed — an absence over many open keys no longer costs them all per event
 
 - In event time, the sequence engine swept every partition's runs on each

@@ -180,6 +180,19 @@ pub struct Engine {
     /// ever disappear from an arrow build.
     #[cfg_attr(not(feature = "arrow"), allow(dead_code))]
     pub(super) checkpoint_planned: bool,
+    /// Fuse `.window(T).aggregate(...)` into the columnar streaming op
+    /// (`arrow` feature) when set. Off by default: the fused op aligns its
+    /// bins on the epoch where a tumbling window opens with its first event,
+    /// and keeps its state out of a checkpoint, so the `arrow` feature would
+    /// otherwise make a different engine of the same program. A benchmark
+    /// opts in with [`EngineBuilder::columnar_fusion`].
+    #[cfg_attr(not(feature = "arrow"), allow(dead_code))]
+    pub(super) columnar_fusion: bool,
+    /// Built by [`Self::new_sync`]: an engine that is fed and drained by a
+    /// host, with no runtime of its own. It refuses at load the constructs
+    /// only the asynchronous runtime can act on (a lookup, a webhook, a
+    /// timer, a context), instead of loading them and doing nothing.
+    pub(super) sync_only: bool,
     /// Async checkpoint manager for non-blocking persistence (Chandy-Lamport mode)
     #[cfg(feature = "async-runtime")]
     pub(super) async_checkpoint_manager: Option<crate::persistence::AsyncCheckpointManager>,
@@ -338,6 +351,8 @@ impl Engine {
             shared_hamlet_aggregators: Vec::new(),
             checkpoint_manager: None,
             checkpoint_planned: false,
+            columnar_fusion: false,
+            sync_only: false,
             #[cfg(feature = "async-runtime")]
             async_checkpoint_manager: None,
             credentials_store: None,
@@ -365,6 +380,7 @@ impl Engine {
         {
             let mut engine = Self::new_internal(None);
             engine.collected_outputs = Vec::new();
+            engine.sync_only = true;
             engine
         }
         #[cfg(not(feature = "async-runtime"))]
@@ -395,6 +411,8 @@ impl Engine {
                 shared_hamlet_aggregators: Vec::new(),
                 checkpoint_manager: None,
                 checkpoint_planned: false,
+                columnar_fusion: false,
+                sync_only: true,
                 dlq_path: None,
                 dlq_config: crate::dead_letter::DlqConfig::default(),
                 dlq: None,
@@ -959,10 +977,17 @@ impl Engine {
                     self.patterns.insert(name.clone(), named_pattern);
                 }
                 Stmt::Import { path, alias } => {
-                    warn!(
-                        "Unresolved import '{}' (alias: {:?}) — imports must be resolved before engine.load()",
-                        path, alias
-                    );
+                    // There is no module system: the import was logged and
+                    // ignored, and whatever the program expected from it was
+                    // simply absent.
+                    return Err(error::EngineError::Compilation(format!(
+                        "import \"{path}\"{}: imports are not supported; put the \
+                         declarations in this program",
+                        alias
+                            .as_ref()
+                            .map(|a| format!(" as {a}"))
+                            .unwrap_or_default()
+                    )));
                 }
                 #[cfg(feature = "wasm-udf")]
                 Stmt::ImportWasmFn {
@@ -1076,18 +1101,28 @@ impl Engine {
                     info!("Assigned variable: {} = {:?}", name, new_value);
                     self.variables.insert(name.clone(), new_value);
                 }
-                #[cfg(feature = "async-runtime")]
                 Stmt::ContextDecl { name, cores } => {
-                    use crate::context::ContextConfig;
-                    info!("Registered context: {} (cores: {:?})", name, cores);
-                    self.context_map.register_context(ContextConfig {
-                        name: name.clone(),
-                        cores: cores.clone(),
-                    });
-                }
-                #[cfg(not(feature = "async-runtime"))]
-                Stmt::ContextDecl { .. } => {
-                    warn!("Context declarations require async-runtime feature; ignoring");
+                    // A context is a thread of the asynchronous runtime. A
+                    // synchronous engine has none; the declaration used to
+                    // be ignored, and the program ran on the host's thread
+                    // as if it were not there.
+                    if self.sync_only {
+                        return Err(error::EngineError::Compilation(format!(
+                            "context {name}: contexts need the asynchronous runtime, which \
+                             this engine does not have; a host runs one program per thread"
+                        )));
+                    }
+                    #[cfg(feature = "async-runtime")]
+                    {
+                        use crate::context::ContextConfig;
+                        info!("Registered context: {} (cores: {:?})", name, cores);
+                        self.context_map.register_context(ContextConfig {
+                            name: name.clone(),
+                            cores: cores.clone(),
+                        });
+                    }
+                    #[cfg(not(feature = "async-runtime"))]
+                    let _ = cores;
                 }
                 #[cfg(feature = "async-runtime")]
                 Stmt::ConnectorDecl {
@@ -1540,15 +1575,12 @@ impl Engine {
         })
     }
 
-    /// Whether this program must run on the asynchronous dispatch path.
+    /// Whether this program has something only the asynchronous dispatch
+    /// path acts on: a sink, a lookup, or a join.
     ///
-    /// The CLI used to decide this with [`Self::has_sink_operations`], which
-    /// asks a different question. A join is not a sink, so a program whose only
-    /// join had no `.to()` took the synchronous path — where join sources are
-    /// not processed at all and every match is silently discarded. That is the
-    /// default path for `simulate`, `detect`, `analyze` and `repl`, so the
-    /// shipped join example emitted nothing when run with the command in its
-    /// own header.
+    /// Joins now run on the synchronous path too (`process_batch_sync`), so a
+    /// join alone no longer needs the asynchronous one; this still reports
+    /// it, as the asynchronous runtime's callers have always read it.
     pub fn requires_async_dispatch(&self) -> bool {
         self.has_sink_operations() || self.has_join_sources()
     }

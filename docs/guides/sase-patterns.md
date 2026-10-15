@@ -189,9 +189,8 @@ For `A -> all B -> C` with 3 Bs, `.subsets()` produces **2³ − 1 = 7 matches**
 - `{B1, B2}`, `{B1, B3}`, `{B2, B3}`
 - `{B1, B2, B3}`
 
-In the engine today the seven matches do not carry their subsets: each one
-binds all three Bs (`count(bs)` is 3 and `collect(bs.k)` lists all three in
-every match). The number of matches is right; what each contains is not.
+Each match carries its own subset: `count(b)` is its size, `collect(b.k)`
+lists its members, and `b` is bound to the last of them.
 
 **Cost**: exponential in the number of Kleene events. Capped at `MAX_ENUMERATION_RESULTS = 10_000` to prevent memory blowup. Use only when you specifically need formal SASE+ verbose semantics or to feed downstream consumers expecting subset enumeration.
 
@@ -452,7 +451,9 @@ pattern SpecificUser =
     Login where user_id == "admin" and ip != "10.0.0.1" as login
 ```
 
-**Operators:** `==`, `!=`, `<`, `<=`, `>`, `>=`
+**Operators:** `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in`, `is`, and
+the arithmetic ones; a list literal is allowed: `where status in ["ok",
+"done"]`. A condition on a field the event does not carry is false.
 
 ### Reference Comparisons
 

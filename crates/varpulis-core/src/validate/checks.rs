@@ -244,6 +244,7 @@ pub fn pass2_semantic(v: &mut Validator, program: &Program) {
             }
             Stmt::PatternDecl { expr, .. } => {
                 check_sase_pattern_refs(v, expr, span);
+                check_negated_step_is_last(v, expr, span);
             }
             Stmt::Assignment { name, value } => {
                 check_assignment(v, name, span);
@@ -254,6 +255,36 @@ pub fn pass2_semantic(v: &mut Validator, program: &Program) {
             }
             _ => {}
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Negated steps
+// ---------------------------------------------------------------------------
+
+/// A `-> NOT B` step completes when the pattern's deadline passes without B,
+/// and the deadline is the run's: a step after it could only match after the
+/// run has expired. `A -> NOT B -> C` checked "ok" and could never fire.
+fn check_negated_step_is_last(v: &mut Validator, expr: &SasePatternExpr, span: Span) {
+    let SasePatternExpr::Seq(items) = expr;
+    let negated: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.event_type.starts_with('!'))
+        .map(|(i, _)| i)
+        .collect();
+    if negated.iter().any(|&i| i + 1 < items.len()) {
+        v.emit_with_hint(
+            Severity::Error,
+            span,
+            "E093",
+            "a negated step (`-> NOT X`) must be the last step of the pattern".to_string(),
+            "the absence is decided when the pattern's `within` passes; a step after it \
+             could only match after the run has expired. For \"A then C, unless B came \
+             in between\", write the sequence without the NOT step and add `.not(B)` to \
+             the stream that reads it"
+                .to_string(),
+        );
     }
 }
 
@@ -620,36 +651,16 @@ fn check_stream_ops(
                     ".all() is not yet implemented".to_string(),
                 );
             }
-            StreamOp::First => {
-                v.emit(
-                    Severity::Error,
-                    op_span,
-                    "E090",
-                    ".first() is not yet implemented".to_string(),
-                );
-            }
-            StreamOp::Distinct(_) => {
-                v.emit(
-                    Severity::Error,
-                    op_span,
-                    "E090",
-                    ".distinct() is not yet implemented".to_string(),
-                );
-            }
+            // `.distinct()`, `.limit()` and `.first()` (`.limit(1)`) run in the
+            // engine; `varpulis check` refused them as unimplemented, so a
+            // program that worked did not check.
+            StreamOp::Distinct(_) | StreamOp::Limit(_) | StreamOp::First => {}
             StreamOp::OrderBy(_) => {
                 v.emit(
                     Severity::Error,
                     op_span,
                     "E090",
                     ".order_by() is not yet implemented".to_string(),
-                );
-            }
-            StreamOp::Limit(_) => {
-                v.emit(
-                    Severity::Error,
-                    op_span,
-                    "E090",
-                    ".limit() is not yet implemented".to_string(),
                 );
             }
             StreamOp::ToExpr(_) => {
@@ -925,20 +936,17 @@ fn check_stream_ops(
                 for field in fields {
                     check_expr_field_refs(v, &field.value, &alias_to_event, op_span);
                 }
+                // The engine never set the type: an emitted event's type is
+                // its stream's name, which is what routes it. `.emit as X`
+                // checked (E034 looked the type up) and changed nothing.
                 if let Some(type_name) = output_type {
-                    if let Some(event_info) = v.symbols.events.get(type_name) {
-                        // Validate that emitted type is a known event
-                        let _ = &event_info.field_names; // field_names used for future field-level validation
-                    } else if !v.symbols.is_declared(type_name) {
-                        let suggestion = did_you_mean(type_name, &v.symbols.all_names());
-                        v.emit_with_hint(
-                            Severity::Error,
-                            op_span,
-                            "E034",
-                            format!(".emit as '{type_name}' references an undeclared type"),
-                            format!("declare it with `event {type_name}:` and its fields{suggestion}"),
-                        );
-                    }
+                    v.emit_with_hint(
+                        Severity::Error,
+                        op_span,
+                        "E090",
+                        format!(".emit as {type_name} is not supported: an emitted event's type is its stream's name"),
+                        "name the stream after the type you want, or carry the type in a field".to_string(),
+                    );
                 }
             }
 
@@ -1043,6 +1051,20 @@ fn collect_member_chain(expr: &Expr) -> Option<(String, Vec<String>)> {
 }
 
 /// Walk an expression tree and warn about references to undeclared fields on known events.
+/// The names `x is <type>` accepts, as the evaluator reads them.
+const IS_TYPE_NAMES: &[&str] = &[
+    "int",
+    "float",
+    "str",
+    "string",
+    "bool",
+    "array",
+    "map",
+    "null",
+    "timestamp",
+    "duration",
+];
+
 fn check_expr_field_refs(
     v: &mut Validator,
     expr: &Expr,
@@ -1305,6 +1327,38 @@ fn check_bare_ident_refs(
         }
         // Skip member expressions — handled by check_expr_field_refs
         Expr::Member { .. } => {}
+        // `x is int`: the right side names a type, it is not a field to read.
+        // It used to draw W035 for a field named `int`, and a name the
+        // engine does not know (`x is integer`) held for no event at all.
+        Expr::Binary {
+            op: BinOp::Is,
+            left,
+            right,
+        } => {
+            check_bare_ident_refs(
+                v,
+                left,
+                bare_fields,
+                alias_to_event,
+                has_forecast,
+                has_enrich,
+                context,
+                span,
+            );
+            let named = match right.as_ref() {
+                Expr::Null => return,
+                Expr::Ident(name) if IS_TYPE_NAMES.contains(&name.as_str()) => return,
+                Expr::Ident(name) => format!("'{name}'"),
+                other => format!("{other:?}"),
+            };
+            v.emit_with_hint(
+                Severity::Error,
+                span,
+                "E094",
+                format!("`is` tests a type, and {named} is not one"),
+                format!("the types are {}", IS_TYPE_NAMES.join(", ")),
+            );
+        }
         // Recurse into sub-expressions
         Expr::Binary { left, right, .. } => {
             check_bare_ident_refs(

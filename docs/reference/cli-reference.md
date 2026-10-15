@@ -11,9 +11,11 @@ cargo install --path crates/varpulis-cli
 
 ## `varpulis check <file>`
 
-Parses the program and loads it into the engine. Prints `ok`, or the error
-on stderr with exit code 1 — the same verdict a host gives before it starts
-the program.
+Parses the program, runs the semantic validator and loads the program into
+the engine. Prints `ok` (with the validator's warnings on stderr), or the
+errors on stderr with exit code 1 — the verdict `Program::compile` gives a
+host, and so the verdict `simulate` gives: a program that does not check does
+not run.
 
 ```bash
 varpulis check examples/security-demo/detect_lateral_movement.vpl
@@ -40,6 +42,10 @@ varpulis simulate -p examples/hvac_quickstart.vpl -e examples/hvac_quickstart.ev
 
 An `.evt` file is one event per line — `Type { field: value, ... }` — with
 `BATCH <ms>` lines advancing the clock and `#` comments; the examples
-directory is full of them. Time is the events' own: `.within()` and windows
-are judged against the event time, never against the wall clock, so the
-same file gives the same emits every run.
+directory is full of them. A line may also be a JSON object, read as a live
+source reads a payload: its `event_type` is the type, its `@timestamp` (RFC
+3339), else `ts`, else `timestamp` (epoch milliseconds) is the time, and
+every other key is a field, nested objects and arrays included. Time is the
+events' own: `.within()` and windows are judged against the event time,
+never against the wall clock, so the same file gives the same emits every
+run.

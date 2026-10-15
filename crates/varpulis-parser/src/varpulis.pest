@@ -135,8 +135,10 @@ inline_stream = {
 }
 
 join_clause_list = { join_clause ~ ("," ~ join_clause)* }
+// The condition takes either form the documentation shows: `.on(A.k == B.k)`
+// as in the joins reference, or `on A.k == B.k` as in the syntax reference.
 join_clause = {
-    ("stream" ~ identifier ~ "=" ~ identifier ~ ("." ~ "on" ~ "(" ~ expr ~ ")")?)
+    ("stream" ~ identifier ~ "=" ~ identifier ~ (("." ~ "on" ~ "(" ~ expr ~ ")") | ("on" ~ expr))?)
     | identifier
 }
 
@@ -186,7 +188,8 @@ followed_by_op = { "->" ~ match_all_keyword? ~ identifier ~ monotonic_op? ~ ("wh
 
 // Filter expression that stops before stream operation keywords
 // This prevents .emit(), .where() etc from being parsed as part of the filter
-filter_expr = { filter_or_expr }
+// `??` binds loosest of all, below `or`, as in the operator table.
+filter_expr = { filter_or_expr ~ ("??" ~ filter_or_expr)* }
 filter_or_expr = { filter_and_expr ~ ("or" ~ filter_and_expr)* }
 filter_and_expr = { filter_not_expr ~ ("and" ~ filter_not_expr)* }
 filter_not_expr = { not_keyword ~ filter_comparison_expr | filter_comparison_expr }
@@ -203,7 +206,8 @@ filter_postfix_suffix = {
     | index_access 
     | call_args 
 }
-filter_primary_expr = { literal | identifier | quoted_identifier | "(" ~ filter_expr ~ ")" }
+// A list literal, so a step can say `status in ["ok", "done"]`.
+filter_primary_expr = { literal | array_literal | identifier | quoted_identifier | "(" ~ filter_expr ~ ")" }
 
 context_op = { "context" ~ "(" ~ identifier ~ ")" }
 where_op = { "where" ~ "(" ~ expr ~ ")" }
@@ -285,7 +289,12 @@ trend_agg_func = { identifier ~ "(" ~ expr? ~ ")" }
 select_list = { select_item ~ ("," ~ select_item)* }
 select_item = { (identifier ~ ":" ~ expr) | identifier }
 
-window_args = { "session" ~ ":" ~ expr | expr ~ ("," ~ "sliding" ~ ":" ~ expr)? ~ ("," ~ "policy" ~ ":" ~ expr)? }
+// The labels are rules of their own so the parser can tell which argument it
+// is reading: as bare literals they were silent, and `policy: x` alone was
+// taken for the slide.
+window_args = { "session" ~ ":" ~ expr | expr ~ ("," ~ window_sliding)? ~ ("," ~ window_policy)? }
+window_sliding = { "sliding" ~ ":" ~ expr }
+window_policy = { "policy" ~ ":" ~ expr }
 
 agg_list = { agg_item ~ ("," ~ agg_item)* }
 agg_item = { identifier ~ ":" ~ expr }
@@ -442,7 +451,10 @@ lambda_block = { "{" ~ statement* ~ expr? ~ "}" }
 identifier_list = { identifier ~ ("," ~ identifier)* }
 
 // Range: 1..5 (exclusive) or 1..=5 (inclusive)
-range_expr = { or_expr ~ (range_op ~ or_expr)? }
+range_expr = { coalesce_expr ~ (range_op ~ coalesce_expr)? }
+
+// Null coalescing: `value ?? default`. Loosest binary operator, below `or`.
+coalesce_expr = { or_expr ~ ("??" ~ or_expr)* }
 range_op = { "..=" | ".." }
 
 // Logical operators
@@ -458,7 +470,10 @@ comparison_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | "in" | "is" | ("not" ~
 bitwise_or_expr = { bitwise_xor_expr ~ ("|" ~ bitwise_xor_expr)* }
 bitwise_xor_expr = { bitwise_and_expr ~ ("^" ~ bitwise_and_expr)* }
 bitwise_and_expr = { shift_expr ~ ("&" ~ shift_expr)* }
-shift_expr = { additive_expr ~ (("<<" | ">>") ~ additive_expr)* }
+// A named operator rule: an anonymous literal is not in the pair stream, and
+// the parser then could not tell `>>` from `<<` (it read every shift as `<<`).
+shift_op = { "<<" | ">>" }
+shift_expr = { additive_expr ~ (shift_op ~ additive_expr)* }
 
 // Arithmetic - explicit operator rules so they appear in parse tree
 additive_op = { "+" | "-" }

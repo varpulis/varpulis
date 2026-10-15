@@ -447,12 +447,7 @@ fn every_vpl_evt_pair_is_covered() {
 /// reason. Kept explicit so "it does not load" is always a recorded decision,
 /// never an omission — and [`every_datafree_vpl_loads`] fails if one of these
 /// starts loading, so the list cannot rot.
-const LOAD_EXEMPT: &[(&str, &str)] = &[
-    (
-        "examples/enrich_refdata.vpl",
-        "needs the `database` cargo feature for its .enrich() provider; this          test crate is built without it. Not a defect in the example.",
-    ),
-];
+const LOAD_EXEMPT: &[(&str, &str)] = &[];
 
 #[test]
 fn every_datafree_vpl_loads() {
