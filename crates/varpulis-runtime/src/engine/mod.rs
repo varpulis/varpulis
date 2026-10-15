@@ -1440,7 +1440,6 @@ impl Engine {
                             | RuntimeOp::Log(_)
                             | RuntimeOp::Having(_)
                             | RuntimeOp::Process(_)
-                            | RuntimeOp::Pattern(_)
                             | RuntimeOp::To(_)
                     )
                 })

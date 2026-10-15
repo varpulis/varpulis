@@ -15,8 +15,8 @@ use varpulis_core::ast::{Expr, StreamOp, StreamSource};
 use super::types::{
     AlertConfig, DistinctState, EmitConfig, EmitExprConfig, EmitSource, EnrichConfig,
     ForecastConfig, LimitState, LogConfig, MergeSource, PartitionedAggregatorState,
-    PartitionedSlidingCountWindowState, PartitionedWindowState, PatternConfig, PrintConfig,
-    RuntimeOp, RuntimeSource, SelectConfig, SourceBinding, StreamDefinition, TimerConfig, ToConfig,
+    PartitionedSlidingCountWindowState, PartitionedWindowState, PrintConfig, RuntimeOp,
+    RuntimeSource, SelectConfig, SourceBinding, StreamDefinition, TimerConfig, ToConfig,
     WindowType,
 };
 use super::{compiler, Engine};
@@ -1388,10 +1388,17 @@ impl Engine {
                     runtime_ops.push(RuntimeOp::WhereExpr(expr.clone()));
                 }
                 StreamOp::Pattern(def) => {
-                    runtime_ops.push(RuntimeOp::Pattern(PatternConfig {
-                        name: def.name.clone(),
-                        matcher: def.matcher.clone(),
-                    }));
+                    // The op evaluated nothing: a lambda over a window's
+                    // events let every batch through, and `A -> B` or
+                    // `A and B` let every event of the source through
+                    // without reading the other type.
+                    return Err(super::error::EngineError::Compilation(format!(
+                        ".pattern({}: ...) is not implemented: it let every event through. \
+                         For a sequence write `A as a -> B as b` with `.within(d)`; for a \
+                         condition over a window's events, `.window(d).aggregate(n: \
+                         count()).where(n > 3)`; to filter events, `.where(condition)`",
+                        def.name
+                    )));
                 }
                 StreamOp::Having(expr) => {
                     // Having filter - applied after aggregation

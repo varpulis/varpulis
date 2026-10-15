@@ -278,8 +278,6 @@ pub enum RuntimeOp {
     /// expensive per-alias structures (`_events_{alias}` arrays, per-field
     /// aggregates) that nothing reads. See [`SequenceMatchConfig`].
     Sequence(SequenceMatchConfig),
-    /// Pattern matching with lambda expression
-    Pattern(PatternConfig),
     /// Process with expression: `.process(expr)` - evaluates for side effects (emit)
     Process(varpulis_core::ast::Expr),
     /// Send to connector: `.to(ConnectorName)`
@@ -326,7 +324,6 @@ impl RuntimeOp {
             Self::Print(_) => "Print",
             Self::Log(_) => "Log",
             Self::Sequence(_) => "Sequence",
-            Self::Pattern(_) => "Pattern",
             Self::Process(_) => "Process",
             Self::To(_) => "Sink",
             Self::TrendAggregate(_) => "TrendAggregate",
@@ -883,13 +880,6 @@ impl PartitionedWindowedColumnarAggregateState {
     pub fn flush_through(&mut self, wm_ms: i64) -> Vec<(i64, String, IndexMap<String, Value>)> {
         self.inner.flush_through(wm_ms)
     }
-}
-
-/// Configuration for pattern matching
-#[allow(dead_code)]
-pub struct PatternConfig {
-    pub name: String,
-    pub matcher: varpulis_core::ast::Expr,
 }
 
 /// Configuration for print operation

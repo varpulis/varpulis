@@ -1040,36 +1040,6 @@ async fn test_count_distinct_aggregation() {
 }
 
 // ============================================================================
-// PATTERN MATCHING INTEGRATION TESTS
-// ============================================================================
-
-#[tokio::test]
-async fn test_pattern_simple_count() {
-    let program = r#"
-        stream HighVolumeAlert = Trade
-            .window(1m)
-            .pattern(high_activity: events => events.len() > 3)
-            .emit(
-                alert_type: "high_activity",
-                count: "detected"
-            )
-    "#;
-
-    let events = r#"
-        Trade { symbol: "AAPL", price: 150.0, amount: 1000 }
-        Trade { symbol: "AAPL", price: 151.0, amount: 2000 }
-        Trade { symbol: "AAPL", price: 152.0, amount: 3000 }
-        Trade { symbol: "AAPL", price: 153.0, amount: 4000 }
-    "#;
-
-    let results = run_scenario(program, events).await;
-
-    // Pattern should match when we have > 3 events
-    // This depends on window behavior
-    assert!(results.len() <= 1);
-}
-
-// ============================================================================
 // BUILDING METRICS COMPREHENSIVE TEST
 // ============================================================================
 
@@ -1121,119 +1091,63 @@ async fn test_building_metrics_comprehensive() {
 }
 
 // ============================================================================
-// APAMA-STYLE PATTERN MATCHING TESTS
+// .pattern() IS REFUSED
 // ============================================================================
 
-#[tokio::test]
-async fn test_apama_followed_by_pattern() {
-    // Apama-style: NewsItem -> StockTick (news followed by stock tick)
-    let program = r#"
+/// `.pattern(name: ...)` loaded and evaluated nothing: the lambda form let
+/// every batch through (`events.len() > 3` held for one event), and the
+/// `A -> B` / `A and B` forms let every event of the source through without
+/// reading the other type. Each form is refused when the program loads,
+/// naming the construct that does the job.
+#[test]
+fn pattern_is_refused_with_the_construct_that_works() {
+    for (form, program) in [
+        (
+            "a lambda",
+            r"
+        stream HighVolumeAlert = Trade
+            .window(1m)
+            .pattern(high_activity: events => events.len() > 3)
+            .emit(alert_type: 'high_activity')
+    ",
+        ),
+        (
+            "a sequence",
+            r"
         stream NewsStockCorrelation = NewsItem
             .pattern(news_stock: NewsItem -> StockTick)
-            .emit(
-                alert_type: "news_stock_correlation"
-            )
-    "#;
-
-    let events = r#"
-        NewsItem { subject: "ACME", headline: "Q4 Results" }
-        StockTick { symbol: "ACME", price: 150.0 }
-    "#;
-
-    let results = run_scenario(program, events).await;
-
-    // Pattern should match when NewsItem is followed by StockTick
-    // Note: depends on pattern engine integration
-    assert!(results.len() <= 2); // May emit on each event or just on completion
-}
-
-#[tokio::test]
-async fn test_apama_and_pattern() {
-    // A and B (both required, any order)
-    let program = r#"
+            .emit(alert_type: 'news_stock_correlation')
+    ",
+        ),
+        (
+            "a conjunction",
+            r"
         stream BothRequired = EventA
             .pattern(both: EventA and EventB)
-            .emit(
-                alert_type: "both_events"
-            )
-    "#;
-
-    let events = r"
-        EventB { id: 1 }
-        EventA { id: 2 }
-    ";
-
-    let results = run_scenario(program, events).await;
-
-    // Pattern should match when both events arrive (any order)
-    assert!(results.len() <= 2);
-}
-
-#[tokio::test]
-async fn test_apama_or_pattern() {
-    // A or B (either one)
-    let program = r#"
-        stream EitherOne = EventA
-            .pattern(either: EventA or EventB)
-            .emit(
-                alert_type: "either_event"
-            )
-    "#;
-
-    let events = r"
-        EventB { id: 1 }
-    ";
-
-    let results = run_scenario(program, events).await;
-
-    // Pattern should match when EventB arrives
-    assert!(results.len() <= 1);
-}
-
-#[tokio::test]
-async fn test_apama_complex_pattern() {
-    // (A -> B) and not C
-    let program = r#"
+            .emit(alert_type: 'both_events')
+    ",
+        ),
+        (
+            "a negation",
+            r"
         stream ComplexPattern = EventA
             .pattern(complex: (EventA -> EventB) and not EventC)
-            .emit(
-                alert_type: "complex_match"
-            )
-    "#;
-
-    let events = r"
-        EventA { id: 1 }
-        EventB { id: 2 }
-    ";
-
-    let results = run_scenario(program, events).await;
-
-    // Pattern should match: A followed by B, no C
-    assert!(results.len() <= 2);
-}
-
-#[tokio::test]
-async fn test_apama_chained_followed_by() {
-    // A -> B -> C -> D
-    let program = r#"
-        stream ChainPattern = EventA
-            .pattern(chain: EventA -> EventB -> EventC -> EventD)
-            .emit(
-                alert_type: "chain_complete"
-            )
-    "#;
-
-    let events = r"
-        EventA { step: 1 }
-        EventB { step: 2 }
-        EventC { step: 3 }
-        EventD { step: 4 }
-    ";
-
-    let results = run_scenario(program, events).await;
-
-    // Pattern should match when all four events arrive in sequence
-    assert!(results.len() <= 4);
+            .emit(alert_type: 'complex_match')
+    ",
+        ),
+    ] {
+        let parsed = parse(program).unwrap_or_else(|e| panic!("{form}: parse failed: {e:?}"));
+        let (tx, _rx) = mpsc::channel::<Event>(1);
+        let mut engine = Engine::new(tx);
+        let err = engine
+            .load(&parsed)
+            .expect_err(&format!("{form}: .pattern() must be refused"))
+            .to_string();
+        assert!(
+            err.contains(".pattern(") && err.contains("->") && err.contains(".where("),
+            "{form}: the refusal names the operator and the constructs that work: {err}"
+        );
+    }
 }
 
 // =============================================================================

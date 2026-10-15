@@ -213,11 +213,10 @@ const fn should_skip_op(op: &RuntimeOp, flags: SkipFlags) -> bool {
         // Print/Log skipping
         RuntimeOp::Print(_) | RuntimeOp::Log(_) => flags.print_log,
 
-        // Sequence/Pattern/TrendAggregate/Forecast skipping
-        RuntimeOp::Sequence(_)
-        | RuntimeOp::Pattern(_)
-        | RuntimeOp::TrendAggregate(_)
-        | RuntimeOp::Forecast(_) => flags.sequence_pattern,
+        // Sequence/TrendAggregate/Forecast skipping
+        RuntimeOp::Sequence(_) | RuntimeOp::TrendAggregate(_) | RuntimeOp::Forecast(_) => {
+            flags.sequence_pattern
+        }
 
         // WhereClosure skipping
         RuntimeOp::WhereClosure(_) => flags.where_closure,
@@ -1275,41 +1274,6 @@ fn execute_op_common(
 
                 if !forecast_results.is_empty() {
                     *current_events = forecast_results;
-                }
-            }
-        }
-
-        RuntimeOp::Pattern(config) => {
-            let events_value = Value::array(
-                current_events
-                    .iter()
-                    .map(|e| {
-                        let mut map: IndexMap<Arc<str>, Value, FxBuildHasher> =
-                            IndexMap::with_hasher(FxBuildHasher);
-                        map.insert(
-                            "event_type".into(),
-                            Value::Str(e.event_type.to_string().into()),
-                        );
-                        for (k, v) in &e.data {
-                            map.insert(k.clone(), v.clone());
-                        }
-                        Value::map(map)
-                    })
-                    .collect(),
-            );
-
-            let mut pattern_vars = FxHashMap::default();
-            pattern_vars.insert("events".into(), events_value);
-
-            if let Some(result) = evaluator::eval_pattern_expr(
-                &config.matcher,
-                current_events,
-                SequenceContext::empty(),
-                functions,
-                &pattern_vars,
-            ) {
-                if !result.as_bool().unwrap_or(false) {
-                    current_events.clear();
                 }
             }
         }

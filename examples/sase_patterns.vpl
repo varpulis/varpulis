@@ -99,16 +99,19 @@ stream FraudChain = Logins as login
     )
 
 # =============================================================================
-# PATTERN 4: Pattern with Lambda (Count-based detection)
-# Velocity check: >5 transactions in window
+# PATTERN 4: Count-based detection
+# Velocity check: more than 5 transactions of one user in a 10-minute window
 # =============================================================================
 
 stream VelocityAlert = Transactions
     .partition_by(user_id)
     .window(10m)
-    .pattern(high_velocity: events => events.len() > 5)
+    .aggregate(transactions: count())
+    .where(transactions > 5)
     .emit(
         alert_type: "high_velocity",
+        user: _partition,
+        transactions: transactions,
         severity: "high"
     )
 

@@ -93,6 +93,12 @@ code before it.
 - `examples/enrich_weather.vpl` and `examples/enrich_refdata.vpl` went with
   the lookup provider; the negated step in `examples/reusable_patterns.vpl`
   is now its pattern's last.
+- `.pattern(name: ...)`, an operator no page documented, loaded and
+  evaluated nothing: a lambda over a window's events (`events => events.len()
+  > 3`) let every batch through, and `A -> B` or `A and B` let every event of
+  the source through without reading the other type. It is refused when the
+  program loads, naming the constructs that do the job: a `->` sequence with
+  `.within()`, `.window().aggregate().where()`, `.where()`.
 - Joins ran on no shipped path: the synchronous engine refused them, and
   before that the documented form, `stream Orders = OrderEvent on
   Orders.order_id == Payments.order_id`, did not parse (only `.on(...)`

@@ -228,7 +228,7 @@ passed to a function is `null` in its own position.
 
 | Function | Description |
 |----------|-------------|
-| `flatten(arr)` / `arr.flatten()` | Flatten nested arrays (exists only inside `.pattern()` lambdas today) |
+| `flatten(arr)` / `arr.flatten()` | Flatten nested arrays |
 | `arr.min()` / `arr.max()` | Smallest and largest element (`min(a, b)` / `max(a, b)` take two values) |
 | `uuid()` | Generate UUID |
 | `random()` | Random number |
