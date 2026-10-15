@@ -1,8 +1,8 @@
 //! Program compilation: stream registration, operator compilation, and join key extraction.
 //!
 //! This module contains the `impl Engine` methods that compile VPL stream declarations
-//! into runtime stream definitions, including SASE+ pattern compilation, Hamlet
-//! aggregator setup, and PST forecaster construction.
+//! into runtime stream definitions, including SASE+ pattern compilation, trend
+//! aggregation setup, and PST forecaster construction.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,12 +14,12 @@ use varpulis_core::ast::{Expr, StreamOp, StreamSource};
 
 use super::types::{
     AlertConfig, DistinctState, EmitConfig, EmitExprConfig, EmitSource, EnrichConfig,
-    FieldAggregateInfo, ForecastConfig, LimitState, LogConfig, MergeSource,
-    PartitionedAggregatorState, PartitionedSlidingCountWindowState, PartitionedWindowState,
-    PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig, SourceBinding,
-    StreamDefinition, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
+    ForecastConfig, LimitState, LogConfig, MergeSource, PartitionedAggregatorState,
+    PartitionedSlidingCountWindowState, PartitionedWindowState, PatternConfig, PrintConfig,
+    RuntimeOp, RuntimeSource, SelectConfig, SourceBinding, StreamDefinition, TimerConfig, ToConfig,
+    WindowType,
 };
-use super::{compiler, pattern_analyzer, Engine};
+use super::{compiler, Engine};
 use crate::aggregation::Aggregator;
 use crate::join::JoinBuffer;
 use crate::sase::SaseEngine;
@@ -129,7 +129,7 @@ impl Engine {
         }
 
         // Check if we have sequence operations and build SASE+ engine
-        let (runtime_ops, sase_engine, sequence_event_types, hamlet_aggregator, pst_forecaster) =
+        let (runtime_ops, sase_engine, sequence_event_types, pst_forecaster) =
             self.compile_ops_with_sequences(source, ops)?;
 
         // Mapping from event_type to source name (for join streams)
@@ -424,8 +424,6 @@ impl Engine {
                 sase_engine,
                 join_buffer,
                 event_type_to_source,
-                hamlet_aggregator,
-                shared_hamlet_ref: None,
                 pst_forecaster,
                 last_raw_event: None,
                 #[cfg(feature = "async-runtime")]
@@ -449,7 +447,6 @@ impl Engine {
             Vec<RuntimeOp>,
             Option<SaseEngine>,
             Vec<String>,
-            Option<crate::hamlet::HamletAggregator>,
             Option<crate::pst::PatternMarkovChain>,
         ),
         super::error::EngineError,
@@ -492,9 +489,8 @@ impl Engine {
         let mut negation_clauses: Vec<varpulis_core::ast::FollowedByClause> = Vec::new();
         let mut global_within: Option<std::time::Duration> = None;
 
-        // For Hamlet trend aggregation
+        // For trend aggregation
         let mut trend_agg_items: Option<Vec<varpulis_core::ast::TrendAggItem>> = None;
-        let mut within_expr_for_hamlet: Option<varpulis_core::ast::Expr> = None;
 
         // For PST forecasting
         let mut forecast_spec: Option<varpulis_core::ast::ForecastSpec> = None;
@@ -644,7 +640,6 @@ impl Engine {
                         _ => 300_000_000_000u64, // 5 minutes default
                     };
                     global_within = Some(std::time::Duration::from_nanos(duration_ns));
-                    within_expr_for_hamlet = Some(expr.clone());
                     continue;
                 }
                 StreamOp::Not(clause) => {
@@ -1571,13 +1566,19 @@ impl Engine {
             }
         }
 
-        // Check if we're in trend aggregation mode (Hamlet) or detection mode (SASE)
+        // Trend aggregation counts the pattern's trends; detection runs it.
         if let Some(ref agg_items) = trend_agg_items {
-            return self.compile_hamlet_mode(
+            return self.compile_trend_mode(
                 source,
                 agg_items,
                 &followed_by_clauses,
-                within_expr_for_hamlet.as_ref(),
+                &negation_clauses,
+                global_within,
+                partition_key.clone(),
+                selection_mode_override,
+                emission_mode_override,
+                forecast_spec.is_some(),
+                &resolve_event_type,
                 runtime_ops,
                 sequence_event_types,
             );
@@ -1617,23 +1618,28 @@ impl Engine {
             runtime_ops,
             sase_engine,
             sequence_event_types,
-            None,
             pst_forecaster,
         ))
     }
 
-    /// Compile Hamlet trend aggregation mode.
-    ///
-    /// Builds a `HamletAggregator` and `TrendAggregateConfig` from the parsed
-    /// sequence pattern and `.trend_aggregate()` items. Returns the full 5-tuple
-    /// so the caller can `return` it directly.
-    #[allow(clippy::type_complexity)]
-    fn compile_hamlet_mode(
+    /// Compile `.trend_aggregate()`: the pattern's steps, the aggregates and
+    /// the window go into one [`super::trend::TrendAggregateConfig`] op at
+    /// the head of the pipeline, which counts the trends of each window; no
+    /// SASE engine runs. What the counting cannot honour is refused here,
+    /// naming the form it honours.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn compile_trend_mode(
         &self,
         source: &StreamSource,
         agg_items: &[varpulis_core::ast::TrendAggItem],
         followed_by_clauses: &[varpulis_core::ast::FollowedByClause],
-        within_expr: Option<&varpulis_core::ast::Expr>,
+        negation_clauses: &[varpulis_core::ast::FollowedByClause],
+        within: Option<std::time::Duration>,
+        partition_key: Option<String>,
+        selection_mode: Option<varpulis_core::ast::SelectionMode>,
+        emission_mode: Option<varpulis_core::ast::EmissionMode>,
+        has_forecast: bool,
+        resolve_event_type: &dyn Fn(&str) -> String,
         mut runtime_ops: Vec<RuntimeOp>,
         sequence_event_types: Vec<String>,
     ) -> Result<
@@ -1641,247 +1647,286 @@ impl Engine {
             Vec<RuntimeOp>,
             Option<SaseEngine>,
             Vec<String>,
-            Option<crate::hamlet::HamletAggregator>,
             Option<crate::pst::PatternMarkovChain>,
         ),
         super::error::EngineError,
     > {
-        let event_types = pattern_analyzer::extract_event_types(source, followed_by_clauses);
-        let kleene_info = pattern_analyzer::extract_kleene_info(source, followed_by_clauses);
-        let window_ms = pattern_analyzer::extract_within_ms(within_expr);
+        use varpulis_core::ast::{EmissionMode, KleeneOp, SasePatternExpr, SelectionMode};
 
-        // Build a type_indices map for aggregate function resolution
-        let mut type_indices_map = std::collections::HashMap::new();
+        use super::error::EngineError::Compilation;
+        use super::trend::{aliases_read, TrendAggregate, TrendAggregateConfig, TrendStep};
 
-        // Build MergedTemplate via TemplateBuilder
-        use crate::hamlet::template::TemplateBuilder;
-        let mut builder = TemplateBuilder::new();
-        let query_id: crate::greta::QueryId = 0;
-
-        // Register event types as a sequence
-        let type_strs: Vec<&str> = event_types.iter().map(|s| s.as_str()).collect();
-        builder.add_sequence(query_id, &type_strs);
-
-        // Build type_indices from the template after adding sequence
-        // (TemplateBuilder registers types internally)
-        let template_preview = builder.build();
-        for et in &event_types {
-            if let Some(idx) = template_preview.type_index(et) {
-                type_indices_map.insert(et.clone(), idx);
-            }
+        if has_forecast {
+            return Err(Compilation(
+                ".forecast() and .trend_aggregate() do not combine: a forecast reads the \
+                 pattern's runs, and aggregation keeps none"
+                    .into(),
+            ));
+        }
+        if !negation_clauses.is_empty() {
+            return Err(Compilation(
+                ".trend_aggregate() cannot count a pattern with a NOT step: an absence is \
+                 decided by a deadline, not by the events; detect it in detection mode"
+                    .into(),
+            ));
+        }
+        if let Some(mode @ (SelectionMode::Strict | SelectionMode::Stnm)) = selection_mode {
+            return Err(Compilation(format!(
+                "{} does not apply to .trend_aggregate(): it counts every trend under \
+                 skip-till-any-match, the default; drop the operator",
+                if mode == SelectionMode::Strict {
+                    ".strict()"
+                } else {
+                    ".stnm()"
+                }
+            )));
+        }
+        if let Some(mode @ (EmissionMode::Each | EmissionMode::Longest)) = emission_mode {
+            return Err(Compilation(format!(
+                "{} does not apply to .trend_aggregate(): it aggregates over every trend, \
+                 which is what .subsets() enumerates; drop the operator",
+                if mode == EmissionMode::Each {
+                    ".each()"
+                } else {
+                    ".longest()"
+                }
+            )));
         }
 
-        // Also map aliases to type indices
-        // Source alias
-        match source {
-            StreamSource::IdentWithAlias { name, alias } => {
-                if let Some(idx) = type_indices_map.get(name) {
-                    type_indices_map.insert(alias.clone(), *idx);
-                }
-            }
-            StreamSource::IdentWithFilterAndAlias {
-                name,
-                alias: Some(alias),
-                ..
-            } => {
-                if let Some(idx) = type_indices_map.get(name) {
-                    type_indices_map.insert(alias.clone(), *idx);
-                }
-            }
-            StreamSource::AllWithAlias {
-                name,
-                alias: Some(alias),
-            } => {
-                if let Some(idx) = type_indices_map.get(name) {
-                    type_indices_map.insert(alias.clone(), *idx);
-                }
-            }
-            _ => {}
-        }
-        for clause in followed_by_clauses {
-            if let Some(ref alias) = clause.alias {
-                if let Some(idx) = type_indices_map.get(&clause.event_type) {
-                    type_indices_map.insert(alias.clone(), *idx);
-                }
-            }
-        }
-
-        // Rebuild template with Kleene info
-        let mut builder = TemplateBuilder::new();
-        builder.add_sequence(query_id, &type_strs);
-
-        for ki in &kleene_info {
-            // The Kleene self-loop must be at the state AFTER consuming the
-            // Kleene event type (the target of the forward transition), not
-            // the source state. For a pattern A -> B+ -> C with types
-            // [A, B, C], states are [s0, s1, s2, s3]:
-            //   (s0,A)->s1, (s1,B)->s2, (s2,C)->s3
-            // The B+ self-loop goes at s2: (s2,B)->s2
-            let type_idx_in_seq = type_strs
-                .iter()
-                .position(|&t| t == ki.event_type)
-                .unwrap_or(0);
-            let state = (type_idx_in_seq + 1) as u16;
-            builder.add_kleene(query_id, &ki.event_type, state);
-        }
-
-        let template = builder.build();
-
-        // Create Hamlet aggregator
-        let config = crate::hamlet::HamletConfig {
-            window_ms,
-            incremental: true,
-            ..Default::default()
+        // The steps: the start from the source and the rest from the `->`
+        // clauses, or all of them from a named pattern.
+        let mut steps: Vec<TrendStep> = Vec::new();
+        let mut within = within;
+        let mut partition_key = partition_key;
+        let single = |event_type: &str, alias: Option<&String>, filter: Option<&Expr>| TrendStep {
+            event_type: resolve_event_type(event_type),
+            alias: alias.cloned(),
+            filter: filter.cloned(),
+            kleene: false,
+            monotonic: None,
         };
-        let mut aggregator = crate::hamlet::HamletAggregator::new(config, template);
-
-        // Convert trend_agg_items to GretaAggregate list
-        let fields: Vec<(String, crate::greta::GretaAggregate)> = agg_items
-            .iter()
-            .map(|item| {
-                let agg = pattern_analyzer::trend_item_to_greta(item, &type_indices_map);
-                (item.alias.clone(), agg)
-            })
-            .collect();
-
-        // Use the first aggregate for the query registration
-        let primary_aggregate = fields
-            .first()
-            .map_or(crate::greta::GretaAggregate::CountTrends, |(_, agg)| *agg);
-
-        // Build Kleene types
-        let kleene_types: smallvec::SmallVec<[u16; 4]> = kleene_info
-            .iter()
-            .filter_map(|ki| type_indices_map.get(&ki.event_type).copied())
-            .collect();
-
-        // Build event type indices
-        let event_type_indices: smallvec::SmallVec<[u16; 4]> = event_types
-            .iter()
-            .filter_map(|et| type_indices_map.get(et).copied())
-            .collect();
-
-        aggregator.register_query(crate::hamlet::QueryRegistration {
-            id: query_id,
-            event_types: event_type_indices,
-            kleene_types,
-            aggregate: primary_aggregate,
-        });
-
-        // Build field aggregate info for runtime computation
-        // Resolves alias.field references from sum_trends(alias.field) etc.
-        let mut alias_to_event_type: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
         match source {
             StreamSource::IdentWithAlias { name, alias } => {
-                alias_to_event_type.insert(alias.clone(), name.clone());
+                steps.push(single(name, Some(alias), None));
             }
             StreamSource::IdentWithFilterAndAlias {
                 name,
-                alias: Some(alias),
-                ..
-            } => {
-                alias_to_event_type.insert(alias.clone(), name.clone());
+                filter,
+                alias,
+            } => steps.push(single(name, alias.as_ref(), Some(filter))),
+            StreamSource::Ident(name) => match self.patterns.get(name) {
+                Some(pattern) => {
+                    let SasePatternExpr::Seq(items) = &pattern.expr;
+                    for (i, item) in items.iter().enumerate() {
+                        let kleene = match item.kleene {
+                            None => false,
+                            Some(KleeneOp::Plus) => true,
+                            Some(KleeneOp::Star | KleeneOp::Optional) => {
+                                return Err(Compilation(format!(
+                                    "pattern '{name}': a '*' or '?' closure is not counted by \
+                                     .trend_aggregate(); write 'all {}' (one or more)",
+                                    item.event_type
+                                )));
+                            }
+                        };
+                        if i == 0 && kleene {
+                            return Err(Compilation(format!(
+                                "pattern '{name}': .trend_aggregate() needs the pattern to \
+                                 start with a single event, not a closure: a trend is \
+                                 counted from each start"
+                            )));
+                        }
+                        steps.push(TrendStep {
+                            event_type: resolve_event_type(&item.event_type),
+                            alias: item.alias.clone(),
+                            filter: item.filter.clone(),
+                            kleene,
+                            monotonic: item.monotonic.clone(),
+                        });
+                    }
+                    if within.is_none() {
+                        within = match pattern.within {
+                            Some(Expr::Duration(ns)) => Some(std::time::Duration::from_nanos(ns)),
+                            _ => None,
+                        };
+                    }
+                    if partition_key.is_none() {
+                        partition_key = match &pattern.partition_by {
+                            Some(Expr::Ident(field)) => Some(field.clone()),
+                            Some(Expr::Member { member, .. }) => Some(member.clone()),
+                            _ => None,
+                        };
+                    }
+                }
+                None => steps.push(single(name, None, None)),
+            },
+            StreamSource::AllWithAlias { name, .. } => {
+                return Err(Compilation(format!(
+                    ".trend_aggregate() needs the pattern to start with a single event \
+                     ('{name} as alias'), not a closure: a trend is counted from each start"
+                )));
             }
-            StreamSource::AllWithAlias {
-                name,
-                alias: Some(alias),
-            } => {
-                alias_to_event_type.insert(alias.clone(), name.clone());
+            StreamSource::FromConnector { .. }
+            | StreamSource::Merge(_)
+            | StreamSource::Join(_)
+            | StreamSource::Sequence(_)
+            | StreamSource::Timer(_) => {
+                return Err(Compilation(
+                    ".trend_aggregate() reads a sequence pattern ('EventType as alias -> all \
+                     T ... as t'); this stream's source is not one"
+                        .into(),
+                ));
             }
-            _ => {}
         }
         for clause in followed_by_clauses {
-            if let Some(ref alias) = clause.alias {
-                alias_to_event_type.insert(alias.clone(), clause.event_type.clone());
-            }
-        }
-
-        // A field aggregate that cannot be resolved to `alias.field` used to be
-        // dropped here by `filter_map`, so `sum_trends(price)` produced no
-        // output field at all — and `.emit(sum: total)` then fabricated the
-        // literal string "total" for it. Refuse instead: the documented
-        // signature is `sum_trends(alias.field)`, and every shipped example
-        // writes it that way.
-        let mut field_aggregates: Vec<FieldAggregateInfo> = Vec::new();
-        for item in agg_items {
-            let func = match item.func.as_str() {
-                "sum_trends" => "sum",
-                "avg_trends" => "avg",
-                "min_trends" => "min",
-                "max_trends" => "max",
-                _ => continue,
-            };
-            let Some(Expr::Member { expr, member }) = &item.arg else {
-                return Err(super::error::EngineError::Compilation(format!(
-                    "{}() takes an alias-qualified field, e.g. {}(steps.duration); \
-                     got {:?}. The alias must name a step of the pattern.",
-                    item.func, item.func, item.arg
-                )));
-            };
-            let Expr::Ident(alias) = expr.as_ref() else {
-                return Err(super::error::EngineError::Compilation(format!(
-                    "{}() takes an alias-qualified field, e.g. {}(steps.duration); \
-                     the part before '.{member}' must be a step alias",
-                    item.func, item.func
-                )));
-            };
-            let event_type = alias_to_event_type
-                .get(alias)
-                .cloned()
-                .unwrap_or_else(|| alias.clone());
-            field_aggregates.push(FieldAggregateInfo {
-                output_alias: item.alias.clone(),
-                func: func.to_string(),
-                event_type,
-                field_name: member.clone(),
+            steps.push(TrendStep {
+                event_type: resolve_event_type(&clause.event_type),
+                alias: clause.alias.clone(),
+                filter: clause.filter.clone(),
+                kleene: clause.match_all,
+                monotonic: clause.monotonic.clone(),
             });
         }
+        let Some(within) = within else {
+            return Err(Compilation(
+                ".trend_aggregate() needs .within(d): the trends are counted per window of \
+                 d, which opens with its first event and closes d later"
+                    .into(),
+            ));
+        };
+        let within = chrono::Duration::from_std(within)
+            .map_err(|e| Compilation(format!(".within() is out of range: {e}")))?;
+        if steps.len() < 2 || !steps[1..].iter().any(|s| s.kleene) {
+            return Err(Compilation(
+                ".trend_aggregate() needs a closure in the pattern ('-> all T ... as t'): \
+                 without one every start gives at most one trend, which detection mode \
+                 emits as it is"
+                    .into(),
+            ));
+        }
 
-        // Build reverse map: type index → event type name
-        let max_idx = type_indices_map.values().copied().max().unwrap_or(0) as usize;
-        let mut type_index_to_name = vec![String::new(); max_idx + 1];
-        // First pass: set aliases as fallback
-        for (name, &idx) in &type_indices_map {
-            let i = idx as usize;
-            if i < type_index_to_name.len() && type_index_to_name[i].is_empty() {
-                type_index_to_name[i] = name.clone();
+        // A condition reads an alias only where the counting binds it: the
+        // start anywhere; a closure its own previous event; a single step
+        // the step before it.
+        let aliases: Vec<String> = steps.iter().filter_map(|s| s.alias.clone()).collect();
+        let start_alias = steps[0].alias.clone();
+        if let Some(filter) = &steps[0].filter {
+            let mut read = Vec::new();
+            aliases_read(filter, &mut read);
+            if let Some(alias) = read.iter().find(|r| aliases.contains(r)) {
+                return Err(Compilation(format!(
+                    "the start's condition reads '{alias}', which is bound later: a start \
+                     condition reads its own event alone"
+                )));
             }
         }
-        // Second pass: overwrite with real event type names
-        for (name, &idx) in &type_indices_map {
-            let i = idx as usize;
-            if i < type_index_to_name.len() && event_types.contains(name) {
-                type_index_to_name[i] = name.clone();
+        for i in 1..steps.len() {
+            let Some(filter) = &steps[i].filter else {
+                continue;
+            };
+            let mut read = Vec::new();
+            aliases_read(filter, &mut read);
+            for alias in read.iter().filter(|r| aliases.contains(r)) {
+                let is_start = start_alias.as_deref() == Some(alias.as_str());
+                let is_own = steps[i].alias.as_deref() == Some(alias.as_str());
+                let is_previous = steps[i - 1].alias.as_deref() == Some(alias.as_str());
+                let bound = if steps[i].kleene {
+                    is_start || is_own
+                } else {
+                    is_start || is_previous
+                };
+                if !bound {
+                    let step = steps[i]
+                        .alias
+                        .clone()
+                        .unwrap_or_else(|| steps[i].event_type.clone());
+                    return Err(Compilation(format!(
+                        "step '{step}' reads '{alias}', which .trend_aggregate() cannot bind \
+                         there: {}",
+                        if steps[i].kleene {
+                            "a closure's condition reads the start and the closure's own \
+                             previous event (its alias), nothing else"
+                        } else {
+                            "a single step's condition reads the start and the step before \
+                             it, nothing else"
+                        }
+                    )));
+                }
             }
         }
 
-        // Insert TrendAggregate op at the beginning (replaces Sequence)
-        runtime_ops.insert(
-            0,
-            RuntimeOp::TrendAggregate(TrendAggregateConfig {
-                fields,
-                query_id,
-                field_aggregates,
-                type_index_to_name,
-                accumulated: Vec::new(),
-                window_ms,
-            }),
-        );
+        let step_alias = |alias: &str| -> Result<String, super::error::EngineError> {
+            if aliases.iter().any(|a| a == alias) {
+                Ok(alias.to_string())
+            } else {
+                Err(Compilation(format!(
+                    "'{alias}' is not a step of the pattern (the steps are {}): a trend \
+                     aggregate reads a step by its alias",
+                    aliases.join(", ")
+                )))
+            }
+        };
+        let mut aggregates: Vec<(Arc<str>, TrendAggregate)> = Vec::with_capacity(agg_items.len());
+        for item in agg_items {
+            let aggregate = match item.func.as_str() {
+                "count_trends" => {
+                    if item.arg.is_some() {
+                        return Err(Compilation(
+                            "count_trends() takes no argument: it is the number of trends".into(),
+                        ));
+                    }
+                    TrendAggregate::CountTrends
+                }
+                "count_events" => match &item.arg {
+                    None => TrendAggregate::CountEvents(None),
+                    Some(Expr::Ident(alias)) => {
+                        TrendAggregate::CountEvents(Some(step_alias(alias)?))
+                    }
+                    Some(other) => {
+                        return Err(Compilation(format!(
+                            "count_events() takes a step's alias (count_events(steps)) or \
+                             nothing, for every step; got {other:?}"
+                        )));
+                    }
+                },
+                func @ ("sum_trends" | "avg_trends" | "min_trends" | "max_trends") => {
+                    let Some(Expr::Member { expr, member }) = &item.arg else {
+                        return Err(Compilation(format!(
+                            "{func}() takes an alias-qualified field, e.g. {func}(steps.duration); \
+                             got {:?}. The alias must name a step of the pattern.",
+                            item.arg
+                        )));
+                    };
+                    let Expr::Ident(alias) = expr.as_ref() else {
+                        return Err(Compilation(format!(
+                            "{func}() takes an alias-qualified field, e.g. {func}(steps.duration); \
+                             the part before '.{member}' must be a step alias"
+                        )));
+                    };
+                    let alias = step_alias(alias)?;
+                    let field = member.clone();
+                    match func {
+                        "sum_trends" => TrendAggregate::Sum { alias, field },
+                        "avg_trends" => TrendAggregate::Avg { alias, field },
+                        "min_trends" => TrendAggregate::Min { alias, field },
+                        _ => TrendAggregate::Max { alias, field },
+                    }
+                }
+                other => {
+                    return Err(Compilation(format!(
+                        "'{other}' is not a trend aggregate; .trend_aggregate() computes \
+                         count_trends(), count_events(alias), sum_trends(alias.field), \
+                         avg_trends(alias.field), min_trends(alias.field) and \
+                         max_trends(alias.field)"
+                    )));
+                }
+            };
+            aggregates.push((Arc::from(item.alias.as_str()), aggregate));
+        }
 
-        info!(
-            "Created Hamlet aggregator for trend aggregation ({} event types, {} Kleene patterns)",
-            event_types.len(),
-            kleene_info.len()
-        );
-
-        Ok((
-            runtime_ops,
-            None,
-            sequence_event_types,
-            Some(aggregator),
-            None,
-        ))
+        let config = TrendAggregateConfig::new(steps, aggregates, within, partition_key);
+        runtime_ops.insert(0, RuntimeOp::TrendAggregate(config));
+        Ok((runtime_ops, None, sequence_event_types, None))
     }
 
     /// Build the SASE+ detection engine from sequence patterns or named pattern references.

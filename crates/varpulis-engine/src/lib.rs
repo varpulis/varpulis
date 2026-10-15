@@ -275,8 +275,8 @@ impl Program {
     /// in its input — a stream sequence, an offset — and gives it to
     /// [`Program::restore`] on a `Program` compiled from the same source.
     ///
-    /// Not in it: trend aggregates (`.trend_aggregate()`) and forecasts
-    /// (`.forecast()`), which start empty after a restore.
+    /// Not in it: forecasts (`.forecast()`), which start empty after a
+    /// restore.
     pub fn snapshot(&self) -> Result<Vec<u8>, Error> {
         let checkpoint = self.engine.create_checkpoint();
         varpulis_runtime::codec::serialize(

@@ -1,27 +1,46 @@
 # Trend Aggregation Reference
 
-Reference for `.trend_aggregate()`, the stream operation that computes aggregations over matching event trends without constructing them individually.
-
-> **What `.trend_aggregate()` computes today is not what this page
-> describes.** The count ignores the closure's predicate, the stream's start
-> condition and its `partition_by`, and it comes out after every event as a
-> running total; `min`/`max` return the trend count. See the
-> [tutorial's warning](../tutorials/trend-aggregation-tutorial.md) for the
-> cases that show it. Detection mode, without `.trend_aggregate()`, is not
-> affected.
+Reference for `.trend_aggregate()`, the stream operation that computes
+statistics over every trend a pattern matches in a window, without
+constructing the trends.
 
 ## Overview
 
-Standard pattern matching in Varpulis operates in **detection mode**: the SASE+ NFA identifies individual pattern matches and emits each one. This works well when you need the matched events themselves, but becomes expensive when patterns contain Kleene closures (`all`), since the number of matching trends can grow exponentially with the number of events.
+Standard pattern matching in Varpulis operates in **detection mode**: the
+SASE+ engine finds the individual matches of a pattern and emits each one.
+This is what you want when you need the matched events themselves. It
+becomes expensive when the pattern contains a Kleene closure (`all`): the
+number of matching trends grows exponentially with the number of events the
+closure accepts.
 
-`.trend_aggregate()` switches a stream into **aggregation mode**. Instead of enumerating every matching trend, the engine computes aggregate values (COUNT, SUM, AVG, etc.) directly over the set of all matching trends. Internally, this uses the GRETA graph-based propagation algorithm, extended by the Hamlet engine for multi-query sharing.
+`.trend_aggregate()` switches a stream into **aggregation mode**. Instead of
+enumerating the trends, the engine counts them, and sums over them, on the
+graph of the window's events: for each event and each step of the pattern,
+the number of partial trends that reach the event at that step is the sum
+over the events that can precede it there, and the number of completions
+from that point is the symmetric sum over the events that can follow it. The
+product of the two is the number of trends the event takes part in, and
+every aggregate is a sum over those. This is the GRETA algorithm (Poppe et
+al., VLDB 2017), quadratic in the number of events of a window where the
+trends are exponential.
 
-The key complexity difference:
+| Mode | What it computes | Cost per window of `n` events |
+|------|------------------|-------------------------------|
+| Detection (SASE+ NFA, `.subsets()`) | Every trend, as a match | O(2^n) |
+| Aggregation (`.trend_aggregate()`) | Counts and sums over every trend | O(n²) per step of the pattern |
 
-| Mode | Algorithm | Time Complexity |
-|------|-----------|-----------------|
-| Detection (SASE+ NFA) | Enumerate all trends | O(2^n) worst case |
-| Aggregation (Hamlet) | Propagate counts through event graph | O(n) per graphlet |
+## What a trend is
+
+A trend is one match of the stream's pattern under skip-till-any-match, with
+every non-empty subset of each closure: exactly what detection mode
+enumerates under `.subsets()`. Every event that satisfies the start's
+condition starts trends of its own; a closure over `k` qualifying events
+gives `2^k - 1` trends from one start.
+
+Detection mode treats a self-referencing closure (`price > rising.price`,
+`.increasing(price)`) as one trend at a time: it runs a single run per
+partition and emits once when the trend breaks. Aggregation mode does not:
+it counts every trend, from every start, as the definitions say.
 
 ## Syntax
 
@@ -38,93 +57,158 @@ stream Name = EventType as alias
     .emit(fields...)
 ```
 
-The `.trend_aggregate()` block replaces the normal match output with computed aggregation results. It must appear after the pattern definition and any `.within()` or `.partition_by()` clauses.
+The `.trend_aggregate()` block replaces the match output with the
+aggregation results. It comes after the pattern and its `.within()` and
+`.partition_by()`.
 
-**Constraints:**
+**Constraints**, each refused when the program loads, with the form that
+works:
 
-- `.trend_aggregate()` and `.select()` are mutually exclusive on the same stream. Use `.emit()` to project the aggregation results.
-- The pattern must contain at least one Kleene closure (`all`) for trend aggregation to be meaningful. Patterns without Kleene closures produce at most one trend per start event, so detection mode is already efficient.
-- `.within()` is required. The engine currently emits a running result after every event rather than at window boundaries (see the warning above).
+- The pattern starts with a single event (`EventType as alias`), not a
+  closure, and contains at least one closure (`-> all T ... as t`). Without
+  a closure every start gives at most one trend, which detection mode
+  already emits.
+- `.within(d)` is required: it is the window.
+- A step's condition reads the current event, the start's alias, and, in a
+  closure, the closure's own alias, which is the trend's previous event (at
+  the closure's first event, the step before). A single step after a closure
+  may read the closure's alias: its last event. Any other alias cannot be
+  bound while counting, and the program is refused naming it.
+- A pattern with a negated step (`.not(T)`) is not counted: an absence is
+  decided by a deadline, not by the events. Detect it in detection mode.
+- `.each()`, `.longest()`, `.strict()` and `.stnm()` do not apply: the
+  trends are the `.subsets()` matches under skip-till-any-match. `.subsets()`
+  itself is accepted and changes nothing.
+- `.forecast()` does not combine with `.trend_aggregate()`: a forecast reads
+  the pattern's runs, and aggregation keeps none.
+- `.select()` and `.trend_aggregate()` are mutually exclusive on the same
+  stream. Use `.emit()` to project the results.
 
-## Aggregation Functions
+## The window
+
+`.within(d)` is a tumbling window of `d` per partition. It opens with the
+partition's first event and closes when an event of the partition arrives
+at or past its end (that event opens the next window), when the event clock
+of the pattern's sources passes its end, or at the end of a bounded input.
+A trend lies inside one window; a trend that would straddle two windows is
+not counted.
+
+The result is one event per partition and window, stamped with the window's
+end, when the window holds at least one event. A window whose events form
+no trend still reports: `count_trends()` is 0, the sums 0, and the averages
+and extremes null.
+
+A `.watermark(out_of_order: d)` on the stream delays the clock-driven close
+by `d`, as for any time window.
+
+Counting is quadratic in the window's size. A partition's window holds at
+most 5 000 events; past that the window drops what arrives and its result
+carries `_trend_truncated` with the number dropped. Choose `.within()` and
+`.partition_by()` so that a window stays in the hundreds of events.
+
+## Aggregation functions
+
+The worked example throughout: five ticks of one symbol, 100 105 110 108
+115, with the pattern
+
+```vpl
+stream RisingTrends = StockTick as first
+    -> all StockTick where price > first.price as rising
+    .within(1m)
+    .partition_by(symbol)
+```
+
+From 100, every later tick qualifies and every non-empty subset of the four
+is a trend: 15. From 105, the subsets of {110, 108, 115}: 7. From 110 and
+from 108, {115}: one each. **24 trends.** 105 takes part in 8 of them, 110
+and 108 in 12 each, 115 in 14.
 
 ### `count_trends()`
 
-Total number of matching trends in the current window.
+The number of trends in the window. **24** in the example.
 
 **Signature:** `count_trends() -> int`
 
-This is the GRETA COUNT operation. For a Kleene pattern `E+` with `n` matching events, the count is `2^n - 1` (every non-empty subset forms a valid trend).
-
-```vpl
-.trend_aggregate(
-    num_trends: count_trends()
-)
-```
+For a start followed by a closure over `k` qualifying events with no
+condition between them, `2^k - 1` from that start. The count saturates at
+`2^63 - 1`.
 
 ### `count_events(alias)`
 
-Number of events of a specific type participating in trends.
+The number of times an event of that step takes part in a trend, summed over
+the trends: an event in five trends counts five times. Without an argument,
+over every step of the pattern. For `rising` in the example, 8 + 12 + 12 +
+14 = **46**; for every step, 46 plus one start per trend, **70**.
 
-**Signature:** `count_events(alias: string) -> int`
+**Signature:** `count_events(alias: step) -> int`, `count_events() -> int`
 
-```vpl
-stream S = Start as s
-    -> all Reading where value > threshold as r
-    -> End as e
-    .within(5m)
-    .trend_aggregate(
-        event_count: count_events(r)
-    )
-```
+The number of *distinct* events of a step that take part in at least one
+trend is `count(alias)` in `.emit()` (**4** here).
 
 ### `sum_trends(alias.field)`
 
-Sum of a numeric field across all matching trends.
+The field summed over every event of that step in every trend: each trend
+contributes the sum of the field over its events of that step. In the
+example, 8·105 + 12·110 + 12·108 + 14·115 = **5066**.
 
-**Signature:** `sum_trends(alias.field: string) -> float`
+**Signature:** `sum_trends(alias.field) -> float`
 
-Each trend contributes the sum of the specified field for events in that trend. The result is the sum across all trends.
-
-```vpl
-.trend_aggregate(
-    total_value: sum_trends(r.amount)
-)
-```
+A non-numeric or missing value of the field does not take part in the sum.
 
 ### `avg_trends(alias.field)`
 
-Average of a numeric field across all matching trends.
+`sum_trends(alias.field) / count_trends()`: the average, per trend, of the
+field summed over the trend's events of that step. 5066 / 24 = **211.08** in
+the example. Null when the window has no trend.
 
-**Signature:** `avg_trends(alias.field: string) -> float | null`
-
-Computed as `sum_trends(alias.field) / count_trends()`.
-
-```vpl
-.trend_aggregate(
-    avg_value: avg_trends(r.amount)
-)
-```
+**Signature:** `avg_trends(alias.field) -> float | null`
 
 ### `min_trends(alias.field)` / `max_trends(alias.field)`
 
-Minimum or maximum of a numeric field across all matching trends.
+The smallest and the largest value of the field over the events of that step
+that take part in at least one trend. **105** and **115** in the example.
+Null when no event of the step takes part in a trend.
 
-**Signature:** `min_trends(alias.field: string) -> float | null`
-**Signature:** `max_trends(alias.field: string) -> float | null`
+**Signature:** `min_trends(alias.field) -> float | null`,
+`max_trends(alias.field) -> float | null`
+
+The alias is required on the field aggregates: it names the pattern step the
+field is read from. A bare `sum_trends(field)` is refused when the program
+loads, as is a function that is not one of the six above (`max(price)` is
+not a trend aggregate) and an alias that is not a step of the pattern.
+
+## What `.emit()` reads after `.trend_aggregate()`
+
+- The aggregates, by the names given in `.trend_aggregate()`.
+- The partition key, by its field name (`symbol` above).
+- `count(alias)`: the number of distinct events of the step that take part
+  in a trend.
+- The fields of the start, as `alias.field` (`first.price`): those of the
+  earliest event that starts a trend in the window.
+- The fields of a single step after the closure (`done.status`): those of
+  the latest event of that step that ends a trend.
+- A closure's fields (`rising.price`) are not available: a closure's events
+  are many; read `min_trends`, `max_trends`, `sum_trends` of them.
+
+A `.where()` between `.trend_aggregate()` and `.emit()` filters the results
+on the same names:
 
 ```vpl
-.trend_aggregate(
-    lowest: min_trends(r.price),
-    highest: max_trends(r.price)
-)
+stream TrendDashboard = StockTick as first
+    -> all StockTick where price > first.price as rising
+    .within(1m)
+    .partition_by(symbol)
+    .trend_aggregate(count: count_trends())
+    .where(count > 1000)
+    .emit(symbol: first.symbol, trends: count)
 ```
 
-## Detection Mode vs Aggregation Mode
+## Detection mode vs aggregation mode
 
-### Detection Mode (default)
+### Detection mode (default)
 
-Without `.trend_aggregate()`, the engine runs the SASE+ NFA. Each complete pattern match produces an output event containing the matched events.
+Without `.trend_aggregate()`, the engine runs the SASE+ NFA. Each match
+produces an output event carrying the matched events.
 
 ```vpl
 # Detection mode: emits each individual match
@@ -140,14 +224,17 @@ stream BruteForceAttempts = LoginFailed as f
     )
 ```
 
-This is appropriate when you need the actual matched events, but if the Kleene closure matches many events (e.g., 30 failed logins), the number of output trends is exponential (2^30 - 1 = ~1 billion).
+This is what you want when you need the matched events. If the closure
+matches many events (30 failed logins), the number of trends is exponential
+(2^30 - 1, about a billion).
 
-### Aggregation Mode
+### Aggregation mode
 
-With `.trend_aggregate()`, the engine uses Hamlet to compute results without constructing trends.
+With `.trend_aggregate()`, the engine computes the results without
+constructing the trends.
 
 ```vpl
-# Aggregation mode: emits a single summary per window
+# Aggregation mode: one summary per user and window
 stream BruteForceStats = LoginFailed as f
     -> all LoginFailed where user_id == f.user_id as repeats
     -> LoginSuccess where user_id == f.user_id as success
@@ -164,80 +251,33 @@ stream BruteForceStats = LoginFailed as f
     )
 ```
 
-This produces one output per partition per window, regardless of how many trends exist.
+This produces one output per partition per window, however many trends there
+are.
 
-### How It Works Internally
+### How the counting works
 
-1. Events arrive and are grouped into **graphlets** (contiguous runs of the same event type).
-2. When a graphlet closes (a different event type arrives), propagation coefficients are computed once for the graphlet.
-3. For a Kleene graphlet with `n` events and incoming snapshot value `s`, the count is: `s * (2^n - 1)`.
-4. Snapshot values propagate across graphlet boundaries, accumulating counts without enumerating individual trends.
-5. At window boundaries, final aggregation results are emitted.
+For a window of events `e_1 .. e_n` in arrival order and a pattern of steps
+`s_0 .. s_m` (the start first):
 
-## Multi-Query Sharing
+1. `reach[i][k]`, the number of partial trends that reach `e_k` at step
+   `s_i`, is 1 for a start, and otherwise the sum of `reach[i-1][j]` over the
+   earlier events `e_j` from which `e_k` can enter the step, plus, for a
+   closure, the sum of `reach[i][j]` over the earlier events of the closure
+   `e_k` can extend. Whether `e_k` can follow `e_j` is the step's condition,
+   evaluated against `e_k` with the aliases bound as detection mode binds
+   them.
+2. `complete[i][k]`, the number of trends that complete from there, is the
+   symmetric sum over the later events, plus one when `s_i` is the last
+   step.
+3. `reach[i][k] · complete[i][k]` is the number of trends `e_k` takes part in
+   at step `s_i`. `count_trends()` is the sum over the starts; the other
+   aggregates sum the field, or 1, times that product.
 
-When multiple streams use `.trend_aggregate()` with patterns that share Kleene sub-patterns over the same event type, the engine automatically detects this and processes the shared Kleene portion once.
+When a condition reads the start's alias (`price > first.price`), the sums
+depend on the start and are computed start by start; otherwise one pass
+counts from every start at once, as GRETA does.
 
-### Automatic Detection
-
-The engine inspects registered queries at load time. If two or more queries contain Kleene closures over the same event type (e.g., both use `all StockTick+`), it creates a shared Hamlet aggregator.
-
-### Sharing Benefit Model
-
-The optimizer uses the following model to decide whether sharing is worthwhile:
-
-```
-Benefit(G) = g^2 * (ks - sp) - ks * sp
-```
-
-Where:
-- `g` = graphlet size (number of events)
-- `ks` = number of queries sharing the Kleene sub-pattern
-- `sp` = number of snapshots
-
-Sharing is beneficial when `ks > sp` and graphlets are large. The optimizer re-evaluates dynamically as workload characteristics change.
-
-### Example: Shared Kleene Patterns
-
-```vpl
-# Query 1: Count all rising price trends
-stream RisingTrends = StockTick as start
-    -> all StockTick where price > start.price as ticks
-    -> StockTick where price < ticks.price as end
-    .within(1m)
-    .partition_by(symbol)
-    .trend_aggregate(
-        trend_count: count_trends()
-    )
-    .emit(symbol: symbol, rising_trends: trend_count)
-
-# Query 2: Sum of volumes in rising price trends
-stream RisingVolume = StockTick as start
-    -> all StockTick where price > start.price as ticks
-    -> StockTick where price < ticks.price as end
-    .within(1m)
-    .partition_by(symbol)
-    .trend_aggregate(
-        total_vol: sum_trends(ticks.volume)
-    )
-    .emit(symbol: symbol, volume_in_trends: total_vol)
-```
-
-Both queries share the `all StockTick where price > start.price` Kleene sub-pattern. The engine processes this shared portion once and resolves per-query results through snapshots.
-
-### Performance Impact
-
-Benchmark results on the Hamlet engine show significant speedups from sharing:
-
-| Queries Sharing Kleene | Per-Query Processing | Shared Processing | Speedup |
-|------------------------|---------------------|-------------------|---------|
-| 5 queries | 2.8 M events/sec | 2.8 M events/sec | 7x vs independent |
-| 10 queries | 2.1 M events/sec | 2.1 M events/sec | 17x vs independent |
-| 50 queries | 0.95 M events/sec | 0.95 M events/sec | 100x vs independent |
-
-The speedup grows with the number of sharing queries because the shared propagation cost is O(1) per graphlet transition, while independent processing is O(queries) per transition.
-
-## Complete Example: Stock Tick Price Trends
+## Complete example: stock tick price trends
 
 ```vpl
 event StockTick:
@@ -246,9 +286,9 @@ event StockTick:
     volume: int
     timestamp: datetime
 
-# Detect how many rising price trends exist per symbol per minute.
-# With 50 ticks in a Kleene closure, there are 2^50 - 1 possible trends.
-# Trend aggregation computes the count in O(50) instead of O(2^50).
+# How many rising price trends per symbol and minute. With 50 ticks that
+# all beat the first, there are 2^50 - 1 trends from that start alone; the
+# count takes a pass over the window, not over the trends.
 
 stream PriceTrendStats = StockTick as first
     -> all StockTick where price >= first.price as rising
@@ -270,7 +310,7 @@ stream PriceTrendStats = StockTick as first
     )
 ```
 
-**Sample output** (one record per symbol per window):
+**Sample output** (one record per symbol and window):
 
 ```json
 {
@@ -282,23 +322,40 @@ stream PriceTrendStats = StockTick as first
 }
 ```
 
-## Implementation Notes
+## Implementation notes
 
-- **Module:** `crates/varpulis-runtime/src/hamlet/` contains the Hamlet aggregator, graph, graphlet, snapshot, template, and optimizer modules.
-- **Baseline:** `crates/varpulis-runtime/src/greta.rs` provides the GRETA foundation that Hamlet extends.
-- **Propagation formula:** For a Kleene graphlet with `n` events and snapshot value `s`: `count = s * (2^n - 1)`.
-- **Graphlet management:** Events of the same type are grouped into graphlets. Kleene edges within a graphlet are implicit (all-to-all adjacency), avoiding explicit edge construction.
-- **Snapshot mechanism:** At graphlet boundaries, a `Snapshot` captures per-query intermediate values. The next graphlet resolves its counts by multiplying propagation coefficients with snapshot values.
+- **Module:** `crates/varpulis-runtime/src/engine/trend.rs` holds the
+  windows, the counting and the result; the compiler builds it from the
+  pattern in `engine/compilation.rs` (`compile_trend_mode`), where what the
+  counting cannot honour is refused.
+- **State:** each partition's open window, its events and when it opened.
+  It is in the snapshot (`Program::snapshot`): a program restored mid-window
+  finishes the window as the original would have.
+- **Condition evaluation:** a step's condition is evaluated with the same
+  evaluator as a sequence step, with the aliases bound as described above;
+  a condition that reads no alias is evaluated once per event.
+- **Research library:** the `varpulis-hamlet` crate implements the shared
+  graphlet propagation of Hamlet (Poppe et al., SIGMOD 2021) for patterns
+  without conditions; it is not what `.trend_aggregate()` runs, since a
+  pattern without conditions is rare and the sharing cannot honour them.
 
-## Academic References
+## Academic references
 
-The trend aggregation implementation is based on the following research:
+- **GRETA**: Olga Poppe, Chuan Lei, Elke A. Rundensteiner, and David Maier.
+  "GRETA: Graph-based Real-time Event Trend Aggregation." Proceedings of the
+  VLDB Endowment, Vol. 11, No. 1, pp. 80-92, 2017. DOI:
+  [10.14778/3151113.3151120](https://doi.org/10.14778/3151113.3151120)
+- **Hamlet**: Olga Poppe, Chuan Lei, Elke A. Rundensteiner, and David Maier.
+  "To Share or Not to Share: Online Event Trend Aggregation Over Bursty Event
+  Streams." Proceedings of the ACM SIGMOD International Conference on
+  Management of Data, 2021. DOI:
+  [10.1145/3448016.3457310](https://doi.org/10.1145/3448016.3457310)
 
-- **GRETA**: Olga Poppe, Chuan Lei, Elke A. Rundensteiner, and David Maier. "GRETA: Graph-based Real-time Event Trend Aggregation." Proceedings of the VLDB Endowment, Vol. 11, No. 1, pp. 80-92, 2017. DOI: [10.14778/3151113.3151120](https://doi.org/10.14778/3151113.3151120)
+## See also
 
-- **Hamlet**: Olga Poppe, Chuan Lei, Elke A. Rundensteiner, and David Maier. "To Share or Not to Share: Online Event Trend Aggregation Over Bursty Event Streams." Proceedings of the ACM SIGMOD International Conference on Management of Data, 2021. DOI: [10.1145/3448016.3457310](https://doi.org/10.1145/3448016.3457310)
-
-## See Also
-
-- [SASE+ Pattern Matching Guide](../guides/sase-patterns.md) -- pattern syntax and detection mode
-- [Windows & Aggregations Reference](windows-aggregations.md) -- window-based aggregations (non-trend)
+- [SASE+ Pattern Matching Guide](../guides/sase-patterns.md) -- pattern
+  syntax and detection mode
+- [Trend Aggregation Tutorial](../tutorials/trend-aggregation-tutorial.md)
+  -- the worked example, step by step
+- [Windows & Aggregations Reference](windows-aggregations.md) -- window-based
+  aggregations (non-trend)

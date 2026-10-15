@@ -1,6 +1,14 @@
 # ADR-005: Hamlet for Multi-Query Trend Aggregation
 
-**Status:** Accepted
+**Status:** Superseded (2026-10-15). `.trend_aggregate()` no longer runs on
+the Hamlet aggregator: the shared propagation reads event types and nothing
+else, so the closure's condition, the start's condition and the partition
+were ignored and the counts were wrong (the audit of 2026-10-14). The op now
+counts the trends on the event graph of each window, honouring the
+conditions (`crates/varpulis-runtime/src/engine/trend.rs`; see
+[docs/architecture/trend-aggregation.md](../architecture/trend-aggregation.md)).
+The `varpulis-hamlet` crate stays as a library. The record below is kept as
+written, its examples given the alias the aggregate reads.
 **Date:** 2026-02-17
 **Authors:** Varpulis Team
 
@@ -15,7 +23,7 @@ Additionally, in a multi-tenant or multi-stream deployment, multiple VPL streams
 ```vpl
 stream Count1 = Purchase -> all Refund -> Close .within(1h)
     .trend_aggregate(count: count_trends())
-stream Sum1 = Purchase -> all Refund -> Close .within(1h)
+stream Sum1 = Purchase -> all Refund as refund -> Close .within(1h)
     .trend_aggregate(total: sum_trends(refund.amount))
 stream Count2 = Buy -> all Refund -> Sell .within(2h)
     .trend_aggregate(count: count_trends())
@@ -74,7 +82,7 @@ The stream definition then holds an `Arc<Mutex<HamletAggregator>>` (shared acros
 ### VPL syntax
 
 ```vpl
-stream TrendCount = Purchase -> all Refund -> Close
+stream TrendCount = Purchase -> all Refund as refund -> Close
     .within(1h)
     .trend_aggregate(
         count: count_trends(),

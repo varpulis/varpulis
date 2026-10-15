@@ -577,12 +577,7 @@ stream EscalationAlert = Escalation
 
 ### Aggregating Over Trends
 
-When you need **statistics** (count, average) over rising trends rather than individual matches, use `.trend_aggregate()` with the Hamlet engine for O(n) performance:
-
-> The counts `.trend_aggregate()` produces today are wrong: they ignore the
-> closure's predicate and the partition. See the
-> [trend aggregation tutorial](../tutorials/trend-aggregation-tutorial.md)
-> before relying on one.
+When you need **statistics** (count, average) over rising trends rather than individual matches, use `.trend_aggregate()`: it counts every trend of each window on the graph of its events, in time quadratic in their number, where the trends are exponential (see the [trend aggregation tutorial](../tutorials/trend-aggregation-tutorial.md)):
 
 ```vpl
 stream TrendStats = StockTick as first
@@ -592,6 +587,8 @@ stream TrendStats = StockTick as first
     .trend_aggregate(count: count_trends())
     .emit(symbol: first.symbol, trends: count)
 ```
+
+Aggregation counts every trend from every start, including those a self-referencing closure gives: the one-run-at-a-time treatment above is detection mode's alone.
 
 > **Note:** Self-referencing predicates (`rising.temperature`) compare against the **previous** Kleene event. Cross-referencing predicates (`first.temperature`) compare against a **fixed** earlier event.
 
@@ -820,7 +817,7 @@ Varpulis uses Zero-suppressed Decision Diagrams (ZDD) to represent Kleene captur
 
 See `varpulis-zdd` crate for ZDD data structures and `sase.rs` for integration with the pattern matcher.
 
-> **Note**: ZDD is used for **pattern matching** (Kleene captures). For **trend aggregation** over patterns, Varpulis uses the Hamlet engine — see [trend aggregation](../architecture/trend-aggregation.md).
+> **Note**: ZDD is used for **pattern matching** (Kleene captures). For **trend aggregation** over patterns, Varpulis counts the trends on the window's event graph — see [trend aggregation](../architecture/trend-aggregation.md).
 
 ---
 
@@ -888,7 +885,7 @@ stream TrendCount = StockTick as first
     .emit(symbol: first.symbol, trends: count)
 ```
 
-This uses the **Hamlet engine** (SIGMOD 2021) for O(n) aggregation instead of explicit trend construction, which can be exponential. Multiple queries sharing Kleene sub-patterns are automatically optimized via shared aggregation.
+This counts the trends on the window's event graph (GRETA, VLDB 2017), quadratic in the events, instead of constructing the trends, which are exponential.
 
 See [Trend Aggregation Reference](../reference/trend-aggregation.md) and [Trend Aggregation Tutorial](../tutorials/trend-aggregation-tutorial.md) for details.
 

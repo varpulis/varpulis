@@ -13,7 +13,6 @@ mod dispatch;
 pub mod error;
 pub mod evaluator;
 pub mod graph;
-mod pattern_analyzer;
 pub mod physical_plan;
 mod pipeline;
 pub mod planner;
@@ -24,6 +23,7 @@ mod sink_factory;
 pub mod topology;
 pub mod topology_builder;
 pub mod trace;
+mod trend;
 mod types;
 
 // Re-export public types
@@ -161,9 +161,6 @@ pub struct Engine {
     /// `None`, the legacy `"varpulis-{name}"` format is used (single-process
     /// deployments — no replica conflict possible).
     pub(super) transactional_id_prefix: Option<String>,
-    /// Shared Hamlet aggregators for multi-query optimization
-    pub(super) shared_hamlet_aggregators:
-        Vec<std::sync::Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     /// Auto-checkpointing manager (None = checkpointing disabled)
     pub(super) checkpoint_manager: Option<crate::persistence::CheckpointManager>,
     /// When true, the compiler skips columnar-aggregate fusion so windowed
@@ -348,7 +345,6 @@ impl Engine {
             context_name: None,
             topic_prefix: None,
             transactional_id_prefix: None,
-            shared_hamlet_aggregators: Vec::new(),
             checkpoint_manager: None,
             checkpoint_planned: false,
             columnar_fusion: false,
@@ -408,7 +404,6 @@ impl Engine {
                 context_name: None,
                 topic_prefix: None,
                 transactional_id_prefix: None,
-                shared_hamlet_aggregators: Vec::new(),
                 checkpoint_manager: None,
                 checkpoint_planned: false,
                 columnar_fusion: false,
@@ -1240,9 +1235,6 @@ impl Engine {
             }
         }
 
-        // Phase 2: Detect multi-query Hamlet sharing opportunities
-        self.setup_hamlet_sharing();
-
         // Build physical plan snapshot for introspection
         let mut plan = physical_plan::PhysicalPlan::new();
         let mut stream_event_types: FxHashMap<String, Vec<String>> = FxHashMap::default();
@@ -1274,169 +1266,6 @@ impl Engine {
         self.physical_plan = Some(plan);
 
         Ok(())
-    }
-
-    /// Detect overlapping Kleene patterns across streams using `.trend_aggregate()`
-    /// and replace per-stream aggregators with shared ones.
-    fn setup_hamlet_sharing(&mut self) {
-        use crate::hamlet::template::TemplateBuilder;
-        use crate::hamlet::{HamletAggregator, HamletConfig, QueryRegistration};
-
-        let hamlet_streams: Vec<String> = self
-            .streams
-            .iter()
-            .filter(|(_, s)| s.hamlet_aggregator.is_some())
-            .map(|(name, _)| name.clone())
-            .collect();
-
-        if hamlet_streams.len() < 2 {
-            return;
-        }
-
-        let mut kleene_groups: FxHashMap<Vec<String>, Vec<String>> = FxHashMap::default();
-
-        for stream_name in &hamlet_streams {
-            if let Some(stream) = self.streams.get(stream_name) {
-                let mut kleene_types = Vec::new();
-                for op in &stream.operations {
-                    if let RuntimeOp::TrendAggregate(_) = op {
-                        if let Some(ref agg) = stream.hamlet_aggregator {
-                            let tmpl = agg.merged_template();
-                            for query in agg.registered_queries() {
-                                for &kt in &query.kleene_types {
-                                    let type_name =
-                                        tmpl.type_name(kt).unwrap_or("unknown").to_string();
-                                    if !kleene_types.contains(&type_name) {
-                                        kleene_types.push(type_name);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                kleene_types.sort();
-                kleene_groups
-                    .entry(kleene_types)
-                    .or_default()
-                    .push(stream_name.clone());
-            }
-        }
-
-        for (kleene_key, group_streams) in &kleene_groups {
-            if group_streams.len() < 2 || kleene_key.is_empty() {
-                continue;
-            }
-
-            info!(
-                "Hamlet sharing detected: {} streams share Kleene patterns {:?}: {:?}",
-                group_streams.len(),
-                kleene_key,
-                group_streams,
-            );
-
-            let mut builder = TemplateBuilder::new();
-            type SharingEntry = (
-                String,
-                QueryRegistration,
-                Vec<(String, crate::greta::GretaAggregate)>,
-            );
-            let mut all_registrations: Vec<SharingEntry> = Vec::new();
-            let mut next_query_id: crate::greta::QueryId = 0;
-
-            for stream_name in group_streams {
-                if let Some(stream) = self.streams.get(stream_name) {
-                    if let Some(ref agg) = stream.hamlet_aggregator {
-                        let tmpl = agg.merged_template();
-                        for query in agg.registered_queries() {
-                            let new_id = next_query_id;
-                            next_query_id += 1;
-
-                            // Resolve type indices to actual event type names
-                            let event_names: Vec<String> = query
-                                .event_types
-                                .iter()
-                                .map(|&idx| tmpl.type_name(idx).unwrap_or("unknown").to_string())
-                                .collect();
-                            let name_strs: Vec<&str> =
-                                event_names.iter().map(String::as_str).collect();
-
-                            // Record base state before adding states for this query
-                            let base_state = builder.num_states() as u16;
-                            builder.add_sequence(new_id, &name_strs);
-
-                            for &kt in &query.kleene_types {
-                                let type_name = tmpl.type_name(kt).unwrap_or("unknown").to_string();
-                                let position = event_names
-                                    .iter()
-                                    .position(|n| *n == type_name)
-                                    .unwrap_or(0);
-                                // Self-loop at target state (base + position + 1)
-                                // since add_sequence creates states starting at base_state
-                                let kleene_state = base_state + position as u16 + 1;
-                                builder.add_kleene(new_id, &type_name, kleene_state);
-                            }
-
-                            let fields: Vec<(String, crate::greta::GretaAggregate)> = stream
-                                .operations
-                                .iter()
-                                .find_map(|op| {
-                                    if let RuntimeOp::TrendAggregate(config) = op {
-                                        Some(config.fields.clone())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or_default();
-
-                            all_registrations.push((
-                                stream_name.clone(),
-                                QueryRegistration {
-                                    id: new_id,
-                                    event_types: query.event_types.clone(),
-                                    kleene_types: query.kleene_types.clone(),
-                                    aggregate: query.aggregate,
-                                },
-                                fields,
-                            ));
-                        }
-                    }
-                }
-            }
-
-            let template = builder.build();
-            let config = HamletConfig {
-                window_ms: 60_000,
-                incremental: true,
-                ..Default::default()
-            };
-            let mut shared_agg = HamletAggregator::new(config, template);
-
-            for (_, registration, _) in &all_registrations {
-                shared_agg.register_query(registration.clone());
-            }
-
-            let shared_ref = std::sync::Arc::new(std::sync::Mutex::new(shared_agg));
-            self.shared_hamlet_aggregators.push(shared_ref.clone());
-
-            for (stream_name, registration, fields) in &all_registrations {
-                if let Some(stream) = self.streams.get_mut(stream_name) {
-                    stream.hamlet_aggregator = None;
-                    stream.shared_hamlet_ref = Some(shared_ref.clone());
-
-                    for op in &mut stream.operations {
-                        if let RuntimeOp::TrendAggregate(config) = op {
-                            config.query_id = registration.id;
-                            config.fields = fields.clone();
-                        }
-                    }
-                }
-            }
-
-            info!(
-                "Created shared Hamlet aggregator with {} queries",
-                next_query_id,
-            );
-        }
     }
 
     /// Connect all sinks that require explicit connection (async-runtime only).
@@ -1602,8 +1431,6 @@ impl Engine {
         self.streams.values().all(|s| {
             s.sase_engine.is_none()
                 && s.join_buffer.is_none()
-                && s.hamlet_aggregator.is_none()
-                && s.shared_hamlet_ref.is_none()
                 && s.operations.iter().all(|op| {
                     matches!(
                         op,
@@ -2083,6 +1910,11 @@ impl Engine {
                             },
                         );
                     }
+                    // A trend aggregate's state is its open windows: each
+                    // partition's events and when its window opened.
+                    RuntimeOp::TrendAggregate(config) => {
+                        window_states.insert(name.clone(), config.checkpoint());
+                    }
                     // Aggregate/PartitionedAggregate hold only config plus a
                     // rebuildable schema cache; their running state lives in the
                     // upstream Window op (snapshotted above). Explicit no-op so
@@ -2220,6 +2052,7 @@ impl Engine {
                                 window.restore(&sub_wcp);
                             }
                         }
+                        RuntimeOp::TrendAggregate(config) => config.restore(wcp),
                         _ => {}
                     }
                 }

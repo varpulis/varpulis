@@ -772,6 +772,7 @@ impl Engine {
             RuntimeOp::Window(w) => {
                 !matches!(w, WindowType::Count(_) | WindowType::SlidingCount(_))
             }
+            RuntimeOp::TrendAggregate(_) => true,
             #[cfg(feature = "arrow")]
             RuntimeOp::WindowedColumnarAggregate(_)
             | RuntimeOp::PartitionedWindowedColumnarAggregate(_) => true,
@@ -1003,6 +1004,11 @@ impl Engine {
                     WindowType::PartitionedSliding(w) => unkeyed(w.advance_due(wm)),
                     _ => Vec::new(),
                 },
+                RuntimeOp::TrendAggregate(config) => config
+                    .close_through(wm)
+                    .into_iter()
+                    .map(|result| vec![result])
+                    .collect(),
                 #[cfg(feature = "arrow")]
                 RuntimeOp::WindowedColumnarAggregate(state) => {
                     let bin_ms = state.bin_duration_ms;
@@ -1726,6 +1732,20 @@ impl Engine {
     ) -> Option<(usize, Vec<Vec<SharedEvent>>)> {
         let wm_ms = wm.timestamp_millis();
         for (idx, op) in stream.operations.iter_mut().enumerate() {
+            // A trend aggregate's windows close on the clock and at the end
+            // of the input like a tumbling window's; they are never
+            // watermark-driven.
+            if let RuntimeOp::TrendAggregate(config) = op {
+                if only_watermark_driven {
+                    return None;
+                }
+                let emissions: Vec<Vec<SharedEvent>> = config
+                    .close_through(wm)
+                    .into_iter()
+                    .map(|result| vec![result])
+                    .collect();
+                return (!emissions.is_empty()).then_some((idx, emissions));
+            }
             if let RuntimeOp::Window(window) = op {
                 let emissions: Vec<Vec<SharedEvent>> = match window {
                     // C2b event-time windows: drain every graduated window,

@@ -5,9 +5,11 @@
 # - ProcessingStep+ captures one or more intermediate steps (Kleene closure)
 # - TransactionClose completes the transaction
 #
-# Using .trend_aggregate() with the Hamlet engine, we efficiently compute
-# aggregate statistics over all possible matching trends without enumerating
-# each one individually — O(n) per event instead of O(2^n).
+# .trend_aggregate() computes statistics over every trend the pattern
+# matches — every non-empty subset of the steps, with the open and the
+# close — without enumerating them: the counts come from a dynamic
+# programme over the window's events (GRETA), quadratic in their number
+# where the trends are exponential.
 
 # =============================================================================
 # Event Definitions
@@ -40,12 +42,20 @@ event TransactionClose:
 # Pattern: TransactionOpen -> ProcessingStep+ -> TransactionClose
 #
 # The Kleene closure (all) captures every intermediate processing step.
-# Hamlet computes aggregates over all matching trends efficiently:
-#   - avg_dur:     average duration across all step trends
-#   - max_errors:  maximum error count across all step trends
-#   - total_tput:  sum of throughput across all step trends
-#   - step_count:  number of processing step events
-#   - trend_count: number of unique trend combinations (2^n - 1)
+# With n steps there are 2^n - 1 trends, one per non-empty subset of the
+# steps; each step takes part in 2^(n-1) of them. The aggregates sum over
+# the trends:
+#   - avg_dur:     sum_trends(steps.duration) / count_trends()
+#   - max_errors:  the largest error_count of a step in a trend
+#   - total_tput:  throughput summed over every step of every trend
+#   - step_count:  count_events(steps): a step counts once per trend it is in
+#                  (four steps give 4 * 8 = 32); count(steps) in .emit() gives
+#                  the distinct steps, 4
+#   - trend_count: the number of trends (2^n - 1)
+#
+# One result per transaction when its window closes: when an event arrives
+# 30 minutes after the transaction opened, when the event clock passes that
+# point, or at the end of the input.
 
 stream TransactionStats = TransactionOpen as open
     -> all ProcessingStep as steps
@@ -62,10 +72,12 @@ stream TransactionStats = TransactionOpen as open
     .emit(
         event_type: "TransactionSummary",
         tx_id: open.tx_id,
+        channel: open.channel,
         avg_duration: avg_dur,
         max_error_count: max_errors,
         total_throughput: total_tput,
         steps: step_count,
+        distinct_steps: count(steps),
         trends: trend_count
     )
 
@@ -90,25 +102,26 @@ stream SlowTransactionStep = TransactionOpen as open
     )
 
 # =============================================================================
-# Stream 3: Multi-Query Sharing — Aggregation by Channel
+# Stream 3: Aggregation by Channel, over the summaries
 # =============================================================================
 #
-# Shares the same Kleene sub-pattern (ProcessingStep+) with TransactionStats.
-# The engine automatically detects this overlap and uses a single shared
-# Hamlet graph, dispatching results per-query.
+# A trend aggregate is partitioned by a field every event of the pattern
+# carries (tx_id above); the channel is on TransactionOpen alone. The
+# per-channel view reads the summaries, which carry it, and aggregates them
+# under a window of their own.
 
-stream ChannelStats = TransactionOpen as open
-    -> all ProcessingStep as steps
-    -> TransactionClose as close
-    .within(30m)
+stream ChannelStats = TransactionStats
     .partition_by(channel)
-    .trend_aggregate(
-        trend_count: count_trends(),
-        step_count: count_events(steps)
+    .window(1h)
+    .aggregate(
+        transactions: count(),
+        avg_trends: avg(trends),
+        avg_step_duration: avg(avg_duration)
     )
     .emit(
         event_type: "ChannelSummary",
-        channel: open.channel,
-        trends: trend_count,
-        steps: step_count
+        channel: _partition,
+        transactions: transactions,
+        avg_trends: avg_trends,
+        avg_step_duration: avg_step_duration
     )

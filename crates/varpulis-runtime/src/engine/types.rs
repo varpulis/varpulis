@@ -131,10 +131,6 @@ pub struct StreamDefinition {
     pub join_buffer: Option<JoinBuffer>,
     /// Mapping from event type to join source name (for join streams)
     pub event_type_to_source: FxHashMap<String, String>,
-    /// Hamlet aggregator for trend aggregation mode
-    pub hamlet_aggregator: Option<crate::hamlet::HamletAggregator>,
-    /// Shared Hamlet aggregator reference (when multi-query sharing is active)
-    pub shared_hamlet_ref: Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     /// PST-based pattern forecaster (when .forecast() is used)
     pub pst_forecaster: Option<crate::pst::PatternMarkovChain>,
     /// Last raw event that entered the pipeline (used by Forecast op to learn
@@ -288,8 +284,9 @@ pub enum RuntimeOp {
     Process(varpulis_core::ast::Expr),
     /// Send to connector: `.to(ConnectorName)`
     To(ToConfig),
-    /// Trend aggregation via Hamlet engine (replaces Sequence for this stream)
-    TrendAggregate(TrendAggregateConfig),
+    /// Trend aggregation: the pattern's trends counted per window (replaces
+    /// Sequence for this stream)
+    TrendAggregate(super::trend::TrendAggregateConfig),
     /// ONNX model scoring: extract input fields, run inference, add output fields
     #[allow(dead_code)]
     Score(ScoreConfig),
@@ -341,37 +338,6 @@ impl RuntimeOp {
             Self::Limit(_) => "Limit",
         }
     }
-}
-
-/// Configuration for trend aggregation via Hamlet engine
-pub struct TrendAggregateConfig {
-    /// Fields to compute: (output_alias, aggregate_function)
-    pub fields: Vec<(String, crate::greta::GretaAggregate)>,
-    /// Query ID in the Hamlet aggregator
-    pub query_id: crate::greta::QueryId,
-    /// Field-based aggregate info for runtime computation (sum/avg/min/max)
-    pub field_aggregates: Vec<FieldAggregateInfo>,
-    /// Maps type index (u16) to event type name (for count_events resolution)
-    pub type_index_to_name: Vec<String>,
-    /// Accumulated events across invocations (persists between execute_op calls)
-    pub accumulated: Vec<SharedEvent>,
-    /// Trend window in milliseconds (the WITHIN duration). `accumulated` is
-    /// bounded to this event-time window so it cannot grow without limit.
-    /// 0 means "no WITHIN clause": a defensive count cap applies instead.
-    pub window_ms: u64,
-}
-
-/// Info for computing field-based aggregates at runtime.
-/// Populated at compile time from `sum_trends(alias.field)` etc.
-pub struct FieldAggregateInfo {
-    /// Output alias in the emitted event (e.g., "total")
-    pub output_alias: String,
-    /// Aggregate function name: "sum", "avg", "min", "max"
-    pub func: String,
-    /// Event type to filter on (e.g., "sensor_reading")
-    pub event_type: String,
-    /// Field name to aggregate (e.g., "temperature")
-    pub field_name: String,
 }
 
 /// Configuration for PST-based pattern forecasting

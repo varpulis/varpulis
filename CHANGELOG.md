@@ -100,6 +100,31 @@ code before it.
   the condition and the emit found nothing. A join now runs in the engine
   as it ships, inner and outer, with both syntaxes, and its buffers are in
   the snapshot.
+- `.trend_aggregate()` counted wrong. It fed the events to the Hamlet
+  aggregator, which reads event types and nothing else: the closure's
+  condition, the start's condition and `.partition_by()` were ignored, the
+  count came out after every event as a running total, `min`/`max` returned
+  the trend count, `count_events()` the number of events, and the result
+  carried no field of the events. On four falling prices, where `price >
+  first.price` never holds, it reported 7 trends. The op now counts the
+  trends of each window on the graph of its events (GRETA): every trend
+  from every start, with the conditions evaluated as a sequence step
+  evaluates them, per partition, one result per partition and window when
+  the window closes, stamped with its end. `count_trends()`,
+  `count_events(alias)` (participations; `count(alias)` in `.emit()` gives
+  the distinct events), `sum_trends`, `avg_trends`, `min_trends` and
+  `max_trends(alias.field)` are defined in the reference, with the
+  tutorial's five ticks worked out (24 trends). `.emit()` reads the
+  partition field, the start's fields (`first.price`) and a later single
+  step's (`done.status`). The open windows are in the snapshot. What the
+  counting cannot honour is refused when the program loads, naming the form
+  it honours: no `.within()`, no closure, a negated step, `.each()`,
+  `.longest()`, `.strict()`, `.stnm()`, `.forecast()`, a condition reading
+  an alias it cannot bind, an aggregate that is not one of the six, a bare
+  field. The Hamlet crate stays as a library; the engine no longer links
+  the op to it, and the automatic "multi-query sharing" is gone with it.
+  `examples/transaction_monitoring.vpl` aggregates per channel over the
+  summaries, since the channel is on the open event alone.
 
 ### Changed — the engine's tests run against the engine that ships
 

@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-SEC fines for insider trading averaged $4.7 billion per year over the past decade. Varpulis monitors trading activity across all symbols simultaneously, detecting suspicious order accumulation before material news breaks -- at 100x the speed of traditional surveillance systems using Hamlet trend aggregation.
+SEC fines for insider trading averaged $4.7 billion per year over the past decade. Varpulis monitors trading activity across all symbols simultaneously, detecting suspicious order accumulation before material news breaks -- counting every accumulation trend without enumerating them, with trend aggregation.
 
 ## The Business Problem
 
@@ -32,18 +32,11 @@ Over 48 hours, a trader places 4 buy orders for the same stock, all small enough
 
 Traditional surveillance checks each trade against fixed thresholds: "flag orders over $1 million." A sophisticated insider splits their order into 8 pieces of $125,000 each -- every single one passes.
 
-Varpulis tracks the *accumulation pattern* over time using Hamlet trend aggregation. Even better: when monitoring 50+ symbols simultaneously, Varpulis shares computation across overlapping patterns -- delivering 100x throughput compared to checking each symbol independently.
-
-| Symbols Monitored | Traditional | Varpulis (Hamlet) | Speedup |
-|-------------------|------------|-------------------|---------|
-| 1 | 2.4 M/s | 6.9 M/s | 3x |
-| 5 | 398 K/s | 2.8 M/s | 7x |
-| 10 | 122 K/s | 2.1 M/s | 17x |
-| 50 | 9 K/s | 950 K/s | **100x** |
+Varpulis tracks the *accumulation pattern* over time with trend aggregation: every subset of a trader's orders that forms an accumulation is a trend, and the engine counts and sums over all of them by counting on the window's event graph -- quadratic in the orders, where the trends are exponential -- per symbol and per trader.
 
 ## Measurable Impact
 
-- **100x throughput for multi-symbol monitoring** via Hamlet engine
+- **Counts every accumulation trend** across 50+ symbols without enumerating one
 - **Detects split-order accumulation** that per-trade thresholds miss
 - **Automated SEC 10b-5 evidence collection** with full audit trail of every order in the chain
 - **Sub-millisecond alert latency** -- flag suspicious activity before the trading day ends

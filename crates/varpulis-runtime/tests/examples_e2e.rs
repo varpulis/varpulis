@@ -98,11 +98,22 @@ async fn run_example(vpl_rel: &str, evt_rel: &str) -> Vec<Event> {
 
     // End-of-input drain: the input is bounded, so every still-open window is
     // as complete as it will ever be — including the fused columnar aggregates,
-    // which `flush_final_watermark` does not touch.
-    engine
-        .flush_end_of_input()
-        .await
-        .unwrap_or_else(|e| panic!("{vpl_rel}: end-of-input drain failed: {e:?}"));
+    // which `flush_final_watermark` does not touch. On the sync path this is
+    // the drain `Program::end_of_input` runs: every time window closes,
+    // upstream first, and what it emits reaches the streams below before
+    // their own windows close. The async drain sends each stream's output to
+    // the channel and routes nothing, so a stream reading another stream's
+    // windowed result would end empty under it.
+    if engine.requires_async_dispatch() {
+        engine
+            .flush_end_of_input()
+            .await
+            .unwrap_or_else(|e| panic!("{vpl_rel}: end-of-input drain failed: {e:?}"));
+    } else {
+        engine
+            .flush_end_of_input_sync()
+            .unwrap_or_else(|e| panic!("{vpl_rel}: end-of-input drain failed: {e:?}"));
+    }
     if engine.has_session_windows() {
         engine
             .flush_expired_sessions()

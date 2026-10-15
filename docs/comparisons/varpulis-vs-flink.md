@@ -173,7 +173,7 @@ The memory difference comes from the runtime: Flink runs on the JVM with JIT com
 | Windowed aggregation | `.window()` + `.aggregate()` | Window API + ProcessFunction |
 | Stream joins | Declarative `.join()` | `CoProcessFunction` or interval join |
 | Pattern forecasting | Built-in PST engine (51 ns/prediction) | Not available |
-| Trend aggregation | Built-in Hamlet engine | Requires custom implementation |
+| Trend aggregation | Built-in (`.trend_aggregate()`) | Requires custom implementation |
 | Exactly-once semantics | At-least-once | Exactly-once with checkpointing |
 | Horizontal scaling | Cluster mode (coordinator + workers) | Full distributed (100s of nodes) |
 | State backends | In-memory | RocksDB, heap, HashMapStateBackend |
@@ -199,7 +199,7 @@ Varpulis is the better choice when you need:
 - **Low-latency pattern detection**: 40% lower latency than Flink on equivalent patterns, with sub-millisecond processing per event.
 - **Minimal resource footprint**: 10--50 MB vs 500 MB -- 2 GB. Ideal for edge deployments, containers, or cost-sensitive environments.
 - **Rapid development**: 3--5x less code to express the same pattern. VPL is purpose-built for CEP, so patterns are readable and maintainable.
-- **Advanced CEP features**: Built-in pattern forecasting (PST), trend aggregation (Hamlet), and exhaustive Kleene matching -- capabilities that would require custom Flink ProcessFunctions.
+- **Advanced CEP features**: Built-in pattern forecasting (PST), trend aggregation (counts over every trend of a Kleene pattern), and exhaustive Kleene matching -- capabilities that would require custom Flink ProcessFunctions.
 - **Fast startup**: Sub-100ms cold start vs Flink's 5--30 second cluster initialization. Critical for serverless or auto-scaling scenarios.
 - **Operational simplicity**: Single binary deployment, no JVM tuning, no cluster coordination overhead for single-node workloads.
 
