@@ -80,7 +80,7 @@ There is no `run`: a program runs on a bus as a Vejas detect unit.
 | `varpulis-engine` | the engine as a library: `Program::compile / feed / feed_json / snapshot / restore` |
 | `varpulis-core`, `varpulis-parser` | the language: AST, values, events, the parser, the payload decoder |
 | `varpulis-runtime` | execution: SASE+, windows, joins, checkpoints — built without its `async-runtime` feature by the engine |
-| `varpulis-sase`, `varpulis-zdd`, `varpulis-pst`, `varpulis-hamlet`, `varpulis-simd` | pattern matching, Kleene closures, forecasting, the Hamlet library, SIMD kernels |
+| `varpulis-sase`, `varpulis-zdd`, `varpulis-pst`, `varpulis-simd` | pattern matching, Kleene closures, forecasting, SIMD kernels |
 | `varpulis-lsp`, `varpulis-wasm`, `varpulis-engine-wasm` | the language server, the parser and the engine for WebAssembly |
 | `varpulis-cli` | `varpulis check`, `parse`, `simulate` |
 

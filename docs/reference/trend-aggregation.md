@@ -334,10 +334,6 @@ stream PriceTrendStats = StockTick as first
 - **Condition evaluation:** a step's condition is evaluated with the same
   evaluator as a sequence step, with the aliases bound as described above;
   a condition that reads no alias is evaluated once per event.
-- **Research library:** the `varpulis-hamlet` crate implements the shared
-  graphlet propagation of Hamlet (Poppe et al., SIGMOD 2021) for patterns
-  without conditions; it is not what `.trend_aggregate()` runs, since a
-  pattern without conditions is rare and the sharing cannot honour them.
 
 ## Academic references
 
@@ -345,11 +341,6 @@ stream PriceTrendStats = StockTick as first
   "GRETA: Graph-based Real-time Event Trend Aggregation." Proceedings of the
   VLDB Endowment, Vol. 11, No. 1, pp. 80-92, 2017. DOI:
   [10.14778/3151113.3151120](https://doi.org/10.14778/3151113.3151120)
-- **Hamlet**: Olga Poppe, Chuan Lei, Elke A. Rundensteiner, and David Maier.
-  "To Share or Not to Share: Online Event Trend Aggregation Over Bursty Event
-  Streams." Proceedings of the ACM SIGMOD International Conference on
-  Management of Data, 2021. DOI:
-  [10.1145/3448016.3457310](https://doi.org/10.1145/3448016.3457310)
 
 ## See also
 

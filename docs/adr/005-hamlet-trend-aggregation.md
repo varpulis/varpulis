@@ -7,7 +7,8 @@ were ignored and the counts were wrong (the audit of 2026-10-14). The op now
 counts the trends on the event graph of each window, honouring the
 conditions (`crates/varpulis-runtime/src/engine/trend.rs`; see
 [docs/architecture/trend-aggregation.md](../architecture/trend-aggregation.md)).
-The `varpulis-hamlet` crate stays as a library. The record below is kept as
+The `varpulis-hamlet` crate was removed with it, along with the runtime's
+GRETA baseline module and its ZDD experiment. The record below is kept as
 written, its examples given the alias the aggregate reads.
 **Date:** 2026-02-17
 **Authors:** Varpulis Team

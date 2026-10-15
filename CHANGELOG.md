@@ -132,10 +132,19 @@ code before it.
   it honours: no `.within()`, no closure, a negated step, `.each()`,
   `.longest()`, `.strict()`, `.stnm()`, `.forecast()`, a condition reading
   an alias it cannot bind, an aggregate that is not one of the six, a bare
-  field. The Hamlet crate stays as a library; the engine no longer links
-  the op to it, and the automatic "multi-query sharing" is gone with it.
+  field. The Hamlet crate is gone (see Removed), and the automatic
+  "multi-query sharing" with it.
   `examples/transaction_monitoring.vpl` aggregates per channel over the
   summaries, since the channel is on the open event alone.
+
+### Removed — what the engine no longer ran
+
+- `varpulis-hamlet`, the runtime's `greta` module and its `zdd_unified`
+  experiment, and the `hamlet_zdd_benchmark` bench. Once `.trend_aggregate()`
+  counted on its own, the engine ran none of them, and the Hamlet sharing
+  cannot honour a condition on a closure by construction (it reads event
+  types and nothing else). `varpulis-zdd` stays: the sequence engine's Kleene
+  closures live in it; `varpulis-runtime` no longer depends on it.
 
 ### Changed — the engine's tests run against the engine that ships
 

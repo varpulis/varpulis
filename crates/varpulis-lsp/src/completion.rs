@@ -393,7 +393,7 @@ fn get_stream_operation_completions() -> Vec<CompletionItem> {
         completion_item(
             "trend_aggregate",
             CompletionItemKind::METHOD,
-            "Hamlet-based trend aggregation over patterns",
+            "Trend aggregation over patterns",
             "trend_aggregate(${1:field}: ${2:sum(value)})",
             Some(".trend_aggregate(total: sum(value))"),
         ),

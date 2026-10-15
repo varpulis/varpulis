@@ -108,16 +108,16 @@ Counts are `u64` with saturating arithmetic, emitted as integers clamped to
 `i64::MAX`. A partition's window holds at most `MAX_WINDOW_EVENTS` (5 000)
 events.
 
-## The Hamlet library
+## What was removed
 
-`crates/varpulis-hamlet` implements the shared graphlet propagation of
-Hamlet (Poppe et al., SIGMOD 2021): several queries over the same Kleene
-sub-pattern share one propagation, with snapshots at graphlet boundaries and
-an optimizer deciding when sharing pays. It works on sequences of event
-types without conditions. The engine's `.trend_aggregate()` used to feed it
-and read its counts; since a pattern without conditions is rare and the
-sharing cannot honour one, the op no longer uses it. The crate stays in the
-workspace as a library with its own tests and benchmarks.
+An earlier implementation fed the events to the `varpulis-hamlet` crate, the
+shared graphlet propagation of Hamlet (Poppe et al., SIGMOD 2021): several
+queries over the same Kleene sub-pattern shared one propagation, resolved per
+query through snapshots. It worked on sequences of event types without
+conditions, which is what let the propagation be shared, and what made every
+count wrong for a pattern with one. The crate, the runtime's GRETA baseline
+module and its ZDD experiment were removed on 2026-10-15; `varpulis-zdd`
+stays, since the sequence engine's Kleene closures live in it.
 
 ## Key Source Files
 
@@ -128,11 +128,11 @@ workspace as a library with its own tests and benchmarks.
 | `crates/varpulis-runtime/src/engine/dispatch.rs` | Clock-driven and end-of-input closes |
 | `crates/varpulis-runtime/src/engine/pipeline.rs` | The op in the pipeline |
 | `crates/varpulis-engine/tests/audit_trend_aggregate.rs` | The counts, step by step |
-| `crates/varpulis-hamlet/` | The Hamlet library (not used by the op) |
 
 ## References
 
 - **GRETA**: Poppe, Lei, Rundensteiner, Maier. "GRETA: Graph-based
   Real-time Event Trend Aggregation." PVLDB 11(1), 2017.
-- **Hamlet**: Poppe, Lei, Rundensteiner, Maier. "To Share or Not to Share:
-  Online Event Trend Aggregation Over Bursty Event Streams." SIGMOD 2021.
+- **Hamlet** (the earlier implementation): Poppe, Lei, Rundensteiner, Maier.
+  "To Share or Not to Share: Online Event Trend Aggregation Over Bursty Event
+  Streams." SIGMOD 2021.

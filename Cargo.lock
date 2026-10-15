@@ -5851,17 +5851,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "varpulis-hamlet"
-version = "0.11.0"
-dependencies = [
- "proptest",
- "rustc-hash",
- "smallvec",
- "tracing",
- "varpulis-core",
-]
-
-[[package]]
 name = "varpulis-lsp"
 version = "0.11.0"
 dependencies = [
@@ -5934,7 +5923,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "smallvec",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -5945,13 +5933,11 @@ dependencies = [
  "varpulis-core",
  "varpulis-dead-letter",
  "varpulis-enrichment",
- "varpulis-hamlet",
  "varpulis-parser",
  "varpulis-pst",
  "varpulis-sase",
  "varpulis-simd",
  "varpulis-wasm",
- "varpulis-zdd",
  "zstd",
 ]
 
