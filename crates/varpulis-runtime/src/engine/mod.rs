@@ -1405,13 +1405,10 @@ impl Engine {
     }
 
     /// Whether this program has something only the asynchronous dispatch
-    /// path acts on: a sink, a lookup, or a join.
-    ///
-    /// Joins now run on the synchronous path too (`process_batch_sync`), so a
-    /// join alone no longer needs the asynchronous one; this still reports
-    /// it, as the asynchronous runtime's callers have always read it.
+    /// path acts on: a sink or a lookup. A join runs on both paths, and its
+    /// unmatched events close on the clock on both.
     pub fn requires_async_dispatch(&self) -> bool {
-        self.has_sink_operations() || self.has_join_sources()
+        self.has_sink_operations()
     }
 
     /// Whether any registered stream is fed by a join.

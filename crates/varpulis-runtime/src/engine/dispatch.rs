@@ -748,7 +748,13 @@ impl Engine {
                     sase.time_semantics() == crate::sase::TimeSemantics::EventTime
                         && sase.nfa().has_negation()
                 });
-                (absences || stream.operations.iter().any(Self::is_time_window))
+                // An outer join emits an unmatched event when its window
+                // closes, so it closes on the clock like a time window.
+                let outer_join = stream
+                    .join_buffer
+                    .as_ref()
+                    .is_some_and(crate::join::JoinBuffer::is_outer);
+                (absences || outer_join || stream.operations.iter().any(Self::is_time_window))
                     .then_some((name, absences))
             })
             .map(|(name, absences)| {
@@ -836,6 +842,29 @@ impl Engine {
                         matches,
                         sequence_idx + 1,
                         pipeline::SkipFlags::none(),
+                        at,
+                        emitted_batch,
+                    )?;
+                }
+            }
+            let Some(stream) = self.streams.get_mut(stream_name) else {
+                continue;
+            };
+            // An outer join's events whose window `wm` has closed without a
+            // match come back alone and run through the stream's operators
+            // as a pair would.
+            if let Some(join_buffer) = stream.join_buffer.as_mut() {
+                let alone: Vec<SharedEvent> = join_buffer
+                    .close_through(wm)
+                    .into_iter()
+                    .map(Arc::new)
+                    .collect();
+                for row in alone {
+                    self.run_closed(
+                        stream_name,
+                        vec![row],
+                        0,
+                        pipeline::SkipFlags::for_join(),
                         at,
                         emitted_batch,
                     )?;
@@ -1942,6 +1971,33 @@ impl Engine {
         let stream_names: Vec<String> = self.streams.keys().cloned().collect();
 
         for stream_name in stream_names {
+            // An outer join's events whose window `wm` has closed without a
+            // match come back alone and run through the stream's operators.
+            if !only_watermark_driven {
+                let alone: Vec<SharedEvent> = self
+                    .streams
+                    .get_mut(&stream_name)
+                    .and_then(|stream| stream.join_buffer.as_mut())
+                    .map(|join_buffer| join_buffer.close_through(wm))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Arc::new)
+                    .collect();
+                for row in alone {
+                    let result = Self::process_join_result(
+                        self.streams.get_mut(&stream_name).unwrap(),
+                        row,
+                        &self.functions,
+                        self.sinks.cache(),
+                    )
+                    .await?;
+                    for emitted in &result.emitted_events {
+                        self.output_events_emitted += 1;
+                        let owned = (**emitted).clone();
+                        self.send_output_async(owned).await;
+                    }
+                }
+            }
             let (collected, send_outputs) = {
                 let stream = self.streams.get_mut(&stream_name).unwrap();
                 // Only on a genuine end-of-input drain. A routine watermark

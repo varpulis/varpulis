@@ -1,8 +1,11 @@
-//! A join runs in the engine as it ships.
+//! A join runs in the engine as it ships, and an outer join emits an
+//! unmatched event once, when its window closes.
 //!
 //! Joins parsed and checked, and the synchronous engine refused them when
 //! the program loaded; the joins reference told the reader to write a
-//! sequence instead.
+//! sequence instead. Once they ran, an outer join emitted an unmatched
+//! event at once and again as a pair when its match arrived, so a paid
+//! order appeared twice.
 
 mod common;
 
@@ -58,6 +61,10 @@ fn an_inner_join_emits_the_pair_once_both_sides_are_in() {
     assert_eq!(out["order"], "o1");
     assert_eq!(out["amount"], 10.0);
     assert_eq!(out["paid"], 10.0);
+    assert!(
+        end(&mut p).is_empty(),
+        "an inner join emits nothing at the end"
+    );
 }
 
 #[test]
@@ -70,47 +77,77 @@ fn an_inner_join_forgets_an_event_past_its_window() {
     );
 }
 
+/// A left event with no match is emitted alone when its window closes: on
+/// the clock of the join's sources, or at the end of the input. One that
+/// found its match is the pair, and nothing else.
 #[test]
-fn a_left_join_emits_the_left_event_at_once_and_the_pair_when_it_comes() {
+fn a_left_join_emits_the_pair_or_the_left_event_alone_at_the_close() {
     let mut p = Program::compile(&joined("left_join")).unwrap();
-    let out = only(feed(&mut p, "OrderEvent", &order("10:00:00", "o1", 10.0)));
-    assert_eq!(out["order"], "o1");
     assert!(
-        out.get("paid").is_none_or(serde_json::Value::is_null),
-        "no payment yet: {out}"
+        feed(&mut p, "OrderEvent", &order("10:00:00", "o1", 10.0)).is_empty(),
+        "nothing at arrival: the match may still come"
     );
+    assert!(feed(&mut p, "OrderEvent", &order("10:00:01", "o2", 20.0)).is_empty());
     let out = only(feed(
         &mut p,
         "PaymentEvent",
         &payment("10:00:10", "o1", 10.0),
     ));
     assert_eq!(out["order"], "o1");
-    assert_eq!(out["paid"], 10.0);
+    assert_eq!(out["paid"], 10.0, "the pair, once");
     assert!(
         feed(&mut p, "PaymentEvent", &payment("10:00:20", "o9", 1.0)).is_empty(),
-        "a right event alone emits nothing from a left join"
+        "a right event alone emits nothing from a left join, now or later"
     );
-}
-
-#[test]
-fn a_full_join_emits_either_side_alone() {
-    let mut p = Program::compile(&joined("full_join")).unwrap();
+    // Both clocks past 10:05:01: o2's window has closed without a match.
+    assert!(feed(&mut p, "OrderEvent", &order("10:06:00", "o3", 30.0)).is_empty());
     let out = only(feed(
         &mut p,
         "PaymentEvent",
-        &payment("10:00:00", "o9", 1.0),
+        &payment("10:06:00", "o8", 1.0),
     ));
-    assert_eq!(out["paid"], 1.0);
-    assert!(
-        out.get("order").is_none_or(serde_json::Value::is_null),
-        "{out}"
-    );
-    let out = only(feed(&mut p, "OrderEvent", &order("10:00:01", "o1", 10.0)));
-    assert_eq!(out["order"], "o1");
+    assert_eq!(out["order"], "o2");
+    assert_eq!(out["amount"], 20.0);
     assert!(
         out.get("paid").is_none_or(serde_json::Value::is_null),
-        "{out}"
+        "no payment: {out}"
     );
+    assert_eq!(
+        out["timestamp"], "2026-10-14T10:00:01Z",
+        "the order's own time"
+    );
+    let last = only(end(&mut p));
+    assert_eq!(
+        last["order"], "o3",
+        "the end of the input closes o3's window"
+    );
+}
+
+/// A right join preserves the right side.
+#[test]
+fn a_right_join_emits_the_right_event_alone_at_the_close() {
+    let mut p = Program::compile(&joined("right_join")).unwrap();
+    assert!(feed(&mut p, "OrderEvent", &order("10:00:00", "o1", 10.0)).is_empty());
+    assert!(feed(&mut p, "PaymentEvent", &payment("10:00:05", "o9", 9.0)).is_empty());
+    let out = end(&mut p);
+    assert_eq!(out.len(), 1, "o1 is not preserved: {out:#?}");
+    assert_eq!(out[0]["paid"], 9.0);
+    assert!(out[0].get("order").is_none_or(serde_json::Value::is_null));
+}
+
+/// A full join preserves both sides, each alone at its close, in the order
+/// they arrived.
+#[test]
+fn a_full_join_emits_either_side_alone_at_the_close() {
+    let mut p = Program::compile(&joined("full_join")).unwrap();
+    assert!(feed(&mut p, "PaymentEvent", &payment("10:00:00", "o9", 1.0)).is_empty());
+    assert!(feed(&mut p, "OrderEvent", &order("10:00:01", "o1", 10.0)).is_empty());
+    let out = end(&mut p);
+    assert_eq!(out.len(), 2, "{out:#?}");
+    assert_eq!(out[0]["paid"], 1.0);
+    assert!(out[0].get("order").is_none_or(serde_json::Value::is_null));
+    assert_eq!(out[1]["order"], "o1");
+    assert!(out[1].get("paid").is_none_or(serde_json::Value::is_null));
 }
 
 #[test]
@@ -128,6 +165,30 @@ fn a_join_survives_a_snapshot() {
     ));
     assert_eq!(out["order"], "o1");
     assert_eq!(out["paid"], 10.0);
+}
+
+/// Whether an event matched is in the snapshot: restored, a matched order
+/// is not emitted alone when its window closes, an unmatched one is.
+#[test]
+fn an_outer_join_remembers_its_matches_across_a_snapshot() {
+    let source = joined("left_join");
+    let mut p = Program::compile(&source).unwrap();
+    assert!(feed(&mut p, "OrderEvent", &order("10:00:00", "o1", 10.0)).is_empty());
+    assert!(feed(&mut p, "OrderEvent", &order("10:00:01", "o2", 20.0)).is_empty());
+    assert_eq!(
+        only(feed(
+            &mut p,
+            "PaymentEvent",
+            &payment("10:00:10", "o1", 10.0)
+        ))["order"],
+        "o1"
+    );
+    let bytes = p.snapshot().unwrap();
+    let mut p = Program::compile(&source).unwrap();
+    p.restore(&bytes).unwrap();
+    let out = end(&mut p);
+    assert_eq!(out.len(), 1, "o1 was paid before the snapshot: {out:#?}");
+    assert_eq!(out[0]["order"], "o2");
 }
 
 #[test]

@@ -1,15 +1,16 @@
 //! A join must never be silently discarded by the dispatch-path choice.
 //!
-//! `Engine::process_stream_sync` does not implement join sources. The CLI chose
-//! between the synchronous and asynchronous paths with `has_sink_operations()`,
-//! which asks whether the program has `.to()` or `.enrich()` — a different
-//! question. A join is not a sink, so a program whose only join had no sink
-//! took the sync path and every match was thrown away, with a successful exit
-//! code and an empty result.
+//! `Engine::process_stream_sync` once did not implement join sources, and the
+//! CLI chose between the synchronous and asynchronous paths with
+//! `has_sink_operations()`, which asks whether the program has `.to()` or
+//! `.enrich()` — a different question. A join is not a sink, so a program
+//! whose only join had no sink took the sync path and every match was thrown
+//! away, with a successful exit code and an empty result.
 //!
-//! That is the default path for `simulate`, `detect`, `analyze` and `repl`, and
-//! the only path in `varpulis-engine-wasm`, so the shipped join example emitted
-//! nothing when run with the command printed in its own header.
+//! Both paths run a join now: the synchronous one, which `simulate`, a Vejas
+//! detect unit and `varpulis-engine-wasm` take, correlates through the same
+//! buffer as the asynchronous one. A sink-less join needs no asynchronous
+//! runtime, and the selector says so.
 
 use tokio::sync::mpsc;
 use varpulis_core::{Event, Value};
@@ -54,23 +55,24 @@ fn quote(sym: &str, bid: f64) -> Event {
     e
 }
 
-/// Fail-before: a sink-less join reported `requires_async_dispatch == false`
-/// via `has_sink_operations`, so the CLI ran it on the path that discards it.
+/// A sink-less join takes the synchronous path, which runs it (see
+/// `the_sync_path_runs_the_join`); only a sink or a lookup needs the
+/// asynchronous one.
 #[tokio::test]
-async fn a_sinkless_join_requires_the_async_path() {
+async fn a_sinkless_join_takes_the_sync_path() {
     let (engine, _rx) = load(JOIN_PROGRAM);
 
     assert!(
         !engine.has_sink_operations(),
-        "the program has no .to()/.enrich() — this is what misled the selector"
+        "the program has no .to()/.enrich()"
     );
     assert!(
         engine.has_join_sources(),
         "the program does have a join source"
     );
     assert!(
-        engine.requires_async_dispatch(),
-        "a join must force the async path even with no sink"
+        !engine.requires_async_dispatch(),
+        "a join alone needs no asynchronous runtime"
     );
 }
 

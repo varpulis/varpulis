@@ -99,7 +99,12 @@ code before it.
   did) and keyed its buffer by the source rather than the clause's name, so
   the condition and the emit found nothing. A join now runs in the engine
   as it ships, inner and outer, with both syntaxes, and its buffers are in
-  the snapshot.
+  the snapshot. An outer join then emitted an unmatched event at once and
+  again as a pair when its match arrived, so a paid order appeared twice;
+  it emits the pair when the match arrives, and an event of a preserved
+  side alone, once, when its window closes on the event clock or at the
+  end of the input, with whether it matched kept in the snapshot. A join
+  alone no longer asks for the asynchronous runtime.
 - `.trend_aggregate()` counted wrong. It fed the events to the Hamlet
   aggregator, which reads event types and nothing else: the closure's
   condition, the start's condition and `.partition_by()` were ignored, the

@@ -2,21 +2,11 @@
 
 This tutorial teaches you to use LEFT, RIGHT, and FULL outer joins in VPL for stream processing. You'll start with an inner join recap, then build progressively through each outer join type, null handling, and a complete reconciliation example.
 
-> **Joins do not run in the engine as it ships.** They parse and pass
-> `varpulis check`, but `varpulis simulate` and a Vejas detect unit run the
-> engine's synchronous path, which refuses a join when it loads the program:
-> `stream 'X' is a join, which the synchronous execution path does not
-> implement`. No shipped command runs the asynchronous path since the platform
-> was retired ([ADR-008](../adr/008-engine-only-platform-retired.md)). To correlate two event types today, use a
-> sequence, which runs everywhere: `A as a -> B where key == a.key as b` with
-> `.within(5m)`.
-
-> The expected-output tables below were written for that asynchronous path and
-> cannot be reproduced with a shipped command. The join buffer's unit tests
-> (`crates/varpulis-runtime/src/join.rs`) show one difference from them: in a
-> left join, a left event with no match is emitted at once with the right side
-> `null`, and a match that arrives later is emitted as a second event, so an
-> order paid after it was placed appears twice, not once.
+An outer join emits a pair when the match arrives, and an event with no match
+once, alone, when its window closes: when the event clock of the join's
+sources passes the window's end, or at the end of the input. In a replay the
+unmatched rows therefore come last, after the pairs; the tables below list
+the rows, not their order.
 
 ## Prerequisites
 

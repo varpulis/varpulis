@@ -8,9 +8,11 @@ source under a name of its own — `stream Orders = OrderEvent` — and that nam
 is what the `on` condition, the emitted fields (`Orders.order_id`) and the
 buffer use. The condition is written either way the examples show: `on
 Orders.k == Payments.k` in the clause, or `.on(Orders.k == Payments.k)` after
-the join. An outer join emits an unmatched event at once, with the other
-side's fields absent, and emits the pair again when the match arrives (see
-the [outer joins tutorial](../tutorials/outer-joins-tutorial.md)).
+the join. An outer join emits a pair when the match arrives, and an event of
+a preserved side that found no match once, alone, when its window closes:
+when the event clock of the join's sources passes the window's end, or at the
+end of a bounded input (see the
+[outer joins tutorial](../tutorials/outer-joins-tutorial.md)).
 
 ## Join Types
 
@@ -60,10 +62,11 @@ stream Result = left_join(
 ```
 
 **Behavior:**
-- Every left event is guaranteed to produce at least one output event
-- If a matching right event exists, fields are joined normally
-- If no matching right event exists within the window, right-side fields are `null`
-- An unmatched left event emits at once; if its match arrives within the window, the pair is emitted as a second event
+- Every left event produces exactly one output event
+- If a matching right event arrives within the window, the pair is emitted then
+- If none does, the left event is emitted alone when its window closes, with
+  the right side's join key `null` and its other fields absent
+- A right event alone produces nothing
 
 **Use cases:**
 - Find orders without payments
@@ -87,7 +90,8 @@ stream Result = right_join(
 ```
 
 **Behavior:**
-- Mirror of left join: every right event produces output
+- Mirror of left join: every right event produces exactly one output event,
+  the pair when its match arrives or itself alone when its window closes
 - Left-side fields are `null` when unmatched
 
 **Note:** `right_join(A, B)` is semantically equivalent to `left_join(B, A)` with swapped field references.
@@ -109,9 +113,9 @@ stream Result = full_join(
 ```
 
 **Behavior:**
-- Matched pairs produce output with all fields populated
-- Unmatched left events produce output with null right-side fields
-- Unmatched right events produce output with null left-side fields
+- Matched pairs produce output with all fields populated, when the match arrives
+- An unmatched event of either side produces output when its window closes,
+  with the other side's fields null
 
 **Use cases:**
 - Reconciliation (detect mismatches from either side)

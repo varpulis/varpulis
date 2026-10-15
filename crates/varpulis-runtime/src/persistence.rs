@@ -1391,6 +1391,11 @@ pub struct StackEntryCheckpoint {
 pub struct JoinCheckpoint {
     /// Buffered events: source_name -> (key_value -> Vec<(timestamp_ms, event)>)
     pub buffers: HashMap<String, HashMap<String, Vec<(i64, SerializableEvent)>>>,
+    /// Per buffered event, in the same order: whether a pair was emitted
+    /// with it. An outer join emits an event alone when its window closes
+    /// only if none was. Absent in older snapshots: nothing matched.
+    #[serde(default)]
+    pub matched: HashMap<String, HashMap<String, Vec<bool>>>,
     /// Source stream names
     pub sources: Vec<String>,
     /// Join key field per source
