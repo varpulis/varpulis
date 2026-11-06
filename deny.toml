@@ -16,24 +16,9 @@ ignore = [
     # No alternative available — bincode is embedded in the benchmark runner.
     { id = "RUSTSEC-2025-0141", reason = "dev-only transitive via iai-callgrind benchmarks" },
 
-    # rustls-pemfile 2.x: unmaintained. Still pulled by rumqttc 0.25 and async-nats 0.38.
-    # Cert parsing only, low attack surface. No upstream fix available yet.
-    { id = "RUSTSEC-2025-0134", reason = "cert parsing only, no upstream fix for rumqttc/async-nats" },
-
     # rsa 0.9: Marvin Attack timing side-channel. Transitive via sqlx-mysql.
     # We don't use MySQL TLS with RSA keys in production; PostgreSQL is primary.
     { id = "RUSTSEC-2023-0071", reason = "transitive via sqlx-mysql, not used in production" },
-
-    # rustls-webpki 0.102.x: CRL distributionPoint bypass. Transitive via async-nats 0.46.
-    # async-nats pins rustls-webpki 0.102; fix requires >=0.103.10. No upstream fix yet.
-    { id = "RUSTSEC-2026-0049", reason = "transitive via async-nats 0.46, no upstream fix yet" },
-
-    # rustls-webpki 0.102.x advisories published 2026-04. Same async-nats 0.46 pin as 0049;
-    # fix requires upstream bump to rustls-webpki >=0.103.10. URI/wildcard name-constraints
-    # and CRL-parse paths are not exposed to attacker-controlled certs in our deployments.
-    { id = "RUSTSEC-2026-0098", reason = "transitive via async-nats 0.46, no upstream fix yet" },
-    { id = "RUSTSEC-2026-0099", reason = "transitive via async-nats 0.46, no upstream fix yet" },
-    { id = "RUSTSEC-2026-0104", reason = "transitive via async-nats 0.46, no upstream fix yet" },
 
     # instant: unmaintained, replaced by web-time. Transitive via notify → varpulis-cli.
     # No safe upgrade: notify-types 1.0 still depends on instant.
@@ -49,6 +34,24 @@ ignore = [
     # (>=0.18.2) is only pulled by aws-sdk-s3 >=1.144, whose rust-version is
     # 1.94.1 — above the workspace MSRV (1.93). Revisit when the MSRV moves.
     { id = "RUSTSEC-2026-0253", reason = "transitive via aws-sdk-s3 1.128; keys have no custom Drop; fix needs MSRV >= 1.94" },
+
+    # crypto-bigint 0.4 and 0.5: timing variability in operations meant to be
+    # constant-time. Fixed only in >=0.7.6, with no backport. Transitive via
+    # aws-sigv4 1.4 (`sigv4a` feature); aws-sigv4 moves to 0.7 in 1.6.4, whose
+    # rust-version is 1.94.1, above the workspace MSRV (1.93). It comes only with
+    # the optional `s3-state` feature, which no shipped build enables, and only
+    # sign/v4a.rs runs it: the SDK signs with SigV4A for Multi-Region Access Point
+    # and Outposts ARNs, or if AWS_AUTH_SCHEME_PREFERENCE asks for it, not for a
+    # plain bucket name. Nothing in the workspace constructs S3StateStore.
+    # Revisit when the MSRV moves.
+    { id = "RUSTSEC-2026-0387", reason = "via aws-sigv4 sigv4a behind optional s3-state, SigV4A only; fix needs MSRV >= 1.94" },
+
+    # pin-utils: unmaintained (repository archived 2026-10-01), no patched
+    # release exists. Transitive via aws-smithy-types, -runtime and -http, which
+    # use only its `pin_mut!` macro, behind the optional `s3-state` feature. They
+    # drop it in 1.9, 1.16.1 and 0.64.2, whose rust-version is 1.94.1, above the
+    # workspace MSRV (1.93). Revisit when the MSRV moves.
+    { id = "RUSTSEC-2026-0441", reason = "pin_mut! macro only, behind optional s3-state; removal needs MSRV >= 1.94" },
 
     # rand: unsound with custom logger calling rand::rng() during reseed.
     # Requires ALL of: `log` + `thread_rng` features, custom logger,
