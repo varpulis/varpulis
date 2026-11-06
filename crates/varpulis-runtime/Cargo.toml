@@ -155,7 +155,7 @@ insta = { workspace = true }
 
 [target.'cfg(unix)'.dev-dependencies]
 pprof = { version = "0.14", features = ["flamegraph"] }
-async-nats = "0.46"
+async-nats = "0.52"
 rumqttc = { package = "rumqttc-v4-next", version = "0.28" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 tokio-postgres = { version = "0.7" }

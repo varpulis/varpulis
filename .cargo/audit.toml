@@ -19,31 +19,26 @@ ignore = [
     # bincode is embedded in the benchmark runner; no alternative available.
     "RUSTSEC-2025-0141",
 
-    # RUSTSEC-2025-0134: rustls-pemfile is unmaintained
-    # Still pulled by async-nats 0.46.x. No upstream fix yet.
-    "RUSTSEC-2025-0134",
-
-    # RUSTSEC-2026-0049: rustls-webpki CRL distributionPoint bypass
-    # Transitive via async-nats 0.46 which pins rustls-webpki 0.102.x.
-    # Fix requires >=0.103.10. No upstream fix for async-nats yet.
-    "RUSTSEC-2026-0049",
-
-    # rustls-webpki 0.102.x advisories from 2026-04. Same upstream pin as
-    # RUSTSEC-2026-0049 (async-nats 0.46 → rustls-webpki 0.102). Fix
-    # requires async-nats bumping to a release that pins >=0.103.10.
-    # We do not feed attacker-controlled certificates through async-nats
-    # in production, so the URI/wildcard name-constraint and CRL-parse
-    # paths are not on the live attack surface.
-    "RUSTSEC-2026-0098",
-    "RUSTSEC-2026-0099",
-    "RUSTSEC-2026-0104",
-
     # RUSTSEC-2026-0253: lru 0.16 `LruCache::pop()` not panic-safe if a key's
     # `Drop` panics. Transitive via aws-sdk-s3 1.128 (S3 Express identity
     # cache, keys without custom `Drop`). The patched lru (>=0.18.2) is only
     # pulled by aws-sdk-s3 >=1.144 (rust-version 1.94.1 > MSRV 1.93).
     # Mirrored from deny.toml.
     "RUSTSEC-2026-0253",
+
+    # RUSTSEC-2026-0387: crypto-bigint 0.4 and 0.5 timing variability, fixed
+    # only in >=0.7.6. Transitive via aws-sigv4 1.4 (`sigv4a`), behind the
+    # optional `s3-state` feature, and run only for SigV4A (Multi-Region Access
+    # Point and Outposts ARNs, or AWS_AUTH_SCHEME_PREFERENCE). aws-sigv4 >=1.6.4
+    # moves to 0.7 but has rust-version 1.94.1 > MSRV 1.93. Mirrored from
+    # deny.toml.
+    "RUSTSEC-2026-0387",
+
+    # RUSTSEC-2026-0441: pin-utils unmaintained, no patched release. Transitive
+    # via aws-smithy-types, -runtime and -http (`pin_mut!` macro only), behind
+    # the optional `s3-state` feature. Their releases without it have
+    # rust-version 1.94.1 > MSRV 1.93. Mirrored from deny.toml.
+    "RUSTSEC-2026-0441",
 
     # RUSTSEC-2026-0097: rand unsound with custom logger calling rand::rng()
     # during reseed. Preconditions (custom logger using rand::rng() with
