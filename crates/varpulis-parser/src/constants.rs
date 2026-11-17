@@ -139,6 +139,111 @@ fn stmt(node: Stmt, known: &HashMap<String, Expr>) -> Stmt {
                 partition_by: partition_by.map(|p| expr(p, known, &bound)),
             }
         }
+        // A function body reads the program's constants too; its parameters
+        // and its own `let`s shadow them.
+        Stmt::FnDecl {
+            name,
+            params,
+            ret,
+            body,
+        } => {
+            let mut bound: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
+            Stmt::FnDecl {
+                name,
+                params,
+                ret,
+                body: body_stmts(body, known, &mut bound),
+            }
+        }
+        other => other,
+    }
+}
+
+/// Substitute into the statements of a function body, in order: a name a
+/// statement binds is left alone from there on.
+fn body_stmts(
+    stmts: Vec<Spanned<Stmt>>,
+    known: &HashMap<String, Expr>,
+    bound: &mut HashSet<String>,
+) -> Vec<Spanned<Stmt>> {
+    stmts
+        .into_iter()
+        .map(|s| Spanned::new(body_stmt(s.node, known, bound), s.span))
+        .collect()
+}
+
+fn body_stmt(node: Stmt, known: &HashMap<String, Expr>, bound: &mut HashSet<String>) -> Stmt {
+    match node {
+        Stmt::Expr(e) => Stmt::Expr(expr(e, known, bound)),
+        Stmt::VarDecl {
+            mutable,
+            name,
+            ty,
+            value,
+        } => {
+            let value = expr(value, known, bound);
+            bound.insert(name.clone());
+            Stmt::VarDecl {
+                mutable,
+                name,
+                ty,
+                value,
+            }
+        }
+        Stmt::ConstDecl { name, ty, value } => {
+            let value = expr(value, known, bound);
+            bound.insert(name.clone());
+            Stmt::ConstDecl { name, ty, value }
+        }
+        Stmt::Assignment { name, value } => {
+            let value = expr(value, known, bound);
+            bound.insert(name.clone());
+            Stmt::Assignment { name, value }
+        }
+        Stmt::If {
+            cond,
+            then_branch,
+            elif_branches,
+            else_branch,
+        } => Stmt::If {
+            cond: expr(cond, known, bound),
+            then_branch: body_stmts(then_branch, known, &mut bound.clone()),
+            elif_branches: elif_branches
+                .into_iter()
+                .map(|(c, b)| {
+                    (
+                        expr(c, known, bound),
+                        body_stmts(b, known, &mut bound.clone()),
+                    )
+                })
+                .collect(),
+            else_branch: else_branch.map(|b| body_stmts(b, known, &mut bound.clone())),
+        },
+        Stmt::For { var, iter, body } => {
+            let iter = expr(iter, known, bound);
+            let mut inner = bound.clone();
+            inner.insert(var.clone());
+            Stmt::For {
+                var,
+                iter,
+                body: body_stmts(body, known, &mut inner),
+            }
+        }
+        Stmt::While { cond, body } => Stmt::While {
+            cond: expr(cond, known, bound),
+            body: body_stmts(body, known, &mut bound.clone()),
+        },
+        Stmt::Return(e) => Stmt::Return(e.map(|e| expr(e, known, bound))),
+        Stmt::Emit { event_type, fields } => Stmt::Emit {
+            event_type,
+            fields: fields
+                .into_iter()
+                .map(|arg| NamedArg {
+                    name: arg.name,
+                    value: expr(arg.value, known, bound),
+                })
+                .collect(),
+        },
         other => other,
     }
 }

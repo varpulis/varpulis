@@ -181,7 +181,7 @@ The key insight: for simple operations (filter, aggregate, join), Kafka Streams 
 | **Kleene closures** | **Native `A+`, `A*`** | Not supported | Not supported |
 | **Negation patterns** | **Native `NOT`** | Not supported | Not supported |
 | **Pattern forecasting** | **Built-in PST engine** | Not supported | Not supported |
-| **Trend aggregation** | **Built-in Hamlet engine** | Not supported | Not supported |
+| **Trend aggregation** | **Built-in (`.trend_aggregate()`)** | Not supported | Not supported |
 | Exactly-once | At-least-once | Exactly-once | Exactly-once |
 | State recovery | Checkpointing | Changelog topics + RocksDB | Changelog topics |
 | Connectors | Kafka, MQTT, NATS, PostgreSQL CDC | Kafka (native) | Kafka (native) |

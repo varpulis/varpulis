@@ -77,7 +77,6 @@ fn visit_op(op: &RuntimeOp, cfg: &mut SequenceMatchConfig) {
                 visit_expr(expr, cfg);
             }
         }
-        RuntimeOp::Pattern(config) => visit_expr(&config.matcher, cfg),
         RuntimeOp::Enrich(config) => visit_expr(&config.key_expr, cfg),
         RuntimeOp::Distinct(state) => {
             if let Some(expr) = &state.expr {

@@ -1,8 +1,8 @@
 //! Program compilation: stream registration, operator compilation, and join key extraction.
 //!
 //! This module contains the `impl Engine` methods that compile VPL stream declarations
-//! into runtime stream definitions, including SASE+ pattern compilation, Hamlet
-//! aggregator setup, and PST forecaster construction.
+//! into runtime stream definitions, including SASE+ pattern compilation, trend
+//! aggregation setup, and PST forecaster construction.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,12 +14,12 @@ use varpulis_core::ast::{Expr, StreamOp, StreamSource};
 
 use super::types::{
     AlertConfig, DistinctState, EmitConfig, EmitExprConfig, EmitSource, EnrichConfig,
-    FieldAggregateInfo, ForecastConfig, LimitState, LogConfig, MergeSource,
-    PartitionedAggregatorState, PartitionedSlidingCountWindowState, PartitionedWindowState,
-    PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig, SourceBinding,
-    StreamDefinition, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
+    ForecastConfig, LimitState, LogConfig, MergeSource, PartitionedAggregatorState,
+    PartitionedSlidingCountWindowState, PartitionedWindowState, PrintConfig, RuntimeOp,
+    RuntimeSource, SelectConfig, SourceBinding, StreamDefinition, TimerConfig, ToConfig,
+    WindowType,
 };
-use super::{compiler, pattern_analyzer, Engine};
+use super::{compiler, Engine};
 use crate::aggregation::Aggregator;
 use crate::join::JoinBuffer;
 use crate::sase::SaseEngine;
@@ -57,14 +57,20 @@ impl Engine {
         #[allow(unused_variables)]
         for (emit_idx, op) in ops.iter().enumerate() {
             match op {
+                // A context is a thread of the asynchronous runtime. A
+                // synchronous engine has none; the assignment used to be
+                // ignored.
+                StreamOp::Context(ctx_name) if self.sync_only => {
+                    return Err(super::error::EngineError::Compilation(format!(
+                        "stream '{name}' .context({ctx_name}): contexts need the \
+                         asynchronous runtime, which this engine does not have; a host \
+                         runs one program per thread"
+                    )));
+                }
                 #[cfg(feature = "async-runtime")]
                 StreamOp::Context(ctx_name) => {
                     self.context_map
                         .assign_stream(name.to_string(), ctx_name.clone());
-                }
-                #[cfg(not(feature = "async-runtime"))]
-                StreamOp::Context(_) => {
-                    // Context assignments require async-runtime
                 }
                 #[cfg(feature = "async-runtime")]
                 StreamOp::Emit {
@@ -123,7 +129,7 @@ impl Engine {
         }
 
         // Check if we have sequence operations and build SASE+ engine
-        let (runtime_ops, sase_engine, sequence_event_types, hamlet_aggregator, pst_forecaster) =
+        let (runtime_ops, sase_engine, sequence_event_types, pst_forecaster) =
             self.compile_ops_with_sequences(source, ops)?;
 
         // Mapping from event_type to source name (for join streams)
@@ -217,54 +223,34 @@ impl Engine {
                 RuntimeSource::EventType(first_type)
             }
             StreamSource::Join(clauses) => {
-                let sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
-                info!(
-                    "Registering join stream {} from sources: {:?}",
-                    name, sources
-                );
-                // For join sources, we register based on whether the source is a derived stream or an event type
-                // - Derived streams (with operations like aggregate, window, etc.) output events with stream name as event_type
-                // - Simple event streams need to receive the raw event type
-                for source in &sources {
-                    if let Some(stream_def) = self.streams.get(source) {
-                        // Source is a registered stream
-                        // Check if it has any transforming operations (aggregate, window, select, etc.)
-                        let has_operations = !stream_def.operations.is_empty();
-
-                        if has_operations {
-                            // Derived stream with operations - register for the stream name
-                            // because its output events have event_type = stream name
-                            info!(
-                                "Join source '{}' is a derived stream, registering for stream name",
-                                source
-                            );
-                            self.router.add_route(source, name);
-                            event_type_to_source.insert(source.clone(), source.clone());
-                        } else {
-                            // Simple passthrough stream - register for underlying event type
-                            let event_type = match &stream_def.source {
+                // Each clause reads a source (an event type or a stream) under
+                // a name of its own: `stream Orders = OrderEvent`. That name
+                // keys the join buffer, prefixes the correlated event's fields
+                // (`Orders.order_id`) and is what the `on` condition says. The
+                // buffer used to be keyed by the source instead, so the
+                // documented form, where the condition and the emit name the
+                // clause, found no key and correlated nothing.
+                let names: Vec<String> = clauses.iter().map(|c| c.name.clone()).collect();
+                info!("Registering join stream {} from {:?}", name, names);
+                for clause in clauses {
+                    // What arrives for the clause: a derived stream's output is
+                    // routed under the stream's name, a stream that only
+                    // filters is read at its event type, anything else is an
+                    // event type itself.
+                    let routed = match self.streams.get(&clause.source) {
+                        Some(stream_def) if stream_def.operations.is_empty() => {
+                            match &stream_def.source {
                                 RuntimeSource::EventType(et) => et.clone(),
                                 RuntimeSource::Stream(s) => s.clone(),
-                                _ => source.clone(),
-                            };
-                            info!(
-                                "Join source '{}' is a passthrough stream, registering for event type '{}'",
-                                source, event_type
-                            );
-                            self.router.add_route(&event_type, name);
-                            event_type_to_source.insert(event_type, source.clone());
+                                _ => clause.source.clone(),
+                            }
                         }
-                    } else {
-                        // Source stream not yet registered, assume it's an event type name
-                        info!(
-                            "Join source '{}' not found as stream, treating as event type",
-                            source
-                        );
-                        self.router.add_route(source, name);
-                        event_type_to_source.insert(source.clone(), source.clone());
-                    }
+                        _ => clause.source.clone(),
+                    };
+                    self.router.add_route(&routed, name);
+                    event_type_to_source.insert(routed, clause.name.clone());
                 }
-                RuntimeSource::Join(sources)
+                RuntimeSource::Join(names)
             }
             StreamSource::Merge(decls) => {
                 let merge_sources: Vec<MergeSource> = decls
@@ -289,6 +275,16 @@ impl Engine {
                 RuntimeSource::Merge(merge_sources)
             }
             StreamSource::Timer(decl) => {
+                // Nothing fires a timer in a synchronous engine: a host feeds
+                // it events, and time is theirs. The stream loaded and never
+                // emitted.
+                if self.sync_only {
+                    return Err(super::error::EngineError::Compilation(format!(
+                        "stream '{name}' reads timer(...), which needs a clock to fire it, \
+                         and this engine has none: feed it a periodic event from the host \
+                         instead"
+                    )));
+                }
                 // Extract interval from duration expression
                 let interval_ns = match &decl.interval {
                     varpulis_core::ast::Expr::Duration(ns) => *ns,
@@ -343,7 +339,22 @@ impl Engine {
 
         // Create JoinBuffer for Join sources
         let join_buffer = if let StreamSource::Join(clauses) = source {
-            let join_sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
+            // The join's window bounds the matching and is not run on the
+            // pairs, so an aggregate written here had nothing to flush on and
+            // emitted nothing. A second stream aggregates the joined stream
+            // under a window of its own.
+            if ops
+                .iter()
+                .any(|op| matches!(op, StreamOp::Aggregate(_) | StreamOp::TrendAggregate(_)))
+            {
+                return Err(super::error::EngineError::Compilation(format!(
+                    "stream '{name}': .aggregate() directly on join(...) emits nothing, since \
+                     the join's .window() bounds the matching and not an aggregation; read the \
+                     joined stream from a second stream with its own .partition_by(), .window() \
+                     and .aggregate()"
+                )));
+            }
+            let join_sources: Vec<String> = clauses.iter().map(|c| c.name.clone()).collect();
             let join_keys = self.extract_join_keys(clauses, ops);
             let window_duration = self.extract_window_duration(ops);
             let join_type = clauses.first().map(|c| c.join_type).unwrap_or_default();
@@ -413,8 +424,6 @@ impl Engine {
                 sase_engine,
                 join_buffer,
                 event_type_to_source,
-                hamlet_aggregator,
-                shared_hamlet_ref: None,
                 pst_forecaster,
                 last_raw_event: None,
                 #[cfg(feature = "async-runtime")]
@@ -438,7 +447,6 @@ impl Engine {
             Vec<RuntimeOp>,
             Option<SaseEngine>,
             Vec<String>,
-            Option<crate::hamlet::HamletAggregator>,
             Option<crate::pst::PatternMarkovChain>,
         ),
         super::error::EngineError,
@@ -481,9 +489,8 @@ impl Engine {
         let mut negation_clauses: Vec<varpulis_core::ast::FollowedByClause> = Vec::new();
         let mut global_within: Option<std::time::Duration> = None;
 
-        // For Hamlet trend aggregation
+        // For trend aggregation
         let mut trend_agg_items: Option<Vec<varpulis_core::ast::TrendAggItem>> = None;
-        let mut within_expr_for_hamlet: Option<varpulis_core::ast::Expr> = None;
 
         // For PST forecasting
         let mut forecast_spec: Option<varpulis_core::ast::ForecastSpec> = None;
@@ -633,7 +640,6 @@ impl Engine {
                         _ => 300_000_000_000u64, // 5 minutes default
                     };
                     global_within = Some(std::time::Duration::from_nanos(duration_ns));
-                    within_expr_for_hamlet = Some(expr.clone());
                     continue;
                 }
                 StreamOp::Not(clause) => {
@@ -666,6 +672,17 @@ impl Engine {
                     continue;
                 }
                 StreamOp::Enrich(spec) => {
+                    // The synchronous pipeline skipped the op in silence: the
+                    // events went on without the fields, and a `.where()` on
+                    // them never held.
+                    if self.sync_only {
+                        return Err(super::error::EngineError::Compilation(format!(
+                            ".enrich() looks values up in a provider the host supplies (here \
+                             the connector '{}'), and this engine has none: enrich the events \
+                             before they reach the engine, or look up what it emits",
+                            spec.connector_name
+                        )));
+                    }
                     // Resolve timeout (default 5s = 5_000_000_000 ns)
                     let timeout_ns = match &spec.timeout {
                         Some(varpulis_core::ast::Expr::Duration(ns)) => *ns,
@@ -763,6 +780,43 @@ impl Engine {
             // Handle non-sequence operations
             match op {
                 StreamOp::Window(args) => {
+                    // `policy:` was parsed and ignored. A late event is filed
+                    // by its own time when the stream declares a watermark.
+                    if args.policy.is_some() {
+                        return Err(super::error::EngineError::Compilation(
+                            ".window(policy: ...): the engine has no window policy; declare \
+                             .watermark(out_of_order: ...) on the stream for a late event to be \
+                             filed by its own time"
+                                .to_string(),
+                        ));
+                    }
+                    // A slide that is not of the window's kind used to fall
+                    // back to a minute (or to one event) in silence.
+                    match (&args.duration, &args.sliding) {
+                        (Expr::Duration(_), Some(Expr::Duration(ns))) if *ns == 0 => {
+                            return Err(super::error::EngineError::Compilation(
+                                ".window(sliding: 0): the slide must be positive".to_string(),
+                            ));
+                        }
+                        (Expr::Duration(_), Some(slide)) if !matches!(slide, Expr::Duration(_)) => {
+                            return Err(super::error::EngineError::Compilation(format!(
+                                ".window(sliding: ...): the slide of a time window is a duration \
+                                 such as sliding: 1m, not {slide:?}"
+                            )));
+                        }
+                        (Expr::Int(_), Some(Expr::Int(n))) if *n <= 0 => {
+                            return Err(super::error::EngineError::Compilation(format!(
+                                ".window(sliding: {n}): the slide must be positive"
+                            )));
+                        }
+                        (Expr::Int(_), Some(slide)) if !matches!(slide, Expr::Int(_)) => {
+                            return Err(super::error::EngineError::Compilation(format!(
+                                ".window(sliding: ...): the slide of a count window is a count \
+                                 such as sliding: 10, not {slide:?}"
+                            )));
+                        }
+                        _ => {}
+                    }
                     // Check for session window first
                     if let Some(ref gap_expr) = args.session_gap {
                         let gap_ns = match gap_expr {
@@ -1057,9 +1111,17 @@ impl Engine {
                 StreamOp::Aggregate(items) => {
                     let mut aggregator = Aggregator::new();
                     for item in items {
-                        if let Some((func, field)) = compiler::compile_agg_expr(&item.expr) {
-                            aggregator = aggregator.add(item.alias.clone(), func, field);
-                        }
+                        // An aggregate the engine cannot compute is refused.
+                        // It used to be skipped, and the result simply had no
+                        // such field.
+                        let (func, field) =
+                            compiler::compile_agg_expr(&item.expr).map_err(|e| {
+                                super::error::EngineError::Compilation(format!(
+                                    ".aggregate({}: ...): {e}",
+                                    item.alias
+                                ))
+                            })?;
+                        aggregator = aggregator.add(item.alias.clone(), func, field);
                     }
 
                     // Phase-2 fusion: if the previously pushed op is a
@@ -1081,7 +1143,8 @@ impl Engine {
                         // bins on max-seen event time and would ignore
                         // out_of_order/allowed_lateness entirely.
                         if let Some(ref key) = partition_key {
-                            if !self.checkpoint_planned
+                            if self.columnar_fusion
+                                && !self.checkpoint_planned
                                 && !watermark_driven
                                 && aggregator.supported_for_columnar()
                             {
@@ -1124,7 +1187,8 @@ impl Engine {
                         // classic Window+Aggregate path. Watermark streams
                         // (C2b) never fuse either: the fused op is event-
                         // arrival driven.
-                        if !self.checkpoint_planned
+                        if self.columnar_fusion
+                            && !self.checkpoint_planned
                             && !watermark_driven
                             && partition_key.is_none()
                             && aggregator.supported_for_columnar()
@@ -1285,6 +1349,16 @@ impl Engine {
                     }));
                 }
                 StreamOp::Alert(args) => {
+                    // Without an async runtime there is no HTTP client: the
+                    // webhook was accepted and never posted.
+                    if self.sync_only && args.iter().any(|arg| arg.name == "webhook") {
+                        return Err(super::error::EngineError::Compilation(
+                            ".alert(webhook: ...) posts over HTTP, which this engine does not \
+                             do: keep .alert(message: ...) for the log, and route the stream \
+                             with .to() for the host to deliver"
+                                .into(),
+                        ));
+                    }
                     let mut webhook_url = None;
                     let mut message_template = None;
 
@@ -1314,10 +1388,17 @@ impl Engine {
                     runtime_ops.push(RuntimeOp::WhereExpr(expr.clone()));
                 }
                 StreamOp::Pattern(def) => {
-                    runtime_ops.push(RuntimeOp::Pattern(PatternConfig {
-                        name: def.name.clone(),
-                        matcher: def.matcher.clone(),
-                    }));
+                    // The op evaluated nothing: a lambda over a window's
+                    // events let every batch through, and `A -> B` or
+                    // `A and B` let every event of the source through
+                    // without reading the other type.
+                    return Err(super::error::EngineError::Compilation(format!(
+                        ".pattern({}: ...) is not implemented: it let every event through. \
+                         For a sequence write `A as a -> B as b` with `.within(d)`; for a \
+                         condition over a window's events, `.window(d).aggregate(n: \
+                         count()).where(n > 3)`; to filter events, `.where(condition)`",
+                        def.name
+                    )));
                 }
                 StreamOp::Having(expr) => {
                     // Having filter - applied after aggregation
@@ -1492,13 +1573,19 @@ impl Engine {
             }
         }
 
-        // Check if we're in trend aggregation mode (Hamlet) or detection mode (SASE)
+        // Trend aggregation counts the pattern's trends; detection runs it.
         if let Some(ref agg_items) = trend_agg_items {
-            return self.compile_hamlet_mode(
+            return self.compile_trend_mode(
                 source,
                 agg_items,
                 &followed_by_clauses,
-                within_expr_for_hamlet.as_ref(),
+                &negation_clauses,
+                global_within,
+                partition_key.clone(),
+                selection_mode_override,
+                emission_mode_override,
+                forecast_spec.is_some(),
+                &resolve_event_type,
                 runtime_ops,
                 sequence_event_types,
             );
@@ -1538,23 +1625,28 @@ impl Engine {
             runtime_ops,
             sase_engine,
             sequence_event_types,
-            None,
             pst_forecaster,
         ))
     }
 
-    /// Compile Hamlet trend aggregation mode.
-    ///
-    /// Builds a `HamletAggregator` and `TrendAggregateConfig` from the parsed
-    /// sequence pattern and `.trend_aggregate()` items. Returns the full 5-tuple
-    /// so the caller can `return` it directly.
-    #[allow(clippy::type_complexity)]
-    fn compile_hamlet_mode(
+    /// Compile `.trend_aggregate()`: the pattern's steps, the aggregates and
+    /// the window go into one [`super::trend::TrendAggregateConfig`] op at
+    /// the head of the pipeline, which counts the trends of each window; no
+    /// SASE engine runs. What the counting cannot honour is refused here,
+    /// naming the form it honours.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn compile_trend_mode(
         &self,
         source: &StreamSource,
         agg_items: &[varpulis_core::ast::TrendAggItem],
         followed_by_clauses: &[varpulis_core::ast::FollowedByClause],
-        within_expr: Option<&varpulis_core::ast::Expr>,
+        negation_clauses: &[varpulis_core::ast::FollowedByClause],
+        within: Option<std::time::Duration>,
+        partition_key: Option<String>,
+        selection_mode: Option<varpulis_core::ast::SelectionMode>,
+        emission_mode: Option<varpulis_core::ast::EmissionMode>,
+        has_forecast: bool,
+        resolve_event_type: &dyn Fn(&str) -> String,
         mut runtime_ops: Vec<RuntimeOp>,
         sequence_event_types: Vec<String>,
     ) -> Result<
@@ -1562,247 +1654,286 @@ impl Engine {
             Vec<RuntimeOp>,
             Option<SaseEngine>,
             Vec<String>,
-            Option<crate::hamlet::HamletAggregator>,
             Option<crate::pst::PatternMarkovChain>,
         ),
         super::error::EngineError,
     > {
-        let event_types = pattern_analyzer::extract_event_types(source, followed_by_clauses);
-        let kleene_info = pattern_analyzer::extract_kleene_info(source, followed_by_clauses);
-        let window_ms = pattern_analyzer::extract_within_ms(within_expr);
+        use varpulis_core::ast::{EmissionMode, KleeneOp, SasePatternExpr, SelectionMode};
 
-        // Build a type_indices map for aggregate function resolution
-        let mut type_indices_map = std::collections::HashMap::new();
+        use super::error::EngineError::Compilation;
+        use super::trend::{aliases_read, TrendAggregate, TrendAggregateConfig, TrendStep};
 
-        // Build MergedTemplate via TemplateBuilder
-        use crate::hamlet::template::TemplateBuilder;
-        let mut builder = TemplateBuilder::new();
-        let query_id: crate::greta::QueryId = 0;
-
-        // Register event types as a sequence
-        let type_strs: Vec<&str> = event_types.iter().map(|s| s.as_str()).collect();
-        builder.add_sequence(query_id, &type_strs);
-
-        // Build type_indices from the template after adding sequence
-        // (TemplateBuilder registers types internally)
-        let template_preview = builder.build();
-        for et in &event_types {
-            if let Some(idx) = template_preview.type_index(et) {
-                type_indices_map.insert(et.clone(), idx);
-            }
+        if has_forecast {
+            return Err(Compilation(
+                ".forecast() and .trend_aggregate() do not combine: a forecast reads the \
+                 pattern's runs, and aggregation keeps none"
+                    .into(),
+            ));
+        }
+        if !negation_clauses.is_empty() {
+            return Err(Compilation(
+                ".trend_aggregate() cannot count a pattern with a NOT step: an absence is \
+                 decided by a deadline, not by the events; detect it in detection mode"
+                    .into(),
+            ));
+        }
+        if let Some(mode @ (SelectionMode::Strict | SelectionMode::Stnm)) = selection_mode {
+            return Err(Compilation(format!(
+                "{} does not apply to .trend_aggregate(): it counts every trend under \
+                 skip-till-any-match, the default; drop the operator",
+                if mode == SelectionMode::Strict {
+                    ".strict()"
+                } else {
+                    ".stnm()"
+                }
+            )));
+        }
+        if let Some(mode @ (EmissionMode::Each | EmissionMode::Longest)) = emission_mode {
+            return Err(Compilation(format!(
+                "{} does not apply to .trend_aggregate(): it aggregates over every trend, \
+                 which is what .subsets() enumerates; drop the operator",
+                if mode == EmissionMode::Each {
+                    ".each()"
+                } else {
+                    ".longest()"
+                }
+            )));
         }
 
-        // Also map aliases to type indices
-        // Source alias
-        match source {
-            StreamSource::IdentWithAlias { name, alias } => {
-                if let Some(idx) = type_indices_map.get(name) {
-                    type_indices_map.insert(alias.clone(), *idx);
-                }
-            }
-            StreamSource::IdentWithFilterAndAlias {
-                name,
-                alias: Some(alias),
-                ..
-            } => {
-                if let Some(idx) = type_indices_map.get(name) {
-                    type_indices_map.insert(alias.clone(), *idx);
-                }
-            }
-            StreamSource::AllWithAlias {
-                name,
-                alias: Some(alias),
-            } => {
-                if let Some(idx) = type_indices_map.get(name) {
-                    type_indices_map.insert(alias.clone(), *idx);
-                }
-            }
-            _ => {}
-        }
-        for clause in followed_by_clauses {
-            if let Some(ref alias) = clause.alias {
-                if let Some(idx) = type_indices_map.get(&clause.event_type) {
-                    type_indices_map.insert(alias.clone(), *idx);
-                }
-            }
-        }
-
-        // Rebuild template with Kleene info
-        let mut builder = TemplateBuilder::new();
-        builder.add_sequence(query_id, &type_strs);
-
-        for ki in &kleene_info {
-            // The Kleene self-loop must be at the state AFTER consuming the
-            // Kleene event type (the target of the forward transition), not
-            // the source state. For a pattern A -> B+ -> C with types
-            // [A, B, C], states are [s0, s1, s2, s3]:
-            //   (s0,A)->s1, (s1,B)->s2, (s2,C)->s3
-            // The B+ self-loop goes at s2: (s2,B)->s2
-            let type_idx_in_seq = type_strs
-                .iter()
-                .position(|&t| t == ki.event_type)
-                .unwrap_or(0);
-            let state = (type_idx_in_seq + 1) as u16;
-            builder.add_kleene(query_id, &ki.event_type, state);
-        }
-
-        let template = builder.build();
-
-        // Create Hamlet aggregator
-        let config = crate::hamlet::HamletConfig {
-            window_ms,
-            incremental: true,
-            ..Default::default()
+        // The steps: the start from the source and the rest from the `->`
+        // clauses, or all of them from a named pattern.
+        let mut steps: Vec<TrendStep> = Vec::new();
+        let mut within = within;
+        let mut partition_key = partition_key;
+        let single = |event_type: &str, alias: Option<&String>, filter: Option<&Expr>| TrendStep {
+            event_type: resolve_event_type(event_type),
+            alias: alias.cloned(),
+            filter: filter.cloned(),
+            kleene: false,
+            monotonic: None,
         };
-        let mut aggregator = crate::hamlet::HamletAggregator::new(config, template);
-
-        // Convert trend_agg_items to GretaAggregate list
-        let fields: Vec<(String, crate::greta::GretaAggregate)> = agg_items
-            .iter()
-            .map(|item| {
-                let agg = pattern_analyzer::trend_item_to_greta(item, &type_indices_map);
-                (item.alias.clone(), agg)
-            })
-            .collect();
-
-        // Use the first aggregate for the query registration
-        let primary_aggregate = fields
-            .first()
-            .map_or(crate::greta::GretaAggregate::CountTrends, |(_, agg)| *agg);
-
-        // Build Kleene types
-        let kleene_types: smallvec::SmallVec<[u16; 4]> = kleene_info
-            .iter()
-            .filter_map(|ki| type_indices_map.get(&ki.event_type).copied())
-            .collect();
-
-        // Build event type indices
-        let event_type_indices: smallvec::SmallVec<[u16; 4]> = event_types
-            .iter()
-            .filter_map(|et| type_indices_map.get(et).copied())
-            .collect();
-
-        aggregator.register_query(crate::hamlet::QueryRegistration {
-            id: query_id,
-            event_types: event_type_indices,
-            kleene_types,
-            aggregate: primary_aggregate,
-        });
-
-        // Build field aggregate info for runtime computation
-        // Resolves alias.field references from sum_trends(alias.field) etc.
-        let mut alias_to_event_type: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
         match source {
             StreamSource::IdentWithAlias { name, alias } => {
-                alias_to_event_type.insert(alias.clone(), name.clone());
+                steps.push(single(name, Some(alias), None));
             }
             StreamSource::IdentWithFilterAndAlias {
                 name,
-                alias: Some(alias),
-                ..
-            } => {
-                alias_to_event_type.insert(alias.clone(), name.clone());
+                filter,
+                alias,
+            } => steps.push(single(name, alias.as_ref(), Some(filter))),
+            StreamSource::Ident(name) => match self.patterns.get(name) {
+                Some(pattern) => {
+                    let SasePatternExpr::Seq(items) = &pattern.expr;
+                    for (i, item) in items.iter().enumerate() {
+                        let kleene = match item.kleene {
+                            None => false,
+                            Some(KleeneOp::Plus) => true,
+                            Some(KleeneOp::Star | KleeneOp::Optional) => {
+                                return Err(Compilation(format!(
+                                    "pattern '{name}': a '*' or '?' closure is not counted by \
+                                     .trend_aggregate(); write 'all {}' (one or more)",
+                                    item.event_type
+                                )));
+                            }
+                        };
+                        if i == 0 && kleene {
+                            return Err(Compilation(format!(
+                                "pattern '{name}': .trend_aggregate() needs the pattern to \
+                                 start with a single event, not a closure: a trend is \
+                                 counted from each start"
+                            )));
+                        }
+                        steps.push(TrendStep {
+                            event_type: resolve_event_type(&item.event_type),
+                            alias: item.alias.clone(),
+                            filter: item.filter.clone(),
+                            kleene,
+                            monotonic: item.monotonic.clone(),
+                        });
+                    }
+                    if within.is_none() {
+                        within = match pattern.within {
+                            Some(Expr::Duration(ns)) => Some(std::time::Duration::from_nanos(ns)),
+                            _ => None,
+                        };
+                    }
+                    if partition_key.is_none() {
+                        partition_key = match &pattern.partition_by {
+                            Some(Expr::Ident(field)) => Some(field.clone()),
+                            Some(Expr::Member { member, .. }) => Some(member.clone()),
+                            _ => None,
+                        };
+                    }
+                }
+                None => steps.push(single(name, None, None)),
+            },
+            StreamSource::AllWithAlias { name, .. } => {
+                return Err(Compilation(format!(
+                    ".trend_aggregate() needs the pattern to start with a single event \
+                     ('{name} as alias'), not a closure: a trend is counted from each start"
+                )));
             }
-            StreamSource::AllWithAlias {
-                name,
-                alias: Some(alias),
-            } => {
-                alias_to_event_type.insert(alias.clone(), name.clone());
+            StreamSource::FromConnector { .. }
+            | StreamSource::Merge(_)
+            | StreamSource::Join(_)
+            | StreamSource::Sequence(_)
+            | StreamSource::Timer(_) => {
+                return Err(Compilation(
+                    ".trend_aggregate() reads a sequence pattern ('EventType as alias -> all \
+                     T ... as t'); this stream's source is not one"
+                        .into(),
+                ));
             }
-            _ => {}
         }
         for clause in followed_by_clauses {
-            if let Some(ref alias) = clause.alias {
-                alias_to_event_type.insert(alias.clone(), clause.event_type.clone());
-            }
-        }
-
-        // A field aggregate that cannot be resolved to `alias.field` used to be
-        // dropped here by `filter_map`, so `sum_trends(price)` produced no
-        // output field at all — and `.emit(sum: total)` then fabricated the
-        // literal string "total" for it. Refuse instead: the documented
-        // signature is `sum_trends(alias.field)`, and every shipped example
-        // writes it that way.
-        let mut field_aggregates: Vec<FieldAggregateInfo> = Vec::new();
-        for item in agg_items {
-            let func = match item.func.as_str() {
-                "sum_trends" => "sum",
-                "avg_trends" => "avg",
-                "min_trends" => "min",
-                "max_trends" => "max",
-                _ => continue,
-            };
-            let Some(Expr::Member { expr, member }) = &item.arg else {
-                return Err(super::error::EngineError::Compilation(format!(
-                    "{}() takes an alias-qualified field, e.g. {}(steps.duration); \
-                     got {:?}. The alias must name a step of the pattern.",
-                    item.func, item.func, item.arg
-                )));
-            };
-            let Expr::Ident(alias) = expr.as_ref() else {
-                return Err(super::error::EngineError::Compilation(format!(
-                    "{}() takes an alias-qualified field, e.g. {}(steps.duration); \
-                     the part before '.{member}' must be a step alias",
-                    item.func, item.func
-                )));
-            };
-            let event_type = alias_to_event_type
-                .get(alias)
-                .cloned()
-                .unwrap_or_else(|| alias.clone());
-            field_aggregates.push(FieldAggregateInfo {
-                output_alias: item.alias.clone(),
-                func: func.to_string(),
-                event_type,
-                field_name: member.clone(),
+            steps.push(TrendStep {
+                event_type: resolve_event_type(&clause.event_type),
+                alias: clause.alias.clone(),
+                filter: clause.filter.clone(),
+                kleene: clause.match_all,
+                monotonic: clause.monotonic.clone(),
             });
         }
+        let Some(within) = within else {
+            return Err(Compilation(
+                ".trend_aggregate() needs .within(d): the trends are counted per window of \
+                 d, which opens with its first event and closes d later"
+                    .into(),
+            ));
+        };
+        let within = chrono::Duration::from_std(within)
+            .map_err(|e| Compilation(format!(".within() is out of range: {e}")))?;
+        if steps.len() < 2 || !steps[1..].iter().any(|s| s.kleene) {
+            return Err(Compilation(
+                ".trend_aggregate() needs a closure in the pattern ('-> all T ... as t'): \
+                 without one every start gives at most one trend, which detection mode \
+                 emits as it is"
+                    .into(),
+            ));
+        }
 
-        // Build reverse map: type index → event type name
-        let max_idx = type_indices_map.values().copied().max().unwrap_or(0) as usize;
-        let mut type_index_to_name = vec![String::new(); max_idx + 1];
-        // First pass: set aliases as fallback
-        for (name, &idx) in &type_indices_map {
-            let i = idx as usize;
-            if i < type_index_to_name.len() && type_index_to_name[i].is_empty() {
-                type_index_to_name[i] = name.clone();
+        // A condition reads an alias only where the counting binds it: the
+        // start anywhere; a closure its own previous event; a single step
+        // the step before it.
+        let aliases: Vec<String> = steps.iter().filter_map(|s| s.alias.clone()).collect();
+        let start_alias = steps[0].alias.clone();
+        if let Some(filter) = &steps[0].filter {
+            let mut read = Vec::new();
+            aliases_read(filter, &mut read);
+            if let Some(alias) = read.iter().find(|r| aliases.contains(r)) {
+                return Err(Compilation(format!(
+                    "the start's condition reads '{alias}', which is bound later: a start \
+                     condition reads its own event alone"
+                )));
             }
         }
-        // Second pass: overwrite with real event type names
-        for (name, &idx) in &type_indices_map {
-            let i = idx as usize;
-            if i < type_index_to_name.len() && event_types.contains(name) {
-                type_index_to_name[i] = name.clone();
+        for i in 1..steps.len() {
+            let Some(filter) = &steps[i].filter else {
+                continue;
+            };
+            let mut read = Vec::new();
+            aliases_read(filter, &mut read);
+            for alias in read.iter().filter(|r| aliases.contains(r)) {
+                let is_start = start_alias.as_deref() == Some(alias.as_str());
+                let is_own = steps[i].alias.as_deref() == Some(alias.as_str());
+                let is_previous = steps[i - 1].alias.as_deref() == Some(alias.as_str());
+                let bound = if steps[i].kleene {
+                    is_start || is_own
+                } else {
+                    is_start || is_previous
+                };
+                if !bound {
+                    let step = steps[i]
+                        .alias
+                        .clone()
+                        .unwrap_or_else(|| steps[i].event_type.clone());
+                    return Err(Compilation(format!(
+                        "step '{step}' reads '{alias}', which .trend_aggregate() cannot bind \
+                         there: {}",
+                        if steps[i].kleene {
+                            "a closure's condition reads the start and the closure's own \
+                             previous event (its alias), nothing else"
+                        } else {
+                            "a single step's condition reads the start and the step before \
+                             it, nothing else"
+                        }
+                    )));
+                }
             }
         }
 
-        // Insert TrendAggregate op at the beginning (replaces Sequence)
-        runtime_ops.insert(
-            0,
-            RuntimeOp::TrendAggregate(TrendAggregateConfig {
-                fields,
-                query_id,
-                field_aggregates,
-                type_index_to_name,
-                accumulated: Vec::new(),
-                window_ms,
-            }),
-        );
+        let step_alias = |alias: &str| -> Result<String, super::error::EngineError> {
+            if aliases.iter().any(|a| a == alias) {
+                Ok(alias.to_string())
+            } else {
+                Err(Compilation(format!(
+                    "'{alias}' is not a step of the pattern (the steps are {}): a trend \
+                     aggregate reads a step by its alias",
+                    aliases.join(", ")
+                )))
+            }
+        };
+        let mut aggregates: Vec<(Arc<str>, TrendAggregate)> = Vec::with_capacity(agg_items.len());
+        for item in agg_items {
+            let aggregate = match item.func.as_str() {
+                "count_trends" => {
+                    if item.arg.is_some() {
+                        return Err(Compilation(
+                            "count_trends() takes no argument: it is the number of trends".into(),
+                        ));
+                    }
+                    TrendAggregate::CountTrends
+                }
+                "count_events" => match &item.arg {
+                    None => TrendAggregate::CountEvents(None),
+                    Some(Expr::Ident(alias)) => {
+                        TrendAggregate::CountEvents(Some(step_alias(alias)?))
+                    }
+                    Some(other) => {
+                        return Err(Compilation(format!(
+                            "count_events() takes a step's alias (count_events(steps)) or \
+                             nothing, for every step; got {other:?}"
+                        )));
+                    }
+                },
+                func @ ("sum_trends" | "avg_trends" | "min_trends" | "max_trends") => {
+                    let Some(Expr::Member { expr, member }) = &item.arg else {
+                        return Err(Compilation(format!(
+                            "{func}() takes an alias-qualified field, e.g. {func}(steps.duration); \
+                             got {:?}. The alias must name a step of the pattern.",
+                            item.arg
+                        )));
+                    };
+                    let Expr::Ident(alias) = expr.as_ref() else {
+                        return Err(Compilation(format!(
+                            "{func}() takes an alias-qualified field, e.g. {func}(steps.duration); \
+                             the part before '.{member}' must be a step alias"
+                        )));
+                    };
+                    let alias = step_alias(alias)?;
+                    let field = member.clone();
+                    match func {
+                        "sum_trends" => TrendAggregate::Sum { alias, field },
+                        "avg_trends" => TrendAggregate::Avg { alias, field },
+                        "min_trends" => TrendAggregate::Min { alias, field },
+                        _ => TrendAggregate::Max { alias, field },
+                    }
+                }
+                other => {
+                    return Err(Compilation(format!(
+                        "'{other}' is not a trend aggregate; .trend_aggregate() computes \
+                         count_trends(), count_events(alias), sum_trends(alias.field), \
+                         avg_trends(alias.field), min_trends(alias.field) and \
+                         max_trends(alias.field)"
+                    )));
+                }
+            };
+            aggregates.push((Arc::from(item.alias.as_str()), aggregate));
+        }
 
-        info!(
-            "Created Hamlet aggregator for trend aggregation ({} event types, {} Kleene patterns)",
-            event_types.len(),
-            kleene_info.len()
-        );
-
-        Ok((
-            runtime_ops,
-            None,
-            sequence_event_types,
-            Some(aggregator),
-            None,
-        ))
+        let config = TrendAggregateConfig::new(steps, aggregates, within, partition_key);
+        runtime_ops.insert(0, RuntimeOp::TrendAggregate(config));
+        Ok((runtime_ops, None, sequence_event_types, None))
     }
 
     /// Build the SASE+ detection engine from sequence patterns or named pattern references.
@@ -2133,62 +2264,52 @@ impl Engine {
         Ok(Some(pmc))
     }
 
-    /// Extract join keys from join clauses and operations
-    /// Returns a map of source_name -> join_key_field
+    /// The join key of each clause, by the clause's name, from every
+    /// `A.k == B.k` the clauses' `on` conditions and a stream-level `.on()`
+    /// state. Both sides of a condition name a key: `stream Payments =
+    /// PaymentEvent on Orders.order_id == Payments.order_id` keys `Orders` as
+    /// well as `Payments`. A side written with the clause's source, or the
+    /// event type behind a stream it reads, is the same clause.
     pub(super) fn extract_join_keys(
         &self,
         clauses: &[varpulis_core::ast::JoinClause],
         ops: &[StreamOp],
     ) -> FxHashMap<String, String> {
         let mut join_keys: FxHashMap<String, String> = FxHashMap::default();
-
-        // First check clauses for on conditions
         for clause in clauses {
             if let Some(ref on_expr) = clause.on {
-                if let Some((source, field)) = self.extract_field_from_expr(on_expr, &clause.source)
-                {
-                    join_keys.insert(source, field);
-                }
+                self.extract_join_keys_from_expr(on_expr, &mut join_keys);
             }
         }
-
-        // Then check operations for StreamOp::On
         for op in ops {
             if let StreamOp::On(expr) = op {
-                // Parse expressions like: EMA12.symbol == EMA26.symbol
-                // or: A.key == B.key and B.key == C.key
                 self.extract_join_keys_from_expr(expr, &mut join_keys);
             }
         }
 
-        // Normalize join key source names to match clause source names.
-        // The .on() expression may use event type names (e.g., "Transaction") while
-        // the clause sources use stream names (e.g., "Transactions").
-        let clause_sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
         let mut normalized_keys: FxHashMap<String, String> = FxHashMap::default();
-        for (src, field) in &join_keys {
-            if clause_sources.contains(src) {
-                // Already matches a clause source
-                normalized_keys.insert(src.clone(), field.clone());
-            } else {
-                // Try to find a clause source whose underlying event type matches
-                let mut found = false;
-                for clause in clauses {
-                    if let Some(stream_def) = self.streams.get(&clause.source) {
-                        let matches = match &stream_def.source {
-                            RuntimeSource::EventType(et) => et == src,
-                            RuntimeSource::Stream(s) => s == src,
-                            _ => false,
-                        };
-                        if matches {
-                            normalized_keys.insert(clause.source.clone(), field.clone());
-                            found = true;
-                            break;
-                        }
-                    }
+        for (src, field) in join_keys {
+            let clause = clauses
+                .iter()
+                .find(|c| c.name == src)
+                .or_else(|| clauses.iter().find(|c| c.source == src))
+                .or_else(|| {
+                    clauses.iter().find(|c| {
+                        self.streams
+                            .get(&c.source)
+                            .is_some_and(|def| match &def.source {
+                                RuntimeSource::EventType(et) => *et == src,
+                                RuntimeSource::Stream(s) => *s == src,
+                                _ => false,
+                            })
+                    })
+                });
+            match clause {
+                Some(c) => {
+                    normalized_keys.insert(c.name.clone(), field);
                 }
-                if !found {
-                    normalized_keys.insert(src.clone(), field.clone());
+                None => {
+                    normalized_keys.insert(src, field);
                 }
             }
         }
@@ -2196,7 +2317,7 @@ impl Engine {
         // If no join keys found, use "symbol" as default (common join key)
         if normalized_keys.is_empty() {
             for clause in clauses {
-                normalized_keys.insert(clause.source.clone(), "symbol".to_string());
+                normalized_keys.insert(clause.name.clone(), "symbol".to_string());
             }
         }
 
@@ -2252,36 +2373,6 @@ impl Engine {
                 return Some((String::new(), name.clone()));
             }
             _ => {}
-        }
-        None
-    }
-
-    /// Extract a field from an expression for a specific source
-    fn extract_field_from_expr(
-        &self,
-        expr: &varpulis_core::ast::Expr,
-        source: &str,
-    ) -> Option<(String, String)> {
-        use varpulis_core::ast::{BinOp, Expr};
-
-        if let Expr::Binary {
-            op: BinOp::Eq,
-            left,
-            right,
-        } = expr
-        {
-            // Check left side
-            if let Some((src, field)) = self.extract_source_field(left) {
-                if src == source || src.is_empty() {
-                    return Some((source.to_string(), field));
-                }
-            }
-            // Check right side
-            if let Some((src, field)) = self.extract_source_field(right) {
-                if src == source || src.is_empty() {
-                    return Some((source.to_string(), field));
-                }
-            }
         }
         None
     }
@@ -2733,8 +2824,9 @@ mod arrow_fusion_tests {
 
     fn compile(source: &str) -> Vec<&'static str> {
         // Returns the runtime-op summary names for the first stream in
-        // the program, in declaration order.
-        let mut engine = Engine::builder().build();
+        // the program, in declaration order, for an engine that asked for
+        // columnar fusion.
+        let mut engine = Engine::builder().columnar_fusion(true).build();
         let program =
             varpulis_parser::parse(source).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
         engine
@@ -2790,7 +2882,10 @@ mod arrow_fusion_tests {
     /// Like [`compile`], but declares checkpointing up front via
     /// `plan_checkpointing(true)`.
     fn compile_planned(source: &str) -> Vec<&'static str> {
-        let mut engine = Engine::builder().plan_checkpointing(true).build();
+        let mut engine = Engine::builder()
+            .columnar_fusion(true)
+            .plan_checkpointing(true)
+            .build();
         let program =
             varpulis_parser::parse(source).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
         engine
@@ -3312,7 +3407,7 @@ mod c2b_watermark_compile_tests {
                 .aggregate(s: sum(temperature))
                 .emit(device_id: device_id, s: s)
         ";
-        let mut engine = Engine::builder().build();
+        let mut engine = Engine::builder().columnar_fusion(true).build();
         let program = varpulis_parser::parse(source).expect("parse");
         engine.load(&program).expect("load");
         let stream_names = engine.stream_names();

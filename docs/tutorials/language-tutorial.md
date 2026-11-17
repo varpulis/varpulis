@@ -598,19 +598,31 @@ stream FullOrderDetails = join(
 
 ### Join with Aggregation
 
+A join's `.window()` bounds the matching: how long an order waits for its
+customer. To aggregate the joined pairs, read the join from a second stream
+with a window of its own. `.aggregate()` written directly on `join(...)` is
+refused, as it had nothing to flush on and emitted nothing.
+
 ```vpl
-stream CustomerStats = join(
+stream CustomerOrders = join(
     stream Orders = OrderEvent,
     stream Customers = CustomerEvent.on(Orders.customer_id == Customers.id)
 )
 .window(1h)
-.aggregate(
-    customer: Customers.name,
-    order_count: count(),
-    total_spent: sum(Orders.amount),
-    avg_order: avg(Orders.amount)
-)
+.select(customer: Customers.name, amount: Orders.amount)
+
+stream CustomerStats = CustomerOrders
+    .partition_by(customer)
+    .window(1h)
+    .aggregate(
+        order_count: count(),
+        total_spent: sum(amount),
+        avg_order: avg(amount)
+    )
 ```
+
+Each result carries the customer in `_partition`, with the count, total and
+average of that customer's orders in the hour.
 
 ### Merge Streams
 
@@ -635,13 +647,14 @@ stream AllSensors = merge(
 
 Contexts let you run streams on dedicated OS threads for true multi-core parallelism.
 
-> **Contexts have no effect in the engine as it ships.** `context`
-> declarations and `.context(...)` parse and pass `varpulis check`, but the
-> threads and channels behind them belong to the engine's asynchronous runtime,
-> which neither `varpulis simulate` nor a Vejas detect unit includes (see
-> [ADR-008](../adr/008-engine-only-platform-retired.md)). A program with
-> contexts runs on one thread, exactly like the same program without them. In
-> Vejas, work runs in parallel as separate detect units.
+> **The engine as it ships refuses contexts.** The threads and channels
+> behind a `context` declaration and `.context(...)` belong to the engine's
+> asynchronous runtime, which neither `varpulis simulate` nor a Vejas detect
+> unit includes (see [ADR-008](../adr/008-engine-only-platform-retired.md)).
+> A program with contexts is refused when it loads, rather than run on one
+> thread as if they were not there, which is what it used to do. In Vejas,
+> work runs in parallel as separate detect units. The programs below are the
+> retired runtime's.
 
 ### Declaring Contexts
 

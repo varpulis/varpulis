@@ -474,19 +474,61 @@ impl EventFileParser {
         let json: serde_json::Value =
             serde_json::from_str(line).map_err(|e| format!("Invalid JSON: {e}"))?;
 
-        // 1. Varpulis native format: {"event_type": "X", "data": {...}}
+        // 1. A line with an `event_type`, read as a live source reads a payload
+        //    (`varpulis_core::decode`): `@timestamp` (RFC 3339), else `ts`,
+        //    else `timestamp` (epoch milliseconds) is the event's time; the
+        //    type is not a field; every other key is one, nested objects and
+        //    arrays included. It used to read fields from a `data` object
+        //    only, so a flat line lost every field, and to take the time
+        //    from `@timestamp` only, so a log stamped in epoch milliseconds
+        //    replayed at the wall clock. The native wrapper
+        //    `{"event_type": "X", "data": {...}}` is still read: a `data`
+        //    object that is the line's only payload is unwrapped.
         if let Some(event_type) = json.get("event_type").and_then(|v| v.as_str()) {
             let mut event = Event::new(event_type);
-            // Honor optional top-level @timestamp / UtcTime / TimeCreated so
-            // benchmarks and replays can preserve event-time. Without this,
-            // time-based windows would never advance because every event
-            // would get Utc::now() (cf. backpressure-fix benchmark work).
-            Self::apply_json_timestamp(&json, &mut event);
-            if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
-                for (key, value) in data.iter().take(crate::limits::MAX_FIELDS_PER_EVENT) {
+            let at_timestamp = json
+                .get("@timestamp")
+                .and_then(|v| v.as_str())
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|t| t.with_timezone(&chrono::Utc));
+            let epoch_millis = json
+                .get("ts")
+                .and_then(|v| v.as_i64())
+                .or_else(|| json.get("timestamp").and_then(|v| v.as_i64()))
+                .and_then(chrono::DateTime::from_timestamp_millis);
+            match at_timestamp.or(epoch_millis) {
+                Some(time) => event.timestamp = time,
+                // Sysmon's own time keys, else the wall clock.
+                None => Self::apply_json_timestamp(&json, &mut event),
+            }
+            if let Some(obj) = json.as_object() {
+                let payload_keys = obj
+                    .keys()
+                    .filter(|k| {
+                        !matches!(
+                            k.as_str(),
+                            "event_type" | "@timestamp" | "ts" | "timestamp" | "@version"
+                        )
+                    })
+                    .count();
+                let wrapped = payload_keys == 1 && obj.get("data").is_some_and(|d| d.is_object());
+                for (key, value) in obj.iter().take(crate::limits::MAX_FIELDS_PER_EVENT) {
+                    if key == "event_type" {
+                        continue;
+                    }
+                    if wrapped && key == "data" {
+                        if let Some(data) = value.as_object() {
+                            for (k, v) in data.iter().take(crate::limits::MAX_FIELDS_PER_EVENT) {
+                                event
+                                    .data
+                                    .insert(intern_field_name(k), Self::json_to_value(v));
+                            }
+                        }
+                        continue;
+                    }
                     event
                         .data
-                        .insert(key.as_str().into(), Self::json_to_value(value));
+                        .insert(intern_field_name(key), Self::json_to_value(value));
                 }
             }
             return Ok(event);

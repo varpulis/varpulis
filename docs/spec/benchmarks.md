@@ -52,4 +52,3 @@ See [`benchmarks-apama-comparison.md`](../benchmarks-apama-comparison.md) for fu
 2. **Throughput benchmark**: Maximum sustained events/sec
 3. **Memory benchmark**: Memory consumption under load
 4. **Pattern matching benchmark**: Pattern complexity vs performance
-5. **Multi-query benchmark**: Hamlet vs ZDD multi-query performance

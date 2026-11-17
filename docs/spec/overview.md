@@ -72,7 +72,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 |---------|-------|----------|
 | **Language** | EPL (SQL-like) | VPL (Python-like) |
 | **Runtime** | JVM | Native (Rust) |
-| **Hamlet** | Not built-in | Multi-query trend aggregation |
+| **Trend aggregation** | Not built-in | Counts over every trend of a pattern |
 | **Observability** | Manual | Automatic metrics/traces |
 
 ### Summary: When to use Varpulis
@@ -91,7 +91,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 1. **Compiler** - VPL → Optimized IR compilation
 2. **Runtime Engine** - Processing graph execution
 3. **Pattern Matcher** - Pattern detection via hypertrees
-4. **Hamlet Engine** - Multi-query trend aggregation
+4. **Trend Aggregation** - Counts and sums over every trend of a pattern
 5. **State Manager** - State management (in-memory / RocksDB)
 6. **Observability Layer** - Metrics, traces, logs
 
@@ -105,7 +105,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 | Partitioned windows | ✅ Implemented | partition_by() with any window type |
 | Join operations | ✅ Implemented | Multi-stream correlation with .on() |
 | Sequence patterns | ✅ Implemented | followed-by, within timeout |
-| Hamlet trend aggregation | ✅ Implemented | Multi-query trend aggregation |
+| Trend aggregation | ✅ Implemented | `.trend_aggregate()`, counts over every trend |
 | User-defined functions | ✅ Implemented | fn keyword (parsed, basic eval) |
 | MQTT connector | ✅ Implemented | Input and output |
 | HTTP connector | 🚧 Partial | Output only (webhooks) |

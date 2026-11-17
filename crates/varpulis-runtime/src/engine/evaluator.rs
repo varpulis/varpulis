@@ -488,6 +488,16 @@ fn eval_builtin_function(func_name: &str, args: &[Value]) -> Option<Value> {
             Value::Int(n) => Some(Value::Int(*n)),
             _ => None,
         }),
+        // `round(x)` is the nearest integer; `round(x, n)` keeps `n`
+        // decimals (the second argument used to be ignored).
+        "round" if args.len() == 2 => match (&args[0], &args[1]) {
+            (Value::Float(f), Value::Int(n)) if (0..=15).contains(n) => {
+                let scale = 10f64.powi(*n as i32);
+                Some(Value::Float((f * scale).round() / scale))
+            }
+            (Value::Int(i), Value::Int(n)) if (0..=15).contains(n) => Some(Value::Float(*i as f64)),
+            _ => None,
+        },
         "round" => args.first().and_then(|v| match v {
             Value::Float(f) => Some(Value::Int(f.round() as i64)),
             Value::Int(n) => Some(Value::Int(*n)),
@@ -1343,6 +1353,37 @@ pub fn eval_expr_with_functions(
                 _ => holds(left) ^ holds(right),
             }))
         }
+        // `x is int`: the right side names a type, it is not a field to read.
+        // A field the event does not carry is null, so `missing is null`
+        // holds, as `is_null(missing)` does.
+        Expr::Binary {
+            op: BinOp::Is,
+            left,
+            right,
+        } => {
+            let type_name = match right.as_ref() {
+                Expr::Ident(name) => name.as_str(),
+                // `null` is a literal to the parser, and a type here.
+                Expr::Null => "null",
+                _ => return None,
+            };
+            let value = eval_expr_with_functions(left, event, ctx, functions, bindings)
+                .unwrap_or(Value::Null);
+            let holds = match type_name {
+                "int" => matches!(value, Value::Int(_)),
+                "float" => matches!(value, Value::Float(_)),
+                "str" | "string" => matches!(value, Value::Str(_)),
+                "bool" => matches!(value, Value::Bool(_)),
+                "array" => matches!(value, Value::Array(_)),
+                "map" => matches!(value, Value::Map(_)),
+                "null" => matches!(value, Value::Null),
+                "timestamp" => matches!(value, Value::Timestamp(_)),
+                "duration" => matches!(value, Value::Duration(_)),
+                _ => return None,
+            };
+            Some(Value::Bool(holds))
+        }
+
         Expr::Binary { op, left, right } => {
             let left_val = eval_expr_with_functions(left, event, ctx, functions, bindings)?;
             let right_val = eval_expr_with_functions(right, event, ctx, functions, bindings)?;
@@ -1397,42 +1438,23 @@ pub fn eval_expr_with_functions(
                 // the same thing in `.where()` and in a `->` sequence step.
                 BinOp::Eq => Some(Value::Bool(left_val.vpl_eq(&right_val))),
                 BinOp::NotEq => Some(Value::Bool(!left_val.vpl_eq(&right_val))),
-                BinOp::Lt => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a < b)),
-                    (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a < b)),
-                    (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) < *b)),
-                    (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a < *b as f64)),
-                    (Value::Timestamp(a), Value::Timestamp(b)) => Some(Value::Bool(a < b)),
-                    (Value::Duration(a), Value::Duration(b)) => Some(Value::Bool(a < b)),
-                    _ => None,
-                },
-                BinOp::Le => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a <= b)),
-                    (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a <= b)),
-                    (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) <= *b)),
-                    (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a <= *b as f64)),
-                    (Value::Timestamp(a), Value::Timestamp(b)) => Some(Value::Bool(a <= b)),
-                    (Value::Duration(a), Value::Duration(b)) => Some(Value::Bool(a <= b)),
-                    _ => None,
-                },
-                BinOp::Gt => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a > b)),
-                    (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a > b)),
-                    (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) > *b)),
-                    (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a > *b as f64)),
-                    (Value::Timestamp(a), Value::Timestamp(b)) => Some(Value::Bool(a > b)),
-                    (Value::Duration(a), Value::Duration(b)) => Some(Value::Bool(a > b)),
-                    _ => None,
-                },
-                BinOp::Ge => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a >= b)),
-                    (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a >= b)),
-                    (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) >= *b)),
-                    (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a >= *b as f64)),
-                    (Value::Timestamp(a), Value::Timestamp(b)) => Some(Value::Bool(a >= b)),
-                    (Value::Duration(a), Value::Duration(b)) => Some(Value::Bool(a >= b)),
-                    _ => None,
-                },
+                // Ordering: numbers widen, two strings compare as text (as
+                // they do in a `->` step's predicate), anything else has no
+                // order and the comparison does not hold.
+                BinOp::Lt => order_of(&left_val, &right_val).map(|o| Value::Bool(o.is_lt())),
+                BinOp::Le => order_of(&left_val, &right_val).map(|o| Value::Bool(o.is_le())),
+                BinOp::Gt => order_of(&left_val, &right_val).map(|o| Value::Bool(o.is_gt())),
+                BinOp::Ge => order_of(&left_val, &right_val).map(|o| Value::Bool(o.is_ge())),
+                // Bitwise, on integers. These parsed and evaluated to nothing.
+                BinOp::BitAnd => int_pair(&left_val, &right_val).map(|(a, b)| Value::Int(a & b)),
+                BinOp::BitOr => int_pair(&left_val, &right_val).map(|(a, b)| Value::Int(a | b)),
+                BinOp::BitXor => int_pair(&left_val, &right_val).map(|(a, b)| Value::Int(a ^ b)),
+                BinOp::Shl => int_pair(&left_val, &right_val)
+                    .and_then(|(a, b)| u32::try_from(b).ok().and_then(|b| a.checked_shl(b)))
+                    .map(Value::Int),
+                BinOp::Shr => int_pair(&left_val, &right_val)
+                    .and_then(|(a, b)| u32::try_from(b).ok().and_then(|b| a.checked_shr(b)))
+                    .map(Value::Int),
                 BinOp::Mod => match (&left_val, &right_val) {
                     // checked_rem covers both modulo-by-zero and i64::MIN % -1.
                     (Value::Int(a), Value::Int(b)) => a.checked_rem(*b).map(Value::Int),
@@ -1492,7 +1514,11 @@ pub fn eval_expr_with_functions(
                     Value::Float(f) => Some(Value::Float(-f)),
                     _ => None,
                 },
-                _ => None,
+                varpulis_core::ast::UnaryOp::BitNot => match val {
+                    Value::Int(n) => Some(Value::Int(!n)),
+                    _ => None,
+                },
+                varpulis_core::ast::UnaryOp::Not => None,
             }
         }
 
@@ -1541,6 +1567,29 @@ pub fn eval_expr_with_functions(
         // stack overflowed and the process aborted (`arr.filter(x => ...)`,
         // `a?.b` and timestamp literals all did).
         Expr::Lambda { .. } => None,
+    }
+}
+
+/// How two values order, when they do: numbers widen int to float, two
+/// strings compare as text, timestamps and durations each among themselves.
+fn order_of(left: &Value, right: &Value) -> Option<std::cmp::Ordering> {
+    match (left, right) {
+        (Value::Int(a), Value::Int(b)) => Some(a.cmp(b)),
+        (Value::Float(a), Value::Float(b)) => a.partial_cmp(b),
+        (Value::Int(a), Value::Float(b)) => (*a as f64).partial_cmp(b),
+        (Value::Float(a), Value::Int(b)) => a.partial_cmp(&(*b as f64)),
+        (Value::Str(a), Value::Str(b)) => Some(a.cmp(b)),
+        (Value::Timestamp(a), Value::Timestamp(b)) => Some(a.cmp(b)),
+        (Value::Duration(a), Value::Duration(b)) => Some(a.cmp(b)),
+        _ => None,
+    }
+}
+
+/// Two integers, for the bitwise operators.
+fn int_pair(left: &Value, right: &Value) -> Option<(i64, i64)> {
+    match (left, right) {
+        (Value::Int(a), Value::Int(b)) => Some((*a, *b)),
+        _ => None,
     }
 }
 

@@ -50,9 +50,7 @@ enum_missing = "allow"
 varpulis-core = { version = "0.11.0", path = "../varpulis-core" }
 varpulis-parser = { version = "0.11.0", path = "../varpulis-parser" }
 varpulis-sase = { version = "0.11.0", path = "../varpulis-sase" }
-varpulis-zdd = { version = "0.11.0", path = "../varpulis-zdd" }
 varpulis-pst = { version = "0.11.0", path = "../varpulis-pst" }
-varpulis-hamlet = { version = "0.11.0", path = "../varpulis-hamlet" }
 varpulis-simd = { version = "0.11.0", path = "../varpulis-simd" }
 varpulis-dead-letter = { version = "0.11.0", path = "../varpulis-dead-letter" }
 serde = { workspace = true }
@@ -64,7 +62,6 @@ chrono = { workspace = true }
 indexmap = { workspace = true }
 rand = { workspace = true }
 rustc-hash = { workspace = true }
-smallvec = "1.13"
 hashlink = "0.11"
 sha2 = { workspace = true }
 hex = { workspace = true }
@@ -179,10 +176,6 @@ harness = false
 
 [[bench]]
 name = "context_benchmark"
-harness = false
-
-[[bench]]
-name = "hamlet_zdd_benchmark"
 harness = false
 
 [[bench]]

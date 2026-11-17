@@ -63,6 +63,7 @@ pub struct EngineBuilder {
     udf_registry: UdfRegistry,
     credentials_store: Option<Arc<connector::credentials::CredentialsStore>>,
     checkpoint_planned: bool,
+    columnar_fusion: bool,
 }
 
 impl Default for EngineBuilder {
@@ -83,7 +84,18 @@ impl EngineBuilder {
             udf_registry: UdfRegistry::new(),
             credentials_store: None,
             checkpoint_planned: false,
+            columnar_fusion: false,
         }
+    }
+
+    /// Fuse `.window(T).aggregate(...)` into the columnar streaming operator
+    /// (`arrow` feature). Off by default: the fused operator aligns its bins
+    /// on the epoch where a tumbling window opens with its first event, and
+    /// keeps its state out of a checkpoint, so it is a different engine for
+    /// the same program. For a throughput benchmark that wants it.
+    pub fn columnar_fusion(mut self, on: bool) -> Self {
+        self.columnar_fusion = on;
+        self
     }
 
     /// Declare that checkpointing will be enabled on this engine.
@@ -180,6 +192,7 @@ impl EngineBuilder {
         engine.udf_registry = self.udf_registry;
         engine.credentials_store = self.credentials_store;
         engine.checkpoint_planned = self.checkpoint_planned;
+        engine.columnar_fusion = self.columnar_fusion;
         engine
     }
 }

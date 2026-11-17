@@ -172,8 +172,9 @@ async fn closes_on_watermark_not_arrival_async() {
 // Golden outputs captured from pre-C2b `main`. These must stay byte-identical:
 // the arrival-driven window paths are structurally untouched by C2b.
 
-/// Tumbling+aggregate (the arrow feature fuses this shape into the streaming
-/// columnar op on default builds — golden reflects that path).
+/// Tumbling+aggregate on the classic window path, which every build takes
+/// unless it opts into columnar fusion (`EngineBuilder::columnar_fusion`):
+/// the golden reflects the engine as it ships.
 #[test]
 fn regression_guard_tumbling_no_watermark() {
     let (mut engine, mut rx) = engine_with(
@@ -194,15 +195,16 @@ fn regression_guard_tumbling_no_watermark() {
         ])
         .expect("process");
 
-    // NOTE: the fused columnar op advances its internal watermark to the
-    // running max event time and flushes per ingest, so the out-of-order
-    // ts=2s event (value 3) lands in an already-flushed bin and is DROPPED.
-    // That is pre-C2b behavior and stays untouched without `.watermark()` —
-    // declaring `.watermark(out_of_order: …)` is exactly what fixes it.
+    // NOTE: without `.watermark()` a tumbling window opens with its first
+    // event and closes when a later event passes its end, so the
+    // out-of-order ts=2s event (value 3) joins the window ts=3s opened
+    // ([3s, 4s)) rather than the one it belongs to, and that window reports
+    // 2 events, 7 in sum, when ts=10s closes it. Declaring
+    // `.watermark(out_of_order: …)` is exactly what files it by its own time.
     assert_eq!(
         drain_n_s(&mut rx),
-        vec![(1, 1), (1, 2), (1, 4)],
-        "no-watermark tumbling output must be identical to pre-C2b main"
+        vec![(1, 1), (1, 2), (2, 7)],
+        "no-watermark tumbling output must be identical to the shipped engine's"
     );
 }
 

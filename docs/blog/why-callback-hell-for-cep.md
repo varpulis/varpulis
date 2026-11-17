@@ -139,7 +139,7 @@ stream TransactionStats = TransactionOpen as open
     )
 ```
 
-The pattern is the query. `->` is sequence. `all` is the Kleene closure — one or more repetitions of `ProcessingStep`. The VPL compiler translates this into a SASE+ automaton with Kleene closure states, and `.trend_aggregate()` computes statistics directly over all matching trends using the Hamlet algorithm — O(n) per event instead of enumerating every possible subsequence.
+The pattern is the query. `->` is sequence. `all` is the Kleene closure — one or more repetitions of `ProcessingStep`. The VPL compiler translates this into a SASE+ automaton with Kleene closure states, and `.trend_aggregate()` computes statistics directly over all matching trends by counting on the window's event graph — quadratic in the events instead of enumerating every possible subsequence.
 
 No callbacks. No manual accumulation. No type casting. The engine handles partitioning, windowing, and aggregation as part of the pattern itself.
 
@@ -174,16 +174,16 @@ Varpulis tackles this at the engine level with two complementary approaches, cho
 
 **Detection mode (SASE+ with ZDD)** — When you need the actual matches, like in the `SlowTransactionStep` example, the engine uses Zero-suppressed Decision Diagrams (ZDD) to represent all 2^n match combinations as a compact boolean function. The full match space is encoded in O(poly(n)) nodes through structure sharing, rather than allocating memory for each combination individually.
 
-**Aggregation mode (Hamlet)** — When you only need statistics over the matches, like in `TransactionStats`, the engine doesn't enumerate trends at all. Hamlet computes aggregates — count, sum, avg, max, min — directly in O(n) per event using propagation coefficients. It answers "what's the average duration across all possible trends?" without ever building the match set.
+**Aggregation mode (counting on the event graph)** — When you only need statistics over the matches, like in `TransactionStats`, the engine doesn't enumerate trends at all. It computes aggregates — count, sum, avg, max, min — directly in O(n) per event using propagation coefficients. It answers "what's the average duration across all possible trends?" without ever building the match set.
 
-The engine picks the right strategy automatically. If your query has `.trend_aggregate()`, it uses Hamlet. If not, it uses SASE+ with ZDD. Same `-> all` Kleene pattern, different execution path — zero configuration from the developer.
+The engine picks the right strategy automatically. If your query has `.trend_aggregate()`, it counts on the event graph. If not, it uses SASE+ with ZDD. Same `-> all` Kleene pattern, different execution path — zero configuration from the developer.
 
 | Mode | Engine | What it does | Complexity |
 |------|--------|-------------|-----------|
 | Detection | SASE+ with ZDD | Represents all Kleene matches compactly | 2^n matches in O(poly(n)) memory |
-| Aggregation | Hamlet | Computes aggregates without enumerating | O(n) per event — skips the match set entirely |
+| Aggregation | Counting on the event graph (GRETA) | Computes aggregates without enumerating | O(n²) per window — skips the match set entirely |
 
-This is the kind of optimization that's invisible in the query language but makes the difference between "works on a demo" and "works on a million events per second." A transaction with 50 processing steps produces 2^50 — over a quadrillion — possible trends. Hamlet computes the aggregate in 50 operations.
+This is the kind of optimization that's invisible in the query language but makes the difference between "works on a demo" and "works on a million events per second." A transaction with 50 processing steps produces 2^50 — over a quadrillion — possible trends. The engine computes the aggregate in a pass over the 50 steps, not over the quadrillion trends.
 
 ## Beyond detection: forecasting
 

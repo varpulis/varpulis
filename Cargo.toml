@@ -16,7 +16,6 @@ members = [
     "crates/varpulis-lsp",
     "crates/varpulis-wasm",
     "crates/varpulis-pst",
-    "crates/varpulis-hamlet",
     "crates/varpulis-enrichment",
     "crates/varpulis-simd",
     "crates/varpulis-dead-letter",

@@ -1,12 +1,12 @@
 # Varpulis Real-World Scenarios
 
-Five industry scenarios demonstrating Varpulis's key differentiators: native Kleene closure, Hamlet multi-query optimization, sub-millisecond latency, and 3-16x memory advantage.
+Five industry scenarios demonstrating Varpulis's key differentiators: native Kleene closure, trend aggregation without enumerating the trends, sub-millisecond latency, and 3-16x memory advantage.
 
 | Scenario | Industry | Key Differentiator | Document |
 |----------|----------|--------------------|----------|
 | [Credit Card Fraud Detection](fraud-detection.md) | Financial Services | Kleene closure captures 5x more fraud patterns than greedy-matching competitors | [VPL](../../tests/scenarios/cxo_fraud_detection.vpl) |
 | [Predictive Equipment Failure](predictive-maintenance.md) | Manufacturing / IoT | Multi-sensor correlation with explainable alerts | [VPL](../../tests/scenarios/cxo_predictive_maintenance.vpl) |
-| [Insider Trading Surveillance](insider-trading.md) | Capital Markets | Hamlet trend_aggregate monitors 50+ symbols at 100x throughput | [VPL](../../tests/scenarios/cxo_insider_trading.vpl) |
+| [Insider Trading Surveillance](insider-trading.md) | Capital Markets | trend_aggregate counts the trends of 50+ symbols without enumerating them | [VPL](../../tests/scenarios/cxo_insider_trading.vpl) |
 | [Cyber Kill Chain Detection](cyber-kill-chain.md) | Cybersecurity / SOC | Multi-stage attack detection with complete forensic trail | [VPL](../../tests/scenarios/cxo_cyber_threat.vpl) |
 | [Patient Safety Monitoring](patient-safety.md) | Healthcare | Sub-millisecond drug interaction detection across prescribers | [VPL](../../tests/scenarios/cxo_patient_safety.vpl) |
 

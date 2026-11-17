@@ -43,7 +43,7 @@
 | `window` | Time window |
 | `aggregate` | Aggregation |
 | `partition_by` | Partitioning |
-| `order_by` | Sorting |
+| `order_by` | Sorting (not implemented: `varpulis check` refuses it) |
 | `limit` | Limitation |
 | `distinct` | Deduplication |
 | `emit` | Emit output events |
@@ -103,7 +103,7 @@
 |---------|-------------|
 | `as` | Alias/cast |
 | `extends` | Event inheritance |
-| `import` | Module import |
+| `import` | Module import (not supported: the engine refuses it; put the declarations in the program) |
 | `export` | Symbol export |
 
 ## Keywords Reserved for Future Use

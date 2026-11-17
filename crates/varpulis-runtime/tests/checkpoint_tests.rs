@@ -728,10 +728,12 @@ async fn checkpoint_planned_partition_window_survives_restart() {
     );
 }
 
-/// Documents the contained C1 bug that `plan_checkpointing` works around: on the
-/// default (arrow) build WITHOUT planning, the pipeline fuses into
-/// `PartitionedWindowedColumnarAggregate`, whose windowed state is invisible to
-/// `create_checkpoint` — so the in-flight events are silently lost on restore.
+/// Documents the contained C1 bug that `plan_checkpointing` works around: an
+/// engine that opts into columnar fusion (`EngineBuilder::columnar_fusion`)
+/// without planning fuses into `PartitionedWindowedColumnarAggregate`, whose
+/// windowed state is invisible to `create_checkpoint` — so the in-flight
+/// events are silently lost on restore. Fusion is off unless asked for, which
+/// is why the engine as it ships does not have this bug.
 #[cfg(feature = "arrow")]
 #[tokio::test]
 async fn fused_partition_window_state_not_checkpointed() {
@@ -748,9 +750,9 @@ async fn fused_partition_window_state_not_checkpointed() {
     ";
     let program = parse(code).expect("parse");
 
-    // Default builder → no plan_checkpointing → columnar fusion kicks in.
+    // Fusion asked for, no plan_checkpointing → the fused op is compiled.
     let (tx, _rx) = mpsc::channel::<Event>(1000);
-    let mut engine = Engine::new(tx);
+    let mut engine = Engine::builder().output(tx).columnar_fusion(true).build();
     engine.load(&program).expect("load");
 
     for (t, temp) in [(100_i64, 10.0_f64), (200, 20.0), (300, 30.0)] {

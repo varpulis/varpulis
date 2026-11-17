@@ -1,5 +1,11 @@
 # VPL Connectors
 
+> **The engine opens no connection.** Since [ADR-008](../adr/008-engine-only-platform-retired.md)
+> a `connector` declaration with `.from()` and `.to()` tells the host what to
+> subscribe to and where to publish (`Program::sources`, `Program::sinks`);
+> the host, Vejas, owns the bus. The connector crates this page describes were
+> retired with the platform; the page is kept for the declaration syntax.
+
 This document describes how to connect Varpulis to external systems for both event ingestion (sources) and output routing (sinks).
 
 ## Overview

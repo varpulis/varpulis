@@ -41,10 +41,9 @@
 //! ### Advanced Features
 //! //! - [`join`]: Multi-stream join operations
 //!
-//! ### Multi-Query Trend Aggregation
-//! - [`greta`]: GRETA baseline aggregation (VLDB 2017)
-//! - [`hamlet`]: Hamlet shared aggregation with graphlets (SIGMOD 2021) - **recommended**
-//! - [`zdd_unified`]: ZDD-based aggregation (experimental, for research)
+//! ### Trend Aggregation
+//! - `.trend_aggregate()` counts the trends of a pattern on the event graph of
+//!   each window (GRETA, VLDB 2017), inside [`engine`]
 //!
 //! ### I/O & Connectors
 //! - [`connector`]: Source and sink connectors (MQTT, HTTP, Kafka)
@@ -118,8 +117,6 @@ pub use varpulis_dead_letter as dead_letter;
 pub mod engine;
 pub mod event;
 pub mod event_file;
-pub mod greta;
-pub use varpulis_hamlet as hamlet;
 pub mod health;
 pub mod join;
 pub mod persistence;
@@ -135,7 +132,6 @@ pub mod vpl_test;
 pub mod wasm_udf;
 pub mod watermark;
 pub mod window;
-pub mod zdd_unified;
 
 // ---- Async-runtime modules (require tokio, not available in WASM) ----
 #[cfg(feature = "async-runtime")]

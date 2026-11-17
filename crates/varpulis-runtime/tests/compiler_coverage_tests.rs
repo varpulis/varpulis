@@ -40,6 +40,14 @@ fn binary(op: BinOp, left: Expr, right: Expr) -> Expr {
     }
 }
 
+/// The message an aggregate expression the compiler refuses comes with.
+fn refused_aggregate(expr: &Expr) -> String {
+    match compile_agg_expr(expr) {
+        Err(message) => message,
+        Ok(_) => panic!("{expr:?} compiled, and it must not"),
+    }
+}
+
 /// A no-op stream resolver that always returns None
 const fn no_resolve(_name: &str) -> Option<DerivedStreamInfo> {
     None
@@ -53,7 +61,7 @@ const fn no_resolve(_name: &str) -> Option<DerivedStreamInfo> {
 fn compile_agg_expr_count() {
     let expr = call_expr("count", vec![]);
     let result = compile_agg_expr(&expr);
-    assert!(result.is_some());
+    assert!(result.is_ok());
     let (func, field) = result.unwrap();
     assert_eq!(func.name(), "count");
     assert!(field.is_none());
@@ -131,9 +139,13 @@ fn compile_agg_expr_ema_with_period() {
 }
 
 #[test]
-fn compile_agg_expr_ema_default_period() {
-    // ema(price) — default period (12)
+fn compile_agg_expr_ema_without_a_period_is_refused() {
+    // ema(price) used to take a period of 12 in silence; the period is part
+    // of the documented signature.
     let expr = call_expr("ema", vec![ident("price")]);
+    let err = refused_aggregate(&expr);
+    assert!(err.contains("period"), "{err}");
+    let expr = call_expr("ema", vec![ident("price"), Expr::Int(12)]);
     let (func, field) = compile_agg_expr(&expr).unwrap();
     assert_eq!(func.name(), "ema");
     assert_eq!(field.as_deref(), Some("price"));
@@ -206,25 +218,38 @@ fn compile_agg_expr_binary_div() {
 }
 
 #[test]
-fn compile_agg_expr_unknown_function_returns_none() {
+fn compile_agg_expr_unknown_function_is_refused() {
     let expr = call_expr("unknown_agg_func", vec![ident("x")]);
-    assert!(compile_agg_expr(&expr).is_none());
+    let err = refused_aggregate(&expr);
+    assert!(err.contains("unknown_agg_func"), "{err}");
 }
 
 #[test]
-fn compile_agg_expr_unsupported_binary_op_returns_none() {
+fn compile_agg_expr_unsupported_binary_op_is_refused() {
     // last(x) % ema(x, 9) — Mod is not a supported AggBinOp
     let left = call_expr("last", vec![ident("x")]);
-    let right = call_expr("ema", vec![ident("x")]);
+    let right = call_expr("ema", vec![ident("x"), Expr::Int(9)]);
     let expr = binary(BinOp::Mod, left, right);
-    assert!(compile_agg_expr(&expr).is_none());
+    let err = refused_aggregate(&expr);
+    assert!(err.contains('%'), "{err}");
 }
 
 #[test]
-fn compile_agg_expr_unsupported_expr_returns_none() {
-    // A literal is not a valid aggregate expression
-    let expr = Expr::Int(42);
-    assert!(compile_agg_expr(&expr).is_none());
+fn compile_agg_expr_bare_field_is_refused() {
+    // A bare field reference is not an aggregate (last(x), sum(x) are).
+    let err = refused_aggregate(&ident("x"));
+    assert!(err.contains("sum(price)"), "{err}");
+}
+
+#[test]
+fn compile_agg_expr_literal_is_a_constant() {
+    // `.aggregate(pipeline: "device-stats")` tags every result with the
+    // literal; it used to be dropped in silence.
+    let (func, field) = compile_agg_expr(&Expr::Int(42)).unwrap();
+    assert_eq!(func.name(), "constant");
+    assert!(field.is_none());
+    let events = vec![varpulis_runtime::Event::new("E")];
+    assert_eq!(func.apply(&events, None), varpulis_core::Value::Int(42));
 }
 
 // =============================================================================

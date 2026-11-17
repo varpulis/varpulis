@@ -139,13 +139,24 @@ impl Emit {
 }
 
 impl Program {
-    /// Parse and load a VPL program.
+    /// Parse, validate and load a VPL program.
     ///
-    /// Everything that can be rejected is rejected here — syntax, unknown
-    /// event types, a `.filter()` the engine refuses — so a host can `check`
-    /// a file before it is deployed and get the same verdict.
+    /// Everything that can be rejected is rejected here — syntax, the
+    /// semantic validator's errors (an event type the program does not
+    /// declare, an aggregate function the engine does not have, a regular
+    /// expression that does not compile), an operator the engine refuses —
+    /// so a host can [`Program::check`] a file before it is deployed and get
+    /// the same verdict. It used to skip the validator, so `varpulis
+    /// simulate` and a host that did not check first ran a program with a
+    /// misspelled event type as one that never fires.
     pub fn compile(vpl: &str) -> Result<Self, Error> {
         let program = varpulis_parser::parse(vpl).map_err(|e| Error::Parse(e.to_string()))?;
+        let validation = varpulis_core::validate::validate(vpl, &program);
+        if validation.has_errors() {
+            return Err(Error::Invalid(
+                validation.format(vpl).trim_end().to_string(),
+            ));
+        }
         let mut engine = Engine::new_sync();
         engine.load(&program)?;
         let sources = engine.source_bindings().to_vec();
@@ -169,17 +180,11 @@ impl Program {
     ///
     /// A check is the parse, the semantic validator (unknown event types when
     /// the program declares its events, unbounded closures, regular
-    /// expressions that do not compile, ...) and a load into the engine.
-    /// [`Program::compile`] skips the validator: a host decides whether to
-    /// check first.
+    /// expressions that do not compile, ...) and a load into the engine: the
+    /// verdict of [`Program::compile`], with the warnings.
     pub fn check_with_warnings(vpl: &str) -> Result<Vec<String>, Error> {
         let program = varpulis_parser::parse(vpl).map_err(|e| Error::Parse(e.to_string()))?;
         let validation = varpulis_core::validate::validate(vpl, &program);
-        if validation.has_errors() {
-            return Err(Error::Invalid(
-                validation.format(vpl).trim_end().to_string(),
-            ));
-        }
         Self::compile(vpl)?;
         Ok(validation.format(vpl).lines().map(str::to_string).collect())
     }
@@ -270,8 +275,8 @@ impl Program {
     /// in its input — a stream sequence, an offset — and gives it to
     /// [`Program::restore`] on a `Program` compiled from the same source.
     ///
-    /// Not in it: trend aggregates (`.trend_aggregate()`) and forecasts
-    /// (`.forecast()`), which start empty after a restore.
+    /// Not in it: forecasts (`.forecast()`), which start empty after a
+    /// restore.
     pub fn snapshot(&self) -> Result<Vec<u8>, Error> {
         let checkpoint = self.engine.create_checkpoint();
         varpulis_runtime::codec::serialize(

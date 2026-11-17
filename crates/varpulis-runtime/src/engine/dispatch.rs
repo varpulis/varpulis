@@ -748,7 +748,13 @@ impl Engine {
                     sase.time_semantics() == crate::sase::TimeSemantics::EventTime
                         && sase.nfa().has_negation()
                 });
-                (absences || stream.operations.iter().any(Self::is_time_window))
+                // An outer join emits an unmatched event when its window
+                // closes, so it closes on the clock like a time window.
+                let outer_join = stream
+                    .join_buffer
+                    .as_ref()
+                    .is_some_and(crate::join::JoinBuffer::is_outer);
+                (absences || outer_join || stream.operations.iter().any(Self::is_time_window))
                     .then_some((name, absences))
             })
             .map(|(name, absences)| {
@@ -772,6 +778,7 @@ impl Engine {
             RuntimeOp::Window(w) => {
                 !matches!(w, WindowType::Count(_) | WindowType::SlidingCount(_))
             }
+            RuntimeOp::TrendAggregate(_) => true,
             #[cfg(feature = "arrow")]
             RuntimeOp::WindowedColumnarAggregate(_)
             | RuntimeOp::PartitionedWindowedColumnarAggregate(_) => true,
@@ -835,6 +842,29 @@ impl Engine {
                         matches,
                         sequence_idx + 1,
                         pipeline::SkipFlags::none(),
+                        at,
+                        emitted_batch,
+                    )?;
+                }
+            }
+            let Some(stream) = self.streams.get_mut(stream_name) else {
+                continue;
+            };
+            // An outer join's events whose window `wm` has closed without a
+            // match come back alone and run through the stream's operators
+            // as a pair would.
+            if let Some(join_buffer) = stream.join_buffer.as_mut() {
+                let alone: Vec<SharedEvent> = join_buffer
+                    .close_through(wm)
+                    .into_iter()
+                    .map(Arc::new)
+                    .collect();
+                for row in alone {
+                    self.run_closed(
+                        stream_name,
+                        vec![row],
+                        0,
+                        pipeline::SkipFlags::for_join(),
                         at,
                         emitted_batch,
                     )?;
@@ -1003,6 +1033,11 @@ impl Engine {
                     WindowType::PartitionedSliding(w) => unkeyed(w.advance_due(wm)),
                     _ => Vec::new(),
                 },
+                RuntimeOp::TrendAggregate(config) => config
+                    .close_through(wm)
+                    .into_iter()
+                    .map(|result| vec![result])
+                    .collect(),
                 #[cfg(feature = "arrow")]
                 RuntimeOp::WindowedColumnarAggregate(state) => {
                     let bin_ms = state.bin_duration_ms;
@@ -1170,19 +1205,38 @@ impl Engine {
             }
         }
 
-        // Join sources are not implemented on the synchronous path.
-        //
-        // This used to return an empty result, so every match was silently
-        // discarded and the caller saw a successful run that emitted nothing.
-        // Callers that can choose now consult `Engine::requires_async_dispatch`
-        // and take the async path; anything genuinely confined to this path
-        // (the WASM build) gets a loud error instead of wrong results.
+        // A join correlates through its buffer, as on the asynchronous path:
+        // the event joins the buffer of the source it came from, and what
+        // the buffer correlates runs through the stream's own operators. The
+        // path used to refuse a join outright (and before that, to drop
+        // every match in silence).
         if matches!(stream.source, RuntimeSource::Join(_)) {
-            return Err(super::error::EngineError::Compilation(format!(
-                "stream '{}' is a join, which the synchronous execution path \
-                 does not implement; run it on the asynchronous path",
-                stream.name
-            )));
+            let Some(join_buffer) = stream.join_buffer.as_mut() else {
+                return Err(super::error::EngineError::Compilation(format!(
+                    "stream '{}' is a join with no join buffer",
+                    stream.name
+                )));
+            };
+            let source_name = stream
+                .event_type_to_source
+                .get(&*event.event_type)
+                .cloned()
+                .unwrap_or_else(|| event.event_type.to_string());
+            return match join_buffer.add_event(&source_name, (*event).clone()) {
+                Some(correlated) => pipeline::execute_pipeline_sync(
+                    stream,
+                    vec![Arc::new(correlated)],
+                    0,
+                    pipeline::SkipFlags::for_join(),
+                    functions,
+                    skip_output_rename,
+                ),
+                None => Ok(StreamProcessResult {
+                    emitted_events: vec![],
+                    output_events: vec![],
+                    sink_events_sent: 0,
+                }),
+            };
         }
 
         // Use synchronous pipeline execution
@@ -1707,6 +1761,20 @@ impl Engine {
     ) -> Option<(usize, Vec<Vec<SharedEvent>>)> {
         let wm_ms = wm.timestamp_millis();
         for (idx, op) in stream.operations.iter_mut().enumerate() {
+            // A trend aggregate's windows close on the clock and at the end
+            // of the input like a tumbling window's; they are never
+            // watermark-driven.
+            if let RuntimeOp::TrendAggregate(config) = op {
+                if only_watermark_driven {
+                    return None;
+                }
+                let emissions: Vec<Vec<SharedEvent>> = config
+                    .close_through(wm)
+                    .into_iter()
+                    .map(|result| vec![result])
+                    .collect();
+                return (!emissions.is_empty()).then_some((idx, emissions));
+            }
             if let RuntimeOp::Window(window) = op {
                 let emissions: Vec<Vec<SharedEvent>> = match window {
                     // C2b event-time windows: drain every graduated window,
@@ -1903,6 +1971,33 @@ impl Engine {
         let stream_names: Vec<String> = self.streams.keys().cloned().collect();
 
         for stream_name in stream_names {
+            // An outer join's events whose window `wm` has closed without a
+            // match come back alone and run through the stream's operators.
+            if !only_watermark_driven {
+                let alone: Vec<SharedEvent> = self
+                    .streams
+                    .get_mut(&stream_name)
+                    .and_then(|stream| stream.join_buffer.as_mut())
+                    .map(|join_buffer| join_buffer.close_through(wm))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Arc::new)
+                    .collect();
+                for row in alone {
+                    let result = Self::process_join_result(
+                        self.streams.get_mut(&stream_name).unwrap(),
+                        row,
+                        &self.functions,
+                        self.sinks.cache(),
+                    )
+                    .await?;
+                    for emitted in &result.emitted_events {
+                        self.output_events_emitted += 1;
+                        let owned = (**emitted).clone();
+                        self.send_output_async(owned).await;
+                    }
+                }
+            }
             let (collected, send_outputs) = {
                 let stream = self.streams.get_mut(&stream_name).unwrap();
                 // Only on a genuine end-of-input drain. A routine watermark

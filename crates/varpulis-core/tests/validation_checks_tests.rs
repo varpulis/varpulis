@@ -734,11 +734,13 @@ fn e090_collect_not_implemented() {
 }
 
 #[test]
-fn e090_distinct_not_implemented() {
-    let diags = validate_vpl("stream S = A\n    .distinct()");
+fn distinct_is_implemented_and_checks() {
+    // The engine runs `.distinct()`; the validator refused it as
+    // unimplemented, so a program that worked did not check.
+    let diags = validate_vpl("stream S = A\n    .distinct(user)");
     assert!(
-        has_error(&diags, "E090"),
-        "Expected E090 for distinct: {diags:?}"
+        !has_code(&diags, "E090"),
+        "distinct must not be refused: {diags:?}"
     );
 }
 
@@ -752,20 +754,21 @@ fn e090_order_by_not_implemented() {
 }
 
 #[test]
-fn e090_limit_not_implemented() {
+fn limit_is_implemented_and_checks() {
     let diags = validate_vpl("stream S = A\n    .limit(100)");
     assert!(
-        has_error(&diags, "E090"),
-        "Expected E090 for limit: {diags:?}"
+        !has_code(&diags, "E090"),
+        "limit must not be refused: {diags:?}"
     );
 }
 
 #[test]
-fn e090_first_not_implemented() {
+fn first_is_implemented_and_checks() {
+    // `.first()` is `.limit(1)` in the engine.
     let diags = validate_vpl("stream S = A\n    .first()");
     assert!(
-        has_error(&diags, "E090"),
-        "Expected E090 for first: {diags:?}"
+        !has_code(&diags, "E090"),
+        "first must not be refused: {diags:?}"
     );
 }
 
@@ -1012,7 +1015,9 @@ fn e033_reference_to_declared_stream_no_error() {
 // =============================================================================
 
 #[test]
-fn e034_emit_as_undeclared_type() {
+fn e090_emit_as_is_not_supported() {
+    // The engine never set the type (`.emit as` changed nothing), whatever
+    // E034 said about the type being declared.
     let diags = validate_vpl(
         r"
         event A: x: int
@@ -1020,15 +1025,15 @@ fn e034_emit_as_undeclared_type() {
             .emit as UnknownType (x: 1)
     ",
     );
-    assert!(has_error(&diags, "E034"), "Expected E034: {diags:?}");
+    assert!(has_error(&diags, "E090"), "Expected E090: {diags:?}");
 }
 
 #[test]
-fn e034_emit_as_declared_event_no_error() {
+fn e090_emit_as_is_refused_even_for_a_declared_event() {
     let diags = validate_vpl(
         "event A: x: int\nevent Alert: msg: str\nstream S = A\n    .emit as Alert (msg: \"hi\")",
     );
-    assert!(!has_code(&diags, "E034"), "Should have no E034: {diags:?}");
+    assert!(has_error(&diags, "E090"), "Expected E090: {diags:?}");
 }
 
 // =============================================================================
@@ -1493,4 +1498,44 @@ fn e050_every_function_the_engine_evaluates_is_known() {
     let src = "stream R = T\n    .window(5)\n    .aggregate(n: count(), u: count_distinct(User), a: avg(Size))\n    .having(n > 3)\n    .emit(n: n, u: u)\n";
     let d = validate_vpl(src);
     assert!(!has_code(&d, "E050"), "{d:?}");
+}
+
+// =============================================================================
+// `is` type tests
+// =============================================================================
+
+#[test]
+fn is_type_test_reads_no_field_named_after_the_type() {
+    // `n is int` drew W035 for an unknown field 'int' in .where() and in
+    // .emit(); the right side of `is` is a type.
+    let diags = validate_vpl(
+        r"
+        event E:
+            n: int
+        stream S = E
+            .where(n is int or n is null)
+            .emit(f: n is float, s: n is str)
+    ",
+    );
+    assert!(!has_code(&diags, "W035"), "{diags:?}");
+    assert!(has_no_errors(&diags), "{diags:?}");
+}
+
+#[test]
+fn is_with_a_type_the_engine_does_not_know_is_refused() {
+    // `n is integer` held for no event, and checked with a warning about a
+    // field named 'integer'.
+    let diags = validate_vpl(
+        r"
+        event E:
+            n: int
+        stream S = E
+            .where(n is integer)
+            .emit(n: n)
+    ",
+    );
+    assert!(has_error(&diags, "E094"), "{diags:?}");
+    assert!(!has_code(&diags, "W035"), "{diags:?}");
+    let (_, _, message) = diags.iter().find(|(_, c, _)| *c == Some("E094")).unwrap();
+    assert!(message.contains("'integer'"), "{message}");
 }

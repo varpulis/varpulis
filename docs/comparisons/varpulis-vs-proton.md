@@ -195,7 +195,7 @@ stream SuspiciousSession = Login as login
     )
 ```
 
-**Twenty-eight lines.** The `->` operator expresses the ordered sequence, `all Transfer` is a Kleene plus that captures every matching transfer (not just one), `partition_by` keeps state isolated per user, `within(5m)` bounds the entire pattern, and `trend_aggregate` runs the sum across all matched transfers in O(n) using Hamlet shared-state.
+**Twenty-eight lines.** The `->` operator expresses the ordered sequence, `all Transfer` is a Kleene plus that captures every matching transfer (not just one), `partition_by` keeps state isolated per user, `within(5m)` bounds the entire pattern, and `trend_aggregate` sums over every matching trend by counting on the window's event graph, in O(n²) per window where the trends are exponential.
 
 **Timeplus Proton — JavaScript UDAF (the official recipe)**
 
@@ -288,7 +288,7 @@ For security teams writing detection rules, **the line-count and maintenance gap
 ### Varpulis
 
 - **Single Rust binary, ~15 MB.** No JVM, no Postgres, no external metadata store. Run from a laptop or as a container, scale out via the built-in Coordinator/Workers cluster mode.
-- **SASE+ NFA pattern engine.** Sequences, Kleene closures, negation, partition_by, and temporal windows are first-class — no UDFs required. Multi-query optimisation via Hamlet graphlet sharing (SIGMOD 2021) when running many concurrent patterns.
+- **SASE+ NFA pattern engine.** Sequences, Kleene closures, negation, partition_by, and temporal windows are first-class — no UDFs required. Trend aggregation counts the trends of a Kleene pattern without enumerating them (GRETA, VLDB 2017).
 - **Forecasting built in.** `.forecast()` uses Probabilistic Suffix Trees + Hawkes process intensity to predict pattern completion before the final event arrives. Unique among open-source streaming engines.
 - **Connectors as crates.** Build a minimal binary with `--features mqtt,kafka` or include all 20+ connectors in the default release.
 - **State backends**: in-memory, RocksDB, S3 (object-storage checkpoints with optional zstd compression).
@@ -313,7 +313,7 @@ For security teams writing detection rules, **the line-count and maintenance gap
 | **Pattern forecasting** | `.forecast()` built-in | Not available |
 | **Cross-event correlation (`B.x == A.y`)** | Native (`as` aliases) | UDAF or self-join |
 | **Per-key pattern partitioning** | `partition_by` operator | UDAF or `SHUFFLE BY` |
-| **Multi-query optimisation** | Hamlet graphlet sharing | None |
+| **Trend aggregation (counts over 2^n matches)** | `.trend_aggregate()` | None |
 | **Tumbling / hopping / session windows** | Yes | Yes |
 | **ASOF join** | Via left join + within | **Native `ASOF JOIN`** |
 | **Range / temporal join** | Via `within` clause | **Native `date_diff_within`** |
@@ -410,7 +410,7 @@ If you want to reproduce these numbers, the benchmark scripts are at [`benchmark
 ### Published vendor numbers (for context)
 
 - **Timeplus Proton**: claims "up to 90M events/sec" on a single MacBook Pro M2 Max in their README. No event size, schema, or query complexity disclosed — this is a single-node microbenchmark, not a sustained-load test.
-- **Varpulis**: 1.5M events/sec for SASE+ pattern matching on a single core, 410K events/sec for a full filter+aggregate+emit pipeline, 950K events/sec for 50 concurrent Hamlet-shared patterns, 51 ns per PST single-symbol forecast prediction. Measured on a Ryzen 9 7950X with full methodology in [docs/PERFORMANCE_ANALYSIS.md](../PERFORMANCE_ANALYSIS.md).
+- **Varpulis**: 1.5M events/sec for SASE+ pattern matching on a single core, 410K events/sec for a full filter+aggregate+emit pipeline, 51 ns per PST single-symbol forecast prediction. Measured on a Ryzen 9 7950X with full methodology in [docs/PERFORMANCE_ANALYSIS.md](../PERFORMANCE_ANALYSIS.md).
 
 For workloads only one engine can express — sequence detection, Kleene closure, forecasting — comparing throughput is meaningless because the JavaScript-UDAF version is in a different operational class than a native NFA.
 
@@ -429,7 +429,7 @@ For workloads only one engine can express — sequence detection, Kleene closure
 - You need **Kleene closure** with exhaustive matching — capture *every* matching event in a window, not just the longest run.
 - You need **per-key partitioning of patterns** with shared state across the matched events.
 - You need **forecasting** — predict that a pattern is about to complete before the final event arrives.
-- You need **multi-query optimisation** when running many concurrent patterns over the same stream (Hamlet graphlet sharing).
+- You need **statistics over an exponential set of matches** — counts and sums over every trend a Kleene pattern matches — without enumerating them.
 - You are doing **detection engineering** — Sigma rules, MITRE ATT&CK kill chains, fraud playbooks, behavioural rules — and you want a DSL designed for that.
 - You want **OSS clustering and dynamic rescaling without paying for an Enterprise tier**.
 

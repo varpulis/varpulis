@@ -1,12 +1,13 @@
 # Parallel Stream Processing with Contexts
 
-> **Contexts have no effect in the engine as it ships.** `context`
-> declarations and `.context(...)` parse and pass `varpulis check`, but the
-> threads and channels behind them belong to the engine's asynchronous runtime,
-> which neither `varpulis simulate` nor a Vejas detect unit includes (see
-> [ADR-008](../adr/008-engine-only-platform-retired.md)). A program with
-> contexts runs on one thread, exactly like the same program without them. In
-> Vejas, work runs in parallel as separate detect units.
+> **The engine as it ships refuses contexts.** The threads and channels
+> behind a `context` declaration and `.context(...)` belong to the engine's
+> asynchronous runtime, which neither `varpulis simulate` nor a Vejas detect
+> unit includes (see [ADR-008](../adr/008-engine-only-platform-retired.md)).
+> A program with contexts is refused when it loads, rather than run on one
+> thread as if they were not there, which is what it used to do. In Vejas,
+> work runs in parallel as separate detect units. What follows describes the
+> retired runtime.
 
 This tutorial teaches you to use VPL contexts for parallel stream processing. You'll start with a single context and build up to multi-stage pipelines with session windows -- each step includes runnable code you can copy-paste and test.
 

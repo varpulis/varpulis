@@ -528,6 +528,59 @@ impl AggregateFunc for Last {
     }
 }
 
+/// Collect aggregation: every value the window holds for the field, in event
+/// order, as an array. An event without the field contributes nothing.
+///
+/// `collect(field)` has had a section in the windows reference since the
+/// reference was written; the function did not exist.
+#[derive(Debug)]
+pub struct Collect;
+
+impl AggregateFunc for Collect {
+    fn name(&self) -> &'static str {
+        "collect"
+    }
+
+    fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        Value::array(
+            events
+                .iter()
+                .filter_map(|e| e.get(field).cloned())
+                .collect(),
+        )
+    }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        Value::array(
+            events
+                .iter()
+                .filter_map(|e| e.get(field).cloned())
+                .collect(),
+        )
+    }
+}
+
+/// A constant: `.aggregate(pipeline: "device-stats", ...)` tags every result
+/// with the literal. The compiler used to drop such an item in silence.
+#[derive(Debug)]
+pub struct Constant(pub Value);
+
+impl AggregateFunc for Constant {
+    fn name(&self) -> &'static str {
+        "constant"
+    }
+
+    fn apply(&self, _events: &[Event], _field: Option<&str>) -> Value {
+        self.0.clone()
+    }
+
+    fn apply_refs(&self, _events: &[&Event], _field: Option<&str>) -> Value {
+        self.0.clone()
+    }
+}
+
 /// Count distinct values aggregation
 /// Optimized to store only hashes instead of cloning full Values
 #[derive(Debug)]

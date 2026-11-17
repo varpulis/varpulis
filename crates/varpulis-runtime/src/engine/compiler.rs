@@ -5,19 +5,23 @@
 
 use std::time::Duration;
 
-use tracing::warn;
 use varpulis_core::ast::{FollowedByClause, SequenceStepDecl, StreamSource};
 
 use crate::aggregation::{
-    AggBinOp, Avg, Count, CountDistinct, Ema, ExprAggregate, First, Last, Max, Median, Min,
-    Percentile, StdDev, Sum, P50, P95, P99,
+    AggBinOp, Avg, Collect, Constant, Count, CountDistinct, Ema, ExprAggregate, First, Last, Max,
+    Median, Min, Percentile, StdDev, Sum, P50, P95, P99,
 };
 use crate::sase::{CompareOp, Predicate, SasePattern};
 
-/// Compile an aggregate expression into an AggregateFunc
+/// Compile an aggregate expression into an AggregateFunc.
+///
+/// An expression the engine cannot aggregate is an error, not a missing
+/// field: it used to answer `None`, the compiler skipped the item, and the
+/// result simply had no such field — a typo in `sumx(price)` checked, loaded
+/// and emitted events without a total.
 pub fn compile_agg_expr(
     expr: &varpulis_core::ast::Expr,
-) -> Option<(Box<dyn crate::aggregation::AggregateFunc>, Option<String>)> {
+) -> Result<(Box<dyn crate::aggregation::AggregateFunc>, Option<String>), String> {
     use varpulis_core::ast::{Arg, BinOp, Expr};
 
     match expr {
@@ -25,7 +29,11 @@ pub fn compile_agg_expr(
         Expr::Call { func, args } => {
             let func_name = match func.as_ref() {
                 Expr::Ident(s) => s.clone(),
-                _ => return None,
+                other => {
+                    return Err(format!(
+                        "an aggregate is a function call such as sum(price), not {other:?}"
+                    ))
+                }
             };
 
             // Handle count(distinct(field)) pattern
@@ -41,7 +49,7 @@ pub fn compile_agg_expr(
                                 Arg::Positional(Expr::Ident(s)) => Some(s.clone()),
                                 _ => None,
                             });
-                            return Some((Box::new(CountDistinct), field));
+                            return Ok((Box::new(CountDistinct), field));
                         }
                     }
                 }
@@ -67,18 +75,8 @@ pub fn compile_agg_expr(
                 Some(Arg::Named(_, _)) => None,
             };
 
-            // Extract second argument as int (period for EMA) or float (quantile for percentile)
-            let second_int = args
-                .get(1)
-                .and_then(|a| match a {
-                    Arg::Positional(Expr::Int(n)) => Some(*n as usize),
-                    _ => None,
-                })
-                .unwrap_or(12);
-
-            let second_float = args.get(1).and_then(|a| match a {
-                Arg::Positional(Expr::Float(f)) => Some(*f),
-                _ => None,
+            let second = args.get(1).map(|a| match a {
+                Arg::Positional(e) | Arg::Named(_, e) => e,
             });
 
             let agg_func: Box<dyn crate::aggregation::AggregateFunc> = match func_name.as_str() {
@@ -90,30 +88,56 @@ pub fn compile_agg_expr(
                 "last" => Box::new(Last),
                 "first" => Box::new(First),
                 "stddev" => Box::new(StdDev),
-                "ema" => Box::new(Ema::new(second_int)),
+                "collect" => Box::new(Collect),
                 "count_distinct" => Box::new(CountDistinct),
                 "median" => Box::new(Median),
                 "p50" => Box::new(P50),
                 "p95" => Box::new(P95),
                 "p99" => Box::new(P99),
-                "percentile" => Box::new(Percentile::new(second_float.unwrap_or(0.5))),
+                // The period is a count of events: an integer of at least one.
+                "ema" => match second {
+                    Some(Expr::Int(n)) if *n >= 1 => Box::new(Ema::new(*n as usize)),
+                    other => {
+                        return Err(format!(
+                            "ema(field, period) takes a period of at least one event, e.g. \
+                             ema(price, 12); got {other:?}"
+                        ))
+                    }
+                },
+                // The quantile is a fraction in 0..=1. `percentile(x, 95)`
+                // used to be read as the median, silently.
+                "percentile" => match second {
+                    Some(Expr::Float(q)) if (0.0..=1.0).contains(q) => {
+                        Box::new(Percentile::new(*q))
+                    }
+                    Some(Expr::Int(q)) if (0..=1).contains(q) => {
+                        Box::new(Percentile::new(*q as f64))
+                    }
+                    other => {
+                        return Err(format!(
+                            "percentile(field, q) takes a quantile between 0.0 and 1.0, e.g. \
+                             percentile(latency, 0.95); got {other:?}"
+                        ))
+                    }
+                },
                 other => {
-                    // Fallback: check UdfRegistry for custom aggregate UDFs
-                    // (checked by compile_agg_expr_with_udfs; standard path logs warning)
-                    warn!("Unknown aggregation function: {}", other);
-                    return None;
+                    return Err(format!(
+                        "unknown aggregate function '{other}'; known: count, sum, avg, min, \
+                         max, stddev, first, last, collect, count_distinct, ema, median, \
+                         percentile, p50, p95, p99"
+                    ));
                 }
             };
 
             match projection {
                 // `count(<expr>)` counts events, not values — wrapping it would
                 // change nothing, so leave it alone.
-                Some(_) if func_name == "count" => Some((agg_func, field)),
-                Some(expr) => Some((
+                Some(_) if func_name == "count" => Ok((agg_func, field)),
+                Some(expr) => Ok((
                     Box::new(crate::aggregation::ProjectedAggregate::new(agg_func, expr)),
                     None,
                 )),
-                None => Some((agg_func, field)),
+                None => Ok((agg_func, field)),
             }
         }
 
@@ -125,8 +149,10 @@ pub fn compile_agg_expr(
                 BinOp::Mul => AggBinOp::Mul,
                 BinOp::Div => AggBinOp::Div,
                 _ => {
-                    warn!("Unsupported binary operator in aggregate: {:?}", op);
-                    return None;
+                    return Err(format!(
+                        "an aggregate expression combines aggregates with + - * /, not {}",
+                        op.as_str()
+                    ));
                 }
             };
 
@@ -136,13 +162,23 @@ pub fn compile_agg_expr(
             let expr_agg =
                 ExprAggregate::new(left_func, left_field, agg_op, right_func, right_field);
 
-            Some((Box::new(expr_agg), None))
+            Ok((Box::new(expr_agg), None))
         }
 
-        _ => {
-            warn!("Unsupported aggregate expression: {:?}", expr);
-            None
-        }
+        // A literal tags every result with its value: `.aggregate(pipeline:
+        // "device-stats", n: count())`.
+        Expr::Str(s) => Ok((
+            Box::new(Constant(varpulis_core::Value::str(s.as_str()))),
+            None,
+        )),
+        Expr::Int(n) => Ok((Box::new(Constant(varpulis_core::Value::Int(*n))), None)),
+        Expr::Float(f) => Ok((Box::new(Constant(varpulis_core::Value::Float(*f))), None)),
+        Expr::Bool(b) => Ok((Box::new(Constant(varpulis_core::Value::Bool(*b))), None)),
+
+        other => Err(format!(
+            "an aggregate is a function call such as sum(price), a literal, or aggregates \
+             combined with + - * /, not {other:?}"
+        )),
     }
 }
 
@@ -156,7 +192,7 @@ pub fn compile_agg_expr_with_udfs(
     udf_registry: &crate::udf::UdfRegistry,
 ) -> Option<(Box<dyn crate::aggregation::AggregateFunc>, Option<String>)> {
     // Try built-in first
-    if let Some(result) = compile_agg_expr(expr) {
+    if let Ok(result) = compile_agg_expr(expr) {
         return Some(result);
     }
 
@@ -411,12 +447,12 @@ pub fn expr_to_sase_predicate(expr: &varpulis_core::ast::Expr) -> Option<Predica
         // Binary comparison: field == value
         Expr::Binary { op, left, right } => {
             let compare_op = match op {
-                BinOp::Eq => Some(CompareOp::Eq),
-                BinOp::NotEq => Some(CompareOp::NotEq),
-                BinOp::Lt => Some(CompareOp::Lt),
-                BinOp::Le => Some(CompareOp::Le),
-                BinOp::Gt => Some(CompareOp::Gt),
-                BinOp::Ge => Some(CompareOp::Ge),
+                BinOp::Eq => CompareOp::Eq,
+                BinOp::NotEq => CompareOp::NotEq,
+                BinOp::Lt => CompareOp::Lt,
+                BinOp::Le => CompareOp::Le,
+                BinOp::Gt => CompareOp::Gt,
+                BinOp::Ge => CompareOp::Ge,
                 BinOp::And => {
                     let left_pred = expr_to_sase_predicate(left)?;
                     let right_pred = expr_to_sase_predicate(right)?;
@@ -427,8 +463,14 @@ pub fn expr_to_sase_predicate(expr: &varpulis_core::ast::Expr) -> Option<Predica
                     let right_pred = expr_to_sase_predicate(right)?;
                     return Some(Predicate::Or(Box::new(left_pred), Box::new(right_pred)));
                 }
-                _ => None,
-            }?;
+                // `in`, `not in`, `is`, `%`, `xor`, ...: not a native
+                // comparison, but a condition all the same, evaluated at
+                // runtime. This arm used to answer `None`, and `?` then made
+                // the whole predicate `None`: the step took every event of
+                // its type, so `-> Process where image in [...]` matched
+                // every process.
+                _ => return Some(Predicate::Expr(Box::new(expr.clone()))),
+            };
 
             // Handle cross-event reference comparisons (e.g., order_id == order.id)
             // Left: current event field, Right: reference to captured event

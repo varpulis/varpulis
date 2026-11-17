@@ -1,11 +1,10 @@
-//! Regression test for the TrendAggregate unbounded-`accumulated` fix.
+//! A trend aggregate counts the trends of one window at a time.
 //!
-//! Audit finding (Phase 2, resource-safety): `TrendAggregateConfig.accumulated`
-//! grew without limit — every event was pushed and never evicted, so the
-//! per-event count/sum re-scan was O(n²) and memory grew forever (OOM). The op
-//! is windowed (WITHIN), so `accumulated` must be bounded to that same
-//! event-time window. Observable consequence: the field aggregates
-//! (`sum_trends`/`count_events`) reflect only the window, not all time.
+//! `.trend_aggregate()` once kept every event it had ever seen in a buffer
+//! that nothing bounded: the field aggregates (`sum_trends`, `count_events`)
+//! re-scanned it per event, O(n²), and it grew until the process died. The
+//! window of the pattern's `.within()` is the bound: a trend lies inside
+//! one window, and a window's result is computed from its events alone.
 
 use tokio::sync::mpsc;
 use varpulis_core::Value;
@@ -28,6 +27,10 @@ async fn run_scenario(program_source: &str, events_source: &str) -> Vec<Event> {
             .await
             .expect("Failed to process event");
     }
+    engine
+        .flush_end_of_input()
+        .await
+        .expect("Failed to close the windows");
 
     let mut results = Vec::new();
     while let Ok(event) = rx.try_recv() {
@@ -36,19 +39,24 @@ async fn run_scenario(program_source: &str, events_source: &str) -> Vec<Event> {
     results
 }
 
-/// A trend aggregate's `accumulated` buffer — the source of its `sum_trends` /
-/// `count_events` field aggregates — must be bounded to the WITHIN window, not
-/// grow for all time. We prove it via the observable sum across a window
-/// boundary: batch A (price 100) at t=0s expires before batch B (price 1) at
-/// t=100s under a 1s window, so a batch-B emit must sum ONLY batch B.
+/// Three ticks at 0s and three at 100s under a 1s window: the first window
+/// closes when the 100s tick arrives, the second at the end of the input,
+/// and each sums its own ticks.
+///
+/// Three ticks `a b c` with no condition: from `a`, the subsets of `{b, c}`
+/// (three trends, `b` in two of them and `c` in two); from `b`, `{c}` (one
+/// trend); from `c`, none. `b` takes part in two trends and `c` in three,
+/// so `sum_trends(rising.price)` is `5 * price`: 500 for the first window,
+/// 5 for the second. Were the buffer unbounded, the second window would
+/// sum 505.
 #[tokio::test]
-async fn trend_accumulated_is_bounded_to_within_window() {
+async fn a_window_sums_its_own_events_only() {
     let program = r"
         stream WindowedSum = StockTick as first
             -> all StockTick as rising
             .within(1s)
-            .trend_aggregate(total: sum_trends(rising.price))
-            .emit(sum: total)
+            .trend_aggregate(trends: count_trends(), total: sum_trends(rising.price))
+            .emit(trends: trends, sum: total)
     ";
 
     let events = r#"
@@ -61,24 +69,16 @@ async fn trend_accumulated_is_bounded_to_within_window() {
     "#;
 
     let results = run_scenario(program, events).await;
-    assert!(!results.is_empty(), "trend aggregate should emit results");
-
-    let last_sum = results
-        .last()
-        .and_then(|r| r.data.get("sum"))
-        .and_then(|v| match v {
-            Value::Float(f) => Some(*f),
-            _ => None,
-        })
-        .expect("final result must carry a float `sum`");
-
-    // Windowed: batch A (300.0) has aged out; only batch B (3 * 1.0 = 3.0)
-    // remains. If `accumulated` were unbounded (the bug), batch A would leak
-    // into this emit and the sum would be 303.0.
-    assert!(
-        last_sum < 100.0,
-        "sum after the window boundary must reflect ONLY the current window \
-         (expected 3.0 from batch B); got {last_sum} — `accumulated` was not \
-         bounded to the WITHIN window, so all-time events leaked in"
+    let sums: Vec<(Option<&Value>, Option<&Value>)> = results
+        .iter()
+        .map(|r| (r.data.get("trends"), r.data.get("sum")))
+        .collect();
+    assert_eq!(
+        sums,
+        vec![
+            (Some(&Value::Int(4)), Some(&Value::Float(500.0))),
+            (Some(&Value::Int(4)), Some(&Value::Float(5.0))),
+        ],
+        "{results:#?}"
     );
 }

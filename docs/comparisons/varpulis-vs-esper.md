@@ -208,7 +208,7 @@ Esper, also running on the JVM, would exhibit similar memory and startup charact
 | Stream joins | Declarative `.join()` | SQL-style `from A, B where ...` |
 | Named windows | Not applicable (stream-oriented) | Create window + insert/select |
 | Pattern forecasting | Built-in PST (51 ns/prediction) | Not available |
-| Trend aggregation | Built-in Hamlet engine | Not available |
+| Trend aggregation | Built-in (`.trend_aggregate()`) | Not available |
 | Contexts / partitioning | `.partition_by()` + contexts | Context partitions, keyed/hash/category |
 | On-demand queries | REST API | Fire-and-forget queries |
 | Connectors | Kafka, MQTT, NATS, PostgreSQL CDC | User-supplied (embedded library) |
@@ -229,7 +229,7 @@ Esper, also running on the JVM, would exhibit similar memory and startup charact
 - **Resource efficiency**: 10--50 MB vs 200 MB+ baseline. No GC pauses. Predictable latency.
 - **Exhaustive Kleene matching**: SASE+ finds all valid pattern instances, not just the longest. Critical for security and fraud detection where every match matters.
 - **Pattern forecasting**: Predict pattern completion probability and timing before it happens (51 ns per prediction).
-- **Trend aggregation**: Hamlet engine provides optimized multi-query trend aggregation with up to 100x speedup over naive approaches for 50 concurrent patterns.
+- **Trend aggregation**: `.trend_aggregate()` computes counts and sums over every trend a Kleene pattern matches — exponential in number — by counting on the window's event graph.
 - **Standalone deployment**: No Java application required. Deploy as a single binary with built-in connectors.
 - **Fast iteration**: Modify VPL files and restart in < 100 ms. No compilation or class loading.
 
@@ -257,10 +257,9 @@ Varpulis is the better choice when you need:
 - **Standalone CEP with built-in connectors**: No Java application wrapper needed. Built-in Kafka, MQTT, NATS, and PostgreSQL CDC connectors.
 - **Exhaustive pattern matching**: SASE+ Kleene+ finds all valid match instances -- not just the longest -- which matters for security monitoring, fraud detection, and compliance.
 - **Pattern forecasting**: Predict pattern completions before they happen. No equivalent exists in Esper.
-- **Multi-query optimization**: Hamlet engine shares computation across overlapping patterns, achieving 100x speedup for 50 concurrent queries vs naive execution.
 - **Operational simplicity**: Single binary, sub-100ms startup, no JVM tuning. Suitable for serverless, auto-scaling, or resource-constrained environments.
 - **Non-Java teams**: VPL is a standalone language. No Java expertise required.
 
 ## Summary
 
-Esper is a mature, well-proven CEP engine with a rich EPL language, ideal for embedding in Java applications. Varpulis is a modern, resource-efficient alternative with a purpose-built pattern language, exhaustive SASE+ matching, and unique capabilities like pattern forecasting and Hamlet trend aggregation. If you need embedded Java CEP with maximum EPL flexibility, Esper is strong. If you need a standalone engine with lower resource usage, built-in connectors, and advanced pattern analytics, Varpulis is a compelling alternative.
+Esper is a mature, well-proven CEP engine with a rich EPL language, ideal for embedding in Java applications. Varpulis is a modern, resource-efficient alternative with a purpose-built pattern language, exhaustive SASE+ matching, and unique capabilities like pattern forecasting and trend aggregation. If you need embedded Java CEP with maximum EPL flexibility, Esper is strong. If you need a standalone engine with lower resource usage, built-in connectors, and advanced pattern analytics, Varpulis is a compelling alternative.

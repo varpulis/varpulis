@@ -954,7 +954,7 @@ fn get_documentation(word: &str) -> Option<String> {
 
         "trend_aggregate" => Some(format!(
             "## .trend_aggregate()\n\n\
-            Hamlet-based trend aggregation over sequence patterns.\n\
+            Trend aggregation over sequence patterns: counts every trend of each window.\n\
             Computes aggregates over all Kleene matches efficiently.\n\n\
             **Parameters:**\n\
             Named aggregation expressions (same as `.aggregate()`).\n\n\
@@ -970,7 +970,7 @@ fn get_documentation(word: &str) -> Option<String> {
                 .emit()\n\
             ```\n\n\
             **Note:** Mutually exclusive with `.forecast()`. \
-            Uses Hamlet optimizer for multi-query sharing."
+            Counts on the window's event graph (GRETA), without enumerating the trends."
         )),
 
         // Forecast built-in variables

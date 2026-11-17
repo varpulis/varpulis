@@ -1,15 +1,16 @@
 //! A join must never be silently discarded by the dispatch-path choice.
 //!
-//! `Engine::process_stream_sync` does not implement join sources. The CLI chose
-//! between the synchronous and asynchronous paths with `has_sink_operations()`,
-//! which asks whether the program has `.to()` or `.enrich()` — a different
-//! question. A join is not a sink, so a program whose only join had no sink
-//! took the sync path and every match was thrown away, with a successful exit
-//! code and an empty result.
+//! `Engine::process_stream_sync` once did not implement join sources, and the
+//! CLI chose between the synchronous and asynchronous paths with
+//! `has_sink_operations()`, which asks whether the program has `.to()` or
+//! `.enrich()` — a different question. A join is not a sink, so a program
+//! whose only join had no sink took the sync path and every match was thrown
+//! away, with a successful exit code and an empty result.
 //!
-//! That is the default path for `simulate`, `detect`, `analyze` and `repl`, and
-//! the only path in `varpulis-engine-wasm`, so the shipped join example emitted
-//! nothing when run with the command printed in its own header.
+//! Both paths run a join now: the synchronous one, which `simulate`, a Vejas
+//! detect unit and `varpulis-engine-wasm` take, correlates through the same
+//! buffer as the asynchronous one. A sink-less join needs no asynchronous
+//! runtime, and the selector says so.
 
 use tokio::sync::mpsc;
 use varpulis_core::{Event, Value};
@@ -54,23 +55,24 @@ fn quote(sym: &str, bid: f64) -> Event {
     e
 }
 
-/// Fail-before: a sink-less join reported `requires_async_dispatch == false`
-/// via `has_sink_operations`, so the CLI ran it on the path that discards it.
+/// A sink-less join takes the synchronous path, which runs it (see
+/// `the_sync_path_runs_the_join`); only a sink or a lookup needs the
+/// asynchronous one.
 #[tokio::test]
-async fn a_sinkless_join_requires_the_async_path() {
+async fn a_sinkless_join_takes_the_sync_path() {
     let (engine, _rx) = load(JOIN_PROGRAM);
 
     assert!(
         !engine.has_sink_operations(),
-        "the program has no .to()/.enrich() — this is what misled the selector"
+        "the program has no .to()/.enrich()"
     );
     assert!(
         engine.has_join_sources(),
         "the program does have a join source"
     );
     assert!(
-        engine.requires_async_dispatch(),
-        "a join must force the async path even with no sink"
+        !engine.requires_async_dispatch(),
+        "a join alone needs no asynchronous runtime"
     );
 }
 
@@ -99,21 +101,27 @@ async fn the_async_path_produces_join_matches() {
     assert_eq!(emitted.len(), 2, "both symbols must join; got {emitted:?}");
 }
 
-/// Anything genuinely confined to the sync path — the WASM build — must get a
-/// loud error rather than a successful empty result.
-///
-/// Fail-before: this returned `Ok` with an empty result.
+/// The synchronous path — `varpulis simulate`, a Vejas detect unit, the WASM
+/// build — runs the join too: it used to refuse it (and before that, to
+/// return `Ok` with an empty result).
 #[test]
-fn the_sync_path_refuses_a_join_instead_of_dropping_it() {
-    let (mut engine, _rx) = load(JOIN_PROGRAM);
+fn the_sync_path_runs_the_join() {
+    let (mut engine, mut rx) = load(JOIN_PROGRAM);
 
-    let err = engine
-        .process_batch_sync(vec![trade("AAPL", 100.0), quote("AAPL", 99.5)])
-        .expect_err("the sync path must refuse a join, not silently drop it");
+    engine
+        .process_batch_sync(vec![
+            trade("AAPL", 100.0),
+            quote("AAPL", 99.5),
+            trade("MSFT", 200.0),
+        ])
+        .expect("processing must succeed");
 
-    let msg = err.to_string();
-    assert!(
-        msg.contains("join") && msg.contains("synchronous"),
-        "the error must say what is unsupported and why; got: {msg}"
-    );
+    let mut emitted = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        emitted.push(e);
+    }
+    assert_eq!(emitted.len(), 1, "AAPL joins, MSFT waits; got {emitted:?}");
+    assert_eq!(&*emitted[0].event_type, "Alerts");
+    assert_eq!(emitted[0].data.get("sym"), Some(&Value::str("AAPL")));
+    assert_eq!(emitted[0].data.get("px"), Some(&Value::Float(100.0)));
 }

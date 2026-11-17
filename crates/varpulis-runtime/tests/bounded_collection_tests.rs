@@ -1,13 +1,8 @@
-//! Tests for bounded PST/Hamlet collections (Issue #19).
+//! Tests for bounded PST collections (Issue #19).
 //!
-//! Validates LRU eviction, arena compaction, graphlet caps, and snapshot caps.
-
-use std::sync::Arc;
+//! Validates LRU eviction and arena compaction.
 
 use rustc_hash::FxHashMap;
-use varpulis_runtime::event::Event;
-use varpulis_runtime::hamlet::aggregator::HamletConfig;
-use varpulis_runtime::hamlet::graph::HamletGraph;
 use varpulis_runtime::pst::{
     OnlinePSTLearner, PMCConfig, PSTConfig, PatternMarkovChain, PredictionSuffixTree,
     PruningStrategy, RunSnapshot,
@@ -214,34 +209,4 @@ fn test_pst_arena_cap_triggers_compact() {
 fn test_pst_config_default_max_nodes() {
     let config = PSTConfig::default();
     assert_eq!(config.max_nodes, 100_000);
-}
-
-// --- Hamlet graphlet cap tests ---
-
-#[test]
-fn test_hamlet_graph_graphlet_cap() {
-    let mut graph = HamletGraph::with_limits(5, 0);
-
-    // Add events of different types to create multiple graphlets
-    for type_idx in 0u16..10 {
-        let e = Arc::new(Event::new(format!("Type{type_idx}").as_str()));
-        graph.add_event(e, type_idx);
-        // Close the graphlet so it becomes inactive
-        graph.close_graphlet_for_type(type_idx);
-        graph.mark_processed(type_idx as u32);
-    }
-
-    // With max_graphlets=5, should have evicted older ones
-    assert!(
-        graph.num_graphlets() <= 10,
-        "Graphlet count should be bounded, got {}",
-        graph.num_graphlets()
-    );
-}
-
-#[test]
-fn test_hamlet_config_default_caps() {
-    let config = HamletConfig::default();
-    assert_eq!(config.max_graphlets, 50_000);
-    assert_eq!(config.max_snapshots, 100_000);
 }

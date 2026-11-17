@@ -447,7 +447,7 @@ pub enum StreamOp {
     Watermark(Vec<NamedArg>),
     /// Allowed lateness for late data: `.allowed_lateness(30s)`
     AllowedLateness(Expr),
-    /// Trend aggregation over Kleene patterns (Hamlet engine):
+    /// Trend aggregation over Kleene patterns:
     /// `.trend_aggregate(count: count_trends(), events: count_events(rising))`
     TrendAggregate(Vec<TrendAggItem>),
     /// ONNX model scoring: `.score(model: "path.onnx", inputs: [...], outputs: [...])`

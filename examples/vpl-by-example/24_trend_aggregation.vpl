@@ -1,8 +1,11 @@
-# VPL by Example: 24 — Trend Aggregation (Hamlet Engine)
+# VPL by Example: 24 — Trend Aggregation (Statistics over Every Trend)
 #
-# .trend_aggregate() computes aggregate statistics over all matching
-# event trends using the Hamlet engine — without enumerating every
-# combination. This is O(n) per event instead of O(2^n).
+# .trend_aggregate() computes statistics over every trend the pattern
+# matches — every non-empty subset of the steps between the start and the
+# end — without enumerating them: the counts come from a dynamic programme
+# over the window's events (GRETA), quadratic in their number where the
+# trends are exponential. One result per partition when its window
+# (the .within()) closes.
 #
 # Syntax:
 #   .trend_aggregate(
@@ -14,13 +17,16 @@
 #       name: count_trends()
 #   )
 #
-# Functions:
-#   avg_trends(alias.field)   Average of field across all trend combinations
-#   sum_trends(alias.field)   Sum of field across all trend combinations
-#   max_trends(alias.field)   Maximum across all trends
-#   min_trends(alias.field)   Minimum across all trends
-#   count_events(alias)       Number of events captured by Kleene closure
-#   count_trends()            Number of unique trend combinations (2^n - 1)
+# Functions (here: three steps, so 7 trends, each step in 4 of them):
+#   count_trends()            Number of trends: 7
+#   count_events(alias)       Times the step's events take part in a trend,
+#                             summed over the trends: 3 steps x 4 = 12
+#                             (count(steps) in .emit() gives the 3 distinct)
+#   sum_trends(alias.field)   The field summed over every step of every
+#                             trend: 4 x (1200 + 3400 + 800) = 21600
+#   avg_trends(alias.field)   sum_trends / count_trends: 3085.7
+#   max_trends(alias.field)   Largest value of the field on a step in a trend
+#   min_trends(alias.field)   Smallest such value
 #
 #   The alias is required on the field aggregates: it names the pattern step
 #   the field is read from. A bare `sum_trends(field)` is refused at compile
@@ -72,5 +78,6 @@ stream BatchAnalytics = BatchStart as start
         max_step_errors: max_errors,
         total_duration: total_duration,
         steps: step_count,
+        distinct_steps: count(steps),
         trends: trend_count
     )
