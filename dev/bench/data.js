@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794833442159,
+  "lastUpdate": 1795444072719,
   "repoUrl": "https://github.com/varpulis/varpulis",
   "entries": {
     "Varpulis Performance": [
@@ -29422,6 +29422,970 @@ window.BENCHMARK_DATA = {
           {
             "name": "conformal_calibration/predict_only",
             "value": 3078,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Cyril PODER",
+            "username": "cpoder",
+            "email": "cyril.poder@gmail.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "4776a666e11c985b47583e55680644b8a2a7113e",
+          "message": "deps: wasmtime 48.0.8, zstd 0.13.4, tokio 1.51.6, arrow 58.4.1, async-nats 0.52; ignore crypto-bigint, pin-utils (nightly Audit/Deny) (#298)\n\nAdvisories published from 2026-10-13 turned the nightly Audit and Deny jobs\nred on main from 10-20. Deny fails on more of them than Audit does: it treats\n`unsound` and `unmaintained` as errors, where Audit only warns.\n\nOn the patched release of each line, Cargo.lock only:\n\n- wasmtime 48.0.6 -> 48.0.8 (RUSTSEC-2026-0378, -0379, -0422..0424). 48.x\n  declares rust-version 1.95, as it already did; only `smartmodule` builds it.\n- zstd 0.13.3 -> 0.13.4, zstd-safe 7.2.4 -> 7.4.0, zstd-sys 2.0.16 -> 2.1.2\n  (RUSTSEC-2026-0391, -0395..0406, -0410). zstd-sys 2.0.17 would not do: the\n  advisory counts only >=2.1.2 as patched.\n- tokio 1.51.0 -> 1.51.6 (RUSTSEC-2026-0386), which deprecates the `AsyncFd`\n  constructors. The workspace does not call them.\n- arrow-array, -buffer, -data, -schema 58.1.0 -> 58.4.1 (RUSTSEC-2026-0442).\n  arrow-arith and arrow-row stay at 58.1.0, which accepts them.\n- rustls-webpki 0.103.15 -> 0.103.16 (RUSTSEC-2026-0382), webpki-roots and\n  webpki-root-certs 1.0.6 -> 1.0.11 (RUSTSEC-2026-0381, -0383).\n- ctutils 0.4.2 -> 0.4.8 (RUSTSEC-2026-0385), with cmov 0.5.4.\n- libz-sys 1.1.24 -> 1.1.31 (RUSTSEC-2026-0418). cc stays locked at 1.2.59,\n  below the 1.6.0 that makes the old build script print the environment, so\n  no build of this lockfile wrote secrets to target/.\n\nasync-nats 0.46 -> 0.52 in varpulis-runtime's dev-dependencies. The rest of\nthe rustls-webpki advisory sat on the 0.102.8 that 0.46 pinned, and the\ncomments calling that unfixable upstream were out of date: 0.47 moved to\nrustls-webpki 0.103. No Rust code uses the crate, so nothing else changes.\nrustls-webpki 0.102, rustls-pemfile and webpki-roots 0.26 leave the lockfile,\nand with them the ignores for RUSTSEC-2025-0134, RUSTSEC-2026-0049, -0098,\n-0099 and -0104, removed from deny.toml and .cargo/audit.toml.\n\nTwo advisories stay, ignored in both files, each blocked by the 1.93 MSRV:\n\nRUSTSEC-2026-0387, crypto-bigint 0.4.9 and 0.5.5: timing variability, fixed\nonly in >=0.7.6 with no backport. They come through aws-sigv4 1.4's `sigv4a`\nfeature, and aws-sigv4 reaches crypto-bigint 0.7 only in 1.6.4, whose\nrust-version is 1.94.1. Only the optional `s3-state` feature pulls them, no\nshipped build enables it, and nothing in the workspace constructs\nS3StateStore. Within aws-sigv4 only sign/v4a.rs uses them, which the SDK runs\nfor Multi-Region Access Point and Outposts ARNs or on\nAWS_AUTH_SCHEME_PREFERENCE, not for a plain bucket name.\n\nRUSTSEC-2026-0441, pin-utils: unmaintained, no patched release. Same\n`s3-state` gate; aws-smithy-types, -runtime and -http use only its `pin_mut!`\nmacro, and the releases that drop it have rust-version 1.94.1.\n\nChecked here: scripts/verify.sh (fmt, audit, deny, clippy, doc) and `cargo\ncheck --workspace --all-targets` pass on default features,\nscripts/check-engine-deps.py passes, and `cargo test -p varpulis-engine --lib`\npasses its 3 tests.\n\nNot run, the machine being overloaded: the workspace tests and doctests, the\nfeature matrix, the wasm checks and the MSRV job. wasmtime, zstd, zstd-sys,\nlibz-sys, librocksdb-sys and webpki-root-certs sit behind optional features, so\nthey resolve here but have not been compiled at these versions. The PR gate\ndoes not build them either: the heavy suite is the first thing that will.\n\n\nClaude-Session: https://claude.ai/code/session_018wXgxT2UoFSZfqhAE1Tb5V\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-06T22:27:10Z",
+          "url": "https://github.com/varpulis/varpulis/commit/4776a666e11c985b47583e55680644b8a2a7113e"
+        },
+        "date": 1795444072173,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "single_stream_overhead/no_context/100",
+            "value": 60973,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "single_stream_overhead/with_context/100",
+            "value": 2111800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "single_stream_overhead/no_context/1000",
+            "value": 642510,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "single_stream_overhead/with_context/1000",
+            "value": 2338700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "single_stream_overhead/no_context/10000",
+            "value": 6543700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "single_stream_overhead/with_context/10000",
+            "value": 9054200,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parallel_streams/sequential/1000",
+            "value": 1235700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parallel_streams/parallel/1000",
+            "value": 2683600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parallel_streams/sequential/10000",
+            "value": 12342000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parallel_streams/parallel/10000",
+            "value": 11869000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parallel_streams/sequential/50000",
+            "value": 63096000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parallel_streams/parallel/50000",
+            "value": 60016000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "cross_context_pipeline/3_context_chain/100",
+            "value": 4244200,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "cross_context_pipeline/3_context_chain/1000",
+            "value": 7359000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "cross_context_pipeline/3_context_chain/10000",
+            "value": 27387000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "cpu_intensive_parallel/sequential/1000",
+            "value": 1857200,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "cpu_intensive_parallel/parallel/1000",
+            "value": 2607100,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "cpu_intensive_parallel/sequential/5000",
+            "value": 9295500,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "cpu_intensive_parallel/parallel/5000",
+            "value": 5172200,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "cpu_intensive_parallel/sequential/20000",
+            "value": 37468000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "cpu_intensive_parallel/parallel/20000",
+            "value": 17946000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "dispatch_methods/process_async/1000",
+            "value": 2337600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "dispatch_methods/try_process/1000",
+            "value": 2329000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "dispatch_methods/router_dispatch/1000",
+            "value": 2330400,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "dispatch_methods/process_async/10000",
+            "value": 7893000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "dispatch_methods/try_process/10000",
+            "value": 6600600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "dispatch_methods/router_dispatch/10000",
+            "value": 6621100,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "session_window/no_context/500",
+            "value": 470220,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "session_window/with_context/500",
+            "value": 2205400,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "session_window/no_context/2000",
+            "value": 1893400,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "session_window/with_context/2000",
+            "value": 2573800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "session_window/no_context/10000",
+            "value": 9459800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "session_window/with_context/10000",
+            "value": 5074000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "session_window_sweep/event_driven/500",
+            "value": 471470,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "session_window_sweep/with_sweep/500",
+            "value": 468690,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "session_window_sweep/event_driven/2000",
+            "value": 1895000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "session_window_sweep/with_sweep/2000",
+            "value": 1893800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "session_window_sweep/event_driven/10000",
+            "value": 9465300,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "session_window_sweep/with_sweep/10000",
+            "value": 9443600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "single_query/hamlet",
+            "value": 616800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "single_query/zdd_unified",
+            "value": 1184900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_query_scaling/hamlet/1",
+            "value": 28753,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_query_scaling/zdd_unified/1",
+            "value": 49902,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_query_scaling/hamlet/5",
+            "value": 265900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_query_scaling/zdd_unified/5",
+            "value": 1661600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_query_scaling/hamlet/10",
+            "value": 622950,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_query_scaling/zdd_unified/10",
+            "value": 9613600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_query_scaling/hamlet/25",
+            "value": 788770,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_query_scaling/zdd_unified/25",
+            "value": 44271000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_query_scaling/hamlet/50",
+            "value": 1082900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_query_scaling/zdd_unified/50",
+            "value": 152840000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_length/hamlet/10",
+            "value": 2468,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_length/zdd_unified/10",
+            "value": 3852,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_length/hamlet/50",
+            "value": 6871,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_length/zdd_unified/50",
+            "value": 13107,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_length/hamlet/100",
+            "value": 12951,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_length/zdd_unified/100",
+            "value": 24619,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_length/hamlet/500",
+            "value": 58001,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_length/zdd_unified/500",
+            "value": 116490,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_length/hamlet/1000",
+            "value": 117850,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_length/zdd_unified/1000",
+            "value": 231480,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "shared_kleene/hamlet_shared",
+            "value": 797240,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "shared_kleene/zdd_unified_shared",
+            "value": 11912000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "burstiness/hamlet_bursty",
+            "value": 183780,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "burstiness/zdd_bursty",
+            "value": 482630,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "burstiness/hamlet_regular",
+            "value": 5446700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "burstiness/zdd_regular",
+            "value": 468510,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/hamlet_10k",
+            "value": 42001000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/zdd_10k",
+            "value": 470480000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "memory_pressure/hamlet_many_small",
+            "value": 1112000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "memory_pressure/zdd_many_small",
+            "value": 1540200,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "memory_pressure/hamlet_few_large",
+            "value": 583060,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "memory_pressure/zdd_few_large",
+            "value": 1291400,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_simple/seq_a_b_plus_c/100",
+            "value": 66284,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_simple/seq_a_b_plus_c/500",
+            "value": 333020,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_simple/seq_a_b_plus_c/1000",
+            "value": 665310,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_simple/seq_a_b_plus_c/5000",
+            "value": 3365800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_rising_sequence/rising_prices/500",
+            "value": 139690,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_rising_sequence/rising_prices/1000",
+            "value": 274620,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_rising_sequence/rising_prices/5000",
+            "value": 1417800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_rising_sequence/rising_prices/10000",
+            "value": 2680400,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_exponential/5middles_2^5_combos/31",
+            "value": 58937,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_exponential/10middles_2^10_combos/1023",
+            "value": 136200,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_exponential/15middles_2^15_combos/32767",
+            "value": 222840,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_exponential/20middles_2^20_combos/1048575",
+            "value": 350450,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_star/seq_a_b_star_c/100",
+            "value": 70334,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_star/seq_a_b_star_c/500",
+            "value": 345890,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_star/seq_a_b_star_c/1000",
+            "value": 682730,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_star/seq_a_b_star_c/5000",
+            "value": 3390900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "all_pattern/all_matching/100",
+            "value": 39485,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "all_pattern/all_matching/500",
+            "value": 145750,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "all_pattern/all_matching/1000",
+            "value": 278030,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "max_runs_impact/max_runs/10",
+            "value": 276170,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "max_runs_impact/max_runs/50",
+            "value": 275610,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "max_runs_impact/max_runs/100",
+            "value": 276290,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "max_runs_impact/max_runs/500",
+            "value": 278730,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "max_runs_impact/max_runs/1000",
+            "value": 261370,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "memory_efficiency/2^15_combinations",
+            "value": 116460,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "memory_efficiency/2^20_combinations",
+            "value": 178120,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "memory_efficiency/2^25_combinations",
+            "value": 182900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/100",
+            "value": 44543,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/1000",
+            "value": 446690,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/10000",
+            "value": 4466500,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/100",
+            "value": 82400,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/1000",
+            "value": 796510,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/5000",
+            "value": 4005400,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/100",
+            "value": 41983,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/1000",
+            "value": 523530,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/5000",
+            "value": 2720800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_5_events_5k",
+            "value": 2388700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_10_events_10k",
+            "value": 5154500,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/negation_5k",
+            "value": 1913500,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/or_pattern_5k",
+            "value": 2175500,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/nested_kleene_5k",
+            "value": 310760000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_predicates/chained_predicates_5k",
+            "value": 2236000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/10000",
+            "value": 4236000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/50000",
+            "value": 21508000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/100000",
+            "value": 43573000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/100k_simple_seq",
+            "value": 44351000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/50k_kleene_plus",
+            "value": 37410000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_training/cyclic_10_types/1000",
+            "value": 124750,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_training/variable_pattern/1000",
+            "value": 150970,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_training/cyclic_10_types/10000",
+            "value": 1232500,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_training/variable_pattern/10000",
+            "value": 1508500,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_training/cyclic_10_types/100000",
+            "value": 11780000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_training/variable_pattern/100000",
+            "value": 15824000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_prediction/predict_symbol/1",
+            "value": 10,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_prediction/predict_distribution/1",
+            "value": 36,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_prediction/predict_symbol/3",
+            "value": 20,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_prediction/predict_distribution/3",
+            "value": 51,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_prediction/predict_symbol/5",
+            "value": 35,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_prediction/predict_distribution/5",
+            "value": 68,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_prediction/predict_symbol/10",
+            "value": 87,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pst_prediction/predict_distribution/10",
+            "value": 120,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pmc_forecast/process_no_runs",
+            "value": 2134100,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pmc_forecast/process_with_runs",
+            "value": 14624000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pmc_forecast/process_multi_runs",
+            "value": 14875000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "online_learning/incremental_no_prune",
+            "value": 7406900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "online_learning/incremental_with_prune",
+            "value": 7344100,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "online_learning/learn_and_predict_mixed",
+            "value": 7320700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "alphabet_scaling/train/5",
+            "value": 9124000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "alphabet_scaling/predict/5",
+            "value": 173,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "alphabet_scaling/online_update/5",
+            "value": 3038600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "alphabet_scaling/train/10",
+            "value": 19802000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "alphabet_scaling/predict/10",
+            "value": 143,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "alphabet_scaling/online_update/10",
+            "value": 6318800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "alphabet_scaling/train/50",
+            "value": 36236000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "alphabet_scaling/predict/50",
+            "value": 399,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "alphabet_scaling/online_update/50",
+            "value": 7876300,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "alphabet_scaling/train/100",
+            "value": 37356000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "alphabet_scaling/predict/100",
+            "value": 153,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "alphabet_scaling/online_update/100",
+            "value": 7837900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "hawkes_intensity/update_regular",
+            "value": 2274600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "hawkes_intensity/update_burst",
+            "value": 2292400,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "hawkes_intensity/boost_computation",
+            "value": 704240,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "conformal_calibration/record_and_predict",
+            "value": 4974100,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "conformal_calibration/predict_only",
+            "value": 4275,
             "range": "± 0",
             "unit": "ns/iter"
           }
