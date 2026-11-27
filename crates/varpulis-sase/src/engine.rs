@@ -1111,15 +1111,6 @@ impl SaseEngine {
             return (true, None);
         }
 
-        // IDX-02: the eviction strategies choose among all runs. Put the
-        // parked ones where they look; the next event files them again.
-        if !matches!(
-            self.backpressure,
-            BackpressureStrategy::Drop | BackpressureStrategy::Error
-        ) {
-            self.release_run_index();
-        }
-
         match &self.backpressure {
             BackpressureStrategy::Drop => {
                 self.total_runs_dropped += 1;
@@ -1149,38 +1140,26 @@ impl SaseEngine {
                 // Find and evict the oldest run. Ties go to the run created
                 // first (`seq`), not to the first in the list, whose order
                 // depends on its history and on the predicate index.
-                if let Some((idx, age)) = self
-                    .runs
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, r)| (r.started_at, r.seq))
-                    .map(|(idx, r)| (idx, r.started_at.elapsed()))
-                {
-                    self.runs.swap_remove(idx);
-                    self.runs.push(run);
-                    self.total_runs_evicted += 1;
-                    (true, Some(ProcessWarning::RunEvicted { age }))
-                } else {
-                    self.runs.push(run);
-                    (true, None)
+                let evicted = self.evict_min_by_key(|r| (r.started_at, r.seq));
+                self.file_run(run);
+                match evicted {
+                    Some(age) => {
+                        self.total_runs_evicted += 1;
+                        (true, Some(ProcessWarning::RunEvicted { age }))
+                    }
+                    None => (true, None),
                 }
             }
             BackpressureStrategy::EvictLeastProgress => {
                 // Find and evict the run with least progress
-                if let Some((idx, age)) = self
-                    .runs
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, r)| (r.stack.len(), r.seq))
-                    .map(|(idx, r)| (idx, r.started_at.elapsed()))
-                {
-                    self.runs.swap_remove(idx);
-                    self.runs.push(run);
-                    self.total_runs_evicted += 1;
-                    (true, Some(ProcessWarning::RunEvicted { age }))
-                } else {
-                    self.runs.push(run);
-                    (true, None)
+                let evicted = self.evict_min_by_key(|r| (r.stack.len(), r.seq));
+                self.file_run(run);
+                match evicted {
+                    Some(age) => {
+                        self.total_runs_evicted += 1;
+                        (true, Some(ProcessWarning::RunEvicted { age }))
+                    }
+                    None => (true, None),
                 }
             }
             BackpressureStrategy::Sample { rate } => {
@@ -1189,15 +1168,8 @@ impl SaseEngine {
                     (self.total_runs_created as f64 * rate) as u64 > self.total_runs_dropped;
                 if should_accept {
                     // Evict oldest to make room
-                    if let Some((idx, age)) = self
-                        .runs
-                        .iter()
-                        .enumerate()
-                        .min_by_key(|(_, r)| (r.started_at, r.seq))
-                        .map(|(idx, r)| (idx, r.started_at.elapsed()))
-                    {
-                        self.runs.swap_remove(idx);
-                        self.runs.push(run);
+                    if let Some(age) = self.evict_min_by_key(|r| (r.started_at, r.seq)) {
+                        self.file_run(run);
                         self.total_runs_evicted += 1;
                         (true, Some(ProcessWarning::RunEvicted { age }))
                     } else {
@@ -1214,6 +1186,26 @@ impl SaseEngine {
                 }
             }
         }
+    }
+
+    /// BP-01: remove the run with the least `key`, listed or parked, and
+    /// return its age. IDX-02: the parked runs are compared where they are,
+    /// so evicting does not take the index apart.
+    fn evict_min_by_key<K: Ord>(&mut self, key: impl Fn(&Run) -> K) -> Option<Duration> {
+        let listed = self
+            .runs
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (key(r), i))
+            .min_by(|a, b| a.0.cmp(&b.0));
+        let parked = self.run_index.as_ref().and_then(|ix| ix.min_by_key(&key));
+        let victim = match (listed, parked) {
+            (Some((lk, _)), Some((pk, slot))) if pk < lk => self.run_index.as_mut()?.remove(slot),
+            (Some((_, i)), _) => self.runs.swap_remove(i),
+            (None, Some((_, slot))) => self.run_index.as_mut()?.remove(slot),
+            (None, None) => return None,
+        };
+        Some(victim.started_at.elapsed())
     }
 
     /// BP-01: Handle backpressure for partitioned runs
@@ -1423,6 +1415,16 @@ impl SaseEngine {
 
     fn process_runs_shared(&mut self, event: SharedEvent) -> (Vec<MatchResult>, bool) {
         self.sync_run_index();
+        // IDX-02: under processing time a listed run whose deadline has
+        // passed leaves when this pass reaches it. A parked run must leave at
+        // the same point, not when `cleanup_timeouts` next runs (it is
+        // throttled), or it would still count towards capacity and the active
+        // runs. After `sync_run_index`, which may have just filed runs.
+        if self.time_semantics == TimeSemantics::ProcessingTime {
+            if let Some(index) = self.run_index.as_mut() {
+                index.expire_processing_time(Timestamp::now());
+            }
+        }
         let mut completed = Vec::with_capacity(4);
         // The creation number of the run behind each entry of `completed`.
         let mut completed_seq: Vec<u64> = Vec::new();

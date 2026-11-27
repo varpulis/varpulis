@@ -360,6 +360,23 @@ impl RunIndex {
         self.slab.iter().flatten().map(|parked| &parked.run)
     }
 
+    /// The parked run with the least `key`, and the slot it is in.
+    pub(crate) fn min_by_key<K: Ord>(&self, key: impl Fn(&Run) -> K) -> Option<(K, Slot)> {
+        self.slab
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, parked)| {
+                let parked = parked.as_ref()?;
+                Some((key(&parked.run), Slot::try_from(slot).ok()?))
+            })
+            .min_by(|a, b| a.0.cmp(&b.0))
+    }
+
+    /// Take out the run at `slot`, as returned by [`RunIndex::min_by_key`].
+    pub(crate) fn remove(&mut self, slot: Slot) -> Run {
+        self.take(slot)
+    }
+
     /// Where `run` would be filed, or `None` if it has to stay with the
     /// runs every event visits.
     pub(crate) fn key_for(&self, run: &Run) -> Option<ParkKey> {

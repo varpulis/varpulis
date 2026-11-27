@@ -465,3 +465,240 @@ fn automatic_mode_switches_with_the_number_of_runs() {
     assert_eq!(engine.parked_run_count(), 0, "under the lower threshold");
     assert_eq!(engine.stats().active_runs, INDEX_OFF_RUNS - 1);
 }
+
+// ---------------------------------------------------------------------------
+// Processing time
+// ---------------------------------------------------------------------------
+//
+// Under processing time a listed run whose deadline has passed leaves when an
+// event's pass reaches it; a parked run must leave at the same point, not when
+// the throttled cleanup next runs. The engine reads the wall clock, so these
+// tests sleep. The events come in bursts much shorter than the window,
+// separated by pauses longer than it: no deadline falls inside a burst, and
+// every run of a burst has expired when the next one starts. The three engines
+// see each event one after the other, so they agree on what has expired. The
+// pauses are shorter than the cleanup interval (100 ms) more often than not,
+// which leaves the expiry to the pass itself.
+
+/// Window of the processing-time patterns.
+const PT_WINDOW: Duration = Duration::from_millis(40);
+/// Pause between two bursts.
+const PT_PAUSE: Duration = Duration::from_millis(60);
+
+fn processing_time_engine(
+    pattern: &SasePattern,
+    strategy: SelectionStrategy,
+    max_runs: usize,
+    backpressure: &BackpressureStrategy,
+    index: Option<bool>,
+) -> SaseEngine {
+    let engine = engine(pattern, strategy, max_runs, backpressure, index);
+    engine.with_processing_time()
+}
+
+/// `pattern` with its window set to [`PT_WINDOW`].
+fn within_pt_window(pattern: SasePattern) -> SasePattern {
+    match pattern {
+        SasePattern::Within(inner, _) => SasePattern::Within(inner, PT_WINDOW),
+        other => SasePattern::Within(Box::new(other), PT_WINDOW),
+    }
+}
+
+/// Run the three engines over bursts of a random stream under processing
+/// time. Returns the number of matches and the most runs the index held.
+fn compare_processing_time(
+    name: &str,
+    pattern: &SasePattern,
+    strategy: SelectionStrategy,
+    max_runs: usize,
+    backpressure: &BackpressureStrategy,
+    seed: u64,
+    bursts: usize,
+) -> (usize, usize, u64) {
+    let mut plain = processing_time_engine(pattern, strategy, max_runs, backpressure, Some(false));
+    let mut indexed = processing_time_engine(pattern, strategy, max_runs, backpressure, Some(true));
+    let mut auto = processing_time_engine(pattern, strategy, max_runs, backpressure, None);
+    let mut rng = Rng(seed);
+    let mut id = 0;
+    let mut matches = 0;
+    let mut most_parked = 0;
+
+    for burst in 0..bursts {
+        if burst > 0 {
+            std::thread::sleep(PT_PAUSE);
+        }
+        for _ in 0..=rng.below(60) {
+            let event = random_event(&mut rng, id, Utc::now());
+            let expected: Vec<String> = plain.process(&event).iter().map(describe).collect();
+            let actual: Vec<String> = indexed.process(&event).iter().map(describe).collect();
+            let automatic: Vec<String> = auto.process(&event).iter().map(describe).collect();
+            assert_eq!(
+                actual, expected,
+                "{name} ({strategy:?}, {backpressure:?}, seed {seed}): matches differ at event {id}"
+            );
+            assert_eq!(
+                automatic, expected,
+                "{name} ({strategy:?}, {backpressure:?}, seed {seed}): automatic mode differs at event {id}"
+            );
+            for (mode, other) in [("indexed", &indexed), ("auto", &auto)] {
+                assert_eq!(
+                    (
+                        other.stats().active_runs,
+                        other.total_runs_dropped,
+                        other.total_runs_evicted
+                    ),
+                    (
+                        plain.stats().active_runs,
+                        plain.total_runs_dropped,
+                        plain.total_runs_evicted
+                    ),
+                    "{name} ({strategy:?}, {backpressure:?}, seed {seed}): {mode} \
+                     (active, dropped, evicted) differ after event {id}"
+                );
+            }
+            matches += expected.len();
+            most_parked = most_parked.max(indexed.parked_run_count());
+            id += 1;
+        }
+    }
+    (
+        matches,
+        most_parked,
+        plain.total_runs_dropped + plain.total_runs_evicted,
+    )
+}
+
+#[test]
+fn index_never_changes_matches_under_processing_time() {
+    // One thread per pattern: the tests mostly sleep.
+    std::thread::scope(|scope| {
+        for (name, pattern, must_engage) in patterns() {
+            let pattern = within_pt_window(pattern);
+            scope.spawn(move || {
+                let mut matches = 0;
+                let mut most_parked = 0;
+                let mut losses = 0;
+                let runs = [
+                    (
+                        SelectionStrategy::SkipTillAnyMatch,
+                        1_000_000,
+                        BackpressureStrategy::Drop,
+                    ),
+                    (
+                        SelectionStrategy::SkipTillNextMatch,
+                        1_000_000,
+                        BackpressureStrategy::Drop,
+                    ),
+                    (
+                        SelectionStrategy::SkipTillAnyMatch,
+                        6,
+                        BackpressureStrategy::Drop,
+                    ),
+                    (
+                        SelectionStrategy::SkipTillAnyMatch,
+                        6,
+                        BackpressureStrategy::EvictOldest,
+                    ),
+                    (
+                        SelectionStrategy::SkipTillAnyMatch,
+                        6,
+                        BackpressureStrategy::EvictLeastProgress,
+                    ),
+                ];
+                for (n, (strategy, max_runs, backpressure)) in runs.iter().enumerate() {
+                    let (m, parked, lost) = compare_processing_time(
+                        name,
+                        &pattern,
+                        *strategy,
+                        *max_runs,
+                        backpressure,
+                        (n as u64 + 1) * 0x2F_0B3D,
+                        6,
+                    );
+                    matches += m;
+                    most_parked = most_parked.max(parked);
+                    losses += lost;
+                }
+                assert!(matches > 0, "{name}: no match, the comparison is vacuous");
+                assert!(losses > 0, "{name}: the cap never bit");
+                if must_engage {
+                    assert!(most_parked > 0, "{name}: the index never filed a run");
+                }
+            });
+        }
+    });
+}
+
+/// The reported case: four runs parked at capacity whose window has passed
+/// must not hold the place of a fresh one.
+#[test]
+fn expired_parked_runs_do_not_hold_capacity_under_processing_time() {
+    let pattern = SasePattern::Within(
+        Box::new(SasePattern::Seq(vec![
+            step("A", "a", None),
+            step("B", "b", Some(key_eq())),
+        ])),
+        Duration::from_millis(30),
+    );
+    let a = |k: i64| Event::new("A").with_field("key", Value::Int(k));
+    let b = |k: i64| Event::new("B").with_field("key", Value::Int(k));
+
+    for backpressure in [
+        BackpressureStrategy::Drop,
+        BackpressureStrategy::EvictOldest,
+    ] {
+        let outcome = |index: bool| {
+            let mut engine = SaseEngine::new(pattern.clone())
+                .with_processing_time()
+                .with_max_runs(4)
+                .with_backpressure(backpressure.clone())
+                .with_predicate_index(index);
+            for k in 0..4 {
+                let _ = engine.process(&a(k));
+            }
+            // Past the window, short of the cleanup interval.
+            std::thread::sleep(Duration::from_millis(60));
+            let _ = engine.process(&a(9));
+            let matches = engine.process(&b(9)).len();
+            (
+                matches,
+                engine.total_runs_dropped,
+                engine.total_runs_evicted,
+                engine.stats().active_runs,
+            )
+        };
+        assert_eq!(outcome(false), (1, 0, 0, 0), "{backpressure:?}, index off");
+        assert_eq!(outcome(true), (1, 0, 0, 0), "{backpressure:?}, index on");
+    }
+}
+
+/// Evicting at capacity picks the victim among the parked runs where they
+/// are: the index stays whole, and the new run is filed in it.
+#[test]
+fn eviction_keeps_the_index() {
+    let pattern = SasePattern::Seq(vec![step("A", "a", None), step("B", "b", Some(key_eq()))]);
+    let a = |k: i64| Event::new("A").with_field("key", Value::Int(k));
+    let b = |k: i64| Event::new("B").with_field("key", Value::Int(k));
+    for backpressure in [
+        BackpressureStrategy::EvictOldest,
+        BackpressureStrategy::EvictLeastProgress,
+    ] {
+        let mut engine = SaseEngine::new(pattern.clone())
+            .with_max_runs(4)
+            .with_backpressure(backpressure.clone())
+            .with_predicate_index(true);
+        for k in 0..6 {
+            let _ = engine.process(&a(k));
+            assert_eq!(
+                engine.parked_run_count(),
+                (k as usize + 1).min(4),
+                "{backpressure:?}"
+            );
+        }
+        assert_eq!(engine.total_runs_evicted, 2);
+        // The two oldest went.
+        assert!(engine.process(&b(1)).is_empty());
+        assert_eq!(engine.process(&b(2)).len(), 1);
+        assert_eq!(engine.process(&b(5)).len(), 1);
+    }
+}
