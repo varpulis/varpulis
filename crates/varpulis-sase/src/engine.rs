@@ -19,6 +19,7 @@ use super::metrics::SaseMetrics;
 use super::nfa::{Nfa, NfaCompiler, StateType};
 use super::predicate::{eval_predicate, event_matches_state, predicate_references_alias};
 use super::run::Run;
+use super::run_index::RunIndex;
 use super::types::{
     EmissionMode, GlobalNegation, MatchResult, Predicate, SasePattern, SaseStats,
     SelectionStrategy, SharedEvent, TimeSemantics, MAX_ENUMERATION_RESULTS, MAX_KLEENE_EVENTS,
@@ -108,6 +109,12 @@ pub struct SaseEngine {
     /// the NFA: greedy patterns (`.increasing()`/`.decreasing()`) → Longest,
     /// otherwise → Each.
     pub(crate) emission_mode_override: Option<EmissionMode>,
+    /// IDX-02: whether the run index was asked for (`with_predicate_index`).
+    predicate_index: bool,
+    /// IDX-02: non-partitioned runs filed by the values their next step
+    /// compares against. Built on first use, and only while the engine's
+    /// shape allows it (`sync_run_index`).
+    run_index: Option<RunIndex>,
 }
 
 impl std::fmt::Debug for SaseEngine {
@@ -115,6 +122,7 @@ impl std::fmt::Debug for SaseEngine {
         f.debug_struct("SaseEngine")
             .field("nfa", &self.nfa)
             .field("runs", &self.runs.len())
+            .field("parked_runs", &self.parked_run_count())
             .field("max_runs", &self.max_runs)
             .field("strategy", &self.strategy)
             .field("partition_by", &self.partition_by)
@@ -211,7 +219,86 @@ impl SaseEngine {
             cleanup_interval: Duration::from_millis(100),
             evaluator: None,
             emission_mode_override: None,
+            // Prototype switch, so whole test suites can run with the index
+            // forced on: VARPULIS_SASE_INDEX=1.
+            predicate_index: std::env::var_os("VARPULIS_SASE_INDEX").is_some_and(|v| v == "1"),
+            run_index: None,
         }
+    }
+
+    /// IDX-02 (prototype): index waiting runs by the captured values their
+    /// next step compares against, so an event visits the runs it can
+    /// advance instead of every run.
+    ///
+    /// A run waiting for `B where id == a.id` is filed under `a.id`; one
+    /// waiting for `B where price >= a.lo and price < a.hi` under the
+    /// interval. Runs the index cannot file, or whose state it cannot plan,
+    /// stay in the list every event visits, so matches are the same with
+    /// and without it; only their order within one event may differ.
+    ///
+    /// Inactive (every run visited, as without it) under strict contiguity,
+    /// with global negations, or with `partition_by`. `false` turns it off,
+    /// including when `VARPULIS_SASE_INDEX=1` turned it on.
+    pub fn with_predicate_index(mut self, enabled: bool) -> Self {
+        if !enabled {
+            self.release_run_index();
+        }
+        self.predicate_index = enabled;
+        self
+    }
+
+    /// IDX-02: number of runs currently held by the run index.
+    pub fn parked_run_count(&self) -> usize {
+        self.run_index.as_ref().map_or(0, RunIndex::len)
+    }
+
+    /// IDX-02: the runs held by the run index, in no particular order. A
+    /// checkpoint must include them: they are not in `runs`.
+    pub fn parked_runs(&self) -> impl Iterator<Item = &Run> {
+        self.run_index.iter().flat_map(RunIndex::runs)
+    }
+
+    /// IDX-02: drop the runs held by the run index, for a restore that is
+    /// about to replace every run.
+    pub fn discard_parked_runs(&mut self) {
+        self.run_index = None;
+    }
+
+    /// IDX-02: put the index's runs back in `runs` and drop the index. It is
+    /// rebuilt on the next event if the engine still allows it.
+    fn release_run_index(&mut self) {
+        if let Some(mut index) = self.run_index.take() {
+            self.runs.extend(index.drain());
+        }
+    }
+
+    /// IDX-02: build the index if it was asked for and the engine allows it;
+    /// release it if the engine no longer does.
+    fn sync_run_index(&mut self) {
+        let usable = self.predicate_index
+            && self.partition_by.is_none()
+            && self.strategy != SelectionStrategy::StrictContiguous
+            && self.global_negations.is_empty();
+        if !usable {
+            self.release_run_index();
+        } else if self.run_index.is_none() {
+            self.run_index = RunIndex::new(&self.nfa);
+            // No state of this pattern can be planned: stop asking.
+            if self.run_index.is_none() {
+                self.predicate_index = false;
+            }
+        }
+    }
+
+    /// IDX-02: file `run` in the index if it can be, else in `runs`.
+    fn file_run(&mut self, run: Run) {
+        if let Some(index) = self.run_index.as_mut() {
+            if let Some(key) = index.key_for(&run) {
+                index.insert(run, key);
+                return;
+            }
+        }
+        self.runs.push(run);
     }
 
     /// Override the emission mode for this engine. By default, the engine
@@ -443,6 +530,8 @@ impl SaseEngine {
 
     /// Add a global negation condition that invalidates active runs
     pub fn add_negation(&mut self, event_type: String, predicate: Option<Predicate>) {
+        // A global negation must see every run: none may stay parked.
+        self.release_run_index();
         self.global_negations.push(GlobalNegation {
             event_type,
             predicate,
@@ -510,7 +599,7 @@ impl SaseEngine {
     /// Used by PST forecasting to assess current pattern progress.
     pub fn active_run_snapshots(&self) -> Vec<super::types::RunSnapshot> {
         let mut snapshots = Vec::new();
-        for run in &self.runs {
+        for run in self.runs.iter().chain(self.parked_runs()) {
             snapshots.push(super::types::RunSnapshot {
                 current_state: run.current_state,
                 started_at_ns: run
@@ -536,6 +625,7 @@ impl SaseEngine {
 
     /// Enable SASEXT partition optimization
     pub fn with_partition_by(mut self, field: String) -> Self {
+        self.release_run_index();
         self.partition_by = Some(field);
         self
     }
@@ -888,7 +978,8 @@ impl SaseEngine {
             // For greedy mode and Kleene-final-from-start patterns, skip
             // starting a new run if any active run exists (avoids duplicate
             // emissions on each Kleene event).
-            let has_active = suppress_new_runs && self.runs.iter().any(|r| !r.invalidated);
+            let has_active = suppress_new_runs
+                && (self.parked_run_count() > 0 || self.runs.iter().any(|r| !r.invalidated));
 
             if !has_active {
                 // Try to start new run with backpressure
@@ -911,9 +1002,20 @@ impl SaseEngine {
     /// BP-01: Handle backpressure for non-partitioned runs
     /// Returns (was_added, optional_warning)
     fn handle_backpressure(&mut self, run: Run) -> (bool, Option<ProcessWarning>) {
-        if self.runs.len() < self.max_runs {
-            self.runs.push(run);
+        if self.runs.len() + self.parked_run_count() < self.max_runs {
+            // IDX-02: the event that started this run has already been
+            // looked up, so filing it now cannot offer it that event again.
+            self.file_run(run);
             return (true, None);
+        }
+
+        // IDX-02: the eviction strategies choose among all runs. Put the
+        // parked ones where they look; the next event files them again.
+        if !matches!(
+            self.backpressure,
+            BackpressureStrategy::Drop | BackpressureStrategy::Error
+        ) {
+            self.release_run_index();
         }
 
         match &self.backpressure {
@@ -935,7 +1037,7 @@ impl SaseEngine {
                     Some(ProcessWarning::RunDropped {
                         reason: format!(
                             "Max runs exceeded: {} / {} (Error strategy)",
-                            self.runs.len(),
+                            self.runs.len() + self.parked_run_count(),
                             self.max_runs
                         ),
                     }),
@@ -1124,7 +1226,7 @@ impl SaseEngine {
         if self.partition_by.is_some() {
             self.partitioned_runs.values().map(|v| v.len()).sum()
         } else {
-            self.runs.len()
+            self.runs.len() + self.parked_run_count()
         }
     }
 
@@ -1216,13 +1318,22 @@ impl SaseEngine {
     }
 
     fn process_runs_shared(&mut self, event: SharedEvent) -> (Vec<MatchResult>, bool) {
+        self.sync_run_index();
         let mut completed = Vec::with_capacity(4);
         let mut consumed = false;
         let limits = self.kleene_limits();
         let now = Timestamp::now();
         let mode = self.resolved_emission_mode();
-        let mut i = 0;
 
+        // IDX-02: the parked runs this event may advance leave the index
+        // before anything is filed in it, so a run this pass files is not
+        // offered the event that moved it a second time.
+        let mut woken = Vec::new();
+        if let Some(index) = self.run_index.as_mut() {
+            index.take_candidates(&event, &mut woken);
+        }
+
+        let mut i = 0;
         while i < self.runs.len() {
             if self.runs[i].is_timed_out() || self.runs[i].invalidated {
                 self.runs.swap_remove(i);
@@ -1241,49 +1352,103 @@ impl SaseEngine {
                 continue;
             }
 
-            match advance_run_shared(
-                &self.nfa,
-                self.strategy,
-                &mut self.runs[i],
-                Arc::clone(&event),
-                limits,
-                now,
-                self.evaluator.as_deref(),
-                mode,
-            ) {
-                RunAdvanceResult::Continue => {
-                    consumed = true;
-                    i += 1;
+            let keep = Self::apply_advance(
+                advance_run_shared(
+                    &self.nfa,
+                    self.strategy,
+                    &mut self.runs[i],
+                    Arc::clone(&event),
+                    limits,
+                    now,
+                    self.evaluator.as_deref(),
+                    mode,
+                ),
+                &mut completed,
+                &mut consumed,
+            );
+            if !keep {
+                self.runs.swap_remove(i);
+                continue;
+            }
+
+            // IDX-02: a run now waiting on a step the index can plan moves
+            // into it. The swap brings an unvisited run to `i`.
+            if let Some(index) = self.run_index.as_mut() {
+                if let Some(key) = index.key_for(&self.runs[i]) {
+                    let run = self.runs.swap_remove(i);
+                    index.insert(run, key);
+                    continue;
                 }
-                RunAdvanceResult::Complete(result) => {
-                    consumed = true;
-                    completed.push(result);
-                    self.runs.swap_remove(i);
-                }
-                RunAdvanceResult::CompleteAndContinue(result) => {
-                    consumed = true;
-                    // Each mode: emit result but keep run active
-                    completed.push(result);
-                    i += 1;
-                }
-                RunAdvanceResult::CompleteMulti(results) => {
-                    consumed = true;
-                    completed.extend(results);
-                    self.runs.swap_remove(i);
-                }
-                RunAdvanceResult::Drained => {
-                    consumed = true;
-                    // Each mode: matches were already emitted; drop the run silently
-                    self.runs.swap_remove(i);
-                }
-                RunAdvanceResult::Invalidate => {
-                    self.runs.swap_remove(i);
-                }
-                RunAdvanceResult::NoMatch => i += 1,
+            }
+            i += 1;
+        }
+
+        // IDX-02: the woken runs, exactly as the pass above treats a run.
+        for mut run in woken {
+            if run.is_timed_out() || run.invalidated {
+                continue;
+            }
+            if run.event_time_excludes(event.timestamp) {
+                self.file_run(run);
+                continue;
+            }
+            let keep = Self::apply_advance(
+                advance_run_shared(
+                    &self.nfa,
+                    self.strategy,
+                    &mut run,
+                    Arc::clone(&event),
+                    limits,
+                    now,
+                    self.evaluator.as_deref(),
+                    mode,
+                ),
+                &mut completed,
+                &mut consumed,
+            );
+            if keep {
+                self.file_run(run);
             }
         }
 
         (completed, consumed)
+    }
+
+    /// Record what advancing a run produced; `true` if the run lives on.
+    fn apply_advance(
+        result: RunAdvanceResult,
+        completed: &mut Vec<MatchResult>,
+        consumed: &mut bool,
+    ) -> bool {
+        match result {
+            RunAdvanceResult::Continue => {
+                *consumed = true;
+                true
+            }
+            RunAdvanceResult::Complete(result) => {
+                *consumed = true;
+                completed.push(result);
+                false
+            }
+            RunAdvanceResult::CompleteAndContinue(result) => {
+                *consumed = true;
+                // Each mode: emit result but keep run active
+                completed.push(result);
+                true
+            }
+            RunAdvanceResult::CompleteMulti(results) => {
+                *consumed = true;
+                completed.extend(results);
+                false
+            }
+            RunAdvanceResult::Drained => {
+                *consumed = true;
+                // Each mode: matches were already emitted; drop the run silently
+                false
+            }
+            RunAdvanceResult::Invalidate => false,
+            RunAdvanceResult::NoMatch => true,
+        }
     }
 
     /// Create a run parked on `state_id`, under the engine's time semantics and
@@ -1492,6 +1657,9 @@ impl SaseEngine {
                 let completed = self.confirm_negations_processing_time();
                 // Use wall-clock time for timeout check
                 self.runs.retain(|r| !r.is_timed_out() && !r.invalidated);
+                if let Some(index) = self.run_index.as_mut() {
+                    index.expire_processing_time(Timestamp::now());
+                }
                 retain_and_evict_empty_partitions(&mut self.partitioned_runs, |r| {
                     !r.is_timed_out() && !r.invalidated
                 });
@@ -1567,6 +1735,11 @@ impl SaseEngine {
         }
         self.runs
             .retain(|r| !r.is_timed_out_event_time(watermark) && !r.invalidated);
+        // IDX-02: parked runs have no pending negation to confirm; expiring
+        // them is all the watermark does, in deadline order.
+        if let Some(index) = self.run_index.as_mut() {
+            index.expire_event_time(watermark);
+        }
 
         // Partitioned runs: only the partitions holding a run whose deadline
         // the watermark has passed. Sweeping every partition on every event
@@ -1737,7 +1910,7 @@ impl SaseEngine {
         let total_runs: usize = if self.partition_by.is_some() {
             self.partitioned_runs.values().map(|v| v.len()).sum()
         } else {
-            self.runs.len()
+            self.runs.len() + self.parked_run_count()
         };
 
         SaseStats {

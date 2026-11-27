@@ -130,7 +130,13 @@ pub trait SaseCheckpointExt {
 impl SaseCheckpointExt for SaseEngine {
     /// Create a checkpoint of the entire SASE engine state.
     fn checkpoint(&self) -> persistence::SaseCheckpoint {
-        let active_runs = self.runs.iter().map(|r| r.checkpoint()).collect();
+        // Runs parked in the predicate index are active runs too.
+        let active_runs = self
+            .runs
+            .iter()
+            .chain(self.parked_runs())
+            .map(|r| r.checkpoint())
+            .collect();
 
         let partitioned_runs = self
             .partitioned_runs
@@ -155,6 +161,9 @@ impl SaseCheckpointExt for SaseEngine {
 
     /// Restore engine state from a checkpoint.
     fn restore(&mut self, cp: &persistence::SaseCheckpoint) {
+        // Every run is replaced; the next event files the restored ones in
+        // the predicate index again.
+        self.discard_parked_runs();
         self.runs = cp.active_runs.iter().map(Run::from_checkpoint).collect();
 
         self.partitioned_runs = cp

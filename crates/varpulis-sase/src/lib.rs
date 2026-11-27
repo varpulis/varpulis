@@ -36,6 +36,7 @@ mod negation;
 mod nfa;
 pub(crate) mod predicate;
 mod run;
+mod run_index;
 mod types;
 
 // Re-export all public types to maintain API compatibility
