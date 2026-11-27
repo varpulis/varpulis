@@ -322,6 +322,14 @@ fn compare(
             "{name} ({strategy:?}, seed {seed}): active runs differ after event {id}"
         );
         assert_eq!(auto.stats().active_runs, plain.stats().active_runs);
+        // Runs dropped or evicted at capacity are counted the same way.
+        for other in [&indexed, &auto] {
+            assert_eq!(
+                (other.total_runs_dropped, other.total_runs_evicted),
+                (plain.total_runs_dropped, plain.total_runs_evicted),
+                "{name} ({strategy:?}, seed {seed}): loss counters differ after event {id}"
+            );
+        }
         assert_eq!(plain.parked_run_count(), 0);
         matches += expected.len();
         most_parked = most_parked.max(indexed.parked_run_count());
@@ -330,8 +338,16 @@ fn compare(
         matches > 0,
         "{name}: the stream never matched, the comparison is vacuous"
     );
+    LOSSES.fetch_add(
+        plain.total_runs_dropped + plain.total_runs_evicted,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     most_parked
 }
+
+/// Runs dropped or evicted by `compare`, so a capacity test can check the
+/// cap was reached at all.
+static LOSSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[test]
 fn index_never_changes_matches() {
@@ -371,6 +387,7 @@ fn index_never_changes_matches_at_capacity() {
         BackpressureStrategy::EvictOldest,
         BackpressureStrategy::EvictLeastProgress,
     ] {
+        let before = LOSSES.load(std::sync::atomic::Ordering::Relaxed);
         for (name, pattern, _) in patterns() {
             for seed in 1..=4 {
                 compare(
@@ -384,6 +401,10 @@ fn index_never_changes_matches_at_capacity() {
                 );
             }
         }
+        assert!(
+            LOSSES.load(std::sync::atomic::Ordering::Relaxed) > before,
+            "{backpressure:?}: the cap never bit"
+        );
     }
 }
 
