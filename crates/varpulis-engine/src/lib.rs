@@ -58,7 +58,7 @@
 pub use varpulis_core::decode::EventDecoder;
 pub use varpulis_core::{Event, Value};
 use varpulis_runtime::Engine;
-pub use varpulis_runtime::{EngineError, SinkBinding, SourceBinding};
+pub use varpulis_runtime::{EngineError, LossCounters, SinkBinding, SourceBinding};
 
 /// What can go wrong between a VPL string and an emit.
 #[derive(Debug, thiserror::Error)]
@@ -96,6 +96,12 @@ pub struct Program {
     /// One decoder per program: its field-name cache makes a steady stream
     /// (the same schema on every payload) decode with no key allocations.
     decoder: EventDecoder,
+    /// What [`Program::losses`] reports is counted since this `Program` was
+    /// built, across restores: the engine's own counters restart from the
+    /// snapshot's on [`Program::restore`], so what was counted before is
+    /// carried here and the engine's value at the restore is the new base.
+    losses_carried: LossCounters,
+    losses_base: LossCounters,
 }
 
 impl std::fmt::Debug for Program {
@@ -144,10 +150,25 @@ impl Program {
     /// Everything that can be rejected is rejected here — syntax, unknown
     /// event types, a `.filter()` the engine refuses — so a host can `check`
     /// a file before it is deployed and get the same verdict.
+    ///
+    /// So is every construct the language has and this engine does not run:
+    /// `import`, `context`, `timer()`, `.enrich()` and `.alert(webhook: ...)`
+    /// are refused with codes E100 to E104 rather than loaded and skipped.
     pub fn compile(vpl: &str) -> Result<Self, Error> {
         let program = varpulis_parser::parse(vpl).map_err(|e| Error::Parse(e.to_string()))?;
+        let unsupported = varpulis_core::validate::support::check_sync_engine_support(&program);
         let mut engine = Engine::new_sync();
-        engine.load(&program)?;
+        let loaded = engine.load(&program);
+        if unsupported.has_errors() {
+            // The load still ran, so a program refused for a construct is
+            // also reported for anything else wrong with it.
+            let mut msg = unsupported.format(vpl).trim_end().to_string();
+            if let Err(e) = loaded {
+                msg.push_str(&format!("\nerror: {e}"));
+            }
+            return Err(Error::Invalid(msg));
+        }
+        loaded?;
         let sources = engine.source_bindings().to_vec();
         let sinks = engine.sink_bindings();
         Ok(Self {
@@ -156,6 +177,8 @@ impl Program {
             sinks,
             source_text: vpl.to_string(),
             decoder: EventDecoder::new(),
+            losses_carried: LossCounters::default(),
+            losses_base: LossCounters::default(),
         })
     }
 
@@ -198,6 +221,54 @@ impl Program {
     /// The VPL this program was compiled from.
     pub fn source_text(&self) -> &str {
         &self.source_text
+    }
+
+    /// What the program has let go of without an error: pattern runs not
+    /// opened because a pattern held [`Program::max_runs`] runs already, and
+    /// events a `.where()` discarded because its predicate had no value.
+    /// Plain counters, cheap to read on every batch; a host publishes them,
+    /// since each one is a detection that may have been missed.
+    ///
+    /// They count what this process saw since the `Program` was built: a
+    /// [`Program::restore`] neither resets them nor adds what the snapshot's
+    /// program had counted.
+    pub fn losses(&self) -> LossCounters {
+        let now = self.engine.loss_counters();
+        let since = |carried: u64, base: u64, now: u64| carried + now.saturating_sub(base);
+        LossCounters {
+            runs_dropped: since(
+                self.losses_carried.runs_dropped,
+                self.losses_base.runs_dropped,
+                now.runs_dropped,
+            ),
+            runs_evicted: since(
+                self.losses_carried.runs_evicted,
+                self.losses_base.runs_evicted,
+                now.runs_evicted,
+            ),
+            filters_without_value: since(
+                self.losses_carried.filters_without_value,
+                self.losses_base.filters_without_value,
+                now.filters_without_value,
+            ),
+        }
+    }
+
+    /// The cap on concurrent runs of each pattern, 10 000 by default; `None`
+    /// when the program has no pattern. Past it, a new run is not opened and
+    /// is counted in [`LossCounters::runs_dropped`]. For a partitioned
+    /// pattern the cap is per partition.
+    pub fn max_runs(&self) -> Option<usize> {
+        self.engine.max_runs()
+    }
+
+    /// Change [`Program::max_runs`]. Each open run costs memory (about
+    /// 1.4 KB with its captured event), so the cap bounds the memory a
+    /// pattern may take: `max_runs` runs for an unpartitioned pattern, and
+    /// up to partitions × `max_runs` for a partitioned one, since the cap
+    /// applies to each partition. Runs already open are kept.
+    pub fn set_max_runs(&mut self, max: usize) {
+        self.engine.set_max_runs(max);
     }
 
     /// Feed one event and return everything it caused to be emitted.
@@ -290,9 +361,16 @@ impl Program {
         let checkpoint: varpulis_runtime::persistence::EngineCheckpoint =
             varpulis_runtime::codec::deserialize(snapshot)
                 .map_err(|e| Error::Snapshot(e.to_string()))?;
-        self.engine
+        let carried = self.losses();
+        let restored = self
+            .engine
             .restore_checkpoint(&checkpoint)
-            .map_err(|e| Error::Snapshot(e.to_string()))
+            .map_err(|e| Error::Snapshot(e.to_string()));
+        // Whatever the restore did to the engine's counters, losses keep
+        // counting from where they were.
+        self.losses_carried = carried;
+        self.losses_base = self.engine.loss_counters();
+        restored
     }
 
     fn route(&self, events: Vec<Event>) -> Vec<Emit> {
@@ -341,6 +419,218 @@ mod tests {
     fn a_program_can_be_moved_into_the_thread_that_owns_its_input() {
         assert_send::<Program>();
         assert_send::<Emit>();
+    }
+
+    fn refusal(vpl: &str) -> String {
+        match Program::compile(vpl) {
+            Err(Error::Invalid(msg)) => msg,
+            Err(other) => panic!("expected a refusal, got {other}"),
+            Ok(_) => panic!("expected a refusal, the program compiled"),
+        }
+    }
+
+    const ORDER: &str = "event Order:\n    id: str\n    total: float\n\n";
+
+    #[test]
+    fn what_this_engine_does_not_run_is_refused_with_its_code() {
+        let cases = [
+            ("import \"other.vpl\"\n", "E100"),
+            ("context ingest\n", "E101"),
+            (
+                "stream S = Order\n    .emit(context: other, id: id)\n",
+                "E101",
+            ),
+            ("stream Beat = timer(5s)\n", "E102"),
+            (
+                "stream S = Order\n    .enrich(Db, key: id, fields: [name])\n",
+                "E103",
+            ),
+            (
+                "stream S = Order\n    .alert(webhook: \"https://example.invalid\")\n",
+                "E104",
+            ),
+        ];
+        for (body, code) in cases {
+            let vpl = format!("{ORDER}{body}");
+            let msg = refusal(&vpl);
+            assert!(msg.contains(&format!("error[{code}]")), "{code}: {msg}");
+            assert!(msg.contains("hint:"), "{code} carries a hint: {msg}");
+            // `check` gives the same verdict as `compile`.
+            assert!(Program::check(&vpl).is_err(), "{code}");
+        }
+    }
+
+    #[test]
+    fn a_join_is_an_error_on_its_first_event_rather_than_silence() {
+        let mut program = Program::compile(&format!(
+            "{ORDER}stream A = Order\nstream B = Order\nstream J = join(A, B)\n    .on(A.id == B.id)\n"
+        ))
+        .unwrap();
+        let err = program
+            .feed_json("Order", br#"{"id": "a", "total": 1.0}"#)
+            .unwrap_err();
+        assert!(err.to_string().contains("join"), "{err}");
+    }
+
+    #[test]
+    fn a_refused_program_is_still_loaded_so_its_other_errors_show() {
+        let vpl = format!(
+            "{ORDER}context ingest\n\
+             stream S = Order.score(model: \"m.onnx\", inputs: [total], outputs: [p])\n"
+        );
+        let msg = refusal(&vpl);
+        assert!(msg.contains("error[E101]"), "{msg}");
+        assert!(
+            msg.contains("onnx"),
+            "the load error is reported too: {msg}"
+        );
+    }
+
+    #[test]
+    fn an_alert_that_only_logs_still_compiles() {
+        let vpl = format!("{ORDER}stream S = Order\n    .alert(message: \"big {{id}}\")\n");
+        Program::compile(&vpl).unwrap();
+    }
+
+    #[test]
+    fn a_pattern_at_its_cap_counts_the_runs_it_could_not_open() {
+        let mut program = Program::compile(
+            "event A:\n    k: int\nevent B:\n    k: int\n\n\
+             stream M = A as a -> B where k == a.k as b\n    .within(1h)\n    .emit(k: a.k)\n",
+        )
+        .unwrap();
+        assert_eq!(program.max_runs(), Some(10_000));
+        program.set_max_runs(2);
+        assert_eq!(program.max_runs(), Some(2));
+        let at = |i: i64| format!("2026-11-27T10:00:{i:02}Z");
+        for i in 0..5 {
+            let json = format!(r#"{{"k": {i}, "@timestamp": "{}"}}"#, at(i));
+            program.feed_json("A", json.as_bytes()).unwrap();
+        }
+        assert_eq!(program.losses().runs_dropped, 3, "{:?}", program.losses());
+        // The runs that did open still match.
+        let json = format!(r#"{{"k": 1, "@timestamp": "{}"}}"#, at(10));
+        assert_eq!(program.feed_json("B", json.as_bytes()).unwrap().len(), 1);
+        // A run past the cap is lost: its B finds nothing.
+        let json = format!(r#"{{"k": 4, "@timestamp": "{}"}}"#, at(11));
+        assert!(program.feed_json("B", json.as_bytes()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_filter_with_no_value_is_counted() {
+        let mut program = Program::compile(&format!(
+            "{ORDER}stream Large = Order\n    .where(total > 250.0)\n    .emit(id: id)\n"
+        ))
+        .unwrap();
+        program
+            .feed_json("Order", br#"{"id": "a", "total": 300.0}"#)
+            .unwrap();
+        program
+            .feed_json("Order", br#"{"id": "b", "total": 10.0}"#)
+            .unwrap();
+        assert_eq!(program.losses().filters_without_value, 0);
+        // No `total`: the predicate has no value and the event is dropped.
+        let out = program.feed_json("Order", br#"{"id": "c"}"#).unwrap();
+        assert!(out.is_empty());
+        assert_eq!(program.losses().filters_without_value, 1);
+    }
+
+    #[test]
+    fn a_compound_filter_dropped_for_want_of_a_value_is_counted() {
+        let mut program = Program::compile(&format!(
+            "{ORDER}stream Large = Order\n    .where(total > 250.0 and id != \"x\")\n    .emit(id: id)\n"
+        ))
+        .unwrap();
+        // Decided by a false condition: not counted.
+        program
+            .feed_json("Order", br#"{"id": "x", "total": 300.0}"#)
+            .unwrap();
+        program
+            .feed_json("Order", br#"{"id": "a", "total": 1.0}"#)
+            .unwrap();
+        assert_eq!(program.losses().filters_without_value, 0);
+        // No `total`: `and` turns it into false, and that drop is counted.
+        assert!(program
+            .feed_json("Order", br#"{"id": "c"}"#)
+            .unwrap()
+            .is_empty());
+        assert_eq!(program.losses().filters_without_value, 1);
+
+        let mut program = Program::compile(&format!(
+            "{ORDER}stream Any = Order\n    .where(total > 250.0 or id == \"vip\")\n    .emit(id: id)\n"
+        ))
+        .unwrap();
+        // `or` holds on its other side: passed, nothing lost.
+        assert_eq!(
+            program
+                .feed_json("Order", br#"{"id": "vip"}"#)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(program.losses().filters_without_value, 0);
+        // Neither side holds and one had no value: counted.
+        assert!(program
+            .feed_json("Order", br#"{"id": "c"}"#)
+            .unwrap()
+            .is_empty());
+        assert_eq!(program.losses().filters_without_value, 1);
+    }
+
+    #[test]
+    fn a_merge_filter_dropped_for_want_of_a_value_is_counted() {
+        let mut program = Program::compile(&format!(
+            "{ORDER}stream Big = merge(stream O = Order.where(total > 250.0))\n    .emit(id: id)\n"
+        ))
+        .unwrap();
+        program
+            .feed_json("Order", br#"{"id": "a", "total": 1.0}"#)
+            .unwrap();
+        assert_eq!(program.losses().filters_without_value, 0);
+        assert!(program
+            .feed_json("Order", br#"{"id": "c"}"#)
+            .unwrap()
+            .is_empty());
+        assert_eq!(program.losses().filters_without_value, 1);
+    }
+
+    #[test]
+    fn losses_count_since_the_program_was_built_across_a_restore() {
+        let vpl = "event A:\n    k: int\nevent B:\n    k: int\n\n\
+             stream M = A as a -> B where k == a.k as b\n    .within(1h)\n    .emit(k: a.k)\n\
+             stream F = B\n    .where(k > 0)\n    .emit(k: k)\n";
+        let at = |i: i64| format!("2026-11-27T10:00:{i:02}Z");
+        let mut other = Program::compile(vpl).unwrap();
+        other.set_max_runs(1);
+        for i in 0..3 {
+            let json = format!(r#"{{"k": {i}, "@timestamp": "{}"}}"#, at(i));
+            other.feed_json("A", json.as_bytes()).unwrap();
+        }
+        assert_eq!(other.losses().runs_dropped, 2);
+        let snapshot = other.snapshot().unwrap();
+
+        let mut program = Program::compile(vpl).unwrap();
+        program.set_max_runs(1);
+        for i in 0..4 {
+            let json = format!(r#"{{"k": {i}, "@timestamp": "{}"}}"#, at(i));
+            program.feed_json("A", json.as_bytes()).unwrap();
+        }
+        program
+            .feed_json("B", br#"{"@timestamp": "2026-11-27T10:00:05Z"}"#)
+            .unwrap();
+        let before = program.losses();
+        assert_eq!(before.runs_dropped, 3);
+        assert_eq!(before.filters_without_value, 1);
+
+        program.restore(&snapshot).unwrap();
+        assert_eq!(
+            program.losses(),
+            before,
+            "a restore neither resets nor imports"
+        );
+        let json = format!(r#"{{"k": 9, "@timestamp": "{}"}}"#, at(20));
+        program.feed_json("A", json.as_bytes()).unwrap();
+        assert_eq!(program.losses().runs_dropped, before.runs_dropped + 1);
     }
 
     #[test]

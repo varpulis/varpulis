@@ -461,6 +461,21 @@ impl SaseEngine {
         self
     }
 
+    /// The cap on concurrent runs: on the whole pattern, or on each
+    /// partition when the pattern is partitioned. A run that would exceed it
+    /// is handled by the backpressure strategy; the default drops it and
+    /// counts it in [`Self::total_runs_dropped`].
+    pub const fn max_runs(&self) -> usize {
+        self.max_runs
+    }
+
+    /// [`Self::with_max_runs`] on a running engine. Runs already open are
+    /// kept even when they exceed a lower cap; the cap applies to the next
+    /// run to open.
+    pub fn set_max_runs(&mut self, max: usize) {
+        self.max_runs = max;
+    }
+
     /// Set the event selection strategy (skip-till-any-match, etc.).
     pub fn with_strategy(mut self, strategy: SelectionStrategy) -> Self {
         self.strategy = strategy;

@@ -1139,22 +1139,23 @@ impl Engine {
         // For merge sources, check if the event passes the appropriate filter
         if let RuntimeSource::Merge(ref sources) = stream.source {
             let mut passes_filter = false;
+            let mut dropped_without_value = false;
             for ms in sources {
                 if ms.event_type == *event.event_type {
                     if let Some(ref filter) = ms.filter {
                         let ctx = SequenceContext::new();
-                        if let Some(result) = evaluator::eval_expr_with_functions(
+                        let (keep, no_value) = evaluator::filter_verdict(
                             filter,
                             &event,
                             &ctx,
                             functions,
                             &FxHashMap::default(),
-                        ) {
-                            if result.as_bool().unwrap_or(false) {
-                                passes_filter = true;
-                                break;
-                            }
+                        );
+                        if keep {
+                            passes_filter = true;
+                            break;
                         }
+                        dropped_without_value |= no_value;
                     } else {
                         passes_filter = true;
                         break;
@@ -1162,6 +1163,9 @@ impl Engine {
                 }
             }
             if !passes_filter {
+                if dropped_without_value {
+                    stream.filters_without_value += 1;
+                }
                 return Ok(StreamProcessResult {
                     emitted_events: vec![],
                     output_events: vec![],
@@ -1366,23 +1370,30 @@ impl Engine {
         sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
     ) -> Result<StreamProcessResult, super::error::EngineError> {
         if let RuntimeSource::Merge(ref sources) = stream.source {
+            let mut without_value = 0u64;
             events.retain(|event| {
-                sources.iter().any(|ms| {
+                let mut dropped_without_value = false;
+                let keep = sources.iter().any(|ms| {
                     ms.event_type == *event.event_type
                         && ms.filter.as_ref().is_none_or(|filter| {
                             let ctx = SequenceContext::new();
-                            evaluator::eval_expr_with_functions(
+                            let (keep, no_value) = evaluator::filter_verdict(
                                 filter,
                                 event,
                                 &ctx,
                                 functions,
                                 &FxHashMap::default(),
-                            )
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false)
+                            );
+                            dropped_without_value |= no_value;
+                            keep
                         })
-                })
+                });
+                if !keep && dropped_without_value {
+                    without_value += 1;
+                }
+                keep
             });
+            stream.filters_without_value += without_value;
             if events.is_empty() {
                 return Ok(StreamProcessResult {
                     emitted_events: vec![],
@@ -1462,24 +1473,25 @@ impl Engine {
         // For merge sources, check if the event passes the appropriate filter
         if let RuntimeSource::Merge(ref sources) = stream.source {
             let mut passes_filter = false;
+            let mut dropped_without_value = false;
             let mut matched_source_name = None;
             for ms in sources {
                 if ms.event_type == *event.event_type {
                     if let Some(ref filter) = ms.filter {
                         let ctx = SequenceContext::new();
-                        if let Some(result) = evaluator::eval_expr_with_functions(
+                        let (keep, no_value) = evaluator::filter_verdict(
                             filter,
                             &event,
                             &ctx,
                             functions,
                             &FxHashMap::default(),
-                        ) {
-                            if result.as_bool().unwrap_or(false) {
-                                passes_filter = true;
-                                matched_source_name = Some(&ms.name);
-                                break;
-                            }
+                        );
+                        if keep {
+                            passes_filter = true;
+                            matched_source_name = Some(&ms.name);
+                            break;
                         }
+                        dropped_without_value |= no_value;
                     } else {
                         // No filter means it passes
                         passes_filter = true;
@@ -1489,6 +1501,9 @@ impl Engine {
                 }
             }
             if !passes_filter {
+                if dropped_without_value {
+                    stream.filters_without_value += 1;
+                }
                 return Ok(StreamProcessResult {
                     emitted_events: vec![],
                     output_events: vec![],

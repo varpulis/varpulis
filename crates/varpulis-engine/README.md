@@ -43,6 +43,34 @@ for payload in my_bus.next_batch() {
 - **`Emit::to_json`** — the exact payload the Varpulis NATS sink publishes,
   `{"event_type", "timestamp", …fields}`.
 - **`Program::end_of_input`** — close open windows, for bounded input.
+- **`Program::losses`** — what the program let go of without an error:
+  pattern runs not opened because a pattern was at its cap
+  (`runs_dropped`), and events a `.where()` discarded because its predicate
+  had no value (`filters_without_value`). Counted since the `Program` was
+  built, across restores. Publish them; each is a detection that may have
+  been missed.
+- **`Program::max_runs` / `set_max_runs`** — the cap on concurrent runs of
+  each pattern, 10 000 by default. A partitioned pattern applies it to each
+  partition, so its memory grows with partitions × `max_runs`.
+
+## What the engine refuses
+
+The language is wider than this engine. These parse, and are refused at
+compile time with a code instead of being loaded and skipped:
+
+| Construct | Code |
+|---|---|
+| `import "file.vpl"` | E100 |
+| `context`, `.context()` | E101 |
+| `timer()` source | E102 |
+| `.enrich()` | E103 |
+| `.alert(webhook: ...)` | E104 |
+
+A join is not run either: the first event it receives is an error.
+
+Not in the language either: AND/OR of events, `wait`/`at` timers, a
+`match` expression, `try`/`catch`. A sequence is `A -> B`, an absence is
+`-> NOT B .within()`.
 
 ## What you do not get
 

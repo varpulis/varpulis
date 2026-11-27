@@ -67,7 +67,7 @@ Named execution domains that run on dedicated OS threads. Enable multi-core para
 
 - [Complete Syntax](syntax.md)
 - [Type System](types.md)
-- [Reserved Keywords](keywords.md)
+- [Keywords](keywords.md)
 - [Operators](operators.md)
 - [Built-in Functions](builtins.md)
 - [Formal Grammar](grammar.md)

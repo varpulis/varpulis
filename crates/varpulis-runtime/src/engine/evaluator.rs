@@ -980,6 +980,68 @@ pub fn eval_expr_with_udfs(
     eval_expr_with_functions(expr, event, ctx, functions, bindings)
 }
 
+/// A filter's verdict on `event`, and whether a condition with no value
+/// decided it.
+///
+/// The verdict is exactly the one [`eval_expr_with_functions`] gives (no
+/// boolean counts as false, `and`/`or` stop at the operand that decides). The
+/// second value is true when the verdict is `false` and a condition that had
+/// no true/false value (a missing field, a type mismatch, a failed call) could
+/// have changed it: the event was dropped for want of a value, not because a
+/// condition was false. `total > 250.0 and id != "x"` on an event without
+/// `total` is such a drop. No allocation beyond the evaluation itself.
+pub fn filter_verdict(
+    expr: &varpulis_core::ast::Expr,
+    event: &Event,
+    ctx: &SequenceContext,
+    functions: &FxHashMap<String, UserFunction>,
+    bindings: &FxHashMap<String, Value>,
+) -> (bool, bool) {
+    use varpulis_core::ast::{BinOp, Expr};
+
+    match expr {
+        Expr::Binary {
+            op: BinOp::And,
+            left,
+            right,
+        } => {
+            let (l, l_no_value) = filter_verdict(left, event, ctx, functions, bindings);
+            if !l {
+                return (false, l_no_value);
+            }
+            filter_verdict(right, event, ctx, functions, bindings)
+        }
+        Expr::Binary {
+            op: BinOp::Or,
+            left,
+            right,
+        } => {
+            let (l, l_no_value) = filter_verdict(left, event, ctx, functions, bindings);
+            if l {
+                return (true, false);
+            }
+            let (r, r_no_value) = filter_verdict(right, event, ctx, functions, bindings);
+            (r, !r && (l_no_value || r_no_value))
+        }
+        Expr::Binary {
+            op: BinOp::Xor,
+            left,
+            right,
+        } => {
+            let (l, l_no_value) = filter_verdict(left, event, ctx, functions, bindings);
+            let (r, r_no_value) = filter_verdict(right, event, ctx, functions, bindings);
+            let v = l ^ r;
+            (v, !v && (l_no_value || r_no_value))
+        }
+        _ => match eval_expr_with_functions(expr, event, ctx, functions, bindings)
+            .and_then(|v| v.as_bool())
+        {
+            Some(v) => (v, false),
+            None => (false, true),
+        },
+    }
+}
+
 /// Evaluate expression with access to user-defined functions
 pub fn eval_expr_with_functions(
     expr: &varpulis_core::ast::Expr,

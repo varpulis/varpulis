@@ -106,6 +106,21 @@ impl WasmEngine {
             }
         };
 
+        // What this engine does not run is refused, and a throwaway load
+        // still runs so that any other error is reported with it.
+        let unsupported = varpulis_core::validate::support::check_sync_engine_support(&program);
+        if unsupported.has_errors() {
+            let mut error = format!("Load error: {}", unsupported.format(vpl).trim_end());
+            if let Err(e) = Engine::new_sync().load(&program) {
+                error.push_str(&format!("\n{e}"));
+            }
+            return json(&LoadResult {
+                ok: false,
+                streams: vec![],
+                error: Some(error),
+            });
+        }
+
         match self.engine.load(&program) {
             Ok(()) => {
                 self.program_source = vpl.to_string();
@@ -258,10 +273,22 @@ impl WasmEngine {
         serde_json::to_string(&json_entries).unwrap_or_else(|_| "[]".into())
     }
 
-    /// Validate VPL syntax without loading.  Returns JSON: `{ ok, error? }`.
+    /// Validate VPL without loading.  Returns JSON: `{ ok, error? }`.
+    ///
+    /// Refuses what [`WasmEngine::load`] refuses before loading: a parse
+    /// error, or a construct this engine does not run (E100 to E104).
     pub fn validate(&self, vpl: &str) -> String {
         match varpulis_parser::parse(vpl) {
-            Ok(_) => r#"{"ok":true}"#.to_string(),
+            Ok(program) => {
+                let unsupported =
+                    varpulis_core::validate::support::check_sync_engine_support(&program);
+                if unsupported.has_errors() {
+                    let error = unsupported.format(vpl).trim_end().to_string();
+                    json(&serde_json::json!({"ok": false, "error": error}))
+                } else {
+                    r#"{"ok":true}"#.to_string()
+                }
+            }
             Err(e) => {
                 let error = format!("{e}");
                 json(&serde_json::json!({"ok": false, "error": error}))

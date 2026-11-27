@@ -417,6 +417,7 @@ impl Engine {
                 shared_hamlet_ref: None,
                 pst_forecaster,
                 last_raw_event: None,
+                filters_without_value: 0,
                 #[cfg(feature = "async-runtime")]
                 enrichment,
                 #[cfg(feature = "async-runtime")]

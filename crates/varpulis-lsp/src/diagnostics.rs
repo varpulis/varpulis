@@ -9,9 +9,13 @@ pub fn get_diagnostics(text: &str) -> Vec<Diagnostic> {
         Ok(program) => {
             // Run semantic validation on successfully parsed programs
             let validation = varpulis_core::validate::validate(text, &program);
+            // What the shipped engine refuses at load, so the editor shows
+            // the same verdict as `varpulis check`.
+            let support = varpulis_core::validate::support::check_sync_engine_support(&program);
             validation
                 .diagnostics
                 .iter()
+                .chain(support.diagnostics.iter())
                 .map(|d| semantic_to_lsp_diagnostic(text, d))
                 .collect()
         }

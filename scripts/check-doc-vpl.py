@@ -11,6 +11,13 @@ The two exceptions are visible on the page:
 - a block that declares nothing (an operator signature, a clause shown on its
   own) is a fragment, and there is no honest way to check half a program.
 
+A block can also say that the engine as it ships refuses it, with the codes
+in an HTML comment on the line just above its fence:
+`<!-- engine-refuses: E101 -->` (the page says why, in prose a reader sees).
+That block then passes only if the check refuses it with those codes and no
+other; a block so marked that checks clean fails, and so does one refused for
+anything else. The comment is a claim the script verifies, not an exemption.
+
 This used to check only blocks that declared an event type, but a VPL program
 needs no `event` declaration to run, so most of the documented programs were
 never checked and 47 of them did not parse: postfix `A+`/`A*`, `AND(...)`,
@@ -39,10 +46,13 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 KNOWN_BROKEN: dict[str, str] = {}
 
 DECLARATION = re.compile(r"^(stream|pattern|event)\s+\w+", re.M)
+REFUSES = re.compile(r"<!-- engine-refuses: (E\d+(?:, *E\d+)*) -->")
+CODE = re.compile(r"error\[(E\d+)\]")
 
 
 def blocks():
-    """Yield (source location, body) for every ```vpl block."""
+    """Yield (source location, body, codes the page says are refused) for
+    every ```vpl block."""
     files = sorted(ROOT.glob("docs/**/*.md")) + [ROOT / "README.md"]
     for md in files:
         if not md.exists() or "node_modules" in md.parts:
@@ -50,7 +60,12 @@ def blocks():
         text = md.read_text(encoding="utf-8", errors="replace")
         for m in re.finditer(r"^```vpl\n(.*?)^```", text, re.S | re.M):
             line = text[: m.start()].count("\n") + 1
-            yield f"{md.relative_to(ROOT)}:{line}", m.group(1)
+            above = text[: m.start()].rstrip("\n").rsplit("\n", 1)[-1]
+            marker = REFUSES.fullmatch(above.strip())
+            refused = (
+                {c.strip() for c in marker.group(1).split(",")} if marker else set()
+            )
+            yield f"{md.relative_to(ROOT)}:{line}", m.group(1), refused
 
 
 def is_program(body: str) -> bool:
@@ -72,7 +87,8 @@ def main() -> int:
     broke: list[tuple[str, str]] = []
     fixed: list[str] = []
 
-    for where, body in blocks():
+    as_said = 0
+    for where, body, refused in blocks():
         if not is_program(body):
             skipped += 1
             continue
@@ -82,11 +98,25 @@ def main() -> int:
         run = subprocess.run(
             [binary, "check", str(path)], capture_output=True, text=True
         )
-        if run.returncode == 0:
+        output = run.stdout + run.stderr
+        codes = set(CODE.findall(output))
+        # An error without a code (a load error reported along with a
+        # refusal) is never one a marker names.
+        if any(l.startswith("error: ") and not l.endswith(" does not check")
+               for l in output.splitlines()):
+            codes.add("uncoded error")
+        if refused:
+            if run.returncode != 0 and codes and codes <= refused:
+                as_said += 1
+            else:
+                got = ", ".join(sorted(codes)) or "no code"
+                verdict = "accepted" if run.returncode == 0 else f"refused with {got}"
+                broke.append((where, f"marked engine-refuses: {', '.join(sorted(refused))}, but {verdict}"))
+        elif run.returncode == 0:
             if where in KNOWN_BROKEN:
                 fixed.append(where)
         elif where not in KNOWN_BROKEN:
-            lines = [l.strip() for l in (run.stdout + run.stderr).splitlines()
+            lines = [l.strip() for l in output.splitlines()
                      if l.strip()]
             first = next((l for l in lines if "×" in l),
                          lines[0] if lines else "(no diagnostic)")
@@ -94,8 +124,9 @@ def main() -> int:
 
     stale = sorted(w for w in KNOWN_BROKEN if w not in checked)
 
-    print(f"{len(checked)} documented programs checked, {skipped} sketches and "
-          f"fragments skipped, {len(KNOWN_BROKEN)} known-broken")
+    print(f"{len(checked)} documented programs checked, {as_said} refused as "
+          f"marked, {skipped} sketches and fragments skipped, "
+          f"{len(KNOWN_BROKEN)} known-broken")
 
     status = 0
     if broke:

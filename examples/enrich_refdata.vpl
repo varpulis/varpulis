@@ -1,4 +1,7 @@
 # Reference data enrichment example
+# engine-refuses: E103
+#   No shipped binary performs .enrich(): the varpulis CLI, the
+#   varpulis-engine library and the WASM build refuse it at load.
 # Enriches order events with product catalog data from PostgreSQL
 # and user profile data from Redis
 
