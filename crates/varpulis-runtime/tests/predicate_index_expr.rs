@@ -265,3 +265,62 @@ fn expression_steps_match_the_same_with_and_without_the_index() {
         }
     }
 }
+
+/// A checkpoint taken while runs sit in the index restores them all: the
+/// restored engine, with the index or without, emits what the original one
+/// emits, in the same order.
+#[test]
+fn a_restore_keeps_the_indexed_runs_and_their_order() {
+    use varpulis_runtime::sase_persistence::SaseCheckpointExt;
+
+    for (name, pattern) in patterns() {
+        if name == "string-order" {
+            continue;
+        }
+        let mut original = engine(&pattern, SelectionStrategy::SkipTillAnyMatch, Some(true));
+        let mut rng = Rng(0x5EED_0001);
+        let mut at = DateTime::from_timestamp(1_700_000_000, 0).expect("valid");
+        let mut stream = Vec::new();
+        for id in 0..1_000 {
+            at += chrono::Duration::milliseconds(rng.below(1000) as i64);
+            stream.push(random_event(&mut rng, id, at));
+        }
+        let (before, after) = stream.split_at(500);
+        for event in before {
+            let _ = original.process(event);
+        }
+        assert!(
+            original.parked_run_count() > 0,
+            "{name}: no run was in the index at the checkpoint"
+        );
+        let checkpoint = original.checkpoint();
+
+        let mut matches = 0;
+        for index in [Some(true), Some(false), None] {
+            let mut restored = engine(&pattern, SelectionStrategy::SkipTillAnyMatch, index);
+            restored.restore(&checkpoint);
+            assert_eq!(
+                restored.stats().active_runs,
+                original.stats().active_runs,
+                "{name}: runs lost by the restore"
+            );
+            let mut reference = engine(&pattern, SelectionStrategy::SkipTillAnyMatch, Some(true));
+            reference.restore(&checkpoint);
+            for (i, event) in after.iter().enumerate() {
+                let expected: Vec<String> = reference.process(event).iter().map(describe).collect();
+                let actual: Vec<String> = restored.process(event).iter().map(describe).collect();
+                assert_eq!(actual, expected, "{name} ({index:?}): differ at event {i}");
+                matches += expected.len();
+            }
+        }
+        // The original keeps going too, and matches like a restored engine.
+        let mut restored = engine(&pattern, SelectionStrategy::SkipTillAnyMatch, Some(false));
+        restored.restore(&checkpoint);
+        for event in after {
+            let expected: Vec<String> = original.process(event).iter().map(describe).collect();
+            let actual: Vec<String> = restored.process(event).iter().map(describe).collect();
+            assert_eq!(actual, expected, "{name}: the restore changed what matches");
+        }
+        assert!(matches > 0, "{name}: nothing matched after the restore");
+    }
+}
