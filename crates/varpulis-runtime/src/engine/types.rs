@@ -52,6 +52,12 @@ pub struct EngineMetrics {
 ///
 /// Each number is a detection the engine may have missed, so a host
 /// publishes them: before these counters, every one of them was silent.
+///
+/// On an [`crate::Engine`], the run counters are part of a checkpoint and
+/// restoring one sets them to the checkpoint's values, while
+/// `filters_without_value` is not and keeps counting. `varpulis-engine`'s
+/// `Program::losses` evens this out: there all three count since the
+/// `Program` was built, whatever is restored.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LossCounters {
     /// Pattern runs that were never opened because the pattern already held

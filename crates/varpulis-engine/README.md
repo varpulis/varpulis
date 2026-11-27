@@ -46,10 +46,12 @@ for payload in my_bus.next_batch() {
 - **`Program::losses`** — what the program let go of without an error:
   pattern runs not opened because a pattern was at its cap
   (`runs_dropped`), and events a `.where()` discarded because its predicate
-  had no value (`filters_without_value`). Publish them; each is a detection
-  that may have been missed.
+  had no value (`filters_without_value`). Counted since the `Program` was
+  built, across restores. Publish them; each is a detection that may have
+  been missed.
 - **`Program::max_runs` / `set_max_runs`** — the cap on concurrent runs of
-  each pattern (each partition, when partitioned), 10 000 by default.
+  each pattern, 10 000 by default. A partitioned pattern applies it to each
+  partition, so its memory grows with partitions × `max_runs`.
 
 ## What the engine refuses
 

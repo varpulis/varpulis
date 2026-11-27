@@ -740,18 +740,17 @@ fn execute_op_common(
         RuntimeOp::WhereExpr(expr) => {
             let mut without_value = 0u64;
             current_events.retain(|e| {
-                let verdict = evaluator::eval_expr_with_functions(
+                let (keep, no_value) = evaluator::filter_verdict(
                     expr,
                     e.as_ref(),
                     SequenceContext::empty(),
                     functions,
                     empty_vars(),
-                )
-                .and_then(|v| v.as_bool());
-                if verdict.is_none() {
+                );
+                if no_value {
                     without_value += 1;
                 }
-                verdict.unwrap_or(false)
+                keep
             });
             *filters_without_value += without_value;
         }

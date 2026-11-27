@@ -87,6 +87,15 @@ fn check_op(op: &StreamOp, span: Span, out: &mut Vec<Diagnostic>) {
             format!(".context({name}) is not run by this engine"),
             "remove the .context() call",
         )),
+        StreamOp::Emit {
+            target_context: Some(name),
+            ..
+        } => out.push(error(
+            span,
+            CONTEXT_UNSUPPORTED,
+            format!(".emit(context: {name}) is not run by this engine"),
+            "remove the context: argument",
+        )),
         StreamOp::Alert(args) if args.iter().any(|a| a.name == "webhook") => out.push(error(
             span,
             ALERT_WEBHOOK_UNSUPPORTED,

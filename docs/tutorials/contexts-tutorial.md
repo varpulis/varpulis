@@ -1,6 +1,5 @@
 # Parallel Stream Processing with Contexts
 
-<!-- engine-refuses: E101 -->
 > **The engine as it ships refuses contexts.** `context` declarations and
 > `.context(...)` parse, and `varpulis check`, the `varpulis-engine` library
 > and the WASM build then refuse the program with `error[E101]`: the threads
@@ -38,6 +37,7 @@ Contexts solve this by giving each stream its own OS thread.
 
 Create a file called `first_context.vpl`:
 
+<!-- engine-refuses: E101 -->
 ```vpl
 # first_context.vpl
 # A single stream running in a named context
@@ -106,6 +106,7 @@ Now let's run two independent streams in separate contexts. Each gets its own OS
 
 Create `parallel_contexts.vpl`:
 
+<!-- engine-refuses: E101 -->
 ```vpl
 # parallel_contexts.vpl
 # Two independent streams, each on its own thread
@@ -188,6 +189,7 @@ Real systems often need data to flow between stages: ingest, then compute, then 
 
 Create `pipeline.vpl`:
 
+<!-- engine-refuses: E101 -->
 ```vpl
 # pipeline.vpl
 # 3-stage pipeline: ingest -> compute -> alert
@@ -300,6 +302,7 @@ Contexts shine when you have CPU-intensive workloads. Windowed aggregation with 
 
 Create `parallel_windows.vpl`:
 
+<!-- engine-refuses: E101 -->
 ```vpl
 # parallel_windows.vpl
 # Two contexts doing independent windowed aggregation
@@ -427,6 +430,7 @@ The syntax is `.window(session: <gap>)`, where `<gap>` is the maximum inactivity
 
 Create `session_contexts.vpl`:
 
+<!-- engine-refuses: E101 -->
 ```vpl
 # session_contexts.vpl
 # User session analytics with session windows in a dedicated context
@@ -516,6 +520,7 @@ This means you don't need a "trailing event" to close the last session -- the sw
 
 Session windows pair well with cross-context pipelines. Here's a pattern where raw events are ingested in one context and session analytics run in another:
 
+<!-- engine-refuses: E101 -->
 ```vpl
 # session_pipeline.vpl
 context ingest

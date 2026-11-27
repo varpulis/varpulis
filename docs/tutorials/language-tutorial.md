@@ -635,7 +635,6 @@ stream AllSensors = merge(
 
 Contexts let you run streams on dedicated OS threads for true multi-core parallelism.
 
-<!-- engine-refuses: E101 -->
 > **The engine as it ships refuses contexts.** `context` declarations and
 > `.context(...)` parse, and `varpulis check`, the `varpulis-engine` library
 > and the WASM build then refuse the program with `error[E101]`: the threads
@@ -660,6 +659,7 @@ Each context gets its own OS thread with a single-threaded Tokio runtime. The op
 
 Use `.context()` to assign a stream to a context:
 
+<!-- engine-refuses: E101 -->
 ```vpl
 context fast (cores: [0])
 context slow (cores: [1])
@@ -679,6 +679,7 @@ stream HeavyAnalytics = SensorReading
 
 Send events from one context to another using `context:` in `.emit()`:
 
+<!-- engine-refuses: E101 -->
 ```vpl
 context ingest (cores: [0])
 context analyze (cores: [1])

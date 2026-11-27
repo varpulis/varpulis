@@ -11,11 +11,12 @@ The two exceptions are visible on the page:
 - a block that declares nothing (an operator signature, a clause shown on its
   own) is a fragment, and there is no honest way to check half a program.
 
-A page can also say that the engine as it ships refuses what it describes,
-with a visible banner and the codes in an HTML comment:
-`<!-- engine-refuses: E101 -->`. A program on that page then passes when the
-check accepts it, or refuses it with those codes and no other. The comment is
-a claim the script verifies: a refusal with any other code still fails.
+A block can also say that the engine as it ships refuses it, with the codes
+in an HTML comment on the line just above its fence:
+`<!-- engine-refuses: E101 -->` (the page says why, in prose a reader sees).
+That block then passes only if the check refuses it with those codes and no
+other; a block so marked that checks clean fails, and so does one refused for
+anything else. The comment is a claim the script verifies, not an exemption.
 
 This used to check only blocks that declared an event type, but a VPL program
 needs no `event` declaration to run, so most of the documented programs were
@@ -57,13 +58,13 @@ def blocks():
         if not md.exists() or "node_modules" in md.parts:
             continue
         text = md.read_text(encoding="utf-8", errors="replace")
-        refused = {
-            code.strip()
-            for found in REFUSES.findall(text)
-            for code in found.split(",")
-        }
         for m in re.finditer(r"^```vpl\n(.*?)^```", text, re.S | re.M):
             line = text[: m.start()].count("\n") + 1
+            above = text[: m.start()].rstrip("\n").rsplit("\n", 1)[-1]
+            marker = REFUSES.fullmatch(above.strip())
+            refused = (
+                {c.strip() for c in marker.group(1).split(",")} if marker else set()
+            )
             yield f"{md.relative_to(ROOT)}:{line}", m.group(1), refused
 
 
@@ -99,11 +100,21 @@ def main() -> int:
         )
         output = run.stdout + run.stderr
         codes = set(CODE.findall(output))
-        if run.returncode == 0:
+        # An error without a code (a load error reported along with a
+        # refusal) is never one a marker names.
+        if any(l.startswith("error: ") and not l.endswith(" does not check")
+               for l in output.splitlines()):
+            codes.add("uncoded error")
+        if refused:
+            if run.returncode != 0 and codes and codes <= refused:
+                as_said += 1
+            else:
+                got = ", ".join(sorted(codes)) or "no code"
+                verdict = "accepted" if run.returncode == 0 else f"refused with {got}"
+                broke.append((where, f"marked engine-refuses: {', '.join(sorted(refused))}, but {verdict}"))
+        elif run.returncode == 0:
             if where in KNOWN_BROKEN:
                 fixed.append(where)
-        elif refused and codes and codes <= refused:
-            as_said += 1
         elif where not in KNOWN_BROKEN:
             lines = [l.strip() for l in output.splitlines()
                      if l.strip()]
@@ -114,7 +125,7 @@ def main() -> int:
     stale = sorted(w for w in KNOWN_BROKEN if w not in checked)
 
     print(f"{len(checked)} documented programs checked, {as_said} refused as "
-          f"their page says, {skipped} sketches and fragments skipped, "
+          f"marked, {skipped} sketches and fragments skipped, "
           f"{len(KNOWN_BROKEN)} known-broken")
 
     status = 0

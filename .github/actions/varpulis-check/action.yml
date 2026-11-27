@@ -161,6 +161,11 @@ runs:
             for code in $(echo "$GOT" | tr ',' ' '); do
               case ",$EXPECT," in *",$code,"*) ;; *) UNEXPECTED="$UNEXPECTED $code" ;; esac
             done
+            # An error without a code (the engine's load error, reported
+            # along with the refusal) is never one the marker names.
+            if echo "$OUTPUT" | grep -E '^error: ' | grep -qvE ' does not check$'; then
+              UNEXPECTED="$UNEXPECTED (an error without a code)"
+            fi
             if [ -z "$GOT" ] || [ -n "$UNEXPECTED" ]; then
               echo "::error file=$file::marked 'engine-refuses: $EXPECT' but refused with '${GOT:-no code}': $OUTPUT"
               ERRORS=$((ERRORS + 1)); EXIT_CODE=1

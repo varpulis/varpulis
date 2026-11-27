@@ -1,6 +1,5 @@
 # Context-Based Multi-Threaded Execution
 
-<!-- engine-refuses: E101 -->
 > **The engine as it ships refuses contexts.** `context` declarations and
 > `.context(...)` parse, and `varpulis check`, the `varpulis-engine` library
 > and the WASM build then refuse the program with `error[E101]`: the threads
@@ -77,6 +76,7 @@ context <name> (cores: [<core_id>, ...])
 
 Use the `.context()` operation in a stream pipeline to assign it to a context:
 
+<!-- engine-refuses: E101 -->
 ```vpl
 context ingestion (cores: [0, 1])
 context analytics (cores: [2, 3])
@@ -102,6 +102,7 @@ Streams without `.context()` run in the default single-threaded engine (backward
 
 Use `context:` in an `.emit()` to send events from one context to another:
 
+<!-- engine-refuses: E101 -->
 ```vpl
 context ingestion (cores: [0])
 context analytics (cores: [1])
@@ -169,6 +170,7 @@ context alert (cores: [3])      # Alert generation and delivery
 
 ### Step 2: Ingestion Stage
 
+<!-- engine-refuses: E101 -->
 ```vpl
 # Fast filtering in the ingestion context
 context ingest (cores: [1])     # declared in Step 1
@@ -182,6 +184,7 @@ stream ValidReadings = SensorReading
 
 ### Step 3: Analytics Stage
 
+<!-- engine-refuses: E101 -->
 ```vpl
 # Per-zone statistics in the analytics context
 context analyze (cores: [2])    # declared in Step 1
@@ -202,6 +205,7 @@ stream ZoneStats = ValidReadings
 
 ### Step 4: Alert Stage
 
+<!-- engine-refuses: E101 -->
 ```vpl
 # Alert on anomalies in the alert context
 context alert (cores: [3])      # declared in Step 1
@@ -219,6 +223,7 @@ stream LowActivityAlerts = ZoneStats
 
 ### Complete Program
 
+<!-- engine-refuses: E101 -->
 ```vpl
 # IoT Monitoring Pipeline with Contexts
 # Three isolated execution domains for maximum throughput
@@ -355,6 +360,7 @@ context io_bound (cores: [6])
 
 Each cross-context emit goes through a channel. Minimize boundary crossings:
 
+<!-- engine-refuses: E101 -->
 ```vpl
 context ingestion
 context analytics
