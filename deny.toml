@@ -16,18 +16,6 @@ ignore = [
     # No alternative available — bincode is embedded in the benchmark runner.
     { id = "RUSTSEC-2025-0141", reason = "dev-only transitive via iai-callgrind benchmarks" },
 
-    # rsa 0.9: Marvin Attack timing side-channel. Transitive via sqlx-mysql.
-    # We don't use MySQL TLS with RSA keys in production; PostgreSQL is primary.
-    { id = "RUSTSEC-2023-0071", reason = "transitive via sqlx-mysql, not used in production" },
-
-    # instant: unmaintained, replaced by web-time. Transitive via notify → varpulis-cli.
-    # No safe upgrade: notify-types 1.0 still depends on instant.
-    { id = "RUSTSEC-2024-0384", reason = "transitive via notify-types, no upstream fix" },
-
-    # number_prefix: unmaintained. Transitive via indicatif → varpulis-cli.
-    # No safe upgrade available.
-    { id = "RUSTSEC-2025-0119", reason = "transitive via indicatif, no upstream fix" },
-
     # lru 0.16: `LruCache::pop()` is not panic-safe if a *key's* `Drop` panics.
     # Transitive via aws-sdk-s3 1.128 (S3 Express identity cache). Its keys carry
     # no custom `Drop`, so the precondition cannot occur. The patched lru
@@ -75,6 +63,14 @@ ignore = [
     # checked); nothing in the workspace loads one since ADR-008. Leaves with
     # varpulis-connectors when `async-runtime` is removed (ADR-008's next change).
     { id = "RUSTSEC-2024-0449", reason = "via serde_yaml, credentials file only; leaves with async-runtime (ADR-008)" },
+
+    # chrono: unmaintained (2026-09-14, chronotope/chrono#1768), every version
+    # affected, no patched release. Informational, not a vulnerability. Used
+    # directly by varpulis-core, -runtime, -sase, -dead-letter and
+    # -connector-api for timestamps, and by arrow-array and arrow-arith, so it
+    # cannot leave until arrow does. Moving the workspace to jiff or time is its
+    # own change. Re-check 2027-02-27 or when arrow drops chrono.
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no fix; direct and via arrow; migration to jiff/time is separate work (re-check 2027-02-27)" },
 ]
 
 # ---------------------------------------------------------------------------
