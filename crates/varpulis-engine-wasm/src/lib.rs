@@ -106,6 +106,18 @@ impl WasmEngine {
             }
         };
 
+        let unsupported = varpulis_core::validate::support::check_sync_engine_support(&program);
+        if unsupported.has_errors() {
+            return json(&LoadResult {
+                ok: false,
+                streams: vec![],
+                error: Some(format!(
+                    "Load error: {}",
+                    unsupported.format(vpl).trim_end()
+                )),
+            });
+        }
+
         match self.engine.load(&program) {
             Ok(()) => {
                 self.program_source = vpl.to_string();

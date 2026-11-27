@@ -47,8 +47,8 @@ pub use types::NamedPattern;
 #[cfg(feature = "arrow")]
 pub use types::WindowedColumnarAggregateState;
 pub use types::{
-    AggregatorState, EngineConfig, EngineMetrics, PartitionedAggregatorState, ReloadReport,
-    SinkBinding, SourceBinding, UserFunction,
+    AggregatorState, EngineConfig, EngineMetrics, LossCounters, PartitionedAggregatorState,
+    ReloadReport, SinkBinding, SourceBinding, UserFunction,
 };
 // Re-export internal types for use within the engine module
 use types::{RuntimeOp, RuntimeSource, StreamDefinition, WindowType};
@@ -1558,6 +1558,42 @@ impl Engine {
         self.streams
             .values()
             .any(|s| matches!(s.source, RuntimeSource::Join(_)))
+    }
+
+    /// What the engine has let go of without an error since it was built.
+    /// See [`LossCounters`].
+    pub fn loss_counters(&self) -> LossCounters {
+        let mut c = LossCounters::default();
+        for stream in self.streams.values() {
+            c.filters_without_value += stream.filters_without_value;
+            if let Some(sase) = &stream.sase_engine {
+                c.runs_dropped += sase.total_runs_dropped;
+                c.runs_evicted += sase.total_runs_evicted;
+            }
+        }
+        c
+    }
+
+    /// The cap on concurrent runs of the program's patterns: on each
+    /// pattern, or on each partition of a partitioned pattern. `None` when
+    /// the program has no pattern. 10 000 unless [`Self::set_max_runs`]
+    /// changed it.
+    pub fn max_runs(&self) -> Option<usize> {
+        self.streams
+            .values()
+            .filter_map(|s| s.sase_engine.as_ref().map(|e| e.max_runs()))
+            .max()
+    }
+
+    /// Set the cap on concurrent runs of every pattern loaded so far. A run
+    /// that would exceed it is not opened and is counted in
+    /// [`LossCounters::runs_dropped`]. Runs already open are kept.
+    pub fn set_max_runs(&mut self, max: usize) {
+        for stream in self.streams.values_mut() {
+            if let Some(sase) = &mut stream.sase_engine {
+                sase.set_max_runs(max);
+            }
+        }
     }
 
     /// Returns (events_in, events_out) counters for this engine.

@@ -1,4 +1,7 @@
 # Weather enrichment example
+# engine-refuses: E103
+#   No shipped binary performs .enrich(): the varpulis CLI, the
+#   varpulis-engine library and the WASM build refuse it at load.
 # Enriches temperature sensor events with weather forecast data from an HTTP API
 
 connector WeatherAPI = http(url: "https://api.weather.com/v1/forecast", method: "GET")

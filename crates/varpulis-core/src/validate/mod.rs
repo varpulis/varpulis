@@ -8,6 +8,7 @@ pub mod builtins;
 mod checks;
 pub mod scope;
 mod suggest;
+pub mod support;
 
 use miette::NamedSource;
 use scope::SymbolTable;

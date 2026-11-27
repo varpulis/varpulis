@@ -159,6 +159,7 @@ pub async fn execute_pipeline(
             functions,
             sinks,
             &mut sink_events_sent,
+            &mut stream.filters_without_value,
         )
         .await?;
 
@@ -252,6 +253,7 @@ async fn execute_op(
     functions: &FxHashMap<String, UserFunction>,
     sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
     sink_sent: &mut u64,
+    filters_without_value: &mut u64,
 ) -> Result<(), super::error::EngineError> {
     // Handle async-requiring ops here; everything else is sync.
     if let RuntimeOp::To(config) = op {
@@ -487,6 +489,7 @@ async fn execute_op(
         current_events,
         emitted_events,
         functions,
+        filters_without_value,
     )
 }
 
@@ -727,6 +730,7 @@ fn execute_op_common(
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
     functions: &FxHashMap<String, UserFunction>,
+    filters_without_value: &mut u64,
 ) -> Result<(), super::error::EngineError> {
     match op {
         RuntimeOp::WhereClosure(predicate) => {
@@ -734,17 +738,22 @@ fn execute_op_common(
         }
 
         RuntimeOp::WhereExpr(expr) => {
+            let mut without_value = 0u64;
             current_events.retain(|e| {
-                evaluator::eval_expr_with_functions(
+                let verdict = evaluator::eval_expr_with_functions(
                     expr,
                     e.as_ref(),
                     SequenceContext::empty(),
                     functions,
                     empty_vars(),
                 )
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
+                .and_then(|v| v.as_bool());
+                if verdict.is_none() {
+                    without_value += 1;
+                }
+                verdict.unwrap_or(false)
             });
+            *filters_without_value += without_value;
         }
 
         RuntimeOp::Window(window) => {
@@ -1561,6 +1570,7 @@ pub fn execute_pipeline_sync(
             &mut current_events,
             &mut emitted_events,
             functions,
+            &mut stream.filters_without_value,
         )?;
 
         // Don't exit early if the Forecast op hasn't run yet
@@ -1611,6 +1621,7 @@ fn execute_op_sync(
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
     functions: &FxHashMap<String, UserFunction>,
+    filters_without_value: &mut u64,
 ) -> Result<(), super::error::EngineError> {
     execute_op_common(
         op,
@@ -1623,6 +1634,7 @@ fn execute_op_sync(
         current_events,
         emitted_events,
         functions,
+        filters_without_value,
     )
 }
 

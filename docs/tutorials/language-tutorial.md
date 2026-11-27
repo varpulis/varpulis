@@ -635,13 +635,15 @@ stream AllSensors = merge(
 
 Contexts let you run streams on dedicated OS threads for true multi-core parallelism.
 
-> **Contexts have no effect in the engine as it ships.** `context`
-> declarations and `.context(...)` parse and pass `varpulis check`, but the
-> threads and channels behind them belong to the engine's asynchronous runtime,
-> which neither `varpulis simulate` nor a Vejas detect unit includes (see
-> [ADR-008](../adr/008-engine-only-platform-retired.md)). A program with
-> contexts runs on one thread, exactly like the same program without them. In
-> Vejas, work runs in parallel as separate detect units.
+<!-- engine-refuses: E101 -->
+> **The engine as it ships refuses contexts.** `context` declarations and
+> `.context(...)` parse, and `varpulis check`, the `varpulis-engine` library
+> and the WASM build then refuse the program with `error[E101]`: the threads
+> and channels behind contexts belong to the engine's asynchronous runtime,
+> which no shipped binary includes (see
+> [ADR-008](../adr/008-engine-only-platform-retired.md)). Remove the contexts and the
+> program runs on one thread. In Vejas, work runs in parallel as separate
+> detect units. The programs in this section describe that runtime.
 
 ### Declaring Contexts
 

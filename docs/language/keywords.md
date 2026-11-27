@@ -1,4 +1,10 @@
-# Reserved Keywords
+# Keywords
+
+The words VPL gives a meaning to. Having a meaning does not mean being run. The engine that ships (the
+`varpulis-engine` library, the CLI and the WASM build) refuses at load the
+constructs it does not execute, with the code given in the tables, rather than
+loading them and skipping them. The last sections list the words that are
+set aside and not implemented at all.
 
 ## Declarations
 
@@ -11,7 +17,7 @@
 | `var` | Declares a mutable variable |
 | `const` | Declares a global constant |
 | `fn` | Declares a function |
-| `context` | Declares an execution context for multi-threaded parallelism |
+| `context` | Declares an execution context. Refused by the shipped engine (E101): one program runs on one thread |
 | `config` | Configuration block |
 
 ## Control Flow
@@ -21,7 +27,6 @@
 | `if` | Condition |
 | `else` | Alternative branch |
 | `elif` | Alternative condition (else if) |
-| `match` | Pattern matching |
 | `for` | Loop over iterable |
 | `while` | Conditional loop |
 | `break` | Exit loop |
@@ -35,10 +40,10 @@
 | `from` | Connector source binding (`.from()`) |
 | `where` | Filtering |
 | `select` | Projection |
-| `join` | Inner stream join |
-| `left_join` | Left outer join (all left events, null-fill right) |
-| `right_join` | Right outer join (null-fill left, all right events) |
-| `full_join` | Full outer join (all events from both sides) |
+| `join` | Inner stream join. Not run by the shipped engine: the first event a join receives is an error |
+| `left_join` | Left outer join. Not run by the shipped engine: the first event a join receives is an error |
+| `right_join` | Right outer join. Not run by the shipped engine: the first event a join receives is an error |
+| `full_join` | Full outer join. Not run by the shipped engine: the first event a join receives is an error |
 | `merge` | Stream merge |
 | `window` | Time window |
 | `aggregate` | Aggregation |
@@ -82,20 +87,15 @@
 
 | Keyword | Description |
 |---------|-------------|
-| `and` | Logical AND |
-| `or` | Logical OR |
-| `not` | Logical NOT |
+| `and` | Logical AND, in an expression |
+| `or` | Logical OR, in an expression |
+| `not` | Logical NOT, in an expression |
+
+`and` and `or` combine conditions inside a `.where()`. There is no AND or OR
+of events (match A and B in any order, A or B): a sequence is written with
+`->`, an absence with `-> NOT B .within()`.
 | `in` | Membership |
 | `is` | Type/identity test |
-
-## Error Handling
-
-| Keyword | Description |
-|---------|-------------|
-| `try` | Try block |
-| `catch` | Exception capture |
-| `finally` | Final block |
-| `raise` | Raise an exception |
 
 ## Other
 
@@ -103,13 +103,27 @@
 |---------|-------------|
 | `as` | Alias/cast |
 | `extends` | Event inheritance |
-| `import` | Module import |
-| `export` | Symbol export |
+| `import` | Module import. Refused by the shipped engine (E100): imports are not resolved, so a program is one file. `import fn ... from "f.wasm"` loads a WASM function only in builds with the `wasm-udf` feature |
 
-## Keywords Reserved for Future Use
+## Stream operators refused by the shipped engine
 
-The following words are reserved for potential extensions:
+Not keywords, but parsed and then refused at load, for the same reason:
 
+| Operator | Code | Why |
+|----------|------|-----|
+| `timer(5s)` as a stream source | E102 | Nothing fires it. The host feeds a periodic event instead |
+| `.enrich(...)` | E103 | The lookup is not performed. The host enriches the event before feeding it |
+| `.alert(webhook: ...)` | E104 | The webhook is not called. Route the stream with `.to()`; `.alert(message: ...)` without a webhook only logs |
+
+## Words set aside
+
+These words have no meaning in VPL today; there is no `match` expression and
+no `try`/`catch`. The editor tooling may highlight some of them, the engine
+gives them none:
+
+- `match`
+- `try`, `catch`, `finally`, `raise`
+- `export`
 - `async`, `await`
 - `class`, `trait`, `impl`
 - `pub`, `priv`

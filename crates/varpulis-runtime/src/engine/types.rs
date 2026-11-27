@@ -48,6 +48,25 @@ pub struct EngineMetrics {
     pub streams_count: usize,
 }
 
+/// What an engine has let go of without an error, counted since it was built.
+///
+/// Each number is a detection the engine may have missed, so a host
+/// publishes them: before these counters, every one of them was silent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LossCounters {
+    /// Pattern runs that were never opened because the pattern already held
+    /// its maximum of concurrent runs (see [`crate::Engine::set_max_runs`]).
+    /// Each is a match the pattern could not find.
+    pub runs_dropped: u64,
+    /// Open pattern runs closed early to make room for a new one, under an
+    /// eviction backpressure strategy. Not used by the default strategy.
+    pub runs_evicted: u64,
+    /// Events a `.where()` filter discarded because its predicate had no
+    /// true/false value: a missing field, a type mismatch, a failed call.
+    /// The event was treated as not matching.
+    pub filters_without_value: u64,
+}
+
 /// Report from a hot reload operation
 #[derive(Debug, Clone, Default)]
 pub struct ReloadReport {
@@ -140,6 +159,9 @@ pub struct StreamDefinition {
     /// Last raw event that entered the pipeline (used by Forecast op to learn
     /// from every event even when the Sequence op clears current_events).
     pub last_raw_event: Option<crate::event::SharedEvent>,
+    /// Events a `.where()` predicate let through as false because it had no
+    /// true/false value: a missing field, a type mismatch, a failed call.
+    pub filters_without_value: u64,
     /// Enrichment provider + cache (when .enrich() is used, async-runtime only)
     #[cfg(feature = "async-runtime")]
     pub enrichment: Option<(
