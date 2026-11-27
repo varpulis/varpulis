@@ -3,12 +3,6 @@
 
 [advisories]
 ignore = [
-    # RUSTSEC-2023-0071: rsa timing side-channel (Marvin Attack)
-    # Transitive dependency via sqlx-mysql -> rsa 0.9.x
-    # No fix available upstream. Low risk: only applies to RSA PKCS#1 v1.5
-    # decryption in MySQL TLS connections, requires attacker on same network.
-    "RUSTSEC-2023-0071",
-
     # RUSTSEC-2025-0052: async-std is unmaintained
     # Transitive dependency via pulsar 6.7.0 (optional, feature-gated).
     # No upstream fix: pulsar-rs has not released a version without async-std.
@@ -61,4 +55,9 @@ ignore = [
     # serde_yaml 0.9, used only to parse a connectors credentials file;
     # leaves with `async-runtime` (ADR-008). Mirrored from deny.toml.
     "RUSTSEC-2024-0449",
+
+    # RUSTSEC-2026-0543: chrono unmaintained, no patched release. Direct dep of
+    # several crates and transitive via arrow. Migration to jiff or time is
+    # separate work. Re-check 2027-02-27. Mirrored from deny.toml.
+    "RUSTSEC-2026-0543",
 ]
