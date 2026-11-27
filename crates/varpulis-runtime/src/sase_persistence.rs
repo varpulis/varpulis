@@ -117,6 +117,9 @@ impl RunCheckpointExt for Run {
             pending_negations: Vec::new(),
             and_state: None,
             kleene_capture,
+            // A fresh number, taken in checkpoint order: the checkpoint lists
+            // runs in creation order, so the restored runs keep theirs.
+            seq: Run::next_seq(),
         }
     }
 }
@@ -130,7 +133,11 @@ pub trait SaseCheckpointExt {
 impl SaseCheckpointExt for SaseEngine {
     /// Create a checkpoint of the entire SASE engine state.
     fn checkpoint(&self) -> persistence::SaseCheckpoint {
-        let active_runs = self.runs.iter().map(|r| r.checkpoint()).collect();
+        // Runs parked in the predicate index are active runs too. They are
+        // written in creation order, which a restore keeps (`Run::seq`).
+        let mut runs: Vec<&Run> = self.runs.iter().chain(self.parked_runs()).collect();
+        runs.sort_by_key(|r| r.seq);
+        let active_runs = runs.into_iter().map(|r| r.checkpoint()).collect();
 
         let partitioned_runs = self
             .partitioned_runs
@@ -155,6 +162,9 @@ impl SaseCheckpointExt for SaseEngine {
 
     /// Restore engine state from a checkpoint.
     fn restore(&mut self, cp: &persistence::SaseCheckpoint) {
+        // Every run is replaced; the next event files the restored ones in
+        // the predicate index again.
+        self.discard_parked_runs();
         self.runs = cp.active_runs.iter().map(Run::from_checkpoint).collect();
 
         self.partitioned_runs = cp

@@ -1,5 +1,6 @@
 //! Active pattern run (partial match in progress)
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,7 +41,15 @@ pub struct Run {
     pub and_state: Option<AndState>,
     /// ZDD-KLEENE: Compact Kleene capture using ZDD (replaces branching)
     pub kleene_capture: Option<KleeneCapture>,
+    /// Creation order, unique in the process. The matches one event
+    /// completes are emitted in this order, whichever structure held the
+    /// runs (the visited list or the predicate index), so the order does
+    /// not depend on how runs were stored.
+    pub seq: u64,
 }
+
+/// Source of [`Run::seq`].
+static NEXT_RUN_SEQ: AtomicU64 = AtomicU64::new(0);
 
 impl Default for Run {
     fn default() -> Self {
@@ -57,11 +66,18 @@ impl Default for Run {
             pending_negations: Vec::new(),
             and_state: None,
             kleene_capture: None,
+            seq: Self::next_seq(),
         }
     }
 }
 
 impl Run {
+    /// A creation number later than every run made so far. A restore takes
+    /// one per run, in checkpoint order, which keeps the runs' relative order.
+    pub fn next_seq() -> u64 {
+        NEXT_RUN_SEQ.fetch_add(1, Ordering::Relaxed)
+    }
+
     /// Create a new run starting at the given NFA state.
     pub fn new(start_state: usize) -> Self {
         Self {
@@ -77,6 +93,7 @@ impl Run {
             pending_negations: Vec::new(),
             and_state: None,
             kleene_capture: None,
+            seq: Self::next_seq(),
         }
     }
 
@@ -95,6 +112,7 @@ impl Run {
             pending_negations: Vec::new(),
             and_state: None,
             kleene_capture: None,
+            seq: Self::next_seq(),
         }
     }
 

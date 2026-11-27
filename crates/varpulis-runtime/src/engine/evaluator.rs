@@ -2101,4 +2101,13 @@ impl varpulis_sase::ExprEvaluator for RuntimeExprEvaluator {
         };
         eval_filter_expr(expr, event, &ctx)
     }
+
+    /// The semantics `ExprEvaluator::indexable_comparisons` describes are
+    /// this evaluator's: `eval_filter_expr` with no bindings and no
+    /// functions. A change to how it reads names, members, arithmetic or
+    /// comparisons must be checked against the predicate index
+    /// (`varpulis-sase` `run_index.rs`, `CapturedRef::value`).
+    fn indexable_comparisons(&self) -> bool {
+        true
+    }
 }
