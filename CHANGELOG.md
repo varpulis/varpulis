@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — an event looks up the runs it can advance instead of visiting them all
+
+- Without `partition_by`, every event visited every run waiting in a
+  sequence: with `A as a -> B where key == a.key` and 10 000 runs waiting,
+  an event cost 1.3 to 2.7 ms, and each new run visited all the others, so
+  10 000 runs took 2 s to open. The engine now files a waiting run under the
+  captured values its next step compares against (a hash bucket for `==`, an
+  ordered set for one bound, an interval tree for two) and an event takes
+  out only the runs its values can reach. Each one still goes through its
+  whole predicate: the index narrows the visit, it never decides a match.
+  From 8 waiting runs on, an event costs 0.24 to 0.34 µs when it advances
+  none and 1.2 to 4.4 µs per completed run and its reopening, up to 100 000
+  runs; 100 000 runs open in 0.07 to 0.14 s. A run costs about 80 to 100
+  more bytes.
+- The comparison may be written either way round (`a.key == key`), and the
+  captured side may be scaled or shifted by a number (`price > a.p * 1.05`):
+  the index computes that bound exactly as the expression evaluator does.
+- Under 8 waiting runs, visiting them all is cheaper and the engine does
+  that; it goes back to it under 4. `SaseEngine::with_predicate_index(bool)`
+  forces either way, and `VARPULIS_SASE_INDEX=1` or `0` sets the default.
+  The index stays off under strict contiguity, with global negations and
+  with `partition_by`, and a run that has a pending negation, an AND or a
+  Kleene capture stays in the visited list.
+- The matches one event completes are now emitted in the order their runs
+  were created, with or without the index. Before, they came out in the
+  order of the run list, which removals reshuffled. A checkpoint lists runs
+  in creation order and a restore keeps it (`Run::seq`).
+- `ExprEvaluator::indexable_comparisons` (default `false`) tells the index
+  whether it may plan comparisons written as expressions; the runtime's
+  evaluator says `true`.
+
 ### Changed — an absence over many open keys no longer costs them all per event
 
 - In event time, the sequence engine swept every partition's runs on each

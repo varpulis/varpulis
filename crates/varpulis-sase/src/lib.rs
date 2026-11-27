@@ -30,12 +30,14 @@ mod engine;
 mod enumeration;
 mod event_index;
 mod event_time;
+mod interval_tree;
 mod kleene;
 mod metrics;
 mod negation;
 mod nfa;
 pub(crate) mod predicate;
 mod run;
+mod run_index;
 mod types;
 
 // Re-export all public types to maintain API compatibility
@@ -46,7 +48,7 @@ pub use backpressure::{
 };
 pub use builder::PatternBuilder;
 pub use clock::Timestamp;
-pub use engine::SaseEngine;
+pub use engine::{SaseEngine, INDEX_OFF_RUNS, INDEX_ON_RUNS};
 pub use event_index::EventTypeIndex;
 pub use event_time::{EventTimeConfig, EventTimeManager, EventTimeResult};
 pub use kleene::KleeneCapture;
@@ -92,4 +94,20 @@ pub trait ExprEvaluator: Send + Sync {
         event: &Event,
         captured: &FxHashMap<String, SharedEvent>,
     ) -> Option<Value>;
+
+    /// Whether this evaluator reads expressions the way the predicate index
+    /// assumes: a bare name is a field of the event (missing: no value), and
+    /// `alias.f` a field of the captured event (missing: no value);
+    /// `+ - * /` on integers and floats follow the runtime evaluator
+    /// (checked integer arithmetic, `f64` otherwise, no division by zero);
+    /// `== < <= > >=` hold only between values of comparable kinds, with
+    /// integers widened to `f64` against floats, and equality is
+    /// `Value::vpl_eq`.
+    ///
+    /// When `true`, the index also files runs under comparisons written as
+    /// expressions (`a.id == id`, `price > a.p * 1.05`). The default,
+    /// `false`, leaves such comparisons to the visited list.
+    fn indexable_comparisons(&self) -> bool {
+        false
+    }
 }
