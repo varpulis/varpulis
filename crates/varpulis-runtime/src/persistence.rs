@@ -1377,6 +1377,39 @@ pub struct RunCheckpoint {
     pub pending_negation_count: usize,
     /// Kleene capture events (ZDD rebuilt on restore)
     pub kleene_events: Option<Vec<SerializableEvent>>,
+    /// For a run inside an `and`: which of its operands have matched, in
+    /// source order. Their events are in `stack` and `captured`. Absent
+    /// from checkpoints written before `and` existed in the language.
+    #[serde(default)]
+    pub and_completed: Option<Vec<bool>>,
+    /// Events of an `and` operand waiting for the operand whose alias their
+    /// `where` reads, oldest first.
+    #[serde(default)]
+    pub and_waiting: Vec<SerializableEvent>,
+    /// Whether the first of `and_waiting` is the event that opened the run.
+    #[serde(default)]
+    pub and_anchored: bool,
+    /// The `or` families the run belongs to: it or a copy of it follows
+    /// several alternatives of an `or`, and the first to leave the `or` ends
+    /// the others.
+    #[serde(default)]
+    pub or_families: Vec<OrFamilyCheckpoint>,
+}
+
+/// A run's membership of an `or` family, in a [`RunCheckpoint`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrFamilyCheckpoint {
+    /// Index of the `or` in the pattern's automaton.
+    pub group: usize,
+    /// Shared by the members of the family.
+    pub family: u64,
+    /// The alternatives (their first state) the run has left to its copies.
+    #[serde(default)]
+    pub forked: Vec<usize>,
+    /// Which alternative the run follows, in source order; the lowest wins
+    /// a tie.
+    #[serde(default)]
+    pub rank: usize,
 }
 
 /// Checkpoint for a stack entry in a SASE+ run.

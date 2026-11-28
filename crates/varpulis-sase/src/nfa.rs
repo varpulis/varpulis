@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use super::and_op::{AndBranch, AndConfig, NegationInfo};
+use super::and_op::{AndBranch, AndConfig, AndOption, NegationInfo};
 use super::predicate::{classify_predicate, needs_deferred_evaluation, PredicateClass};
 use super::types::{Predicate, SasePattern};
 
@@ -120,6 +120,35 @@ pub struct Nfa {
     pub start_state: usize,
     /// Indices of accepting (final) states.
     pub accept_states: Vec<usize>,
+    /// The `or`s of the pattern, outermost first. See [`OrGroup`].
+    pub or_groups: Vec<OrGroup>,
+}
+
+/// An `or` of the pattern, with what a run needs to follow every
+/// alternative at once.
+///
+/// A run before the `or` that an event takes into an alternative still
+/// needing more events forks: the copy goes into the alternative and the
+/// run stays, open to the others. The run and its copies form a family;
+/// the first of them to leave the `or` (to reach the end of an alternative)
+/// ends the others, so one run gives at most one match through the `or`.
+#[derive(Debug, Clone, Default)]
+pub struct OrGroup {
+    /// The states the alternatives follow.
+    pub prevs: Vec<usize>,
+    /// The first state of each alternative.
+    pub entries: Vec<usize>,
+    /// The last state of each alternative: arriving there leaves the `or`.
+    pub ends: Vec<usize>,
+    /// The states of the alternatives, a contiguous range of ids.
+    pub inside: std::ops::Range<usize>,
+}
+
+impl OrGroup {
+    /// Whether a run that has just arrived at `state` is out of this `or`.
+    pub fn is_left_at(&self, state: usize) -> bool {
+        self.ends.contains(&state) || !self.inside.contains(&state)
+    }
 }
 
 impl Nfa {
@@ -130,6 +159,7 @@ impl Nfa {
             states: vec![start],
             start_state: 0,
             accept_states: Vec::new(),
+            or_groups: Vec::new(),
         }
     }
 
@@ -211,6 +241,15 @@ impl Nfa {
             .next_back()
     }
 
+    /// The outermost `or` that `next` enters from `split`, if any: `split`
+    /// is one of the states its alternatives follow and `next` the first
+    /// state of one of them.
+    pub fn or_split(&self, split: usize, next: usize) -> Option<usize> {
+        self.or_groups
+            .iter()
+            .position(|g| g.entries.contains(&next) && g.prevs.contains(&split))
+    }
+
     /// Mark a state as an accepting (final) state.
     pub fn set_accept(&mut self, state_id: usize) {
         if let Some(state) = self.states.get_mut(state_id) {
@@ -246,8 +285,11 @@ impl NfaCompiler {
 
     /// Compile a [`SasePattern`] into a ready-to-use NFA.
     pub fn compile(mut self, pattern: &SasePattern) -> Nfa {
-        let (_, end) = self.compile_pattern(pattern, self.nfa.start_state);
-        self.nfa.set_accept(end);
+        let start = self.nfa.start_state;
+        let frag = self.compile_pattern(pattern, &[start]);
+        for end in frag.ends {
+            self.nfa.set_accept(end);
+        }
         // PERF: Pre-compute has_epsilon_to_accept for each state
         let accept_flags: Vec<(usize, bool)> = self
             .nfa
@@ -288,8 +330,14 @@ impl NfaCompiler {
         self.nfa
     }
 
-    /// Returns (start_state, end_state) for the compiled pattern
-    fn compile_pattern(&mut self, pattern: &SasePattern, prev: usize) -> (usize, usize) {
+    /// Compile `pattern` so that it follows every state in `prevs`.
+    ///
+    /// A fragment can have several entries and several ends: `B or C` enters
+    /// at B and at C and ends at both, and what follows it is reached from
+    /// each. An `or` adds no state of its own; the state before it simply has
+    /// one transition per alternative, and the run there follows each (see
+    /// [`OrGroup`]).
+    fn compile_pattern(&mut self, pattern: &SasePattern, prevs: &[usize]) -> Frag {
         match pattern {
             SasePattern::Event {
                 event_type,
@@ -304,73 +352,88 @@ impl NfaCompiler {
                     state = state.with_alias(a.clone());
                 }
                 let id = self.nfa.add_state(state);
-                self.nfa.add_transition(prev, id);
-                (id, id)
+                for &prev in prevs {
+                    self.nfa.add_transition(prev, id);
+                }
+                Frag::single(id)
             }
 
             SasePattern::Seq(patterns) => {
-                let mut current = prev;
-                let mut first_state = None;
+                let mut current: Vec<usize> = prevs.to_vec();
+                let mut entries: Option<Vec<usize>> = None;
                 for p in patterns {
-                    let (start, end) = self.compile_pattern(p, current);
-                    if first_state.is_none() {
-                        first_state = Some(start);
+                    let frag = self.compile_pattern(p, &current);
+                    if entries.is_none() {
+                        entries = Some(frag.entries);
                     }
-                    current = end;
+                    current = frag.ends;
                 }
-                (first_state.unwrap_or(prev), current)
+                Frag {
+                    entries: entries.unwrap_or_else(|| prevs.to_vec()),
+                    ends: current,
+                }
             }
 
-            SasePattern::And(left, right) => {
-                // AND-01: Both patterns must match, in any order
-                // Extract event info from both branches
-                let (left_type, left_pred) = extract_event_info(left);
-                let (right_type, right_pred) = extract_event_info(right);
-
-                // Extract aliases
-                let left_alias = extract_alias(left);
-                let right_alias = extract_alias(right);
+            SasePattern::And(_, _) => {
+                // AND-01: every branch must match, in any order. Nested ANDs
+                // are one state: `A and B and C` waits for three events. An
+                // `or` of events is one branch with an option per event.
+                let mut branches = Vec::new();
+                collect_and_branches(pattern, &mut branches);
+                let aliases: Vec<Vec<String>> = branches
+                    .iter()
+                    .map(|b| b.options.iter().filter_map(|o| o.alias.clone()).collect())
+                    .collect();
+                for (idx, branch) in branches.iter_mut().enumerate() {
+                    for option in &mut branch.options {
+                        option.sibling_refs =
+                            sibling_refs(option.predicate.as_ref(), &aliases, idx);
+                    }
+                }
 
                 // Create join state (where we go after both branches complete)
                 let join = self.nfa.add_state(State::new(0, StateType::Normal));
 
-                // Create AND state with configuration
                 let mut and_state = State::new(0, StateType::And);
                 and_state.and_config = Some(AndConfig {
-                    branches: vec![
-                        AndBranch {
-                            event_type: left_type.unwrap_or_default(),
-                            predicate: left_pred,
-                            alias: left_alias,
-                        },
-                        AndBranch {
-                            event_type: right_type.unwrap_or_default(),
-                            predicate: right_pred,
-                            alias: right_alias,
-                        },
-                    ],
+                    branches,
                     join_state: join,
                 });
 
                 let and_state_id = self.nfa.add_state(and_state);
-                self.nfa.add_transition(prev, and_state_id);
+                for &prev in prevs {
+                    self.nfa.add_transition(prev, and_state_id);
+                }
 
-                (and_state_id, join)
+                Frag {
+                    entries: vec![and_state_id],
+                    ends: vec![join],
+                }
             }
 
-            SasePattern::Or(left, right) => {
-                // For OR, either branch can match
-                let fork = self.nfa.add_state(State::new(0, StateType::Normal));
-                self.nfa.add_epsilon(prev, fork);
-
-                let (_, left_end) = self.compile_pattern(left, fork);
-                let (_, right_end) = self.compile_pattern(right, fork);
-
-                let join = self.nfa.add_state(State::new(0, StateType::Normal));
-                self.nfa.add_epsilon(left_end, join);
-                self.nfa.add_epsilon(right_end, join);
-
-                (fork, join)
+            SasePattern::Or(_, _) => {
+                // Either alternative can match. Each follows `prevs`
+                // directly; their ends are all ends of the OR. Nested ORs
+                // are one: `A or B or C` has three alternatives.
+                let mut alternatives = Vec::new();
+                collect_or_alternatives(pattern, &mut alternatives);
+                let group = self.nfa.or_groups.len();
+                self.nfa.or_groups.push(OrGroup::default());
+                let first = self.nfa.states.len();
+                let mut entries = Vec::new();
+                let mut ends = Vec::new();
+                for alternative in alternatives {
+                    let frag = self.compile_pattern(alternative, prevs);
+                    entries.extend(frag.entries);
+                    ends.extend(frag.ends);
+                }
+                self.nfa.or_groups[group] = OrGroup {
+                    prevs: prevs.to_vec(),
+                    entries: entries.clone(),
+                    ends: ends.clone(),
+                    inside: first..self.nfa.states.len(),
+                };
+                Frag { entries, ends }
             }
 
             SasePattern::Not(inner) => {
@@ -392,90 +455,188 @@ impl NfaCompiler {
                 });
 
                 let neg_state_id = self.nfa.add_state(neg_state);
-                self.nfa.add_transition(prev, neg_state_id);
+                for &prev in prevs {
+                    self.nfa.add_transition(prev, neg_state_id);
+                }
 
                 // Note: No epsilon transition to continue_state!
                 // The transition happens only when negation is confirmed via watermark/timeout
 
-                (neg_state_id, continue_state)
+                Frag {
+                    entries: vec![neg_state_id],
+                    ends: vec![continue_state],
+                }
             }
 
             SasePattern::KleenePlus(inner) => {
                 // A+: one or more - must match at least once, then can loop
-                let (inner_start, inner_end) = self.compile_pattern(inner, prev);
+                let frag = self.compile_pattern(inner, prevs);
+                let continue_state = self.nfa.add_state(State::new(0, StateType::Normal));
 
-                // Mark as Kleene state with self-loop
-                if let Some(state) = self.nfa.states.get_mut(inner_end) {
-                    state.state_type = StateType::Kleene;
-                    state.self_loop = true;
-                    // SIGMOD 2014 §5.2: Split predicate into eager vs postponed.
-                    // Self-referencing CompareRef predicates (e.g., field > alias.field)
-                    // are evaluated eagerly: captured[alias] tracks the last Kleene event
-                    // via push_at_kleene(), enabling sliding-window comparison.
-                    // Only Expr-based cross-references need deferred ZDD evaluation.
-                    if let Some(ref pred) = state.predicate {
-                        let alias = state.alias.as_deref();
-                        if classify_predicate(pred, alias) == PredicateClass::Inconsistent
-                            && needs_deferred_evaluation(pred)
-                        {
-                            state.postponed_predicate = state.predicate.take();
-                        }
+                for &inner_end in &frag.ends {
+                    self.mark_kleene(inner_end);
+                    // Add back-edge for loop
+                    for &inner_start in &frag.entries {
+                        self.nfa.add_epsilon(inner_end, inner_start);
                     }
+                    self.nfa.add_epsilon(inner_end, continue_state);
                 }
 
-                // Add back-edge for loop
-                self.nfa.add_epsilon(inner_end, inner_start);
-
-                // Continue state
-                let continue_state = self.nfa.add_state(State::new(0, StateType::Normal));
-                self.nfa.add_epsilon(inner_end, continue_state);
-
-                (inner_start, continue_state)
+                Frag {
+                    entries: frag.entries,
+                    ends: vec![continue_state],
+                }
             }
 
             SasePattern::KleeneStar(inner) => {
                 // A*: zero or more - can skip entirely
                 let skip_state = self.nfa.add_state(State::new(0, StateType::Normal));
-                self.nfa.add_epsilon(prev, skip_state);
-
-                let (inner_start, inner_end) = self.compile_pattern(inner, prev);
-
-                if let Some(state) = self.nfa.states.get_mut(inner_end) {
-                    state.state_type = StateType::Kleene;
-                    state.self_loop = true;
-                    // Same eager evaluation fix as KleenePlus
-                    if let Some(ref pred) = state.predicate {
-                        let alias = state.alias.as_deref();
-                        if classify_predicate(pred, alias) == PredicateClass::Inconsistent
-                            && needs_deferred_evaluation(pred)
-                        {
-                            state.postponed_predicate = state.predicate.take();
-                        }
-                    }
+                for &prev in prevs {
+                    self.nfa.add_epsilon(prev, skip_state);
                 }
 
-                // Add back-edge for loop
-                self.nfa.add_epsilon(inner_end, inner_start);
+                let frag = self.compile_pattern(inner, prevs);
 
                 // Both paths lead to continue
                 let continue_state = self.nfa.add_state(State::new(0, StateType::Normal));
                 self.nfa.add_epsilon(skip_state, continue_state);
-                self.nfa.add_epsilon(inner_end, continue_state);
+                for &inner_end in &frag.ends {
+                    self.mark_kleene(inner_end);
+                    for &inner_start in &frag.entries {
+                        self.nfa.add_epsilon(inner_end, inner_start);
+                    }
+                    self.nfa.add_epsilon(inner_end, continue_state);
+                }
 
-                (prev, continue_state)
+                Frag {
+                    entries: prevs.to_vec(),
+                    ends: vec![continue_state],
+                }
             }
 
             SasePattern::Within(inner, duration) => {
-                // Compile inner with timeout tracking
-                let (start, end) = self.compile_pattern(inner, prev);
-                // Timeout is tracked at runtime, not in NFA structure
-                // We store it for runtime use
-                if let Some(state) = self.nfa.states.get_mut(start) {
-                    state.timeout = Some(*duration);
+                // Compile inner with timeout tracking. The timeout is tracked
+                // at runtime, on the state a run starts in: every entry, so an
+                // `or` at the start carries it whichever alternative opens.
+                let frag = self.compile_pattern(inner, prevs);
+                for &entry in &frag.entries {
+                    if let Some(state) = self.nfa.states.get_mut(entry) {
+                        state.timeout = Some(*duration);
+                    }
                 }
-                (start, end)
+                frag
             }
         }
+    }
+
+    /// Make `state_id` a Kleene self-loop, postponing its predicate when it
+    /// can only be judged over the whole closure.
+    fn mark_kleene(&mut self, state_id: usize) {
+        if let Some(state) = self.nfa.states.get_mut(state_id) {
+            state.state_type = StateType::Kleene;
+            state.self_loop = true;
+            // SIGMOD 2014 §5.2: Split predicate into eager vs postponed.
+            // Self-referencing CompareRef predicates (e.g., field > alias.field)
+            // are evaluated eagerly: captured[alias] tracks the last Kleene event
+            // via push_at_kleene(), enabling sliding-window comparison.
+            // Only Expr-based cross-references need deferred ZDD evaluation.
+            if let Some(ref pred) = state.predicate {
+                let alias = state.alias.as_deref();
+                if classify_predicate(pred, alias) == PredicateClass::Inconsistent
+                    && needs_deferred_evaluation(pred)
+                {
+                    state.postponed_predicate = state.predicate.take();
+                }
+            }
+        }
+    }
+}
+
+/// The states a compiled pattern starts at and ends at.
+#[derive(Debug)]
+struct Frag {
+    entries: Vec<usize>,
+    ends: Vec<usize>,
+}
+
+impl Frag {
+    fn single(id: usize) -> Self {
+        Self {
+            entries: vec![id],
+            ends: vec![id],
+        }
+    }
+}
+
+/// The branches of an AND, nested ANDs flattened, in source order. An `or`
+/// of events is one branch, with one option per event.
+fn collect_and_branches(pattern: &SasePattern, out: &mut Vec<AndBranch>) {
+    match pattern {
+        SasePattern::And(left, right) => {
+            collect_and_branches(left, out);
+            collect_and_branches(right, out);
+        }
+        SasePattern::Or(_, _) => {
+            let mut alternatives = Vec::new();
+            collect_or_alternatives(pattern, &mut alternatives);
+            out.push(AndBranch {
+                options: alternatives.into_iter().map(and_option).collect(),
+            });
+        }
+        other => out.push(AndBranch {
+            options: vec![and_option(other)],
+        }),
+    }
+}
+
+fn and_option(pattern: &SasePattern) -> AndOption {
+    let (event_type, predicate) = extract_event_info(pattern);
+    AndOption {
+        event_type: event_type.unwrap_or_default(),
+        predicate,
+        alias: extract_alias(pattern),
+        sibling_refs: Vec::new(),
+    }
+}
+
+/// The alternatives of an OR, nested ORs flattened, in source order.
+fn collect_or_alternatives<'p>(pattern: &'p SasePattern, out: &mut Vec<&'p SasePattern>) {
+    match pattern {
+        SasePattern::Or(left, right) => {
+            collect_or_alternatives(left, out);
+            collect_or_alternatives(right, out);
+        }
+        other => out.push(other),
+    }
+}
+
+/// The other branches of the same AND whose alias `predicate` reads. An
+/// option can only be judged once those have matched.
+fn sibling_refs(predicate: Option<&Predicate>, aliases: &[Vec<String>], own: usize) -> Vec<usize> {
+    let Some(predicate) = predicate else {
+        return Vec::new();
+    };
+    aliases
+        .iter()
+        .enumerate()
+        .filter(|&(idx, names)| {
+            idx != own && names.iter().any(|a| predicate_mentions_alias(predicate, a))
+        })
+        .map(|(idx, _)| idx)
+        .collect()
+}
+
+/// Whether `predicate` reads `alias`, in a comparison or anywhere in an
+/// expression (`abs(x - a.x) < 5`).
+fn predicate_mentions_alias(predicate: &Predicate, alias: &str) -> bool {
+    match predicate {
+        Predicate::CompareRef { ref_alias, .. } => ref_alias == alias,
+        Predicate::Compare { .. } => false,
+        Predicate::And(l, r) | Predicate::Or(l, r) => {
+            predicate_mentions_alias(l, alias) || predicate_mentions_alias(r, alias)
+        }
+        Predicate::Not(inner) => predicate_mentions_alias(inner, alias),
+        Predicate::Expr(expr) => expr.mentions_name(alias),
     }
 }
 

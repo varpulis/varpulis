@@ -397,43 +397,134 @@ waiting for an event; see [Absence](../language/operators.md#absence-not-b).
 
 **Implementation:** See `NegationInfo` in `crates/varpulis-sase/src/and_op.rs`
 
-### Any Order
+### Both, in any order (`and`)
 
-There is no `AND(A, B)`. The sequence engine has an AND state (`AndConfig`,
-`StateType::And` in `crates/varpulis-sase`), but no VPL syntax reaches it. For
-"both, in either order", declare one sequence per order:
+`A and B` matches when both events have come, in either order, within the
+pattern's `within`. It is written in a `pattern` declaration:
 
 ```vpl
 # Both documents for the same case, in either order
-stream BothDocsAB = DocumentA as a
-    -> DocumentB where case_id == a.case_id as b
-    .within(1h)
-    .emit(case_id: a.case_id)
+pattern BothDocs =
+    DocumentA as a
+    and DocumentB where case_id == a.case_id as b
+    within 1h
 
-stream BothDocsBA = DocumentB as b
-    -> DocumentA where case_id == b.case_id as a
-    .within(1h)
-    .emit(case_id: b.case_id)
+stream Complete = BothDocs
+    .emit(case_id: a.case_id)
 ```
 
-A then B for one case fires `BothDocsAB`, B then A for another fires
-`BothDocsBA`, and a case with only one of the two fires nothing. With three
-events there are six orders, so past two this gets long.
+A then B for one case, or B then A, fires `Complete`; a case with only one of
+the two fires nothing. `A and B and C` waits for three events, in any of the
+six orders.
 
-### Either
+- **The operands are single events**, each with its own `where` and alias,
+  or an `or` of single events: `(A as e or B as e) and C` waits for C and for
+  either an A or a B, in any order. `NOT` and `all` are steps of their own
+  and do not go inside an `and` (E035); neither does a sequence, nor an `or`
+  with a sequence or an `and` among its alternatives: write
+  `(A and B) -> C`, not `(A -> C) and B`.
+- **A `where` may read a sibling's alias**, as `b`'s does above. Such an
+  operand is judged once the sibling has matched: a `DocumentB` that comes
+  first waits, and is judged when a `DocumentA` arrives. The engine keeps at
+  most 20 such waiting events per run, the Kleene cap. Two operands that read
+  each other cannot be judged in any order (E037).
+- **Each operand takes a different event.** `A as x and A as y` needs two As.
+  An event takes the first operand, in source order, that it satisfies.
+- **The window** counts from the earliest of the events, whichever came first.
+  Under event time an operand may arrive after a later-stamped sibling and
+  still match, as long as all the events fit in the `within`.
+- **Each run completes once**, with the first partner that comes after it.
+  Under the default `.stam()` every `DocumentA` and every `DocumentB` opens a
+  run, so A1, A2, B gives two matches, (A1, B) and (A2, B); A, B1, B2 gives
+  one, (A, B1), as `A -> B` does. `.stnm()` and `.strict()` behave as they do
+  for a sequence.
 
-There is no `OR(A, B)` either. A sequence step names one event type; for
-"either of these types", merge them into one stream:
+An `and` can sit anywhere in a sequence, and an absence can follow it. The
+absence is watched from the moment the `and` completes to the pattern's
+deadline, counted from its first event (the order, below):
 
 ```vpl
-# Accept either payment method
-stream PaymentReceived = merge(CreditCard, BankTransfer)
-    .emit(order_id: order_id)
+# Shipped and invoiced, then no complaint within the day
+pattern Settled =
+    Order as o
+    -> (Shipment where order_id == o.order_id as s
+        and Invoice where order_id == o.order_id as i)
+    -> NOT Complaint where order_id == o.order_id
+    within 1d
+    partition by order_id
+
+stream SettledOrders = Settled
+    .emit(order: o.order_id)
 ```
 
-A `CreditCard` and a `BankTransfer` each come out of `PaymentReceived`; any
-other event type does not. Where a sequence must accept either type at one
-step, write the sequence once per type.
+**Implementation:** `StateType::And` with an `AndConfig` (one `AndBranch` per
+operand, with one `AndOption` per event an `or` operand allows), in
+`crates/varpulis-sase/src/and_op.rs`. A run inside an `and`
+records which operands have matched; it is not filed in the predicate index,
+and a checkpoint keeps what it has matched and what waits.
+
+### Either (`or`)
+
+`A or B` matches either event. It is a step like any other:
+
+```vpl
+# Paid by card or by transfer, then shipped
+pattern Paid =
+    Order as o
+    -> (CardPayment where order_id == o.order_id as p
+        or Transfer where order_id == o.order_id as p)
+    -> Shipped where order_id == o.order_id
+    within 1h
+
+stream Delivered = Paid
+    .emit(order: o.order_id, amount: p.amount)
+```
+
+- **An alternative can be a sequence or an `and`**, in parentheses:
+  `A -> ((B -> C) or D) -> E` takes B then C, or D alone, before E. Without
+  the inner parentheses, `A -> (B -> C or D) -> E` is `A -> B -> (C or D) -> E`.
+- **Aliases**: only the alternative that matched binds its aliases. Give the
+  alternatives the same alias, as `p` above, to read whichever came. A later
+  step that reads an alias only some alternatives bind is flagged (W037): after
+  the others it has no value and the comparison fails.
+- **Every alternative is followed at once.** When an event starts an
+  alternative that needs more events, the run forks: a copy goes on in that
+  alternative and the run stays open to the others. In
+  `A -> ((B -> C) or D) -> E`, the events A, B, D, E match through D while
+  the copy still waits for C. The first copy to complete its alternative ends
+  the others, so a run gives at most one match through an `or`; with
+  `X -> ((B -> C) or (B -> D))`, X, B, D matches through the second. When
+  one event completes several alternatives at once, the leftmost in the
+  source wins. A closure (`all B`) at the start of an alternative commits
+  the run to it.
+- **Under `.strict()`** the event that forks the run is the run's next
+  event: a later one cannot start another alternative.
+  `X -> ((B -> C) or (D -> E))` matches X, B, C and X, D, E, not X, B, D, E.
+- **At the run cap** a fork evicts another run if the backpressure setting
+  evicts, never one of its own family. When it cannot, the run commits to the
+  alternative the event started, as if there were no other, and the run cap
+  counts a dropped run.
+
+`pattern Either = A or B` matches each A and each B on its own; for a stream
+of either type with nothing after it, `merge(A, B)` does the same without a
+pattern.
+
+### Precedence
+
+Loosest first: `->`, then `or`, then `and`. Parentheses group.
+
+| Written | Read as |
+|---|---|
+| `A -> B or C -> D` | `A -> (B or C) -> D` |
+| `A and B or C` | `(A and B) or C` |
+| `A or B and C` | `A or (B and C)` |
+| `X -> A or B and C -> Y` | `X -> (A or (B and C)) -> Y` |
+
+A step's `where` takes a whole expression, `and` and `or` included:
+`A where x > 1 and B` filters A on `x > 1 and B`, and has no B step. To join a
+filtered step, end it with its alias, `A where x > 1 as a and B`, or put it in
+parentheses, `(A where x > 1) and B`. When `B` is a declared event type the
+validator flags the first form (W038).
 
 ---
 

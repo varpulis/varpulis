@@ -62,6 +62,7 @@ statement       ::= context_decl
                   | type_decl
                   | var_decl
                   | fn_decl
+                  | pattern_decl
                   | config_block
                   | import_stmt
 ```
@@ -92,6 +93,29 @@ field_decl      ::= IDENTIFIER ':' type NEWLINE
 param_list      ::= param (',' param)*
 param           ::= IDENTIFIER ':' type
 ```
+
+### Pattern Declarations
+
+```ebnf
+pattern_decl    ::= 'pattern' IDENTIFIER '=' pattern_expr
+                    ('within' DURATION)? ('partition' 'by' IDENTIFIER)?
+
+pattern_expr    ::= pattern_or ('->' pattern_or)*          (* followed by: loosest *)
+pattern_or      ::= pattern_and ('or' pattern_and)*        (* either *)
+pattern_and     ::= pattern_atom ('and' pattern_atom)*     (* both, any order: tightest *)
+pattern_atom    ::= '(' pattern_expr ')' | pattern_item
+
+pattern_item    ::= 'all'? 'NOT'? IDENTIFIER monotonic_op?
+                    ('where' expr)? ('as' IDENTIFIER)?
+monotonic_op    ::= '.' ('increasing' | 'decreasing') '(' IDENTIFIER ')'
+```
+
+`A -> B or C and D -> E` reads `A -> (B or (C and D)) -> E`. The `expr`
+after `where` is a whole expression, `and` and `or` included, so
+`A where x > 1 and B` filters A on `x > 1 and B`; write `(A where x > 1) and B`,
+or end the step with its alias (`A where x > 1 as a and B`). The operands of
+an `and` are single events; `NOT` and `all` are steps of their own, outside
+`and` and `or` (see [SASE+ patterns](../guides/sase-patterns.md#both-in-any-order-and)).
 
 ### Types
 

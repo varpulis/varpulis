@@ -46,10 +46,52 @@ pub struct Run {
     /// runs (the visited list or the predicate index), so the order does
     /// not depend on how runs were stored.
     pub seq: u64,
+    /// The `or` families this run belongs to, innermost last (see
+    /// [`crate::nfa::OrGroup`]). Empty unless the run is following an `or`
+    /// whose alternatives it forked into.
+    pub or_families: Vec<OrFamily>,
+}
+
+/// A run's place in the family of runs following one `or`.
+///
+/// The family is the run before the `or` and the copies it forked into
+/// alternatives (see [`crate::nfa::OrGroup`]). The first of them to leave
+/// the `or` ends the others.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrFamily {
+    /// Index of the `or` in [`crate::nfa::Nfa::or_groups`].
+    pub group: usize,
+    /// Shared by the members of the family, unique in the process.
+    pub family: u64,
+    /// The alternatives (their first state) this run has forked into and
+    /// leaves to the copy that took them. Only the run before the `or` has
+    /// any.
+    pub forked: Vec<usize>,
+    /// Where the alternative this run follows starts, as a position in
+    /// [`crate::nfa::OrGroup::entries`] (source order). When members leave
+    /// the `or` on the same event, the lowest wins: the leftmost
+    /// alternative. Meaningless for the run before the `or`.
+    pub rank: usize,
 }
 
 /// Source of [`Run::seq`].
 static NEXT_RUN_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Source of [`OrFamily::family`].
+static NEXT_OR_FAMILY: AtomicU64 = AtomicU64::new(0);
+
+impl OrFamily {
+    /// A family id no family has had yet.
+    pub fn next_id() -> u64 {
+        NEXT_OR_FAMILY.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// After a restore: ids handed out from now on are past `id`, which a
+    /// restored run carries.
+    pub fn reserve_past(id: u64) {
+        NEXT_OR_FAMILY.fetch_max(id.saturating_add(1), Ordering::Relaxed);
+    }
+}
 
 impl Default for Run {
     fn default() -> Self {
@@ -67,6 +109,7 @@ impl Default for Run {
             and_state: None,
             kleene_capture: None,
             seq: Self::next_seq(),
+            or_families: Vec::new(),
         }
     }
 }
@@ -94,6 +137,7 @@ impl Run {
             and_state: None,
             kleene_capture: None,
             seq: Self::next_seq(),
+            or_families: Vec::new(),
         }
     }
 
@@ -113,6 +157,7 @@ impl Run {
             and_state: None,
             kleene_capture: None,
             seq: Self::next_seq(),
+            or_families: Vec::new(),
         }
     }
 

@@ -71,6 +71,7 @@ varpulis simulate -p <example>.vpl -e <example>.evt -v -w 1
 | 27 | [strictly_increasing](27_strictly_increasing.vpl) | Detect rising values | `.increasing(field)` |
 | 28 | [strictly_decreasing](28_strictly_decreasing.vpl) | Detect falling values | `.decreasing(field)` |
 | 29 | [arrow_patterns](29_seq_vs_arrow.vpl) | Named patterns vs inline streams | `pattern Name = A -> B within 5m` |
+| 32 | [and_or](32_and_or.vpl) | Both in any order, or either | `A -> (B and C)`, `A -> (B or C)` |
 
 ## VPL Quick Reference
 

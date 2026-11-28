@@ -202,13 +202,43 @@ pub struct ConnectorParam {
 
 /// SASE+ Pattern Expression for complex event processing.
 ///
-/// Patterns are produced by the arrow syntax (`A -> all B as bs -> C`).
-/// The legacy `SEQ()` form and AND/OR/NOT/Group combinators have been
-/// removed in favor of the unified arrow syntax.
+/// Patterns are produced by the arrow syntax (`A -> all B as bs -> C`),
+/// with `and` (both, any order) and `or` (either) combining steps:
+/// `A -> (B and C) -> D`. A pattern without `and`/`or` is always a [`Seq`],
+/// the only form older programs and plans hold.
+///
+/// [`Seq`]: SasePatternExpr::Seq
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SasePatternExpr {
     /// Sequence: A -> B -> C (or a single item, degenerate sequence)
     Seq(Vec<SasePatternItem>),
+    /// A sequence one of whose steps is an `and` or an `or`:
+    /// `A -> (B or C) -> D`. Each element is a step, in order.
+    FollowedBy(Vec<SasePatternExpr>),
+    /// `A and B and C`: every operand, in any order.
+    And(Vec<SasePatternExpr>),
+    /// `A or B or C`: any one operand.
+    Or(Vec<SasePatternExpr>),
+}
+
+impl SasePatternExpr {
+    /// Every item of the pattern, in source order.
+    pub fn items(&self) -> Vec<&SasePatternItem> {
+        let mut out = Vec::new();
+        self.collect_items(&mut out);
+        out
+    }
+
+    fn collect_items<'a>(&'a self, out: &mut Vec<&'a SasePatternItem>) {
+        match self {
+            Self::Seq(items) => out.extend(items.iter()),
+            Self::FollowedBy(parts) | Self::And(parts) | Self::Or(parts) => {
+                for p in parts {
+                    p.collect_items(out);
+                }
+            }
+        }
+    }
 }
 
 /// Item in a SASE+ sequence with optional Kleene operator
@@ -792,6 +822,64 @@ pub enum Expr {
         /// Final expression that produces the block's value.
         result: Box<Self>,
     },
+}
+
+impl Expr {
+    /// Whether the expression reads `name` as a variable: `name`, `name.f`,
+    /// `name[0].f`, at any depth. Lambda parameters that shadow it count too;
+    /// the answer errs on the side of "it does".
+    pub fn mentions_name(&self, name: &str) -> bool {
+        match self {
+            Self::Ident(ident) => {
+                ident == name
+                    || (ident.starts_with(name) && ident.as_bytes().get(name.len()) == Some(&b'.'))
+            }
+            Self::Null
+            | Self::Bool(_)
+            | Self::Int(_)
+            | Self::Float(_)
+            | Self::Str(_)
+            | Self::Duration(_)
+            | Self::Timestamp(_) => false,
+            Self::Array(items) => items.iter().any(|e| e.mentions_name(name)),
+            Self::Map(entries) => entries.iter().any(|(_, e)| e.mentions_name(name)),
+            Self::Binary { left, right, .. } => {
+                left.mentions_name(name) || right.mentions_name(name)
+            }
+            Self::Unary { expr, .. }
+            | Self::Member { expr, .. }
+            | Self::OptionalMember { expr, .. } => expr.mentions_name(name),
+            Self::Index { expr, index } => expr.mentions_name(name) || index.mentions_name(name),
+            Self::Slice { expr, start, end } => {
+                expr.mentions_name(name)
+                    || start.as_ref().is_some_and(|e| e.mentions_name(name))
+                    || end.as_ref().is_some_and(|e| e.mentions_name(name))
+            }
+            Self::Call { func, args } => {
+                func.mentions_name(name)
+                    || args.iter().any(|a| match a {
+                        Arg::Positional(e) | Arg::Named(_, e) => e.mentions_name(name),
+                    })
+            }
+            Self::Lambda { body, .. } => body.mentions_name(name),
+            Self::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                cond.mentions_name(name)
+                    || then_branch.mentions_name(name)
+                    || else_branch.mentions_name(name)
+            }
+            Self::Coalesce { expr, default } => {
+                expr.mentions_name(name) || default.mentions_name(name)
+            }
+            Self::Range { start, end, .. } => start.mentions_name(name) || end.mentions_name(name),
+            Self::Block { stmts, result } => {
+                stmts.iter().any(|(_, _, e, _)| e.mentions_name(name)) || result.mentions_name(name)
+            }
+        }
+    }
 }
 
 /// Function argument

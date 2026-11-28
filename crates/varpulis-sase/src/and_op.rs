@@ -2,15 +2,36 @@
 
 use super::types::{Predicate, SharedEvent};
 
-/// Configuration for an AND branch
+/// One event an AND branch accepts: `A where x > 1 as a`. A branch made of
+/// an `or` (`(A as e or B as e) and C`) has one option per alternative.
 #[derive(Debug, Clone)]
-pub struct AndBranch {
-    /// Event type expected for this branch
+pub struct AndOption {
+    /// Event type this option takes
     pub event_type: String,
     /// Optional predicate
     pub predicate: Option<Predicate>,
     /// Alias for the captured event
     pub alias: Option<String>,
+    /// The other branches whose alias `predicate` reads
+    /// (`B where id == a.id as b` next to `A as a`). The option is judged
+    /// only once all of them have matched; an event that arrives earlier
+    /// waits in [`AndState::waiting`].
+    pub sibling_refs: Vec<usize>,
+}
+
+/// Configuration for an AND branch: the events, any one of which completes it.
+#[derive(Debug, Clone)]
+pub struct AndBranch {
+    /// What the branch accepts, in source order. An event takes the first
+    /// option it satisfies.
+    pub options: Vec<AndOption>,
+}
+
+impl AndBranch {
+    /// Whether some option of this branch takes events of `event_type`.
+    pub fn accepts_type(&self, event_type: &str) -> bool {
+        self.options.iter().any(|o| o.event_type == event_type)
+    }
 }
 
 /// Configuration for AND states in the NFA
@@ -29,6 +50,17 @@ pub struct AndState {
     pub completed: Vec<bool>,
     /// Captured events for completed branches
     pub branch_events: Vec<Option<SharedEvent>>,
+    /// Events of a branch's type that arrived before the siblings its
+    /// predicate reads, oldest first: `B` in `A as a and B where id == a.id`
+    /// arriving before any `A`. Each is judged when those siblings have
+    /// matched. Bounded by the Kleene event cap; past it the oldest leaves
+    /// and [`AndState::waiting_dropped`] counts it.
+    pub waiting: Vec<SharedEvent>,
+    /// Events that left [`AndState::waiting`] at the cap, unjudged.
+    pub waiting_dropped: u32,
+    /// The waiting event that opened this run, when an AND at the start of
+    /// the pattern opened it with one (see `offer_to_and`).
+    pub anchor: Option<SharedEvent>,
 }
 
 impl AndState {
@@ -37,6 +69,9 @@ impl AndState {
         Self {
             completed: Vec::new(),
             branch_events: Vec::new(),
+            waiting: Vec::new(),
+            waiting_dropped: 0,
+            anchor: None,
         }
     }
 
@@ -53,6 +88,19 @@ impl AndState {
         }
         self.completed[idx] = true;
         self.branch_events[idx] = Some(event);
+    }
+
+    /// Restore the completed branches of a checkpointed run. The events
+    /// themselves are in the run's captures and stack.
+    pub fn from_completed(completed: Vec<bool>) -> Self {
+        let branch_events = vec![None; completed.len()];
+        Self {
+            completed,
+            branch_events,
+            waiting: Vec::new(),
+            waiting_dropped: 0,
+            anchor: None,
+        }
     }
 
     /// Return true if all `total` branches have been completed.

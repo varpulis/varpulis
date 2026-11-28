@@ -779,7 +779,9 @@ fn test_pattern_decl_negated_item() {
     let stmt = parse_first_stmt("pattern P = Login -> NOT Logout -> Transaction");
     match stmt {
         Stmt::PatternDecl { expr, .. } => {
-            let SasePatternExpr::Seq(items) = expr;
+            let SasePatternExpr::Seq(items) = expr else {
+                panic!("expected a plain sequence, got {expr:?}");
+            };
             assert_eq!(items.len(), 3);
             // Negated items are prefixed with "!"
             assert!(items[1].event_type.starts_with('!'));
@@ -794,7 +796,9 @@ fn test_pattern_decl_not_in_arrow() {
     let stmt = parse_first_stmt("pattern P = Login -> NOT Logout");
     match stmt {
         Stmt::PatternDecl { expr, .. } => {
-            let SasePatternExpr::Seq(items) = expr;
+            let SasePatternExpr::Seq(items) = expr else {
+                panic!("expected a plain sequence, got {expr:?}");
+            };
             assert_eq!(items.len(), 2);
             assert!(
                 items[1].event_type.starts_with('!'),
@@ -811,7 +815,9 @@ fn test_pattern_decl_kleene_via_all() {
     let stmt = parse_first_stmt("pattern P = Login -> all Transaction where amount > 100 as txs");
     match stmt {
         Stmt::PatternDecl { expr, .. } => {
-            let SasePatternExpr::Seq(items) = expr;
+            let SasePatternExpr::Seq(items) = expr else {
+                panic!("expected a plain sequence, got {expr:?}");
+            };
             assert_eq!(items.len(), 2);
             assert_eq!(items[1].kleene, Some(KleeneOp::Plus));
             assert!(items[1].filter.is_some());

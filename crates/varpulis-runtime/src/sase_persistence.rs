@@ -6,7 +6,9 @@
 use std::sync::Arc;
 
 use chrono::DateTime;
-use varpulis_sase::{KleeneCapture, Run, SaseEngine, SharedEvent, StackEntry, Timestamp};
+use varpulis_sase::{
+    AndState, KleeneCapture, OrFamily, Run, SaseEngine, SharedEvent, StackEntry, Timestamp,
+};
 
 use crate::persistence;
 
@@ -55,6 +57,28 @@ impl RunCheckpointExt for Run {
             invalidated: self.invalidated,
             pending_negation_count: self.pending_negations.len(),
             kleene_events,
+            and_completed: self.and_state.as_ref().map(|a| a.completed.clone()),
+            and_waiting: self
+                .and_state
+                .as_ref()
+                .map(|a| {
+                    a.waiting
+                        .iter()
+                        .map(|e| SerializableEvent::from(e.as_ref()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            and_anchored: self.and_state.as_ref().is_some_and(|a| a.anchor.is_some()),
+            or_families: self
+                .or_families
+                .iter()
+                .map(|m| persistence::OrFamilyCheckpoint {
+                    group: m.group,
+                    family: m.family,
+                    forked: m.forked.clone(),
+                    rank: m.rank,
+                })
+                .collect(),
         }
     }
 
@@ -115,13 +139,48 @@ impl RunCheckpointExt for Run {
                 .map(|sv| persistence::ser_to_value(sv.clone())),
             invalidated: rc.invalidated,
             pending_negations: Vec::new(),
-            and_state: None,
+            and_state: restore_and_state(rc),
             kleene_capture,
             // A fresh number, taken in checkpoint order: the checkpoint lists
             // runs in creation order, so the restored runs keep theirs.
             seq: Run::next_seq(),
+            or_families: rc
+                .or_families
+                .iter()
+                .map(|m| {
+                    // Families formed after the restore must not take an id
+                    // a restored run carries.
+                    OrFamily::reserve_past(m.family);
+                    OrFamily {
+                        group: m.group,
+                        family: m.family,
+                        forked: m.forked.clone(),
+                        rank: m.rank,
+                    }
+                })
+                .collect(),
         }
     }
+}
+
+/// The `and` a checkpointed run was inside, if any: its matched operands and
+/// its waiting events.
+fn restore_and_state(rc: &persistence::RunCheckpoint) -> Option<AndState> {
+    use crate::event::Event;
+
+    if rc.and_completed.is_none() && rc.and_waiting.is_empty() {
+        return None;
+    }
+    let mut and_state = AndState::from_completed(rc.and_completed.clone().unwrap_or_default());
+    and_state.waiting = rc
+        .and_waiting
+        .iter()
+        .map(|se| Arc::new(Event::from(se.clone())) as SharedEvent)
+        .collect();
+    if rc.and_anchored {
+        and_state.anchor = and_state.waiting.first().cloned();
+    }
+    Some(and_state)
 }
 
 /// Extension trait for checkpointing/restoring a SASE Engine.
@@ -143,7 +202,11 @@ impl SaseCheckpointExt for SaseEngine {
             .partitioned_runs
             .iter()
             .map(|(k, runs)| {
-                let run_cps = runs.iter().map(|r| r.checkpoint()).collect();
+                // In creation order too: the list order is what swap-removes
+                // left, and a restore numbers the runs in the order written.
+                let mut runs: Vec<&Run> = runs.iter().collect();
+                runs.sort_by_key(|r| r.seq);
+                let run_cps = runs.into_iter().map(|r| r.checkpoint()).collect();
                 (k.clone(), run_cps)
             })
             .collect();

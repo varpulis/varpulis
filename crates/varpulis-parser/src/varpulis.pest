@@ -321,7 +321,20 @@ pattern_partition_clause = { "partition" ~ "by" ~ identifier }
 // Arrow syntax for patterns: A -> all B where cond as b -> C
 // Allows a single item (no `->`) for trivial patterns; the engine handles
 // the degenerate sequence as a single-event match.
-pattern_arrow_expr = { pattern_arrow_item ~ ("->" ~ pattern_arrow_item)* }
+//
+// `and` (both, in any order) and `or` (either) combine steps. Precedence,
+// loosest first: `->`, then `or`, then `and`; parentheses group. So
+// `A -> B or C and D -> E` reads `A -> (B or (C and D)) -> E`. A step's
+// `where` takes a whole expression, `and`/`or` included, so
+// `A where x > 1 and B` filters A on `x > 1 and B`. To join a filtered step,
+// parenthesize it, `(A where x > 1) and B`, or end it with its alias,
+// `A where x > 1 as a and B`.
+pattern_arrow_expr = { pattern_or_group ~ ("->" ~ pattern_or_group)* }
+pattern_or_group = { pattern_and_group ~ (pattern_or_keyword ~ pattern_and_group)* }
+pattern_and_group = { pattern_atom ~ (pattern_and_keyword ~ pattern_atom)* }
+pattern_atom = { "(" ~ pattern_arrow_expr ~ ")" | pattern_arrow_item }
+pattern_and_keyword = @{ "and" ~ !(ASCII_ALPHANUMERIC | "_") }
+pattern_or_keyword = @{ "or" ~ !(ASCII_ALPHANUMERIC | "_") }
 pattern_arrow_item = {
     match_all_keyword? ~ sase_not_keyword? ~ identifier ~
     monotonic_op? ~ sase_where_clause? ~ sase_alias_clause?

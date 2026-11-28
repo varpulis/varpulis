@@ -1,0 +1,36 @@
+# Test: an `and` after a closure takes only its own events, and an `or` of
+# events can be one operand of an `and`.
+
+=== VPL ===
+pattern Settled = Login as l
+    -> all Click where user == l.user as clicks
+    -> (Paid where user == l.user as p and Shipped where user == l.user as s)
+    within 1h
+
+stream SettledUsers = Settled
+    .emit(user: l.user, clicks: count(clicks), paid: p.amount)
+
+pattern Reached = (Email as via or Sms as via) and Ack as a
+    within 1h
+
+stream Acked = Reached
+    .emit(channel: via.channel, ack: a.id)
+
+=== INPUT ===
+Login { user: "u1" }
+Click { user: "u1" }
+Login { user: "u2" }
+Paid { user: "u1", amount: 30 }
+Shipped { user: "u1" }
+Ack { id: 1 }
+Sms { channel: "sms" }
+
+=== EXPECT_COUNT ===
+2
+
+=== EXPECT_FIELDS ===
+[0].user = "u1"
+[0].clicks = 1
+[0].paid = 30
+[1].channel = "sms"
+[1].ack = 1

@@ -741,61 +741,151 @@ fn parse_pattern_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     })
 }
 
-/// Parse arrow syntax in pattern declarations: A -> all B.increasing(temp) as rising -> C
+/// Parse arrow syntax in pattern declarations: A -> all B.increasing(temp) as rising -> C,
+/// with `and` / `or` steps: `A -> (B and C) -> D or E`.
+///
+/// A pattern without `and`/`or` comes out as a single [`SasePatternExpr::Seq`],
+/// exactly as before the two operators existed.
 fn parse_pattern_arrow_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
-    let inner = pair.into_inner();
-    let mut items = Vec::new();
-
-    for item_pair in inner {
-        if item_pair.as_rule() != Rule::pattern_arrow_item {
-            continue;
+    let mut steps = Vec::new();
+    for p in pair.into_inner() {
+        if p.as_rule() == Rule::pattern_or_group {
+            steps.push(parse_pattern_or_group(p)?);
         }
-        let mut item_inner = item_pair.into_inner();
-        let mut match_all = false;
-        let mut negated = false;
-        let mut event_type = String::new();
-        let mut monotonic = None;
-        let mut filter = None;
-        let mut alias = None;
+    }
+    Ok(followed_by(steps))
+}
 
-        for p in item_inner.by_ref() {
-            match p.as_rule() {
-                Rule::match_all_keyword => match_all = true,
-                Rule::sase_not_keyword => negated = true,
-                Rule::identifier if event_type.is_empty() => {
-                    event_type = p.as_str().to_string();
-                }
-                Rule::monotonic_op => monotonic = Some(parse_monotonic_op(p)?),
-                Rule::sase_where_clause => {
-                    filter = Some(parse_sase_where_clause(p)?);
-                }
-                Rule::sase_alias_clause => {
-                    alias = Some(p.into_inner().expect_next("alias")?.as_str().to_string());
-                }
-                _ => {}
+/// `X or Y or ...`; a single operand is that operand.
+fn parse_pattern_or_group(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
+    let mut alternatives = Vec::new();
+    for p in pair.into_inner() {
+        if p.as_rule() == Rule::pattern_and_group {
+            // `(A or B) or C` is `A or B or C`.
+            match parse_pattern_and_group(p)? {
+                SasePatternExpr::Or(inner) => alternatives.extend(inner),
+                other => alternatives.push(other),
             }
         }
+    }
+    Ok(if alternatives.len() == 1 {
+        alternatives.remove(0)
+    } else {
+        SasePatternExpr::Or(alternatives)
+    })
+}
 
-        if negated {
-            event_type = format!("!{event_type}");
+/// `X and Y and ...`; a single operand is that operand.
+fn parse_pattern_and_group(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
+    let mut operands = Vec::new();
+    for p in pair.into_inner() {
+        if p.as_rule() == Rule::pattern_atom {
+            // `(A and B) and C` is `A and B and C`.
+            match parse_pattern_atom(p)? {
+                SasePatternExpr::And(inner) => operands.extend(inner),
+                other => operands.push(other),
+            }
         }
+    }
+    Ok(if operands.len() == 1 {
+        operands.remove(0)
+    } else {
+        SasePatternExpr::And(operands)
+    })
+}
 
-        let kleene = if match_all || monotonic.is_some() {
-            Some(KleeneOp::Plus)
-        } else {
-            None
-        };
+/// A parenthesized pattern or a single item.
+fn parse_pattern_atom(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
+    let inner = pair.into_inner().expect_next("pattern step")?;
+    match inner.as_rule() {
+        Rule::pattern_arrow_expr => parse_pattern_arrow_expr(inner),
+        _ => Ok(SasePatternExpr::Seq(vec![parse_pattern_arrow_item(inner)?])),
+    }
+}
 
-        items.push(SasePatternItem {
-            event_type,
-            alias,
-            kleene,
-            filter,
-            monotonic,
-        });
+/// Join steps with `->`: plain sequences merge into one `Seq`, which keeps a
+/// pattern without `and`/`or` in the form it always had.
+fn followed_by(steps: Vec<SasePatternExpr>) -> SasePatternExpr {
+    let mut flat: Vec<SasePatternExpr> = Vec::new();
+    for step in steps {
+        match step {
+            SasePatternExpr::FollowedBy(inner) => flat.extend(inner),
+            other => flat.push(other),
+        }
+    }
+    if flat.iter().all(|s| matches!(s, SasePatternExpr::Seq(_))) {
+        let items = flat
+            .into_iter()
+            .flat_map(|s| match s {
+                SasePatternExpr::Seq(items) => items,
+                _ => Vec::new(),
+            })
+            .collect();
+        return SasePatternExpr::Seq(items);
+    }
+    // Adjacent plain steps still merge: `A -> B -> (C or D)` holds `Seq[A, B]`
+    // then the `or`.
+    let mut out: Vec<SasePatternExpr> = Vec::new();
+    for step in flat {
+        match (out.last_mut(), step) {
+            (Some(SasePatternExpr::Seq(prev)), SasePatternExpr::Seq(items)) => prev.extend(items),
+            (_, step) => out.push(step),
+        }
+    }
+    if out.len() == 1 {
+        out.remove(0)
+    } else {
+        SasePatternExpr::FollowedBy(out)
+    }
+}
+
+/// One arrow item: `[all] [NOT] EventType[.increasing(f)] [where filter] [as alias]`.
+fn parse_pattern_arrow_item(
+    item_pair: pest::iterators::Pair<Rule>,
+) -> ParseResult<SasePatternItem> {
+    let mut item_inner = item_pair.into_inner();
+    let mut match_all = false;
+    let mut negated = false;
+    let mut event_type = String::new();
+    let mut monotonic = None;
+    let mut filter = None;
+    let mut alias = None;
+
+    for p in item_inner.by_ref() {
+        match p.as_rule() {
+            Rule::match_all_keyword => match_all = true,
+            Rule::sase_not_keyword => negated = true,
+            Rule::identifier if event_type.is_empty() => {
+                event_type = p.as_str().to_string();
+            }
+            Rule::monotonic_op => monotonic = Some(parse_monotonic_op(p)?),
+            Rule::sase_where_clause => {
+                filter = Some(parse_sase_where_clause(p)?);
+            }
+            Rule::sase_alias_clause => {
+                alias = Some(p.into_inner().expect_next("alias")?.as_str().to_string());
+            }
+            _ => {}
+        }
     }
 
-    Ok(SasePatternExpr::Seq(items))
+    if negated {
+        event_type = format!("!{event_type}");
+    }
+
+    let kleene = if match_all || monotonic.is_some() {
+        Some(KleeneOp::Plus)
+    } else {
+        None
+    };
+
+    Ok(SasePatternItem {
+        event_type,
+        alias,
+        kleene,
+        filter,
+        monotonic,
+    })
 }
 
 fn parse_sase_where_clause(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {

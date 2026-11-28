@@ -7,8 +7,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use rustc_hash::FxHashMap;
 
-use super::advance::{advance_run_shared, RunAdvanceResult};
-use super::and_op::AndState;
+use super::advance::{advance_run_shared, OrEffects, OrLeft, RunAdvanceResult};
 use super::backpressure::{
     BackpressureStrategy, ProcessResult, ProcessStats, ProcessWarning, SaseExtendedStats,
 };
@@ -18,7 +17,7 @@ use super::kleene::KleeneLimits;
 use super::metrics::SaseMetrics;
 use super::nfa::{Nfa, NfaCompiler, StateType};
 use super::predicate::{eval_predicate, event_matches_state, predicate_references_alias};
-use super::run::Run;
+use super::run::{OrFamily, Run};
 use super::run_index::RunIndex;
 use super::types::{
     EmissionMode, GlobalNegation, MatchResult, Predicate, SasePattern, SaseStats,
@@ -196,6 +195,114 @@ fn retain_and_evict_empty_partitions<F: Fn(&Run) -> bool>(
         runs.retain(&keep);
         !runs.is_empty()
     });
+}
+
+/// What happened to `or` families during one pass over the runs: the
+/// copies forked (with the `seq` of the run each was copied from), the
+/// members that left their `or`, and the alternatives whose copy died
+/// otherwise, as (family, first state of the alternative).
+#[derive(Default)]
+struct OrPass {
+    forks: Vec<(Run, u64)>,
+    left: Vec<OrLeft>,
+    released: Vec<(u64, usize)>,
+}
+
+impl OrPass {
+    /// Move what a run's advance produced into the pass, leaving `effects`
+    /// empty for the next run.
+    fn take(&mut self, effects: &mut OrEffects) {
+        self.forks.append(&mut effects.forks);
+        self.left.append(&mut effects.left);
+    }
+
+    /// End the families a member left during the pass. The member that left
+    /// first wins; members that left on the same event tie, and the one in
+    /// the leftmost alternative (lowest rank) wins, the one created first
+    /// among equals, so the outcome depends neither on the order the pass
+    /// visited them in nor on how the run forked. Every other member ends:
+    /// marked invalidated in `runs` (the caller sweeps them out), dropped
+    /// from the forks. Returns the `seq` of the members whose matches this
+    /// pass must take back, the losers of a tie.
+    fn settle(&mut self, runs: &mut [Run]) -> Vec<u64> {
+        if self.left.is_empty() {
+            return Vec::new();
+        }
+        let mut winners: Vec<OrLeft> = Vec::new();
+        for &left in &self.left {
+            match winners.iter_mut().find(|w| w.family == left.family) {
+                Some(w) if (left.rank, left.seq) < (w.rank, w.seq) => *w = left,
+                Some(_) => {}
+                None => winners.push(left),
+            }
+        }
+        let losers: Vec<u64> = self
+            .left
+            .iter()
+            .filter(|l| !winners.contains(l))
+            .map(|l| l.seq)
+            .collect();
+        let ends = |r: &Run| {
+            losers.contains(&r.seq)
+                || r.or_families
+                    .iter()
+                    .any(|m| winners.iter().any(|w| w.family == m.family))
+        };
+        for run in runs.iter_mut().filter(|r| ends(r)) {
+            run.invalidated = true;
+        }
+        self.forks.retain(|(r, _)| !ends(r));
+        self.left.clear();
+        losers
+    }
+
+    /// Note that `run`, a member of `or` families, ended other than by its
+    /// family settling (refuted, evicted): the alternative it followed is
+    /// open to the run before the `or` again.
+    fn release(&mut self, nfa: &Nfa, run: &Run) {
+        released_alternatives(nfa, run, &mut self.released);
+    }
+
+    /// Give the released alternatives back to the runs before their `or`.
+    fn reopen(&mut self, runs: &mut [Run]) {
+        reopen_alternatives(runs, &self.released);
+        self.released.clear();
+    }
+}
+
+/// The alternatives `run` followed in its `or` families, as (family, first
+/// state of the alternative). The run before an `or` follows none.
+fn released_alternatives(nfa: &Nfa, run: &Run, out: &mut Vec<(u64, usize)>) {
+    for m in &run.or_families {
+        if !m.forked.is_empty() {
+            continue;
+        }
+        if let Some(&entry) = nfa.or_groups[m.group].entries.get(m.rank) {
+            out.push((m.family, entry));
+        }
+    }
+}
+
+/// An evicted run's alternatives, given back to the runs before their `or`.
+fn release_evicted(nfa: &Nfa, runs: &mut [Run], victim: &Run) {
+    if victim.or_families.is_empty() {
+        return;
+    }
+    let mut released = Vec::new();
+    released_alternatives(nfa, victim, &mut released);
+    reopen_alternatives(runs, &released);
+}
+
+/// The runs before an `or` may start these alternatives again.
+fn reopen_alternatives(runs: &mut [Run], released: &[(u64, usize)]) {
+    if released.is_empty() {
+        return;
+    }
+    for run in runs.iter_mut() {
+        for m in &mut run.or_families {
+            m.forked.retain(|&t| !released.contains(&(m.family, t)));
+        }
+    }
 }
 
 /// Build the match a run produces when a deadline completes it.
@@ -596,6 +703,11 @@ impl SaseEngine {
             if !run.pending_negations.is_empty() {
                 continue;
             }
+            // A closure followed by a negated step watches it from inside.
+            super::advance::watch_absence_after_closure(nfa, run);
+            if !run.pending_negations.is_empty() {
+                continue;
+            }
             let Some(neg_info) = nfa
                 .states
                 .get(run.current_state)
@@ -815,28 +927,28 @@ impl SaseEngine {
                 self.process_partition_shared(&partition_key, Arc::clone(&shared_event));
             completed.extend(advanced);
 
-            if let Some(run) = self.try_start_run_after(Arc::clone(&shared_event), consumed) {
-                let (added, _) = self.handle_backpressure_partitioned(&partition_key, run);
+            self.for_each_started(&shared_event, consumed, |this, run| {
+                let (added, _) = this.admit_new_run(run, Some(&partition_key), &mut completed);
                 if added {
-                    self.total_runs_created += 1;
-                    self.metrics.record_run_created();
+                    this.total_runs_created += 1;
+                    this.metrics.record_run_created();
                 } else {
-                    self.metrics.record_run_dropped();
+                    this.metrics.record_run_dropped();
                 }
-            }
+            });
         } else {
             let (advanced, consumed) = self.process_runs_shared(Arc::clone(&shared_event));
             completed.extend(advanced);
 
-            if let Some(run) = self.try_start_run_after(Arc::clone(&shared_event), consumed) {
-                let (added, _) = self.handle_backpressure(run);
+            self.for_each_started(&shared_event, consumed, |this, run| {
+                let (added, _) = this.admit_new_run(run, None, &mut completed);
                 if added {
-                    self.total_runs_created += 1;
-                    self.metrics.record_run_created();
+                    this.total_runs_created += 1;
+                    this.metrics.record_run_created();
                 } else {
-                    self.metrics.record_run_dropped();
+                    this.metrics.record_run_dropped();
                 }
-            }
+            });
         }
 
         // Record metrics
@@ -915,37 +1027,38 @@ impl SaseEngine {
             completed.extend(advanced);
 
             // Try to start new run with backpressure
-            if let Some(mut run) = self.try_start_run_after(Arc::clone(&event), consumed) {
-                if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
+            self.for_each_started(&event, consumed, |this, mut run| {
+                if let Some(m) = this.post_start_kleene_handling(&mut run, &event, mode) {
                     completed.push(m);
                 }
-                let (added, warning) = self.handle_backpressure_partitioned(&partition_key, run);
+                let (added, warning) =
+                    this.admit_new_run(run, Some(&partition_key), &mut completed);
                 if added {
                     stats.runs_created += 1;
-                    self.total_runs_created += 1;
+                    this.total_runs_created += 1;
                 }
                 if let Some(w) = warning {
                     warnings.push(w);
                 }
-            }
+            });
         } else {
             let (advanced, consumed) = self.process_runs_shared(Arc::clone(&event));
             completed.extend(advanced);
 
             // Try to start new run with backpressure
-            if let Some(mut run) = self.try_start_run_after(Arc::clone(&event), consumed) {
-                if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
+            self.for_each_started(&event, consumed, |this, mut run| {
+                if let Some(m) = this.post_start_kleene_handling(&mut run, &event, mode) {
                     completed.push(m);
                 }
-                let (added, warning) = self.handle_backpressure(run);
+                let (added, warning) = this.admit_new_run(run, None, &mut completed);
                 if added {
                     stats.runs_created += 1;
-                    self.total_runs_created += 1;
+                    this.total_runs_created += 1;
                 }
                 if let Some(w) = warning {
                     warnings.push(w);
                 }
-            }
+            });
         }
 
         stats.runs_completed = completed.len();
@@ -1062,15 +1175,15 @@ impl SaseEngine {
 
             if !has_active {
                 // Try to start new run in partition with backpressure
-                if let Some(mut run) = self.try_start_run_after(Arc::clone(&event), consumed) {
-                    if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
+                self.for_each_started(&event, consumed, |this, mut run| {
+                    if let Some(m) = this.post_start_kleene_handling(&mut run, &event, mode) {
                         completed.push(m);
                     }
-                    let (added, _) = self.handle_backpressure_partitioned(&partition_key, run);
+                    let (added, _) = this.admit_new_run(run, Some(&partition_key), &mut completed);
                     if added {
-                        self.total_runs_created += 1;
+                        this.total_runs_created += 1;
                     }
-                }
+                });
             }
         } else {
             // Non-partitioned processing
@@ -1085,20 +1198,39 @@ impl SaseEngine {
 
             if !has_active {
                 // Try to start new run with backpressure
-                if let Some(mut run) = self.try_start_run_after(Arc::clone(&event), consumed) {
-                    if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
+                self.for_each_started(&event, consumed, |this, mut run| {
+                    if let Some(m) = this.post_start_kleene_handling(&mut run, &event, mode) {
                         completed.push(m);
                     }
-                    let (added, _) = self.handle_backpressure(run);
+                    let (added, _) = this.admit_new_run(run, None, &mut completed);
                     if added {
-                        self.total_runs_created += 1;
+                        this.total_runs_created += 1;
                     }
-                }
+                });
             }
         }
 
         self.total_runs_completed += completed.len() as u64;
         completed
+    }
+
+    /// Keep a run an event just opened, within the run cap; or, when that
+    /// one event completed the pattern (`A or B`, a single step), emit its
+    /// match: there is nothing left for a run to wait for.
+    fn admit_new_run(
+        &mut self,
+        mut run: Run,
+        partition_key: Option<&str>,
+        completed: &mut Vec<MatchResult>,
+    ) -> (bool, Option<ProcessWarning>) {
+        if self.nfa.states[run.current_state].state_type == StateType::Accept {
+            completed.push(match_from_completed_run(&mut run));
+            return (true, None);
+        }
+        match partition_key {
+            Some(key) => self.handle_backpressure_partitioned(key, run),
+            None => self.handle_backpressure(run),
+        }
     }
 
     /// BP-01: Handle backpressure for non-partitioned runs
@@ -1192,10 +1324,22 @@ impl SaseEngine {
     /// return its age. IDX-02: the parked runs are compared where they are,
     /// so evicting does not take the index apart.
     fn evict_min_by_key<K: Ord>(&mut self, key: impl Fn(&Run) -> K) -> Option<Duration> {
+        self.evict_min_by_key_except(key, |_| false)
+    }
+
+    /// [`Self::evict_min_by_key`] among the runs `spared` does not protect.
+    /// An evicted member of an `or` family gives its alternative back to
+    /// the run before the `or`.
+    fn evict_min_by_key_except<K: Ord>(
+        &mut self,
+        key: impl Fn(&Run) -> K,
+        spared: impl Fn(&Run) -> bool,
+    ) -> Option<Duration> {
         let listed = self
             .runs
             .iter()
             .enumerate()
+            .filter(|(_, r)| !spared(r))
             .map(|(i, r)| (key(r), i))
             .min_by(|a, b| a.0.cmp(&b.0));
         let parked = self.run_index.as_ref().and_then(|ix| ix.min_by_key(&key));
@@ -1205,7 +1349,22 @@ impl SaseEngine {
             (None, Some((_, slot))) => self.run_index.as_mut()?.remove(slot),
             (None, None) => return None,
         };
+        if !victim.or_families.is_empty() {
+            let mut released = Vec::new();
+            released_alternatives(&self.nfa, &victim, &mut released);
+            reopen_alternatives(&mut self.runs, &released);
+        }
         Some(victim.started_at.elapsed())
+    }
+
+    /// File a partitioned run's event-time deadline, for the watermark sweep
+    /// to visit that partition when it passes.
+    fn index_partition_deadline(&mut self, deadline: DateTime<Utc>, partition_key: &str) {
+        if self.partition_deadlines.len() >= self.partition_deadlines_compact_at {
+            self.purge_partition_deadlines();
+        }
+        self.partition_deadlines
+            .insert((deadline, partition_key.to_string()));
     }
 
     /// BP-01: Handle backpressure for partitioned runs
@@ -1215,11 +1374,7 @@ impl SaseEngine {
         run: Run,
     ) -> (bool, Option<ProcessWarning>) {
         if let Some(deadline) = run.event_time_deadline {
-            if self.partition_deadlines.len() >= self.partition_deadlines_compact_at {
-                self.purge_partition_deadlines();
-            }
-            self.partition_deadlines
-                .insert((deadline, partition_key.to_string()));
+            self.index_partition_deadline(deadline, partition_key);
         }
         let partition_runs = self
             .partitioned_runs
@@ -1262,7 +1417,8 @@ impl SaseEngine {
                     .min_by_key(|(_, r)| (r.started_at, r.seq))
                     .map(|(idx, r)| (idx, r.started_at.elapsed()))
                 {
-                    partition_runs.swap_remove(idx);
+                    let victim = partition_runs.swap_remove(idx);
+                    release_evicted(&self.nfa, partition_runs, &victim);
                     partition_runs.push(run);
                     self.total_runs_evicted += 1;
                     (true, Some(ProcessWarning::RunEvicted { age }))
@@ -1278,7 +1434,8 @@ impl SaseEngine {
                     .min_by_key(|(_, r)| (r.stack.len(), r.seq))
                     .map(|(idx, r)| (idx, r.started_at.elapsed()))
                 {
-                    partition_runs.swap_remove(idx);
+                    let victim = partition_runs.swap_remove(idx);
+                    release_evicted(&self.nfa, partition_runs, &victim);
                     partition_runs.push(run);
                     self.total_runs_evicted += 1;
                     (true, Some(ProcessWarning::RunEvicted { age }))
@@ -1297,7 +1454,8 @@ impl SaseEngine {
                         .min_by_key(|(_, r)| (r.started_at, r.seq))
                         .map(|(idx, r)| (idx, r.started_at.elapsed()))
                     {
-                        partition_runs.swap_remove(idx);
+                        let victim = partition_runs.swap_remove(idx);
+                        release_evicted(&self.nfa, partition_runs, &victim);
                         partition_runs.push(run);
                         self.total_runs_evicted += 1;
                         (true, Some(ProcessWarning::RunEvicted { age }))
@@ -1342,7 +1500,12 @@ impl SaseEngine {
         let now = Timestamp::now();
         let mode = self.resolved_emission_mode();
 
+        let mut pass = OrPass::default();
+        // Filled only by a run at an `or`; reused across the pass.
+        let mut effects = OrEffects::default();
         if let Some(runs) = self.partitioned_runs.get_mut(partition_key) {
+            // The creation number of the run behind each entry of `completed`.
+            let mut completed_seq: Vec<u64> = Vec::new();
             let mut i = 0;
             while i < runs.len() {
                 if runs[i].is_timed_out() || runs[i].invalidated {
@@ -1362,7 +1525,10 @@ impl SaseEngine {
                     continue;
                 }
 
-                match advance_run_shared(
+                // An `and` that takes an event stamped before the run's start
+                // moves the run's window, deadline included, earlier.
+                let deadline_before = runs[i].event_time_deadline;
+                let advanced = advance_run_shared(
                     &self.nfa,
                     self.strategy,
                     &mut runs[i],
@@ -1371,7 +1537,19 @@ impl SaseEngine {
                     now,
                     self.evaluator.as_deref(),
                     mode,
-                ) {
+                    &mut effects,
+                );
+                if !effects.is_empty() {
+                    pass.take(&mut effects);
+                }
+                let seq = runs[i].seq;
+                if let Some(deadline) = runs[i].event_time_deadline {
+                    if deadline_before != Some(deadline) {
+                        self.partition_deadlines
+                            .insert((deadline, partition_key.to_string()));
+                    }
+                }
+                match advanced {
                     RunAdvanceResult::Continue => {
                         consumed = true;
                         i += 1;
@@ -1398,19 +1576,105 @@ impl SaseEngine {
                         runs.swap_remove(i);
                     }
                     RunAdvanceResult::Invalidate => {
-                        runs.swap_remove(i);
+                        let run = runs.swap_remove(i);
+                        if !run.or_families.is_empty() {
+                            pass.release(&self.nfa, &run);
+                        }
                     }
                     RunAdvanceResult::NoMatch => i += 1,
+                }
+                completed_seq.resize(completed.len(), seq);
+            }
+            pass.reopen(runs);
+            if !pass.left.is_empty() {
+                let losers = pass.settle(runs);
+                runs.retain(|r| !r.invalidated);
+                if !losers.is_empty() {
+                    let mut seqs = completed_seq.iter();
+                    completed.retain(|_| seqs.next().is_some_and(|s| !losers.contains(s)));
                 }
             }
             // A partition whose runs are all gone leaves the map now: the
             // watermark sweep only visits the partitions with a deadline due.
-            if runs.is_empty() {
+            if runs.is_empty() && pass.forks.is_empty() {
                 self.partitioned_runs.remove(partition_key);
             }
         }
+        for (fork, parent) in std::mem::take(&mut pass.forks) {
+            self.admit_fork(fork, parent, Some(partition_key));
+        }
 
         (completed, consumed)
+    }
+
+    /// File a copy a run (`parent`, by `seq`) forked into an `or`
+    /// alternative. Within the run cap it is simply filed. At the cap, under
+    /// an evicting strategy it evicts a run outside its own family; when it
+    /// cannot (a strategy that does not evict, or only its family to evict),
+    /// the parent commits to the alternative itself: the copy takes its
+    /// place, and the alternatives the parent still held open are lost,
+    /// counted as a dropped run.
+    fn admit_fork(&mut self, fork: Run, parent: u64, partition_key: Option<&str>) {
+        let families: Vec<u64> = fork.or_families.iter().map(|m| m.family).collect();
+        let kin = |r: &Run| r.or_families.iter().any(|m| families.contains(&m.family));
+        let held = match partition_key {
+            Some(key) => self.partitioned_runs.get(key).map_or(0, Vec::len),
+            None => self.runs.len() + self.parked_run_count(),
+        };
+        let evicting = matches!(
+            self.backpressure,
+            BackpressureStrategy::EvictOldest | BackpressureStrategy::EvictLeastProgress
+        );
+        let mut room = held < self.max_runs;
+        if !room && evicting {
+            let oldest = matches!(self.backpressure, BackpressureStrategy::EvictOldest);
+            let evicted = match partition_key {
+                None if oldest => self.evict_min_by_key_except(|r| (r.started_at, r.seq), kin),
+                None => self.evict_min_by_key_except(|r| (r.stack.len(), r.seq), kin),
+                Some(key) => {
+                    let nfa = &self.nfa;
+                    self.partitioned_runs.get_mut(key).and_then(|runs| {
+                        let others = runs.iter().enumerate().filter(|(_, r)| !kin(r));
+                        let idx = if oldest {
+                            others.min_by_key(|(_, r)| (r.started_at, r.seq))
+                        } else {
+                            others.min_by_key(|(_, r)| (r.stack.len(), r.seq))
+                        }
+                        .map(|(i, _)| i)?;
+                        let victim = runs.swap_remove(idx);
+                        release_evicted(nfa, runs, &victim);
+                        Some(victim.started_at.elapsed())
+                    })
+                }
+            };
+            if evicted.is_some() {
+                self.total_runs_evicted += 1;
+                room = true;
+            }
+        }
+        // Either way the copy is now a run of the partition, whose deadline
+        // the watermark sweep must find.
+        if let (Some(key), Some(deadline)) = (partition_key, fork.event_time_deadline) {
+            self.index_partition_deadline(deadline, key);
+        }
+        if room {
+            let runs = match partition_key {
+                Some(key) => self.partitioned_runs.entry(key.to_string()).or_default(),
+                None => &mut self.runs,
+            };
+            runs.push(fork);
+            self.total_runs_created += 1;
+            return;
+        }
+        // No room: the parent commits to this alternative.
+        let runs = match partition_key {
+            Some(key) => self.partitioned_runs.entry(key.to_string()).or_default(),
+            None => &mut self.runs,
+        };
+        if let Some(slot) = runs.iter().position(|r| r.seq == parent && !r.invalidated) {
+            runs[slot] = fork;
+        }
+        self.total_runs_dropped += 1;
     }
 
     fn process_runs_shared(&mut self, event: SharedEvent) -> (Vec<MatchResult>, bool) {
@@ -1440,6 +1704,9 @@ impl SaseEngine {
         if let Some(index) = self.run_index.as_mut() {
             index.take_candidates(&event, &mut woken);
         }
+        let mut pass = OrPass::default();
+        // Filled only by a run at an `or`; reused across the pass.
+        let mut effects = OrEffects::default();
 
         let mut i = 0;
         while i < self.runs.len() {
@@ -1461,20 +1728,26 @@ impl SaseEngine {
             }
 
             let seq = self.runs[i].seq;
-            let keep = Self::apply_advance(
-                advance_run_shared(
-                    &self.nfa,
-                    self.strategy,
-                    &mut self.runs[i],
-                    Arc::clone(&event),
-                    limits,
-                    now,
-                    self.evaluator.as_deref(),
-                    mode,
-                ),
-                &mut completed,
-                &mut consumed,
+            let advanced = advance_run_shared(
+                &self.nfa,
+                self.strategy,
+                &mut self.runs[i],
+                Arc::clone(&event),
+                limits,
+                now,
+                self.evaluator.as_deref(),
+                mode,
+                &mut effects,
             );
+            if !effects.is_empty() {
+                pass.take(&mut effects);
+            }
+            if matches!(advanced, RunAdvanceResult::Invalidate)
+                && !self.runs[i].or_families.is_empty()
+            {
+                pass.release(&self.nfa, &self.runs[i]);
+            }
+            let keep = Self::apply_advance(advanced, &mut completed, &mut consumed);
             completed_seq.resize(completed.len(), seq);
             if !keep {
                 self.runs.swap_remove(i);
@@ -1503,23 +1776,43 @@ impl SaseEngine {
                 continue;
             }
             let seq = run.seq;
-            let keep = Self::apply_advance(
-                advance_run_shared(
-                    &self.nfa,
-                    self.strategy,
-                    &mut run,
-                    Arc::clone(&event),
-                    limits,
-                    now,
-                    self.evaluator.as_deref(),
-                    mode,
-                ),
-                &mut completed,
-                &mut consumed,
+            let advanced = advance_run_shared(
+                &self.nfa,
+                self.strategy,
+                &mut run,
+                Arc::clone(&event),
+                limits,
+                now,
+                self.evaluator.as_deref(),
+                mode,
+                &mut effects,
             );
+            if !effects.is_empty() {
+                pass.take(&mut effects);
+            }
+            let keep = Self::apply_advance(advanced, &mut completed, &mut consumed);
             completed_seq.resize(completed.len(), seq);
             if keep {
                 self.file_run(run);
+            }
+        }
+        // Runs of an `or` family stay listed (the index does not park them),
+        // so ending a family's other members is a sweep of the list.
+        if !self.nfa.or_groups.is_empty() {
+            pass.reopen(&mut self.runs);
+            if !pass.left.is_empty() {
+                let losers = pass.settle(&mut self.runs);
+                self.runs.retain(|r| !r.invalidated);
+                if !losers.is_empty() {
+                    let keep: Vec<bool> =
+                        completed_seq.iter().map(|s| !losers.contains(s)).collect();
+                    let mut keep_iter = keep.iter();
+                    completed.retain(|_| *keep_iter.next().unwrap_or(&true));
+                    completed_seq.retain(|s| !losers.contains(s));
+                }
+            }
+            for (fork, parent) in std::mem::take(&mut pass.forks) {
+                self.admit_fork(fork, parent, None);
             }
         }
 
@@ -1604,100 +1897,178 @@ impl SaseEngine {
     /// most one match, and every event that could open the pattern used to
     /// open a run whatever the strategy (four failed logins and a success
     /// made one alert per failure under `.stnm()` as under the default).
-    fn try_start_run_after(&self, event: SharedEvent, consumed: bool) -> Option<Run> {
+    fn try_start_run_after(
+        &self,
+        event: SharedEvent,
+        consumed: bool,
+        rest: &mut Vec<Run>,
+    ) -> Option<Run> {
         if consumed && self.strategy == SelectionStrategy::SkipTillNextMatch {
             return None;
         }
-        self.try_start_run_shared(event)
+        self.try_start_run_shared(event, rest)
+    }
+
+    /// Hand `f` each run `event` opens. The first comes back by value, as
+    /// most events open one run or none; the other members of a family
+    /// that starts an `or` go through `rest`, which allocates only then.
+    fn for_each_started(
+        &mut self,
+        event: &SharedEvent,
+        consumed: bool,
+        mut f: impl FnMut(&mut Self, Run),
+    ) {
+        let mut rest = Vec::new();
+        if let Some(run) = self.try_start_run_after(Arc::clone(event), consumed, &mut rest) {
+            f(self, run);
+        }
+        for run in rest {
+            f(self, run);
+        }
     }
 
     /// Start a run for `event`, entering a negated step straight away if the
-    /// pattern's next item is one.
+    /// pattern's next item is one. Several runs when the pattern starts with
+    /// an `or` whose alternatives the event starts (`(B -> C) or (B -> D)`),
+    /// one family (see [`crate::nfa::OrGroup`]).
     ///
-    /// The entry is here rather than at each of the four `return Some(run)`
-    /// points inside, so a new one cannot be added that forgets it.
-    fn try_start_run_shared(&self, event: SharedEvent) -> Option<Run> {
-        let mut run = self.try_start_run_inner(event)?;
-        // "A, and then NOT B" must begin waiting for B's absence the moment A
-        // matches. Waiting for the next event to notice would mean the absence
-        // is only observable when something else arrives, which is precisely
-        // what an absence does not guarantee.
-        super::advance::enter_negation_if_next(&self.nfa, &mut run);
+    /// The entry is here rather than at each of the `return` points inside,
+    /// so a new one cannot be added that forgets it.
+    fn try_start_run_shared(&self, event: SharedEvent, rest: &mut Vec<Run>) -> Option<Run> {
+        let mut first = self.try_start_run_inner(event, rest);
+        for run in first.iter_mut().chain(rest.iter_mut()) {
+            // "A, and then NOT B" must begin waiting for B's absence the
+            // moment A matches. Waiting for the next event to notice would
+            // mean the absence is only observable when something else
+            // arrives, which is precisely what an absence does not guarantee.
+            super::advance::enter_negation_if_next(&self.nfa, run);
+        }
+        first
+    }
+
+    /// A run opened by `event` in the AND state `and_id`, if a branch takes it.
+    fn start_in_and(&self, and_id: usize, event: &SharedEvent) -> Option<Run> {
+        let mut run = self.new_run_at(and_id, event);
+        match super::advance::offer_to_and(
+            &self.nfa,
+            &mut run,
+            and_id,
+            event,
+            Timestamp::now(),
+            self.kleene_limits(),
+            self.evaluator.as_deref(),
+        ) {
+            super::advance::AndOffer::Taken | super::advance::AndOffer::Completed => Some(run),
+            super::advance::AndOffer::NotTaken | super::advance::AndOffer::Refuted => None,
+        }
+    }
+
+    /// The run `event` opens at `next_id`, a transition of the start state.
+    fn start_at(&self, next_id: usize, event: &SharedEvent) -> Option<Run> {
+        let next_state = &self.nfa.states[next_id];
+        // AND-01: a run starts in an AND when one of its branches takes
+        // the event (or holds it until the sibling it refers to comes).
+        if next_state.state_type == StateType::And {
+            return self.start_in_and(next_id, event);
+        }
+
+        // For Kleene states with self-referencing predicates, the first
+        // event has no previous value to compare against. Match event type only.
+        let matches = if next_state.state_type == StateType::Kleene
+            && next_state.self_loop
+            && next_state.alias.as_ref().is_some_and(|a| {
+                next_state
+                    .predicate
+                    .as_ref()
+                    .is_some_and(|p| predicate_references_alias(p, a))
+            }) {
+            next_state
+                .event_type
+                .as_ref()
+                .is_none_or(|et| *event.event_type == *et)
+        } else {
+            event_matches_state(
+                &self.nfa,
+                event,
+                next_state,
+                &EMPTY_CAPTURED,
+                self.evaluator.as_deref(),
+            )
+        };
+        if !matches {
+            return None;
+        }
+        let mut run = self.new_run_at(next_id, event);
+        // Capture event - use Arc::clone instead of cloning the event
+        run.push(Arc::clone(event), next_state.alias.clone());
         Some(run)
     }
 
-    fn try_start_run_inner(&self, event: SharedEvent) -> Option<Run> {
-        let start_state = &self.nfa.states[self.nfa.start_state];
+    /// The run `event` opens, if any; the other members of a family go to
+    /// `rest`, which the caller hands in empty.
+    fn try_start_run_inner(&self, event: SharedEvent, rest: &mut Vec<Run>) -> Option<Run> {
+        let start = self.nfa.start_state;
+        let start_state = &self.nfa.states[start];
         // PERF: Use static empty map instead of allocating on every call
         let empty_captured = &*EMPTY_CAPTURED;
 
-        // Check if event matches any transition from start
+        // The first transition that takes the event opens the run. When it
+        // starts an alternative of an `or` that needs more events, every
+        // other alternative the event starts opens a run too, all one
+        // family; an alternative the event completes wins alone.
+        // The group and first member; the others are pushed on `rest`.
+        let mut family: Option<(usize, Run)> = None;
         for &next_id in &start_state.transitions {
-            let next_state = &self.nfa.states[next_id];
-
-            // AND-01: Handle AND states specially - check if event matches any branch
-            if next_state.state_type == StateType::And {
-                if let Some(ref config) = next_state.and_config {
-                    // Check if event matches any branch
-                    for (idx, branch) in config.branches.iter().enumerate() {
-                        if *event.event_type == branch.event_type {
-                            let pred_matches = branch.predicate.as_ref().is_none_or(|p| {
-                                eval_predicate(p, &event, empty_captured, self.evaluator.as_deref())
-                            });
-
-                            if pred_matches {
-                                let mut run = self.new_run_at(next_id, &event);
-
-                                // Initialize AND state and complete this branch
-                                let mut and_state = AndState::new();
-                                and_state.complete_branch(idx, Arc::clone(&event));
-                                run.and_state = Some(and_state);
-
-                                // Capture with alias if present
-                                if let Some(ref alias) = branch.alias {
-                                    run.captured.insert(alias.clone(), Arc::clone(&event));
-                                }
-                                run.push(Arc::clone(&event), branch.alias.clone());
-
-                                return Some(run);
-                            }
-                        }
+            let group = self.nfa.or_split(start, next_id);
+            if let Some((g, _)) = &family {
+                if group != Some(*g) {
+                    continue;
+                }
+            }
+            let Some(mut run) = self.start_at(next_id, &event) else {
+                continue;
+            };
+            let open_alternative = group.filter(|&g| {
+                !self.nfa.or_groups[g].ends.contains(&next_id)
+                    && self.nfa.states[next_id].state_type != StateType::Kleene
+            });
+            if let Some(g) = open_alternative {
+                // Its rank, should it join a family below.
+                let rank = self.nfa.or_groups[g]
+                    .entries
+                    .iter()
+                    .position(|&e| e == next_id)
+                    .unwrap_or(usize::MAX);
+                run.or_families.push(OrFamily {
+                    group: g,
+                    family: 0,
+                    forked: Vec::new(),
+                    rank,
+                });
+            }
+            match (open_alternative, &family) {
+                (Some(g), None) => family = Some((g, run)),
+                (Some(_), Some(_)) => rest.push(run),
+                (None, _) => {
+                    rest.clear();
+                    run.or_families.clear();
+                    return Some(run);
+                }
+            }
+        }
+        if let Some((_, mut first)) = family {
+            if rest.is_empty() {
+                // Alone, it has no family.
+                first.or_families.clear();
+            } else {
+                let id = OrFamily::next_id();
+                for run in std::iter::once(&mut first).chain(rest.iter_mut()) {
+                    if let Some(m) = run.or_families.last_mut() {
+                        m.family = id;
                     }
                 }
-                continue;
             }
-
-            // For Kleene states with self-referencing predicates, the first
-            // event has no previous value to compare against. Match event type only.
-            let matches = if next_state.state_type == StateType::Kleene
-                && next_state.self_loop
-                && next_state.alias.as_ref().is_some_and(|a| {
-                    next_state
-                        .predicate
-                        .as_ref()
-                        .is_some_and(|p| predicate_references_alias(p, a))
-                }) {
-                next_state
-                    .event_type
-                    .as_ref()
-                    .is_none_or(|et| *event.event_type == *et)
-            } else {
-                event_matches_state(
-                    &self.nfa,
-                    &event,
-                    next_state,
-                    empty_captured,
-                    self.evaluator.as_deref(),
-                )
-            };
-            if matches {
-                let mut run = self.new_run_at(next_id, &event);
-
-                // Capture event - use Arc::clone instead of cloning the event
-                run.push(Arc::clone(&event), next_state.alias.clone());
-
-                return Some(run);
-            }
+            return Some(first);
         }
 
         // Check epsilon transitions
@@ -1708,34 +2079,8 @@ impl SaseEngine {
 
                 // AND-01: Handle AND states in epsilon paths
                 if next_state.state_type == StateType::And {
-                    if let Some(ref config) = next_state.and_config {
-                        for (idx, branch) in config.branches.iter().enumerate() {
-                            if *event.event_type == branch.event_type {
-                                let pred_matches = branch.predicate.as_ref().is_none_or(|p| {
-                                    eval_predicate(
-                                        p,
-                                        &event,
-                                        empty_captured,
-                                        self.evaluator.as_deref(),
-                                    )
-                                });
-
-                                if pred_matches {
-                                    let mut run = self.new_run_at(next_id, &event);
-
-                                    let mut and_state = AndState::new();
-                                    and_state.complete_branch(idx, Arc::clone(&event));
-                                    run.and_state = Some(and_state);
-
-                                    if let Some(ref alias) = branch.alias {
-                                        run.captured.insert(alias.clone(), Arc::clone(&event));
-                                    }
-                                    run.push(Arc::clone(&event), branch.alias.clone());
-
-                                    return Some(run);
-                                }
-                            }
-                        }
+                    if let Some(run) = self.start_in_and(next_id, &event) {
+                        return Some(run);
                     }
                     continue;
                 }
@@ -2095,6 +2440,42 @@ mod tests {
             "an emptied partition must be evicted, not kept as an empty Vec"
         );
         assert_eq!(parts.len(), 1);
+    }
+
+    #[test]
+    fn an_evicted_copy_gives_its_alternative_back() {
+        // A -> ((B -> C) or D): after A, B the run waits for D and its copy
+        // for C. With the copy evicted, the run can take a later B itself.
+        let step = |t: &str| SasePattern::Event {
+            event_type: t.into(),
+            predicate: None,
+            alias: Some(t.to_lowercase()),
+        };
+        let pattern = SasePattern::Seq(vec![
+            step("A"),
+            SasePattern::Or(
+                Box::new(SasePattern::Seq(vec![step("B"), step("C")])),
+                Box::new(step("D")),
+            ),
+        ]);
+        let mut engine = SaseEngine::new(pattern);
+        let ev = |t: &str| varpulis_core::Event::new(t);
+        assert!(engine.process(&ev("A")).is_empty());
+        assert!(engine.process(&ev("B")).is_empty());
+        assert_eq!(engine.runs.len(), 2);
+        let parent = engine
+            .runs
+            .iter()
+            .find(|r| r.or_families.iter().any(|m| !m.forked.is_empty()))
+            .map(|r| r.seq)
+            .expect("the run before the `or`");
+        assert!(engine
+            .evict_min_by_key_except(|r| r.seq, |r| r.seq == parent)
+            .is_some());
+        assert_eq!(engine.runs.len(), 1);
+        assert!(engine.process(&ev("B")).is_empty());
+        assert_eq!(engine.runs.len(), 2, "the run forked into B again");
+        assert_eq!(engine.process(&ev("C")).len(), 1);
     }
 
     fn keyed(event_type: &str, key: &str, secs: i64) -> varpulis_core::Event {

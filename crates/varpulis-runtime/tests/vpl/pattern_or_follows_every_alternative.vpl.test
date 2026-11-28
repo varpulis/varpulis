@@ -1,0 +1,33 @@
+# Test: a run follows every alternative of an `or`. A refund that started
+# (requested, not yet approved) does not stop a cancellation from closing
+# the order; the first alternative to complete ends the other.
+
+=== VPL ===
+pattern Closed = Order as o
+    -> ((RefundRequested where order_id == o.order_id as r
+         -> RefundApproved where order_id == o.order_id)
+        or Cancelled where order_id == o.order_id as c)
+    -> Archived where order_id == o.order_id
+    within 1h
+
+stream Done = Closed
+    .emit(order_id: o.order_id)
+
+=== INPUT ===
+Order { order_id: "o1" }
+RefundRequested { order_id: "o1" }
+Cancelled { order_id: "o1" }
+RefundApproved { order_id: "o1" }
+Archived { order_id: "o1" }
+Order { order_id: "o2" }
+RefundRequested { order_id: "o2" }
+RefundApproved { order_id: "o2" }
+Cancelled { order_id: "o2" }
+Archived { order_id: "o2" }
+
+=== EXPECT_COUNT ===
+2
+
+=== EXPECT_FIELDS ===
+[0].order_id = "o1"
+[1].order_id = "o2"

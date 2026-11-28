@@ -35,11 +35,11 @@ impl EventTypeIndex {
                     // AND states handle multiple event types
                     index.and_states.push(state.id);
                     if let Some(ref config) = state.and_config {
-                        for branch in &config.branches {
-                            if !branch.event_type.is_empty() {
+                        for option in config.branches.iter().flat_map(|b| &b.options) {
+                            if !option.event_type.is_empty() {
                                 index
                                     .state_index
-                                    .entry(branch.event_type.clone())
+                                    .entry(option.event_type.clone())
                                     .or_default()
                                     .push(state.id);
                             }

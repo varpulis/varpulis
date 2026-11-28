@@ -72,3 +72,26 @@ pub use event::{Event, FieldKey, SharedEvent};
 pub use span::Span;
 pub use types::*;
 pub use value::Value;
+
+#[cfg(test)]
+mod semver {
+    /// The `[package.metadata.cargo-semver-checks.lints]` block in Cargo.toml
+    /// allows `enum_variant_added`, for the `FollowedBy`, `And` and `Or`
+    /// variants of `SasePatternExpr`, taken against the 0.11.0 baseline.
+    ///
+    /// The exception is crate-wide: while it stands it also covers every
+    /// *other* public enum here. This test is the reminder to remove it. It
+    /// fails on the release commit that bumps the version, which is when the
+    /// baseline already holds the variants and the block must go.
+    #[test]
+    fn semver_exceptions_expire_with_their_baseline() {
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(
+            version.starts_with("0.11."),
+            "varpulis-core is now {version}, past the 0.11.0 baseline the \
+             cargo-semver-checks lint exceptions were taken against. Delete the \
+             [package.metadata.cargo-semver-checks.lints] block in \
+             crates/varpulis-core/Cargo.toml and this test with it."
+        );
+    }
+}

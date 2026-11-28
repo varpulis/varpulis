@@ -1,0 +1,16 @@
+# Test: an `or` of single events matches each event of either type, at once.
+
+=== VPL ===
+pattern Alarm = Smoke as s or Heat where celsius > 60 as h
+
+stream Alarms = Alarm
+    .emit(kind: "alarm")
+
+=== INPUT ===
+Smoke { room: 1 }
+Heat { celsius: 40 }
+Heat { celsius: 75 }
+Door { room: 2 }
+
+=== EXPECT_COUNT ===
+2

@@ -1,0 +1,50 @@
+# Both and Either: `and` and `or` in a pattern
+#
+# `A and B` matches both events, in either order, within the pattern's
+# `within`. `A or B` matches either. Between steps, `and` binds tightest,
+# then `or`, then `->`; parentheses group.
+#
+# Run with: varpulis simulate -p 32_and_or.vpl -e 32_and_or.evt -v -w 1
+
+event Order:
+    order_id: str
+
+event Shipment:
+    order_id: str
+    carrier: str
+
+event Invoice:
+    order_id: str
+    amount: float
+
+event CardPayment:
+    order_id: str
+    amount: float
+
+event Transfer:
+    order_id: str
+    amount: float
+
+# ─── and: shipped and invoiced, in either order ───────────────────
+# o1 is invoiced before it ships, o2 ships before it is invoiced: both
+# close. o3 is invoiced and never ships: nothing.
+pattern ReadyToClose = Order as o
+    -> (Shipment where order_id == o.order_id as s
+        and Invoice where order_id == o.order_id as i)
+    within 1h
+    partition by order_id
+
+stream Closable = ReadyToClose
+    .emit(order: o.order_id, carrier: s.carrier, amount: i.amount)
+
+# ─── or: paid by card or by transfer ──────────────────────────────
+# Both alternatives bind the same alias, `p`, so the emit reads whichever
+# came.
+pattern Paid = Order as o
+    -> (CardPayment where order_id == o.order_id as p
+        or Transfer where order_id == o.order_id as p)
+    within 1h
+    partition by order_id
+
+stream Payments = Paid
+    .emit(order: o.order_id, amount: p.amount)

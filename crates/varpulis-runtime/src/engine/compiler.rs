@@ -488,25 +488,108 @@ pub fn expr_to_sase_predicate(expr: &varpulis_core::ast::Expr) -> Option<Predica
 }
 
 /// Compile a `SasePatternExpr` (from a named `pattern` declaration) into a runtime `SasePattern`.
+///
+/// `None` when the expression holds a combination the engine does not run:
+/// an `and` operand that is neither a single event nor an `or` of single
+/// events (a sequence, `all`, `NOT`). The validator refuses those first
+/// (E035), with the reason.
 pub fn compile_sase_pattern_expr(
     expr: &varpulis_core::ast::SasePatternExpr,
     within: Option<Duration>,
 ) -> Option<SasePattern> {
-    use varpulis_core::ast::SasePatternExpr;
-
-    let SasePatternExpr::Seq(items) = expr;
-    let steps: Vec<SasePattern> = items.iter().map(compile_sase_pattern_item).collect();
-    let pattern = if steps.len() == 1 {
-        steps.into_iter().next().unwrap()
-    } else {
-        SasePattern::Seq(steps)
-    };
+    let pattern = compile_sase_expr(expr)?;
 
     // Wrap with Within if specified
     if let Some(duration) = within {
         Some(SasePattern::Within(Box::new(pattern), duration))
     } else {
         Some(pattern)
+    }
+}
+
+fn compile_sase_expr(expr: &varpulis_core::ast::SasePatternExpr) -> Option<SasePattern> {
+    use varpulis_core::ast::SasePatternExpr;
+
+    match expr {
+        SasePatternExpr::Seq(items) => {
+            let mut steps: Vec<SasePattern> = items.iter().map(compile_sase_pattern_item).collect();
+            Some(if steps.len() == 1 {
+                steps.remove(0)
+            } else {
+                SasePattern::Seq(steps)
+            })
+        }
+        SasePatternExpr::FollowedBy(parts) => {
+            let steps = parts
+                .iter()
+                .map(compile_sase_expr)
+                .collect::<Option<Vec<_>>>()?;
+            Some(SasePattern::Seq(steps))
+        }
+        SasePatternExpr::Or(parts) => {
+            let alternatives = parts
+                .iter()
+                .map(compile_sase_expr)
+                .collect::<Option<Vec<_>>>()?;
+            or_of(alternatives)
+        }
+        SasePatternExpr::And(parts) => {
+            // An `and` joins operands each of which is one event, or an
+            // `or` of events: `(A or B) and C` waits for C and for either
+            // of A and B, in one state.
+            let operands = parts.iter().map(and_operand).collect::<Option<Vec<_>>>()?;
+            operands
+                .into_iter()
+                .rev()
+                .reduce(|acc, e| SasePattern::And(Box::new(e), Box::new(acc)))
+        }
+    }
+}
+
+/// `a or b or c` as the engine's binary `Or`, leftmost first.
+fn or_of(alternatives: Vec<SasePattern>) -> Option<SasePattern> {
+    alternatives
+        .into_iter()
+        .rev()
+        .reduce(|acc, alt| SasePattern::Or(Box::new(alt), Box::new(acc)))
+}
+
+/// One operand of an `and`: a single event, a nested `and`, or an `or` of
+/// single events. `None` for anything else.
+fn and_operand(part: &varpulis_core::ast::SasePatternExpr) -> Option<SasePattern> {
+    use varpulis_core::ast::SasePatternExpr;
+
+    match part {
+        SasePatternExpr::Seq(_) => single_event(part),
+        SasePatternExpr::And(_) => compile_sase_expr(part),
+        SasePatternExpr::Or(alternatives) => or_of(
+            alternatives
+                .iter()
+                .map(single_event)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        SasePatternExpr::FollowedBy(_) => None,
+    }
+}
+
+fn single_event(part: &varpulis_core::ast::SasePatternExpr) -> Option<SasePattern> {
+    use varpulis_core::ast::SasePatternExpr;
+
+    match part {
+        SasePatternExpr::Seq(items) => match items.as_slice() {
+            [item] if item.kleene.is_none() && !item.event_type.starts_with('!') => {
+                Some(compile_sase_pattern_item(item))
+            }
+            _ => None,
+        },
+        // `((A or B) or C) and D`, should the parser ever leave it nested.
+        SasePatternExpr::Or(alternatives) => or_of(
+            alternatives
+                .iter()
+                .map(single_event)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        _ => None,
     }
 }
 
@@ -579,11 +662,8 @@ fn compile_sase_pattern_item(item: &varpulis_core::ast::SasePatternItem) -> Sase
 pub fn extract_event_types_from_pattern_expr(
     expr: &varpulis_core::ast::SasePatternExpr,
 ) -> Vec<String> {
-    use varpulis_core::ast::SasePatternExpr;
-
-    let SasePatternExpr::Seq(items) = expr;
     let mut types = Vec::new();
-    for item in items {
+    for item in expr.items() {
         // Strip the "!" prefix that NOT items use
         let name = item
             .event_type

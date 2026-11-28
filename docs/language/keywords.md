@@ -87,13 +87,17 @@ set aside and not implemented at all.
 
 | Keyword | Description |
 |---------|-------------|
-| `and` | Logical AND, in an expression |
-| `or` | Logical OR, in an expression |
+| `and` | Logical AND, in an expression; in a `pattern`, both events in any order |
+| `or` | Logical OR, in an expression; in a `pattern`, either event |
 | `not` | Logical NOT, in an expression |
 
-`and` and `or` combine conditions inside a `.where()`. There is no AND or OR
-of events (match A and B in any order, A or B): a sequence is written with
-`->`, an absence with `-> NOT B .within()`.
+`and` and `or` combine conditions inside a `.where()`. In a `pattern`
+declaration they also combine events: `A and B` matches both, in any order,
+within the pattern's `within`; `A or B` matches either. They bind tighter than
+`->`, and `and` tighter than `or`: `X -> A or B and C` is
+`X -> (A or (B and C))`. A sequence is written with `->`, an absence with
+`-> NOT B` (uppercase, a step of its own). See
+[SASE+ patterns](../guides/sase-patterns.md#both-in-any-order-and).
 | `in` | Membership |
 | `is` | Type/identity test |
 

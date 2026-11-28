@@ -1,0 +1,29 @@
+# Test: `or` takes either step, and the shared alias names whichever came.
+
+=== VPL ===
+pattern Paid = Order as o
+    -> (CardPayment where order_id == o.order_id as p
+        or Transfer where order_id == o.order_id as p)
+    -> Shipped where order_id == o.order_id
+    within 1h
+
+stream Delivered = Paid
+    .emit(order_id: o.order_id, amount: p.amount)
+
+=== INPUT ===
+Order { order_id: "o1" }
+Transfer { order_id: "o1", amount: 40 }
+Order { order_id: "o2" }
+CardPayment { order_id: "o2", amount: 25 }
+Shipped { order_id: "o2" }
+Shipped { order_id: "o1" }
+Shipped { order_id: "o3" }
+
+=== EXPECT_COUNT ===
+2
+
+=== EXPECT_FIELDS ===
+[0].order_id = "o2"
+[0].amount = 25
+[1].order_id = "o1"
+[1].amount = 40
