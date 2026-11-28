@@ -430,11 +430,38 @@ fn advance_inner(
 ) -> RunAdvanceResult {
     let current_state = &nfa.states[run.current_state];
 
-    // NEG-01: Check if event violates any pending negation constraints
+    // NEG-01: Check if event violates any pending negation constraints.
+    //
+    // An absence in the middle of the pattern (`A -> NOT B -> C`) covers the
+    // gap up to the step after it, not that step: the event that takes it
+    // closes the gap and is not inside it, even when the forbidden filter
+    // fits it too (`A -> NOT B -> B where key == 1`). Such an event is
+    // offered to the step after the absence first, and cancels the run only
+    // if it does not take it.
+    let mut inside_gap = false;
     for neg in &run.pending_negations {
         if neg.is_violated_by(&event, &run.captured, evaluator) {
-            return RunAdvanceResult::Invalidate;
+            if !neg.until_next {
+                return RunAdvanceResult::Invalidate;
+            }
+            inside_gap = true;
         }
+    }
+    if inside_gap {
+        let ctx = Step {
+            nfa,
+            event: &event,
+            limits,
+            now,
+            evaluator,
+            mode,
+        };
+        // Copies an `or` forked took the event into an alternative; the run
+        // they came from did not take it, and the event falls in its gap.
+        return match leave_absence(&ctx, run, effects) {
+            Followed::Moved(result) => result,
+            Followed::Forked | Followed::Nothing => RunAdvanceResult::Invalidate,
+        };
     }
 
     // AND-01: Handle AND states specially
@@ -826,6 +853,35 @@ fn past_negation_reached_by_epsilon(
         return Followed::Nothing;
     }
     follow_past_negation(ctx, run, neg_id, effects)
+}
+
+/// Offer the event to the steps after the absence the run is watching in
+/// the middle of the pattern, and to nothing else: from the negated step
+/// the run waits at, or past the closure before it.
+fn leave_absence(ctx: &Step<'_>, run: &mut Run, effects: &mut OrEffects) -> Followed {
+    let nfa = ctx.nfa;
+    let state = &nfa.states[run.current_state];
+    if state.state_type == StateType::Negation {
+        return follow_past_negation(ctx, run, run.current_state, effects);
+    }
+    let mut forked = false;
+    for &eps_id in &state.epsilon_transitions {
+        for &next_id in &nfa.states[eps_id].transitions {
+            if nfa.states[next_id].state_type != StateType::Negation {
+                continue;
+            }
+            match past_negation_reached_by_epsilon(ctx, run, next_id, effects) {
+                Followed::Nothing => {}
+                Followed::Forked => forked = true,
+                moved => return moved,
+            }
+        }
+    }
+    if forked {
+        Followed::Forked
+    } else {
+        Followed::Nothing
+    }
 }
 
 /// Offer the event to the steps after the negated step `neg_id`, which is

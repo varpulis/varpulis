@@ -549,3 +549,126 @@ fn a_snapshot_taken_mid_pattern_keeps_the_absence() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// The step after the absence overlaps the forbidden filter
+// ---------------------------------------------------------------------------
+
+/// "The next B for k1, with no other B in between": the B that takes the
+/// step after the absence closes the gap and is not inside it, though it
+/// fits the forbidden filter too.
+#[test]
+fn the_event_that_takes_the_next_step_is_not_in_the_gap() {
+    let pattern = "    A as a
+    -> NOT B
+    -> B where id == \"k1\" as b
+    within 1m";
+    let mut p = program(pattern, "a: a.id");
+    id(&mut p, "A", 0, "o1");
+    assert_eq!(of(&id(&mut p, "B", 100, "k1"), "Out", "a"), ["o1"]);
+
+    // Another B first: inside the gap, it cancels the run.
+    id(&mut p, "A", 200, "o2");
+    assert!(id(&mut p, "B", 300, "k2").is_empty());
+    assert!(id(&mut p, "B", 400, "k1").is_empty());
+}
+
+#[test]
+fn a_forbidden_filter_narrower_than_the_next_step() {
+    // `NOT B where id == "k1" -> B`: any B takes the step, the k1 one too.
+    let pattern = "    A as a
+    -> NOT B where id == \"k1\"
+    -> B as b
+    within 1m";
+    let mut p = program(pattern, "a: a.id, b: b.id");
+    id(&mut p, "A", 0, "o1");
+    let out = id(&mut p, "B", 100, "k1");
+    assert_eq!(of(&out, "Out", "b"), ["k1"]);
+    id(&mut p, "A", 200, "o2");
+    assert_eq!(of(&id(&mut p, "B", 300, "k2"), "Out", "b"), ["k2"]);
+}
+
+#[test]
+fn overlapping_next_step_with_two_absences_in_a_row() {
+    let pattern = "    A as a
+    -> NOT B
+    -> NOT D
+    -> D where id == \"k1\" as d
+    within 1m";
+    let mut p = program(pattern, "a: a.id");
+    id(&mut p, "A", 0, "o1");
+    assert_eq!(of(&id(&mut p, "D", 100, "k1"), "Out", "a"), ["o1"]);
+    id(&mut p, "A", 200, "o2");
+    id(&mut p, "D", 300, "k2");
+    assert!(id(&mut p, "D", 400, "k1").is_empty());
+    id(&mut p, "A", 500, "o3");
+    id(&mut p, "B", 600, "k1");
+    assert!(id(&mut p, "D", 700, "k1").is_empty());
+}
+
+#[test]
+fn overlapping_next_step_in_an_or() {
+    let pattern = "    A as a
+    -> NOT B
+    -> (B where id == \"k1\" as e or C as e)
+    within 1m";
+    let mut p = program(pattern, "a: a.id, e: e.id");
+    id(&mut p, "A", 0, "o1");
+    assert_eq!(of(&id(&mut p, "B", 100, "k1"), "Out", "a"), ["o1"]);
+    id(&mut p, "A", 200, "o2");
+    id(&mut p, "B", 300, "k2");
+    assert!(id(&mut p, "C", 400, "c").is_empty());
+}
+
+#[test]
+fn overlapping_next_step_in_an_or_of_sequences() {
+    // The B starts the first alternative on a copy; the run it came from
+    // did not take it, and is cancelled.
+    let pattern = "    A as a
+    -> NOT B
+    -> ((B where id == \"k1\" as e -> C as c) or (D as e -> C as c))
+    within 1m";
+    let mut p = program(pattern, "a: a.id, e: e.id");
+    id(&mut p, "A", 0, "o1");
+    id(&mut p, "B", 100, "k1");
+    let out = id(&mut p, "C", 200, "c");
+    assert_eq!(of(&out, "Out", "e"), ["k1"]);
+    // A B that starts no alternative cancels the run.
+    id(&mut p, "A", 300, "o2");
+    id(&mut p, "B", 400, "k2");
+    id(&mut p, "D", 500, "d");
+    assert!(id(&mut p, "C", 600, "c").is_empty());
+}
+
+#[test]
+fn overlapping_next_step_in_an_and() {
+    let pattern = "    A as a
+    -> NOT B
+    -> (B where id == \"k1\" as b and C as c)
+    within 1m";
+    let mut p = program(pattern, "a: a.id");
+    id(&mut p, "A", 0, "o1");
+    id(&mut p, "B", 100, "k1");
+    assert_eq!(of(&id(&mut p, "C", 200, "c"), "Out", "a"), ["o1"]);
+    id(&mut p, "A", 300, "o2");
+    id(&mut p, "B", 400, "k2");
+    assert!(id(&mut p, "B", 500, "k1").is_empty());
+    assert!(id(&mut p, "C", 600, "c").is_empty());
+}
+
+#[test]
+fn overlapping_next_step_after_a_closure() {
+    let pattern = "    A as a
+    -> all E as es
+    -> NOT B
+    -> B where id == \"k1\" as b
+    within 1m";
+    let mut p = program(pattern, "a: a.id");
+    id(&mut p, "A", 0, "o1");
+    id(&mut p, "E", 50, "e");
+    assert!(!of(&id(&mut p, "B", 100, "k1"), "Out", "a").is_empty());
+    id(&mut p, "A", 200, "o2");
+    id(&mut p, "E", 250, "e");
+    id(&mut p, "B", 300, "k2");
+    assert!(id(&mut p, "B", 400, "k1").is_empty());
+}

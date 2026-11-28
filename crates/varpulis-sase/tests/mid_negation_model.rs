@@ -59,10 +59,27 @@ fn not(event_type: &str, keyed: bool) -> SasePattern {
 /// The pattern: A, then no event of the `forbidden` types with A's key,
 /// then a C with A's key. `keyed` puts `key == a.key` on the negated
 /// steps; without it a partition by key has to scope them.
+///
+/// When C itself is forbidden, the step after the absence also asks for
+/// `flag == 1`: "the next C with flag 1, with no other C in between". The
+/// C that takes the step fits the forbidden filter too, and closes the gap
+/// rather than falling in it.
 fn pattern(forbidden: &[&str], keyed: bool) -> SasePattern {
     let mut steps = vec![step("A", "a", None)];
     steps.extend(forbidden.iter().map(|f| not(f, keyed)));
-    steps.push(step("C", "c", Some(key_eq())));
+    let next = if overlaps(forbidden) {
+        Predicate::And(
+            Box::new(key_eq()),
+            Box::new(Predicate::Compare {
+                field: "flag".into(),
+                op: CompareOp::Eq,
+                value: Value::Int(1),
+            }),
+        )
+    } else {
+        key_eq()
+    };
+    steps.push(step("C", "c", Some(next)));
     SasePattern::Within(
         Box::new(SasePattern::Seq(steps)),
         Duration::from_millis(WITHIN_MS as u64),
@@ -89,19 +106,18 @@ impl Model {
         // Runs past their window are gone before the event is judged.
         self.open
             .retain(|r| event.timestamp - r.at <= chrono::Duration::milliseconds(WITHIN_MS));
+        let takes_step = event_type == "C" && (!overlaps(forbidden) || int(event, "flag") == 1);
         let mut out = Vec::new();
-        if forbidden.contains(&event_type) {
-            self.open.retain(|r| r.key != key);
-        } else if event_type == "C" {
-            self.open.retain(|r| {
-                if r.key == key {
-                    out.push((r.a, id));
-                    false
-                } else {
-                    true
-                }
-            });
-        }
+        self.open.retain(|r| {
+            if r.key != key {
+                true
+            } else if takes_step {
+                out.push((r.a, id));
+                false
+            } else {
+                !forbidden.contains(&event_type)
+            }
+        });
         if event_type == "A" {
             self.open.push(Open {
                 a: id,
@@ -111,6 +127,11 @@ impl Model {
         }
         out
     }
+}
+
+/// Whether the step after the absence is of a forbidden type.
+fn overlaps(forbidden: &[&str]) -> bool {
+    forbidden.contains(&"C")
 }
 
 fn int(event: &Event, field: &str) -> i64 {
@@ -130,7 +151,8 @@ fn random_event(rng: &mut Rng, id: i64, at: DateTime<Utc>) -> Event {
     let event_type = ["A", "A", "A", "C", "C", "C", "B", "D", "E"][rng.below(9) as usize];
     let mut event = Event::new(event_type)
         .with_field("id", Value::Int(id))
-        .with_field("key", Value::Int(rng.below(4) as i64));
+        .with_field("key", Value::Int(rng.below(4) as i64))
+        .with_field("flag", Value::Int(rng.below(2) as i64));
     event.timestamp = at;
     event
 }
@@ -180,7 +202,7 @@ fn check(forbidden: &[&str], partitioned: bool, strategy: SelectionStrategy, see
 
 #[test]
 fn engine_matches_the_model() {
-    for forbidden in [&["B"][..], &["B", "D"][..]] {
+    for forbidden in [&["B"][..], &["B", "D"][..], &["C"][..], &["B", "C"][..]] {
         for partitioned in [false, true] {
             for strategy in [
                 SelectionStrategy::SkipTillAnyMatch,

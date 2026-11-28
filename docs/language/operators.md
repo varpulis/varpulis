@@ -239,8 +239,17 @@ pattern ShippedUnpaid =
   closure's first event on.
 - Before an `or` or an `and`, the absence ends with the first event of the
   alternative or operand the run takes.
+- The event that takes the step after the absence closes the gap and is not
+  inside it, even when it fits the forbidden filter too. So
+  `A -> NOT B -> B where id == "k1"` reads "the next B for k1, with no other
+  B in between": a B for k2 first cancels the run, a B for k1 completes it.
 - Events are judged in the order they arrive, as for every step: a late B
-  that arrives between A and C cancels the run whatever its stamp.
+  that arrives between A and C cancels the run, unless its stamp is past the
+  run's deadline, in which case the run does not see it.
+- The match comes out when C arrives, so the event-time tolerance
+  (`max_out_of_orderness`) does not apply to it: a late B that arrives after
+  C retracts nothing. A trailing `-> NOT B` is different: it waits for the
+  watermark, which lags by that tolerance.
 - A pattern cannot start with `NOT B`, which has no step to be judged from,
   and `all NOT B` repeats nothing (E038).
 

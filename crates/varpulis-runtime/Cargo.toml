@@ -40,6 +40,12 @@ categories = ["science", "development-tools", "data-structures"]
 #       host must publish is not a breaking change again. Hosts read it; none
 #       had a reason to build one.
 #
+#   constructible_struct_adds_field / struct_marked_non_exhaustive
+#       `sase::NegationConstraint` (re-exported as `varpulis_runtime::sase`)
+#       gained `until_next`, for a negated step in the middle of a pattern,
+#       and was marked `#[non_exhaustive]` in the same change. The engine
+#       builds it from the pattern; nothing outside it had a reason to.
+#
 # `semver_exceptions_expire_with_their_baseline` in src/engine/error.rs turns
 # red the moment the version moves past 0.11.x, which is when this whole
 # block must be deleted.

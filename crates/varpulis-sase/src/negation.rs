@@ -9,8 +9,13 @@ use super::types::{Predicate, SharedEvent};
 use crate::clock::Timestamp;
 use crate::ExprEvaluator;
 
-/// Constraint for temporal negation that must be confirmed via timeout
+/// Constraint for temporal negation that must be confirmed via timeout.
+///
+/// Non-exhaustive: the engine builds it from the negated step
+/// (`until_next` was added for a step in the middle of a pattern), so code
+/// outside this crate reads it and does not construct it.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct NegationConstraint {
     /// Event type that must NOT occur
     pub forbidden_type: String,

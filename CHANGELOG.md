@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   B from the step before it until the run takes the step after it: a
   matching B in between invalidates the run, and C completes it at once,
   without waiting for the `within`. The `within` still bounds the run.
+  The event that takes C closes the gap even when it fits the forbidden
+  filter, so `A -> NOT B -> B where id == "k1"` is "the next B for k1, with
+  no other B in between".
   Two in a row (`A -> NOT B -> NOT D -> C`) forbid both; after a closure
   (`A -> all X -> NOT B -> C`) the absence is watched from the closure's
   first event; before an `or` or an `and`, it ends with the first event of

@@ -398,7 +398,10 @@ waiting for an event; see [Absence](../language/operators.md#absence-not-b).
 **Between two steps.** `A -> NOT B -> C` reads "A, then C, with no B in
 between": a B matching the step's `where` that arrives after A and before
 the run takes C invalidates the run, and C completes it at once. The
-`within` bounds the whole run, as for any sequence.
+`within` bounds the whole run, as for any sequence. The event that takes
+the step after the absence is not inside the gap, even when it fits the
+forbidden filter: `A -> NOT B -> B where id == "k1"` is "the next B for k1,
+with no other B in between".
 
 ```vpl
 # Shipped before it was paid
