@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use super::and_op::AndState;
+use super::and_op::{AndBranch, AndConfig, AndState};
 use super::enumeration::enumerate_with_filter;
 use super::kleene::{KleeneCapture, KleeneLimits};
-use super::nfa::{Nfa, State, StateType};
+use super::nfa::{Nfa, StateType};
 use super::predicate::{eval_predicate, event_matches_state, predicate_references_alias};
 use super::types::{Predicate, StackEntry};
 
@@ -286,7 +286,15 @@ pub(crate) fn advance_run_shared(
 
     // AND-01: Handle AND states specially
     if current_state.state_type == StateType::And {
-        return advance_and_state(nfa, run, current_state, event, limits, evaluator, mode);
+        return match offer_to_and(nfa, run, run.current_state, &event, now, limits, evaluator) {
+            AndOffer::Completed => finish_and(nfa, run, limits, evaluator, mode),
+            AndOffer::Taken => RunAdvanceResult::Continue,
+            AndOffer::Refuted => RunAdvanceResult::Invalidate,
+            AndOffer::NotTaken => match strategy {
+                SelectionStrategy::StrictContiguous => RunAdvanceResult::Invalidate,
+                _ => RunAdvanceResult::NoMatch,
+            },
+        };
     }
 
     // NEG-01: Handle Negation states - check if event matches forbidden pattern
@@ -438,10 +446,24 @@ pub(crate) fn advance_run_shared(
             }
         }
 
-        // AND-01: If transitioning to an AND state, enter it and try to match current event
+        // AND-01: an AND state is entered by an event one of its branches
+        // takes. An event none takes leaves the run where it was, free to
+        // follow another transition (an `or` alternative).
         if next_state.state_type == StateType::And {
-            run.current_state = next_id;
-            return advance_and_state(nfa, run, next_state, event, limits, evaluator, mode);
+            match offer_to_and(nfa, run, next_id, &event, now, limits, evaluator) {
+                AndOffer::Completed => {
+                    run.current_state = next_id;
+                    return finish_and(nfa, run, limits, evaluator, mode);
+                }
+                AndOffer::Taken => {
+                    run.current_state = next_id;
+                    return RunAdvanceResult::Continue;
+                }
+                AndOffer::NotTaken | AndOffer::Refuted => {
+                    run.and_state = None;
+                    continue;
+                }
+            }
         }
 
         // For Kleene states with self-referencing predicates: the first event
@@ -595,88 +617,294 @@ pub(crate) fn advance_run_shared(
     }
 }
 
-/// AND-01: Handle AND state - track which branches are completed
-#[allow(clippy::too_many_arguments)]
-fn advance_and_state(
+/// What an AND state did with an event offered to it.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum AndOffer {
+    /// No open branch takes the event.
+    NotTaken,
+    /// A branch took it, or it waits for the siblings its branch reads.
+    Taken,
+    /// Every branch has now matched: the run is at the AND's join state.
+    Completed,
+    /// The event that opened this run can no longer be part of its match
+    /// (see [`offer_to_and`]); the run is over.
+    Refuted,
+}
+
+/// Offer `event` to the AND state `and_id` for `run`, which is at that state
+/// or at a state with a transition to it.
+///
+/// An event takes the first open branch (in source order) whose type it has
+/// and whose predicate it satisfies. A branch whose predicate reads a
+/// sibling's alias (`B where id == a.id` next to `A as a`) is judged once
+/// that sibling has matched; an event of its type arriving earlier waits in
+/// [`AndState::waiting`] and is judged then, oldest first.
+///
+/// A run that an AND at the start of the pattern opened with a waiting event
+/// is anchored on it: it holds no other waiting event (a later one opens a
+/// run of its own, under the default selection, and would otherwise show up
+/// in two identical matches), and when that event is judged and fails, the
+/// run is [`AndOffer::Refuted`].
+///
+/// Under event time an AND accepts an event stamped before the run's start
+/// (any order is the point of an AND) as long as all its events fit in the
+/// WITHIN; the window then starts at that event.
+pub(crate) fn offer_to_and(
     nfa: &Nfa,
     run: &mut Run,
-    state: &State,
-    event: SharedEvent,
+    and_id: usize,
+    event: &SharedEvent,
+    now: Timestamp,
     limits: KleeneLimits,
     evaluator: Option<&dyn ExprEvaluator>,
-    mode: EmissionMode,
-) -> RunAdvanceResult {
-    let config = match &state.and_config {
-        Some(c) => c,
-        None => return RunAdvanceResult::NoMatch,
+) -> AndOffer {
+    let Some(config) = nfa.states[and_id].and_config.as_ref() else {
+        return AndOffer::NotTaken;
     };
+    let mut and_state = run.and_state.take().unwrap_or_default();
 
-    // Initialize AND state if not already
-    if run.and_state.is_none() {
-        run.and_state = Some(AndState::new());
+    let mut taken = false;
+    let mut waits = false;
+    for (idx, branch) in config.branches.iter().enumerate() {
+        if and_state.is_branch_completed(idx) || *event.event_type != branch.event_type {
+            continue;
+        }
+        if !branch
+            .sibling_refs
+            .iter()
+            .all(|&r| and_state.is_branch_completed(r))
+        {
+            waits = true;
+            continue;
+        }
+        let pred_matches = branch
+            .predicate
+            .as_ref()
+            .is_none_or(|p| eval_predicate(p, event, &run.captured, evaluator));
+        if pred_matches
+            && !refutes_anchor(run, &and_state, config, idx, event, evaluator)
+            && admit_event_time(run, event)
+        {
+            complete_and_branch(run, &mut and_state, idx, branch, event, now);
+            taken = true;
+            break;
+        }
     }
 
-    // Find matching branch
-    let mut matched_branch: Option<(usize, Option<String>)> = None;
-    let total_branches = config.branches.len();
-
-    {
-        let Some(and_state) = run.and_state.as_ref() else {
-            return RunAdvanceResult::Continue;
-        };
-
-        for (idx, branch) in config.branches.iter().enumerate() {
-            if and_state.is_branch_completed(idx) {
-                continue;
+    if !taken {
+        let offer = if waits && and_state.anchor.is_none() && fits_event_time(run, event) {
+            if run.stack.is_empty() && and_state.waiting.is_empty() {
+                and_state.anchor = Some(Arc::clone(event));
             }
+            if and_state.waiting.len() >= limits.max_events as usize {
+                let dropped = and_state.waiting.remove(0);
+                if and_state
+                    .anchor
+                    .as_ref()
+                    .is_some_and(|a| Arc::ptr_eq(a, &dropped))
+                {
+                    and_state.anchor = None;
+                }
+                and_state.waiting_dropped = and_state.waiting_dropped.saturating_add(1);
+                if and_state.waiting_dropped == 1 {
+                    tracing::warn!(
+                        cap = limits.max_events,
+                        "an `and` holds at most this many events waiting for the branch \
+                         they refer to; the oldest is dropped and may miss its match"
+                    );
+                }
+            }
+            and_state.waiting.push(Arc::clone(event));
+            AndOffer::Taken
+        } else {
+            AndOffer::NotTaken
+        };
+        let untouched = and_state.completed.iter().all(|c| !c) && and_state.waiting.is_empty();
+        run.and_state = (!untouched).then_some(and_state);
+        return offer;
+    }
 
-            if *event.event_type == branch.event_type {
+    // A completed branch may be what waiting events were waiting for.
+    if drain_and_waiting(run, &mut and_state, config, now, evaluator) {
+        return AndOffer::Refuted;
+    }
+
+    if and_state.all_completed(config.branches.len()) {
+        run.current_state = config.join_state;
+        run.and_state = None;
+        return AndOffer::Completed;
+    }
+    run.and_state = Some(and_state);
+    AndOffer::Taken
+}
+
+/// Whether taking `event` into branch `idx` would make the run's anchor (the
+/// waiting event that opened it) fail: the anchor's branch would then be
+/// judged, against this event, and refuse it. Such an event is left for
+/// other runs; this one keeps waiting for a sibling its anchor accepts.
+fn refutes_anchor(
+    run: &Run,
+    and_state: &AndState,
+    config: &AndConfig,
+    idx: usize,
+    event: &SharedEvent,
+    evaluator: Option<&dyn ExprEvaluator>,
+) -> bool {
+    let Some(anchor) = and_state.anchor.as_ref() else {
+        return false;
+    };
+    let completed_after = |i: usize| i == idx || and_state.is_branch_completed(i);
+    let mut captured = None;
+    for (b, branch) in config.branches.iter().enumerate() {
+        if completed_after(b) || *anchor.event_type != branch.event_type {
+            continue;
+        }
+        if !branch.sibling_refs.iter().all(|&r| completed_after(r)) {
+            // Still waiting after this event: nothing is decided yet.
+            return false;
+        }
+        let captured = captured.get_or_insert_with(|| {
+            let mut c = run.captured.clone();
+            if let Some(alias) = &config.branches[idx].alias {
+                c.insert(alias.clone(), Arc::clone(event));
+            }
+            c
+        });
+        if branch
+            .predicate
+            .as_ref()
+            .is_none_or(|p| eval_predicate(p, anchor, captured, evaluator))
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Judge the waiting events whose siblings have now matched, until none
+/// can move. `true` when the event that anchors the run failed.
+fn drain_and_waiting(
+    run: &mut Run,
+    and_state: &mut AndState,
+    config: &AndConfig,
+    now: Timestamp,
+    evaluator: Option<&dyn ExprEvaluator>,
+) -> bool {
+    'again: loop {
+        let mut i = 0;
+        while i < and_state.waiting.len() {
+            let event = Arc::clone(&and_state.waiting[i]);
+            let mut pending = false;
+            for (idx, branch) in config.branches.iter().enumerate() {
+                if and_state.is_branch_completed(idx) || *event.event_type != branch.event_type {
+                    continue;
+                }
+                if !branch
+                    .sibling_refs
+                    .iter()
+                    .all(|&r| and_state.is_branch_completed(r))
+                {
+                    pending = true;
+                    continue;
+                }
                 let pred_matches = branch
                     .predicate
                     .as_ref()
                     .is_none_or(|p| eval_predicate(p, &event, &run.captured, evaluator));
-
-                if pred_matches {
-                    matched_branch = Some((idx, branch.alias.clone()));
-                    break;
+                if pred_matches && admit_event_time(run, &event) {
+                    and_state.waiting.remove(i);
+                    if and_state
+                        .anchor
+                        .as_ref()
+                        .is_some_and(|a| Arc::ptr_eq(a, &event))
+                    {
+                        and_state.anchor = None;
+                    }
+                    complete_and_branch(run, and_state, idx, branch, &event, now);
+                    // New captures: every waiting event is judged again.
+                    continue 'again;
                 }
             }
-        }
-    }
-
-    // Process the match if found
-    if let Some((idx, alias)) = matched_branch {
-        // Complete this branch
-        let Some(and_state) = run.and_state.as_mut() else {
-            return RunAdvanceResult::Continue;
-        };
-        and_state.complete_branch(idx, Arc::clone(&event));
-
-        // Capture with alias if present
-        if let Some(ref alias) = alias {
-            run.captured.insert(alias.clone(), Arc::clone(&event));
-        }
-        run.push(Arc::clone(&event), alias);
-
-        // Check if all branches are completed
-        let all_completed = run
-            .and_state
-            .as_ref()
-            .is_some_and(|s| s.all_completed(total_branches));
-
-        if all_completed {
-            run.current_state = config.join_state;
-            run.and_state = None; // Clear AND state
-
-            // Check if join state is accept
-            let join_state = &nfa.states[config.join_state];
-            if join_state.state_type == StateType::Accept {
-                return complete_run(run, limits, evaluator, mode, nfa);
+            if pending {
+                i += 1;
+                continue;
+            }
+            // Every branch it could take is judged and refuses it.
+            and_state.waiting.remove(i);
+            if and_state
+                .anchor
+                .as_ref()
+                .is_some_and(|a| Arc::ptr_eq(a, &event))
+            {
+                return true;
             }
         }
-
-        return RunAdvanceResult::Continue;
+        return false;
     }
+}
 
-    RunAdvanceResult::NoMatch
+fn complete_and_branch(
+    run: &mut Run,
+    and_state: &mut AndState,
+    idx: usize,
+    branch: &AndBranch,
+    event: &SharedEvent,
+    now: Timestamp,
+) {
+    and_state.complete_branch(idx, Arc::clone(event));
+    run.push_at(Arc::clone(event), branch.alias.clone(), now);
+}
+
+/// Whether `event` fits in the run's event-time WITHIN together with the
+/// events the run holds, in whichever order they came.
+fn fits_event_time(run: &Run, event: &SharedEvent) -> bool {
+    let (Some(start), Some(deadline)) = (run.event_time_started_at, run.event_time_deadline) else {
+        return true;
+    };
+    if event.timestamp > deadline {
+        return false;
+    }
+    if event.timestamp >= start {
+        return true;
+    }
+    let within = deadline - start;
+    let latest = run
+        .stack
+        .iter()
+        .map(|e| e.event.timestamp)
+        .max()
+        .unwrap_or(start);
+    latest - event.timestamp <= within
+}
+
+/// [`fits_event_time`], and when `event` is the earliest so far, start the
+/// window at it.
+fn admit_event_time(run: &mut Run, event: &SharedEvent) -> bool {
+    if !fits_event_time(run, event) {
+        return false;
+    }
+    if let (Some(start), Some(deadline)) = (run.event_time_started_at, run.event_time_deadline) {
+        if event.timestamp < start {
+            let within = deadline - start;
+            run.event_time_started_at = Some(event.timestamp);
+            run.event_time_deadline = Some(event.timestamp + within);
+        }
+    }
+    true
+}
+
+/// The run's AND has just completed; it is at the join state.
+fn finish_and(
+    nfa: &Nfa,
+    run: &mut Run,
+    limits: KleeneLimits,
+    evaluator: Option<&dyn ExprEvaluator>,
+    mode: EmissionMode,
+) -> RunAdvanceResult {
+    if nfa.states[run.current_state].state_type == StateType::Accept {
+        return complete_run(run, limits, evaluator, mode, nfa);
+    }
+    // `(A and B) -> NOT C`: the absence starts when the AND completes.
+    enter_negation_if_next(nfa, run);
+    RunAdvanceResult::Continue
 }

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `and` and `or` between the steps of a pattern
+
+- `A and B` matches both events, in either order, within the pattern's
+  `within`; `A or B` matches either. Between steps `and` binds tightest,
+  then `or`, then `->`, and parentheses group:
+  `X -> A or B and C -> Y` is `X -> (A or (B and C)) -> Y`. They are written
+  in `pattern` declarations. See the SASE+ patterns guide.
+- The operands of an `and` are single events. A `where` that reads a
+  sibling's alias (`A as a and B where id == a.id as b`) is judged once that
+  sibling has matched; an event that comes first waits for it, at most 20 per
+  run. Under event time the window counts from the earliest event, whichever
+  came first. A checkpoint keeps the operands a run has matched and the
+  events that wait.
+- The alternatives of an `or` can be sequences or `and`s. An event takes the
+  leftmost alternative it satisfies; a shared alias names whichever matched.
+  `(A or B) and C` runs as `(A and C) or (B and C)`.
+- The validator refuses `NOT` or `all` inside `and`/`or` and a sequence inside
+  `and` (E035), one alias on two operands of an `and` (E036) and operands that
+  read each other's alias (E037). It warns on alternatives that start with
+  the same event type (W036), on a later step that reads an alias only some
+  alternatives bind (W037), and on a `where` that reads an event type's name
+  as a value (W038), which is what `A where x > 1 and B` does: the filter
+  takes the `and`.
+- Fixed on the way: a pattern that one event completes (`pattern P = A`,
+  `A or B`) emitted its match only when the next event arrived; it now emits
+  at once. An AND inside a sequence moved its run into the AND on any event,
+  even one it did not take. A run restored from a checkpoint inside an AND
+  lost the operands it had matched.
+
 ### Changed — an event looks up the runs it can advance instead of visiting them all
 
 - Without `partition_by`, every event visited every run waiting in a

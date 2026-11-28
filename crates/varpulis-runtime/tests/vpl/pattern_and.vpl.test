@@ -1,0 +1,23 @@
+# Test: `and` matches both events in either order.
+# The B for case 1 comes first and waits for the A it refers to; the A for
+# case 2 is not its partner, the A for case 1 is.
+
+=== VPL ===
+pattern BothDocs = DocumentA as a and DocumentB where case_id == a.case_id as b
+    within 1h
+
+stream Complete = BothDocs
+    .emit(case_id: a.case_id, pages: b.pages)
+
+=== INPUT ===
+DocumentB { case_id: 1, pages: 3 }
+DocumentA { case_id: 2 }
+DocumentA { case_id: 1 }
+DocumentB { case_id: 3, pages: 5 }
+
+=== EXPECT_COUNT ===
+1
+
+=== EXPECT_FIELDS ===
+[0].case_id = 1
+[0].pages = 3

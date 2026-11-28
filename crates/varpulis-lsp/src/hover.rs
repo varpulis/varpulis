@@ -913,21 +913,25 @@ fn get_documentation(word: &str) -> Option<String> {
         // Logical operators
         "and" => Some(format!(
             "## and\n\n\
-            Logical AND operator.\n\n\
+            Logical AND operator. In a `pattern`, both events in any order, \
+            within the pattern's `within`.\n\n\
             **Example:**\n\
             ```vpl\n\
             if temp > 25 and humidity > 80 then\n\
                 \"Hot and humid\"\n\
+            pattern BothDocs = DocA as a and DocB where id == a.id as b within 1h\n\
             ```"
         )),
 
         "or" => Some(format!(
             "## or\n\n\
-            Logical OR operator.\n\n\
+            Logical OR operator. In a `pattern`, either event; `and` binds \
+            tighter, `->` looser.\n\n\
             **Example:**\n\
             ```vpl\n\
             if status == \"error\" or status == \"critical\" then\n\
                 emit_alert()\n\
+            pattern Paid = Order as o -> (Card as p or Transfer as p) within 1h\n\
             ```"
         )),
 

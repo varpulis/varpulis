@@ -219,6 +219,44 @@ one the pattern never reads because a stream in between filtered it out.
 - A program restored from its snapshot keeps the absences it was waiting
   out: its acknowledgement still cancels one, its deadline still raises it.
 
+### Both and either: `and`, `or`
+
+In a `pattern` declaration, `and` and `or` combine steps. `A and B` matches
+both events in any order within the pattern's `within`; `A or B` matches
+either. They bind tighter than `->`, and `and` tighter than `or`:
+`X -> A or B and C -> Y` is `X -> (A or (B and C)) -> Y`. Parentheses group.
+
+```varpulis
+pattern BothDocs =
+    DocumentA as a
+    and DocumentB where case_id == a.case_id as b
+    within 1h
+
+pattern Paid =
+    Order as o
+    -> (CardPayment where order_id == o.order_id as p
+        or Transfer where order_id == o.order_id as p)
+    -> Shipped where order_id == o.order_id
+    within 1h
+```
+
+- The operands of an `and` are single events, each with its `where` and
+  alias. A `where` that reads a sibling's alias (`b`'s above) is judged once
+  that sibling has matched. `NOT`, `all` and sequences do not go inside an
+  `and`, and `NOT` and `all` not inside an `or` either (E035).
+- The alternatives of an `or` can be sequences or `and`s. Only the one that
+  matched binds its aliases; a shared alias (`p`) names whichever came. An
+  event takes the leftmost alternative it satisfies.
+- A step's `where` takes `and`/`or` into its filter: join a filtered step after
+  its alias (`A where x > 1 as a and B`) or in parentheses.
+
+The validator reports what the engine does not run (E035), one alias on two
+operands of an `and` (E036), operands that read each other's alias in a
+circle (E037), alternatives that start with the same event type (W036), an
+alias only some alternatives bind read by a later step (W037), and a `where`
+that reads an event type's name as a value (W038). The full account is in
+[SASE+ patterns](../guides/sase-patterns.md#both-in-any-order-and).
+
 ### Monotonic pattern shortcuts
 
 | Operator | Description | Example |
@@ -241,6 +279,10 @@ one the pattern never reads because a stream in between filtered it out.
 ```
 
 ## Operator Precedence (highest to lowest)
+
+In expressions (`where`, `.where()`, `.emit()`, ...). Between the steps of a
+`pattern`, `and` binds tightest, then `or`, then `->`; see
+[Both and either](#both-and-either-and-or).
 
 1. `()`, `[]`, `.`, `?.`
 2. `**`

@@ -8,7 +8,6 @@ use chrono::{DateTime, Utc};
 use rustc_hash::FxHashMap;
 
 use super::advance::{advance_run_shared, RunAdvanceResult};
-use super::and_op::AndState;
 use super::backpressure::{
     BackpressureStrategy, ProcessResult, ProcessStats, ProcessWarning, SaseExtendedStats,
 };
@@ -816,7 +815,7 @@ impl SaseEngine {
             completed.extend(advanced);
 
             if let Some(run) = self.try_start_run_after(Arc::clone(&shared_event), consumed) {
-                let (added, _) = self.handle_backpressure_partitioned(&partition_key, run);
+                let (added, _) = self.admit_new_run(run, Some(&partition_key), &mut completed);
                 if added {
                     self.total_runs_created += 1;
                     self.metrics.record_run_created();
@@ -829,7 +828,7 @@ impl SaseEngine {
             completed.extend(advanced);
 
             if let Some(run) = self.try_start_run_after(Arc::clone(&shared_event), consumed) {
-                let (added, _) = self.handle_backpressure(run);
+                let (added, _) = self.admit_new_run(run, None, &mut completed);
                 if added {
                     self.total_runs_created += 1;
                     self.metrics.record_run_created();
@@ -919,7 +918,8 @@ impl SaseEngine {
                 if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
                     completed.push(m);
                 }
-                let (added, warning) = self.handle_backpressure_partitioned(&partition_key, run);
+                let (added, warning) =
+                    self.admit_new_run(run, Some(&partition_key), &mut completed);
                 if added {
                     stats.runs_created += 1;
                     self.total_runs_created += 1;
@@ -937,7 +937,7 @@ impl SaseEngine {
                 if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
                     completed.push(m);
                 }
-                let (added, warning) = self.handle_backpressure(run);
+                let (added, warning) = self.admit_new_run(run, None, &mut completed);
                 if added {
                     stats.runs_created += 1;
                     self.total_runs_created += 1;
@@ -1066,7 +1066,7 @@ impl SaseEngine {
                     if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
                         completed.push(m);
                     }
-                    let (added, _) = self.handle_backpressure_partitioned(&partition_key, run);
+                    let (added, _) = self.admit_new_run(run, Some(&partition_key), &mut completed);
                     if added {
                         self.total_runs_created += 1;
                     }
@@ -1089,7 +1089,7 @@ impl SaseEngine {
                     if let Some(m) = self.post_start_kleene_handling(&mut run, &event, mode) {
                         completed.push(m);
                     }
-                    let (added, _) = self.handle_backpressure(run);
+                    let (added, _) = self.admit_new_run(run, None, &mut completed);
                     if added {
                         self.total_runs_created += 1;
                     }
@@ -1099,6 +1099,25 @@ impl SaseEngine {
 
         self.total_runs_completed += completed.len() as u64;
         completed
+    }
+
+    /// Keep a run an event just opened, within the run cap; or, when that
+    /// one event completed the pattern (`A or B`, a single step), emit its
+    /// match: there is nothing left for a run to wait for.
+    fn admit_new_run(
+        &mut self,
+        mut run: Run,
+        partition_key: Option<&str>,
+        completed: &mut Vec<MatchResult>,
+    ) -> (bool, Option<ProcessWarning>) {
+        if self.nfa.states[run.current_state].state_type == StateType::Accept {
+            completed.push(match_from_completed_run(&mut run));
+            return (true, None);
+        }
+        match partition_key {
+            Some(key) => self.handle_backpressure_partitioned(key, run),
+            None => self.handle_backpressure(run),
+        }
     }
 
     /// BP-01: Handle backpressure for non-partitioned runs
@@ -1362,7 +1381,10 @@ impl SaseEngine {
                     continue;
                 }
 
-                match advance_run_shared(
+                // An `and` that takes an event stamped before the run's start
+                // moves the run's window, deadline included, earlier.
+                let deadline_before = runs[i].event_time_deadline;
+                let advanced = advance_run_shared(
                     &self.nfa,
                     self.strategy,
                     &mut runs[i],
@@ -1371,7 +1393,14 @@ impl SaseEngine {
                     now,
                     self.evaluator.as_deref(),
                     mode,
-                ) {
+                );
+                if let Some(deadline) = runs[i].event_time_deadline {
+                    if deadline_before != Some(deadline) {
+                        self.partition_deadlines
+                            .insert((deadline, partition_key.to_string()));
+                    }
+                }
+                match advanced {
                     RunAdvanceResult::Continue => {
                         consumed = true;
                         i += 1;
@@ -1626,6 +1655,23 @@ impl SaseEngine {
         Some(run)
     }
 
+    /// A run opened by `event` in the AND state `and_id`, if a branch takes it.
+    fn start_in_and(&self, and_id: usize, event: &SharedEvent) -> Option<Run> {
+        let mut run = self.new_run_at(and_id, event);
+        match super::advance::offer_to_and(
+            &self.nfa,
+            &mut run,
+            and_id,
+            event,
+            Timestamp::now(),
+            self.kleene_limits(),
+            self.evaluator.as_deref(),
+        ) {
+            super::advance::AndOffer::Taken | super::advance::AndOffer::Completed => Some(run),
+            super::advance::AndOffer::NotTaken | super::advance::AndOffer::Refuted => None,
+        }
+    }
+
     fn try_start_run_inner(&self, event: SharedEvent) -> Option<Run> {
         let start_state = &self.nfa.states[self.nfa.start_state];
         // PERF: Use static empty map instead of allocating on every call
@@ -1635,34 +1681,11 @@ impl SaseEngine {
         for &next_id in &start_state.transitions {
             let next_state = &self.nfa.states[next_id];
 
-            // AND-01: Handle AND states specially - check if event matches any branch
+            // AND-01: a run starts in an AND when one of its branches takes
+            // the event (or holds it until the sibling it refers to comes).
             if next_state.state_type == StateType::And {
-                if let Some(ref config) = next_state.and_config {
-                    // Check if event matches any branch
-                    for (idx, branch) in config.branches.iter().enumerate() {
-                        if *event.event_type == branch.event_type {
-                            let pred_matches = branch.predicate.as_ref().is_none_or(|p| {
-                                eval_predicate(p, &event, empty_captured, self.evaluator.as_deref())
-                            });
-
-                            if pred_matches {
-                                let mut run = self.new_run_at(next_id, &event);
-
-                                // Initialize AND state and complete this branch
-                                let mut and_state = AndState::new();
-                                and_state.complete_branch(idx, Arc::clone(&event));
-                                run.and_state = Some(and_state);
-
-                                // Capture with alias if present
-                                if let Some(ref alias) = branch.alias {
-                                    run.captured.insert(alias.clone(), Arc::clone(&event));
-                                }
-                                run.push(Arc::clone(&event), branch.alias.clone());
-
-                                return Some(run);
-                            }
-                        }
-                    }
+                if let Some(run) = self.start_in_and(next_id, &event) {
+                    return Some(run);
                 }
                 continue;
             }
@@ -1708,34 +1731,8 @@ impl SaseEngine {
 
                 // AND-01: Handle AND states in epsilon paths
                 if next_state.state_type == StateType::And {
-                    if let Some(ref config) = next_state.and_config {
-                        for (idx, branch) in config.branches.iter().enumerate() {
-                            if *event.event_type == branch.event_type {
-                                let pred_matches = branch.predicate.as_ref().is_none_or(|p| {
-                                    eval_predicate(
-                                        p,
-                                        &event,
-                                        empty_captured,
-                                        self.evaluator.as_deref(),
-                                    )
-                                });
-
-                                if pred_matches {
-                                    let mut run = self.new_run_at(next_id, &event);
-
-                                    let mut and_state = AndState::new();
-                                    and_state.complete_branch(idx, Arc::clone(&event));
-                                    run.and_state = Some(and_state);
-
-                                    if let Some(ref alias) = branch.alias {
-                                        run.captured.insert(alias.clone(), Arc::clone(&event));
-                                    }
-                                    run.push(Arc::clone(&event), branch.alias.clone());
-
-                                    return Some(run);
-                                }
-                            }
-                        }
+                    if let Some(run) = self.start_in_and(next_id, &event) {
+                        return Some(run);
                     }
                     continue;
                 }

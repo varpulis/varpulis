@@ -597,8 +597,8 @@ impl Engine {
                 }
                 StreamSource::Ident(name) => {
                     if let Some(p) = self.patterns.get(name) {
-                        let varpulis_core::ast::SasePatternExpr::Seq(items) = &p.expr;
-                        candidates.extend(items.iter().filter_map(|i| i.alias.as_ref()));
+                        candidates
+                            .extend(p.expr.items().into_iter().filter_map(|i| i.alias.as_ref()));
                     }
                 }
                 _ => {}

@@ -11,6 +11,11 @@ pub struct AndBranch {
     pub predicate: Option<Predicate>,
     /// Alias for the captured event
     pub alias: Option<String>,
+    /// The other branches whose alias `predicate` reads
+    /// (`B where id == a.id as b` next to `A as a`). The branch is judged
+    /// only once all of them have matched; an event that arrives earlier
+    /// waits in [`AndState::waiting`].
+    pub sibling_refs: Vec<usize>,
 }
 
 /// Configuration for AND states in the NFA
@@ -29,6 +34,17 @@ pub struct AndState {
     pub completed: Vec<bool>,
     /// Captured events for completed branches
     pub branch_events: Vec<Option<SharedEvent>>,
+    /// Events of a branch's type that arrived before the siblings its
+    /// predicate reads, oldest first: `B` in `A as a and B where id == a.id`
+    /// arriving before any `A`. Each is judged when those siblings have
+    /// matched. Bounded by the Kleene event cap; past it the oldest leaves
+    /// and [`AndState::waiting_dropped`] counts it.
+    pub waiting: Vec<SharedEvent>,
+    /// Events that left [`AndState::waiting`] at the cap, unjudged.
+    pub waiting_dropped: u32,
+    /// The waiting event that opened this run, when an AND at the start of
+    /// the pattern opened it with one (see `offer_to_and`).
+    pub anchor: Option<SharedEvent>,
 }
 
 impl AndState {
@@ -37,6 +53,9 @@ impl AndState {
         Self {
             completed: Vec::new(),
             branch_events: Vec::new(),
+            waiting: Vec::new(),
+            waiting_dropped: 0,
+            anchor: None,
         }
     }
 
@@ -53,6 +72,19 @@ impl AndState {
         }
         self.completed[idx] = true;
         self.branch_events[idx] = Some(event);
+    }
+
+    /// Restore the completed branches of a checkpointed run. The events
+    /// themselves are in the run's captures and stack.
+    pub fn from_completed(completed: Vec<bool>) -> Self {
+        let branch_events = vec![None; completed.len()];
+        Self {
+            completed,
+            branch_events,
+            waiting: Vec::new(),
+            waiting_dropped: 0,
+            anchor: None,
+        }
     }
 
     /// Return true if all `total` branches have been completed.

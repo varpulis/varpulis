@@ -1377,6 +1377,18 @@ pub struct RunCheckpoint {
     pub pending_negation_count: usize,
     /// Kleene capture events (ZDD rebuilt on restore)
     pub kleene_events: Option<Vec<SerializableEvent>>,
+    /// For a run inside an `and`: which of its operands have matched, in
+    /// source order. Their events are in `stack` and `captured`. Absent
+    /// from checkpoints written before `and` existed in the language.
+    #[serde(default)]
+    pub and_completed: Option<Vec<bool>>,
+    /// Events of an `and` operand waiting for the operand whose alias their
+    /// `where` reads, oldest first.
+    #[serde(default)]
+    pub and_waiting: Vec<SerializableEvent>,
+    /// Whether the first of `and_waiting` is the event that opened the run.
+    #[serde(default)]
+    pub and_anchored: bool,
 }
 
 /// Checkpoint for a stack entry in a SASE+ run.

@@ -296,6 +296,11 @@ const EXAMPLE_CASES: &[(&str, &str, usize)] = &[
         "examples/vpl-by-example/31_array_semantics.evt",
         1,
     ),
+    (
+        "examples/vpl-by-example/32_and_or.vpl",
+        "examples/vpl-by-example/32_and_or.evt",
+        4,
+    ),
 ];
 
 /// Examples whose VPL is correct but which the ENGINE currently drops on the

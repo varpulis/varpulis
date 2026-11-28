@@ -1,0 +1,10 @@
+@0s Order { order_id: "o1" }
+@1s Order { order_id: "o2" }
+@2s Invoice { order_id: "o1", amount: 100.0 }
+@3s CardPayment { order_id: "o1", amount: 100.0 }
+@4s Shipment { order_id: "o1", carrier: "rail" }
+@5s Shipment { order_id: "o2", carrier: "road" }
+@6s Transfer { order_id: "o2", amount: 50.0 }
+@7s Invoice { order_id: "o2", amount: 50.0 }
+@8s Order { order_id: "o3" }
+@9s Invoice { order_id: "o3", amount: 75.0 }
