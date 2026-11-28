@@ -995,3 +995,33 @@ fn a_closure_after_a_closure_emits() {
     assert!(!got.is_empty());
     assert_eq!(stack(&got[0]), ["A 1", "B 2", "C 3"]);
 }
+
+#[test]
+fn a_tie_loser_waiting_in_the_predicate_index_ends_too() {
+    // A -> ((C -> D) or D) -> E where key == a.key. D completes both
+    // alternatives at once: the copy that took C and the run's own D. The
+    // left one wins the tie. The loser has left the `or` too and waits for
+    // an E it could be filed under, so it must not reach the index before
+    // its family settles, or no settle can find it and it matches as well.
+    let p = || {
+        seq(vec![
+            step("A", "a"),
+            or(seq(vec![step("C", "c"), step("D", "d")]), step("D", "d")),
+            step_where("E", "e", same_key("a")),
+        ])
+    };
+    let events = [
+        keyed("A", 1, 1),
+        keyed("C", 2, 1),
+        keyed("D", 3, 1),
+        keyed("E", 4, 1),
+    ];
+    for index in [false, true] {
+        let mut e = engine(p()).with_predicate_index(index);
+        assert_eq!(run(&mut e, &events), ["a=1,c=2,d=3,e=4"], "index {index}");
+    }
+    let mut e = engine(p())
+        .with_partition_by("key".into())
+        .with_predicate_index(true);
+    assert_eq!(run(&mut e, &events), ["a=1,c=2,d=3,e=4"], "partitioned");
+}

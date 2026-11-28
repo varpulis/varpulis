@@ -1410,6 +1410,15 @@ pub struct RunCheckpoint {
     /// the others.
     #[serde(default)]
     pub or_families: Vec<OrFamilyCheckpoint>,
+    // New fields go last: the binary codec writes this struct as a
+    // positional array, so a field inserted earlier shifts the ones after it.
+    /// The same instant to the nanosecond. The oldest run is the one an
+    /// `EvictOldest` run cap evicts, and runs a few microseconds apart (a
+    /// copy forked into an `or` keeps the start of the run it was copied
+    /// from) would tie at the millisecond and swap places after a restore.
+    /// Absent from older checkpoints, which fall back to `started_at_ms`.
+    #[serde(default)]
+    pub started_at_ns: Option<i64>,
 }
 
 /// A run's membership of an `or` family, in a [`RunCheckpoint`].

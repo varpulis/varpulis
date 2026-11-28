@@ -330,6 +330,16 @@ impl OrPass {
         losers
     }
 
+    /// Whether the run numbered `seq` left an `or` during this pass. Such a
+    /// run stays listed until the pass settles its families: it may lose a
+    /// tie there, and the settle only sweeps the listed runs. It stays listed
+    /// until an event of a type it can take arrives and leaves it waiting,
+    /// which files it in the index; meanwhile each event costs it a type
+    /// check, and no match is lost.
+    fn left_now(&self, seq: u64) -> bool {
+        self.left.iter().any(|l| l.seq == seq)
+    }
+
     /// Note that `run`, a member of `or` families, ended other than by its
     /// family settling (refuted, evicted): the alternative it followed is
     /// open to the run before the `or` again.
@@ -1702,8 +1712,13 @@ impl SaseEngine {
                 }
 
                 // IDX-03: a run now waiting on a step the index can plan
-                // moves into it. The swap brings an unvisited run to `i`.
-                if let Some(index) = partition.index.as_mut() {
+                // moves into it, unless it just left an `or` (`left_now`).
+                // The swap brings an unvisited run to `i`.
+                if let Some(index) = partition
+                    .index
+                    .as_mut()
+                    .filter(|_| !pass.left_now(partition.runs[i].seq))
+                {
                     if let Some(key) = index.key_for(&partition.runs[i]) {
                         let run = partition.runs.swap_remove(i);
                         index.insert(run, key);
@@ -1922,8 +1937,9 @@ impl SaseEngine {
             }
 
             // IDX-02: a run now waiting on a step the index can plan moves
-            // into it. The swap brings an unvisited run to `i`.
-            if let Some(index) = self.run_index.as_mut() {
+            // into it, unless it just left an `or` (`OrPass::left_now`). The
+            // swap brings an unvisited run to `i`.
+            if let Some(index) = self.run_index.as_mut().filter(|_| !pass.left_now(seq)) {
                 if let Some(key) = index.key_for(&self.runs[i]) {
                     let run = self.runs.swap_remove(i);
                     index.insert(run, key);
