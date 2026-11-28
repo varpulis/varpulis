@@ -332,8 +332,10 @@ impl OrPass {
 
     /// Whether the run numbered `seq` left an `or` during this pass. Such a
     /// run stays listed until the pass settles its families: it may lose a
-    /// tie there, and the settle only sweeps the listed runs. The next event
-    /// that leaves it waiting files it in the index.
+    /// tie there, and the settle only sweeps the listed runs. It stays listed
+    /// until an event of a type it can take arrives and leaves it waiting,
+    /// which files it in the index; meanwhile each event costs it a type
+    /// check, and no match is lost.
     fn left_now(&self, seq: u64) -> bool {
         self.left.iter().any(|l| l.seq == seq)
     }
