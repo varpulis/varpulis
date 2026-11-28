@@ -5,8 +5,8 @@
 //! auto-wired into the engine — instantiate [`WorkerPool`] and submit events to
 //! it directly.
 //!
-//! Unlike Apama's opaque spawn/contexts, Varpulis provides explicit control over
-//! parallel workers with monitoring, backpressure, and dynamic resizing.
+//! It gives explicit control over parallel workers with monitoring,
+//! backpressure, and dynamic resizing.
 //!
 //! # Example
 //! ```text

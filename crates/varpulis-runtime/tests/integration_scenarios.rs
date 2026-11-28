@@ -1121,12 +1121,12 @@ async fn test_building_metrics_comprehensive() {
 }
 
 // ============================================================================
-// APAMA-STYLE PATTERN MATCHING TESTS
+// EVENT PATTERN OPERATOR TESTS (->, and, or, not)
 // ============================================================================
 
 #[tokio::test]
-async fn test_apama_followed_by_pattern() {
-    // Apama-style: NewsItem -> StockTick (news followed by stock tick)
+async fn test_pattern_followed_by_pattern() {
+    // NewsItem -> StockTick (news followed by stock tick)
     let program = r#"
         stream NewsStockCorrelation = NewsItem
             .pattern(news_stock: NewsItem -> StockTick)
@@ -1148,7 +1148,7 @@ async fn test_apama_followed_by_pattern() {
 }
 
 #[tokio::test]
-async fn test_apama_and_pattern() {
+async fn test_pattern_and_pattern() {
     // A and B (both required, any order)
     let program = r#"
         stream BothRequired = EventA
@@ -1170,7 +1170,7 @@ async fn test_apama_and_pattern() {
 }
 
 #[tokio::test]
-async fn test_apama_or_pattern() {
+async fn test_pattern_or_pattern() {
     // A or B (either one)
     let program = r#"
         stream EitherOne = EventA
@@ -1191,7 +1191,7 @@ async fn test_apama_or_pattern() {
 }
 
 #[tokio::test]
-async fn test_apama_complex_pattern() {
+async fn test_pattern_complex_pattern() {
     // (A -> B) and not C
     let program = r#"
         stream ComplexPattern = EventA
@@ -1213,7 +1213,7 @@ async fn test_apama_complex_pattern() {
 }
 
 #[tokio::test]
-async fn test_apama_chained_followed_by() {
+async fn test_pattern_chained_followed_by() {
     // A -> B -> C -> D
     let program = r#"
         stream ChainPattern = EventA

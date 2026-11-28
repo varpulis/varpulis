@@ -89,9 +89,9 @@ There is no `run`: a program runs on a bus as a Vejas detect unit.
 Same machine, same events, the same detection program on the bus: the engine
 inside a Vejas detect unit runs at 18 600 events/s at 16 publishers against
 a per-event flow at 16 200 (`bench/README.md` in Vejas). In isolation the
-engine's share is under 10 µs an event. Head-to-head numbers against Apama,
-Arroyo, Flink and Proton are in [docs/spec/benchmarks.md](docs/spec/benchmarks.md)
-and [docs/comparisons/](docs/comparisons/).
+engine's share is under 10 µs an event. Measured engine figures are in
+[docs/spec/benchmarks.md](docs/spec/benchmarks.md); head-to-head numbers
+against Arroyo, Flink and Proton are in [docs/comparisons/](docs/comparisons/).
 
 ## Build & test
 

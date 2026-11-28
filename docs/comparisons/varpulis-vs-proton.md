@@ -410,7 +410,7 @@ If you want to reproduce these numbers, the benchmark scripts are at [`benchmark
 ### Published vendor numbers (for context)
 
 - **Timeplus Proton**: claims "up to 90M events/sec" on a single MacBook Pro M2 Max in their README. No event size, schema, or query complexity disclosed — this is a single-node microbenchmark, not a sustained-load test.
-- **Varpulis**: 1.5M events/sec for SASE+ pattern matching on a single core, 410K events/sec for a full filter+aggregate+emit pipeline, 950K events/sec for 50 concurrent Hamlet-shared patterns, 51 ns per PST single-symbol forecast prediction. Measured on a Ryzen 9 7950X with full methodology in [docs/PERFORMANCE_ANALYSIS.md](../PERFORMANCE_ANALYSIS.md).
+- **Varpulis**: 1.5M events/sec for SASE+ pattern matching on a single core, 410K events/sec for a full filter+aggregate+emit pipeline, 950K events/sec for 50 concurrent Hamlet-shared patterns, 51 ns per PST single-symbol forecast prediction. Measured on a Ryzen 9 7950X.
 
 For workloads only one engine can express — sequence detection, Kleene closure, forecasting — comparing throughput is meaningless because the JavaScript-UDAF version is in a different operational class than a native NFA.
 

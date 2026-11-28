@@ -8,51 +8,6 @@ A common pattern in transaction monitoring: detect a transaction that opens, goe
 
 Simple enough, right?
 
-## Apama (MonitorScript)
-
-The classic approach uses nested `on` listeners in a monitor:
-
-```
-monitor TransactionMonitor {
-    action onload() {
-        on all TransactionOpen() as open {
-            sequence<ProcessingStep> steps := new sequence<ProcessingStep>;
-
-            on all ProcessingStep(tx_id=open.tx_id) as step
-                and not TransactionClose(tx_id=open.tx_id) {
-                steps.append(step);
-            }
-
-            on TransactionClose(tx_id=open.tx_id) as close {
-                float totalDuration := 0.0;
-                integer maxErrors := 0;
-                float totalThroughput := 0.0;
-
-                ProcessingStep s;
-                for s in steps {
-                    totalDuration := totalDuration + s.duration;
-                    if s.error_count > maxErrors {
-                        maxErrors := s.error_count;
-                    }
-                    totalThroughput := totalThroughput + s.throughput;
-                }
-
-                float avgDuration := totalDuration / steps.size().toFloat();
-
-                emit TransactionSummary(
-                    open.tx_id, avgDuration, maxErrors,
-                    totalThroughput, steps.size()
-                );
-            }
-        }
-    }
-}
-```
-
-Three nested `on` blocks. Manual accumulation. Manual aggregation. And if you forget the `and not` guard on the middle listener, you get duplicate matches.
-
-Apama does have a more declarative paradigm — stream queries with `from` clauses support windowed aggregation, joins, and partitioning. But stream queries operate on individual streams with retention windows. They have no sequence operator and no Kleene closure. You simply cannot express "A then B+ then C" in a `from` query. For sequential patterns with accumulation, the nested `on` listener approach above is what you're stuck with.
-
 ## Esper (EPL)
 
 ```sql
@@ -166,7 +121,7 @@ Two lines of pattern plus a window constraint, and you get an alert the instant 
 
 There's a deeper issue with Kleene closures that syntax alone doesn't solve. When you match `A → B+ → C` and 10 events match `B`, there are 2^10 - 1 = 1,023 possible trend combinations. With 20 events, that's over a million. With 30, over a billion.
 
-This isn't a theoretical concern — it's an operational one, though it manifests differently in each engine. Esper's `until` operator collects matched events into an in-memory array. The array itself is O(n), but for long-running patterns with hundreds of intermediate steps, the accumulation keeps growing until the terminator arrives or the window expires — and there's no backpressure mechanism to limit it. Flink CEP buffers matched events in its `SharedBuffer` keyed state backend. The buffer stores individual events with versioned links for concurrent partial matches. Under high cardinality — many concurrent transactions with many steps each — state size grows with every new partial match, leading to checkpoint failures, back-pressure cascades, and ultimately OOM kills. Apama's approach of manually collecting events into a `sequence<>` has the same linear accumulation problem, and since the correlator processes events single-threaded within each context partition, one runaway pattern can starve other monitors.
+This isn't a theoretical concern — it's an operational one, though it manifests differently in each engine. Esper's `until` operator collects matched events into an in-memory array. The array itself is O(n), but for long-running patterns with hundreds of intermediate steps, the accumulation keeps growing until the terminator arrives or the window expires — and there's no backpressure mechanism to limit it. Flink CEP buffers matched events in its `SharedBuffer` keyed state backend. The buffer stores individual events with versioned links for concurrent partial matches. Under high cardinality — many concurrent transactions with many steps each — state size grows with every new partial match, leading to checkpoint failures, back-pressure cascades, and ultimately OOM kills.
 
 The exponential blowup hits when you need *aggregates* over Kleene matches. If you want "average duration across all possible subsequences of B events," you're asking about 2^n combinations. Most engines don't even attempt this — they either aggregate over the flat event list (ignoring subsequence semantics) or force you to enumerate matches yourself. Most production deployments work around it by keeping Kleene windows short, limiting the number of intermediate events, or simply avoiding Kleene closures altogether. That's not a solution — that's giving up on the expressiveness that CEP was supposed to provide.
 
@@ -210,7 +165,7 @@ The PST learns transition patterns incrementally — no pre-training, no batch s
 
 CEP is not a new problem. SASE was published in 2006. Kleene closures over event streams have been well-understood for almost two decades. Yet most production engines still force developers to express these patterns through nested callbacks, manual state management, or verbose APIs that obscure the intent.
 
-Worse, most engines split event processing into two disconnected worlds: stream queries for windowed aggregation, and pattern listeners for sequence detection. In Apama, you can't use a Kleene closure in a `from` query. In Flink, stream processing and CEP are separate APIs. This means developers end up stitching two paradigms together for problems that are fundamentally one thing.
+Worse, most engines split event processing into two disconnected worlds: stream queries for windowed aggregation, and pattern listeners for sequence detection. In Flink, stream processing and CEP are separate APIs. This means developers end up stitching two paradigms together for problems that are fundamentally one thing.
 
 Varpulis doesn't make that distinction. Sequential patterns, Kleene closures, trend aggregations, joins (`join`, `left_join`, `right_join`, `full_join`, `merge`) — it's all the same `stream` construct. The pattern is the query. The engine picks the execution strategy.
 

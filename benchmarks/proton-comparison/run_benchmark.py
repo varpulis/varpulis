@@ -12,8 +12,8 @@ Methodology:
 
 Engines:
   - Varpulis: `varpulis simulate -p file.vpl -e file.jsonl --quiet --workers 1`
-    (runs the engine in pure-CPU mode with no network, similar to apama-comparison
-    "CLI/ramdisk" methodology — measures pure engine throughput)
+    (runs the engine in pure-CPU mode with no network, the "CLI/ramdisk"
+    methodology — measures pure engine throughput)
   - Proton: `INSERT INTO stream FORMAT JSONEachRow < file` then poll the
     materialized view's table() until all events are visible. Timing covers
     the entire INSERT + materialized view propagation.

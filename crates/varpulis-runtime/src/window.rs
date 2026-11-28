@@ -1353,7 +1353,7 @@ impl PartitionedSlidingWindow {
 
 /// A delay buffer that outputs items as they are pushed out by newer items.
 ///
-/// This is equivalent to Apama's `rstream` operator:
+/// This is equivalent to an `rstream` operator over a one-item window:
 /// - `retain 1 select rstream a` delays output by 1 item
 /// - When a new item arrives, the oldest item is output
 ///
@@ -1454,13 +1454,9 @@ impl<T: Clone> DelayBuffer<T> {
 
 /// A specialized delay buffer for comparing current vs previous values.
 ///
-/// This is optimized for the common pattern:
+/// This is optimized for the common pattern "alert when the average moves by
+/// more than a threshold since the last one":
 /// ```text
-/// // Apama:
-/// // from a in averages from p in (from a in averages retain 1 select rstream a)
-/// // where a > p + threshold
-///
-/// // Varpulis:
 /// let mut tracker = PreviousValueTracker::new();
 /// tracker.update(current_avg);
 /// if let Some(prev) = tracker.previous() {
@@ -2835,7 +2831,7 @@ mod tests {
 
     #[test]
     fn test_partitioned_previous_tracker_avg_change_detection() {
-        // Simulate Apama streams example:
+        // Streams example:
         // Alert when average price changes by more than THRESHOLD
         let mut tracker: PartitionedPreviousValueTracker<f64> =
             PartitionedPreviousValueTracker::new();

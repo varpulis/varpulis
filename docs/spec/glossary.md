@@ -32,7 +32,7 @@ Queue for messages that could not be processed.
 ## E
 
 ### EPL (Event Processing Language)
-Event processing language, generic term (used notably by Apama/Cumulocity).
+Event processing language, generic term used by several CEP engines.
 
 ### Event
 Immutable record representing a timestamped fact.

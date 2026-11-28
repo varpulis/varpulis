@@ -2,8 +2,8 @@
 #
 # Two transport modes for fair benchmarking:
 #   1. FILE mode (primary): JSONL file → engine → output. Bypasses network entirely
-#      and measures pure engine throughput. This is the apama-comparison "CLI/ramdisk"
-#      methodology — where engines hit their real ceilings.
+#      and measures pure engine throughput, the "CLI/ramdisk" methodology —
+#      where engines hit their real ceilings.
 #   2. REDPANDA (Kafka-compatible): single-binary, much higher throughput than MQTT.
 #      Shared with the Varpulis side of the benchmark for the "realistic operational"
 #      number.
