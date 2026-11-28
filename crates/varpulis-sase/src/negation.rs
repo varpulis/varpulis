@@ -22,6 +22,11 @@ pub struct NegationConstraint {
     pub event_time_deadline: Option<DateTime<Utc>>,
     /// NFA state to transition to once negation is confirmed
     pub next_state: usize,
+    /// The negated step has another step after it (`A -> NOT B -> C`): the
+    /// constraint holds until the run takes that step, and no deadline
+    /// confirms it. A trailing negated step (`A -> NOT B`) is the opposite:
+    /// its deadline passing is what completes the match.
+    pub until_next: bool,
 }
 
 impl NegationConstraint {

@@ -395,7 +395,28 @@ comes out with that 11:30 event, nothing comes out for o2, and nothing for the
 stream that goes silent, a host with an idle grace raises the alert without
 waiting for an event; see [Absence](../language/operators.md#absence-not-b).
 
+**Between two steps.** `A -> NOT B -> C` reads "A, then C, with no B in
+between": a B matching the step's `where` that arrives after A and before
+the run takes C invalidates the run, and C completes it at once. The
+`within` bounds the whole run, as for any sequence.
+
+```vpl
+# Shipped before it was paid
+pattern ShippedUnpaid =
+    Order as o
+    -> NOT Payment where order_id == o.order_id
+    -> Shipment where order_id == o.order_id as s
+    within 1d
+```
+
+Two absences in a row forbid both until the next step. After a closure
+(`A -> all X -> NOT B -> C`) the absence is watched from the closure's
+first event; before an `or` or an `and` it ends with the first event of
+the alternative or operand the run takes. A pattern that starts with
+`NOT B`, and `all NOT B`, are refused (E038).
+
 **Implementation:** See `NegationInfo` in `crates/varpulis-sase/src/and_op.rs`
+and `follow_past_negation` in `crates/varpulis-sase/src/advance.rs`
 
 ### Both, in any order (`and`)
 
@@ -855,6 +876,8 @@ pattern PerCategory =
 - Event type mismatch in NOT clause
 - Timeout too short (event arrives just after)
 - Negated event arriving before pattern start
+- A step after the `NOT` whose event never comes: `A -> NOT B -> C` needs
+  the C, within the `within`
 
 **Debug:**
 ```vpl

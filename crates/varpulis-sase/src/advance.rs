@@ -2,9 +2,10 @@
 
 use std::sync::Arc;
 
-use super::and_op::{AndConfig, AndOption, AndState};
+use super::and_op::{AndConfig, AndOption, AndState, NegationInfo};
 use super::enumeration::enumerate_with_filter;
 use super::kleene::{KleeneCapture, KleeneLimits};
+use super::negation::NegationConstraint;
 use super::nfa::{Nfa, State, StateType};
 use super::predicate::{eval_predicate, event_matches_state, predicate_references_alias};
 use super::types::{Predicate, StackEntry};
@@ -81,33 +82,83 @@ pub(crate) enum RunAdvanceResult {
 /// Returns true when a negation was entered.
 pub(crate) fn enter_negation_if_next(nfa: &Nfa, run: &mut Run) -> bool {
     watch_absence_after_closure(nfa, run);
-    let transitions = nfa.states[run.current_state].transitions.clone();
-    for next_id in transitions {
-        let next_state = &nfa.states[next_id];
-        if next_state.state_type != StateType::Negation {
-            continue;
-        }
-        let Some(ref neg_info) = next_state.negation_info else {
+    let transitions = &nfa.states[run.current_state].transitions;
+    let Some(&next_id) = transitions
+        .iter()
+        .find(|&&t| nfa.states[t].negation_info.is_some())
+    else {
+        return false;
+    };
+    watch_negations(nfa, run, next_id);
+    run.current_state = next_id;
+    true
+}
+
+/// Whether the negated step `info` belongs to has another step after it
+/// (`A -> NOT B -> C`), rather than ending the pattern (`A -> NOT B`).
+pub(crate) fn negation_in_middle(nfa: &Nfa, info: &NegationInfo) -> bool {
+    nfa.states[info.continue_state].state_type != StateType::Accept
+}
+
+/// The constraint a run watches for the negated step `info`.
+///
+/// A negated step in the middle of the pattern holds until the run takes
+/// the step after it, and has no deadline of its own: the run's `within`
+/// still ends the run, but nothing completes at it. A trailing negated step
+/// is completed by the run's deadline.
+fn constraint_for(nfa: &Nfa, info: &NegationInfo, run: &Run) -> NegationConstraint {
+    let until_next = negation_in_middle(nfa, info);
+    NegationConstraint {
+        forbidden_type: info.forbidden_type.clone(),
+        predicate: info.predicate.clone(),
+        deadline: if until_next { None } else { run.deadline },
+        event_time_deadline: if until_next {
+            None
+        } else {
+            run.event_time_deadline
+        },
+        next_state: info.continue_state,
+        until_next,
+    }
+}
+
+/// Attach the constraint of the negated step `neg_id`, and of every negated
+/// step right after it (`A -> NOT B -> NOT C -> D` forbids both B and C
+/// until D), unless the run already watches it.
+pub(crate) fn watch_negations(nfa: &Nfa, run: &mut Run, neg_id: usize) {
+    let mut todo = vec![neg_id];
+    while let Some(id) = todo.pop() {
+        let Some(info) = nfa.states[id].negation_info.as_ref() else {
             continue;
         };
-        run.pending_negations
-            .push(super::negation::NegationConstraint {
-                forbidden_type: neg_info.forbidden_type.clone(),
-                predicate: neg_info.predicate.clone(),
-                deadline: run.deadline,
-                event_time_deadline: run.event_time_deadline,
-                next_state: neg_info.continue_state,
-            });
-        run.current_state = next_id;
-        return true;
+        if run
+            .pending_negations
+            .iter()
+            .any(|n| n.next_state == info.continue_state)
+        {
+            continue;
+        }
+        let constraint = constraint_for(nfa, info, run);
+        let until_next = constraint.until_next;
+        run.pending_negations.push(constraint);
+        if until_next {
+            todo.extend(
+                nfa.states[info.continue_state]
+                    .transitions
+                    .iter()
+                    .copied()
+                    .filter(|&t| nfa.states[t].negation_info.is_some()),
+            );
+        }
     }
-    false
 }
 
 /// `A -> all B -> NOT C`: the absence of C is watched from the closure's
 /// first event on, while the run stays in the closure to take more B. The
 /// run is not moved to the negated step, which would end the closure; the
 /// constraint alone forbids C, and its deadline completes the match.
+/// `A -> all B -> NOT C -> D` watches C the same way, until D ends the
+/// closure.
 ///
 /// A negated step after a closure used to be reached only through the
 /// closure's epsilon exit, by the first event that was not a B. That moved
@@ -120,24 +171,9 @@ pub(crate) fn watch_absence_after_closure(nfa: &Nfa, run: &mut Run) {
     }
     for &eps_id in &state.epsilon_transitions {
         for &next_id in &nfa.states[eps_id].transitions {
-            let Some(neg_info) = nfa.states[next_id].negation_info.as_ref() else {
-                continue;
-            };
-            if run
-                .pending_negations
-                .iter()
-                .any(|n| n.next_state == neg_info.continue_state)
-            {
-                continue;
+            if nfa.states[next_id].negation_info.is_some() {
+                watch_negations(nfa, run, next_id);
             }
-            run.pending_negations
-                .push(super::negation::NegationConstraint {
-                    forbidden_type: neg_info.forbidden_type.clone(),
-                    predicate: neg_info.predicate.clone(),
-                    deadline: run.deadline,
-                    event_time_deadline: run.event_time_deadline,
-                    next_state: neg_info.continue_state,
-                });
         }
     }
 }
@@ -414,22 +450,34 @@ fn advance_inner(
         };
     }
 
-    // NEG-01: Handle Negation states - check if event matches forbidden pattern
+    // NEG-01: a run at a negated step. A forbidden event has invalidated it
+    // above. At a trailing step the run waits for its deadline; at a step in
+    // the middle of the pattern it is open to the steps after it, and the
+    // first one it takes ends the absence.
     if current_state.state_type == StateType::Negation {
-        if let Some(ref neg_info) = current_state.negation_info {
-            // Check if this event violates the negation
-            if *event.event_type == neg_info.forbidden_type {
-                let pred_matches = neg_info
-                    .predicate
-                    .as_ref()
-                    .is_none_or(|p| eval_predicate(p, &event, &run.captured, evaluator));
-                if pred_matches {
-                    return RunAdvanceResult::Invalidate;
-                }
-            }
+        let in_middle = current_state
+            .negation_info
+            .as_ref()
+            .is_some_and(|info| negation_in_middle(nfa, info));
+        if !in_middle {
+            return RunAdvanceResult::NoMatch;
         }
-        // Event doesn't violate negation, stay in this state waiting for confirmation
-        return RunAdvanceResult::NoMatch;
+        let ctx = Step {
+            nfa,
+            event: &event,
+            limits,
+            now,
+            evaluator,
+            mode,
+        };
+        return match follow_past_negation(&ctx, run, run.current_state, effects) {
+            Followed::Moved(result) => result,
+            Followed::Forked => forked_result(strategy),
+            Followed::Nothing => match strategy {
+                SelectionStrategy::StrictContiguous => RunAdvanceResult::Invalidate,
+                _ => RunAdvanceResult::NoMatch,
+            },
+        };
     }
 
     // Check if we're at an accept state
@@ -671,7 +719,10 @@ fn follow(
         // event moves the run.
         for &next_id in &nfa.states[split].transitions {
             if via_epsilon && nfa.states[next_id].state_type == StateType::Negation {
-                continue;
+                match past_negation_reached_by_epsilon(ctx, run, next_id, effects) {
+                    Followed::Nothing => continue,
+                    other => return other,
+                }
             }
             if other_type(&nfa.states[next_id], ctx.event) {
                 continue;
@@ -687,7 +738,14 @@ fn follow(
         // A negated step after a closure is watched from the closure on
         // (see `watch_absence_after_closure`), not entered.
         if via_epsilon && nfa.states[next_id].state_type == StateType::Negation {
-            continue;
+            match past_negation_reached_by_epsilon(ctx, run, next_id, effects) {
+                Followed::Nothing => continue,
+                Followed::Forked => {
+                    forked = true;
+                    continue;
+                }
+                moved => return moved,
+            }
         }
         if other_type(&nfa.states[next_id], ctx.event) {
             continue;
@@ -747,6 +805,49 @@ fn follow(
     } else {
         Followed::Nothing
     }
+}
+
+/// A negated step that a run reaches without entering it: past a closure
+/// (`A -> all B -> NOT C -> D`), or right after another negated step
+/// (`A -> NOT B -> NOT C -> D`). Its constraint is already watched; a step
+/// in the middle of the pattern is crossed to the steps after it, a
+/// trailing one waits for the deadline.
+fn past_negation_reached_by_epsilon(
+    ctx: &Step<'_>,
+    run: &mut Run,
+    neg_id: usize,
+    effects: &mut OrEffects,
+) -> Followed {
+    let in_middle = ctx.nfa.states[neg_id]
+        .negation_info
+        .as_ref()
+        .is_some_and(|info| negation_in_middle(ctx.nfa, info));
+    if !in_middle {
+        return Followed::Nothing;
+    }
+    follow_past_negation(ctx, run, neg_id, effects)
+}
+
+/// Offer the event to the steps after the negated step `neg_id`, which is
+/// in the middle of the pattern. The step that takes it ends every absence
+/// the run was watching until its next step: the run, or the copy an `or`
+/// forked, moves on without them. A run the event does not move keeps them.
+fn follow_past_negation(
+    ctx: &Step<'_>,
+    run: &mut Run,
+    neg_id: usize,
+    effects: &mut OrEffects,
+) -> Followed {
+    let Some(info) = ctx.nfa.states[neg_id].negation_info.as_ref() else {
+        return Followed::Nothing;
+    };
+    let watched = run.pending_negations.clone();
+    run.pending_negations.retain(|n| !n.until_next);
+    let followed = follow(ctx, run, info.continue_state, true, effects);
+    if !matches!(followed, Followed::Moved(_)) {
+        run.pending_negations = watched;
+    }
+    followed
 }
 
 /// Whether `event` cannot move, end or complete `run`, which advancing it
@@ -826,21 +927,12 @@ fn enter(ctx: &Step<'_>, run: &mut Run, next_id: usize) -> Option<RunAdvanceResu
     } = *ctx;
     let next_state = &nfa.states[next_id];
 
-    // NEG-01: If transitioning to a Negation state, set up the pending negation
-    if next_state.state_type == StateType::Negation {
-        if let Some(ref neg_info) = next_state.negation_info {
-            // Add pending negation constraint - deadline will be set based on WITHIN
-            let negation_constraint = super::negation::NegationConstraint {
-                forbidden_type: neg_info.forbidden_type.clone(),
-                predicate: neg_info.predicate.clone(),
-                deadline: run.deadline, // Use the run's deadline
-                event_time_deadline: run.event_time_deadline,
-                next_state: neg_info.continue_state,
-            };
-            run.pending_negations.push(negation_constraint);
-            run.current_state = next_id;
-            return Some(RunAdvanceResult::Continue);
-        }
+    // NEG-01: a negated step reached by a transition rather than on arrival:
+    // watch its absence.
+    if next_state.negation_info.is_some() {
+        watch_negations(nfa, run, next_id);
+        run.current_state = next_id;
+        return Some(RunAdvanceResult::Continue);
     }
 
     // AND-01: an AND state is entered by an event one of its branches

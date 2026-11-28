@@ -219,6 +219,31 @@ one the pattern never reads because a stream in between filtered it out.
 - A program restored from its snapshot keeps the absences it was waiting
   out: its acknowledgement still cancels one, its deadline still raises it.
 
+#### Between two steps: `A -> NOT B -> C`
+
+A negated step with a step after it reads "A, then C, with no B in
+between". A B that matches its `where` and arrives after A and before the
+run takes C invalidates the run; C completes it at once, without waiting
+for the `within`, which still bounds the whole run.
+
+```varpulis
+pattern ShippedUnpaid =
+    Order as o
+    -> NOT Payment where id == o.id
+    -> Shipment where id == o.id as s
+    within 1d
+```
+
+- Two in a row, `A -> NOT B -> NOT D -> C`, forbid both until C.
+- After a closure, `A -> all X -> NOT B -> C`, B is forbidden from the
+  closure's first event on.
+- Before an `or` or an `and`, the absence ends with the first event of the
+  alternative or operand the run takes.
+- Events are judged in the order they arrive, as for every step: a late B
+  that arrives between A and C cancels the run whatever its stamp.
+- A pattern cannot start with `NOT B`, which has no step to be judged from,
+  and `all NOT B` repeats nothing (E038).
+
 ### Both and either: `and`, `or`
 
 In a `pattern` declaration, `and` and `or` combine steps. `A and B` matches

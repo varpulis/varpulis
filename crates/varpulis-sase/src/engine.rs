@@ -809,7 +809,9 @@ impl SaseEngine {
     /// entering the negated step attached to it, so a restored run had none:
     /// the forbidden event no longer cancelled it, and at its deadline it was
     /// dropped instead of completing. The constraint is the step's, with the
-    /// run's deadline, as entering the step built it.
+    /// run's deadline, as entering the step built it; a step in the middle of
+    /// the pattern also forbids the negated steps right after it, and has no
+    /// deadline.
     fn restore_pending_negations(&mut self) {
         let nfa = &self.nfa;
         for run in self.runs.iter_mut().chain(
@@ -825,22 +827,13 @@ impl SaseEngine {
             if !run.pending_negations.is_empty() {
                 continue;
             }
-            let Some(neg_info) = nfa
+            if nfa
                 .states
                 .get(run.current_state)
-                .filter(|state| state.state_type == StateType::Negation)
-                .and_then(|state| state.negation_info.as_ref())
-            else {
-                continue;
-            };
-            run.pending_negations
-                .push(super::negation::NegationConstraint {
-                    forbidden_type: neg_info.forbidden_type.clone(),
-                    predicate: neg_info.predicate.clone(),
-                    deadline: run.deadline,
-                    event_time_deadline: run.event_time_deadline,
-                    next_state: neg_info.continue_state,
-                });
+                .is_some_and(|state| state.state_type == StateType::Negation)
+            {
+                super::advance::watch_negations(nfa, run, run.current_state);
+            }
         }
     }
 

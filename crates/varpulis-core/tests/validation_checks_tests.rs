@@ -1540,6 +1540,40 @@ fn e035_not_inside_and_or() {
 }
 
 #[test]
+fn e038_a_pattern_that_starts_with_an_absence() {
+    for pattern in [
+        "pattern P = NOT A -> B within 5m",
+        "pattern P = NOT A within 5m",
+        "pattern P = NOT A -> (B or C) within 5m",
+    ] {
+        let diags = validate_pattern(pattern);
+        assert!(has_error(&diags, "E038"), "{pattern}: {diags:?}");
+    }
+}
+
+#[test]
+fn e038_a_repeated_absence() {
+    let diags = validate_pattern("pattern P = A -> all NOT B -> C within 5m");
+    assert!(has_error(&diags, "E038"), "{diags:?}");
+}
+
+#[test]
+fn absences_after_a_step_check_clean() {
+    for pattern in [
+        "pattern P = A as a -> NOT B where id == a.id within 5m",
+        "pattern P = A as a -> NOT B where id == a.id -> C within 5m",
+        "pattern P = A as a -> NOT B -> NOT C -> D within 5m",
+        "pattern P = all A as xs -> NOT B -> C within 5m",
+        "pattern P = (A and B) -> NOT C -> D within 5m",
+        "pattern P = A -> NOT B -> (C or D) within 5m",
+    ] {
+        let diags = validate_pattern(pattern);
+        assert!(!has_code(&diags, "E038"), "{pattern}: {diags:?}");
+        assert!(!has_code(&diags, "E035"), "{pattern}: {diags:?}");
+    }
+}
+
+#[test]
 fn e035_closure_or_sequence_inside_and() {
     let diags = validate_pattern("pattern P = all A as xs and B");
     assert!(has_error(&diags, "E035"), "{diags:?}");

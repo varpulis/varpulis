@@ -1776,6 +1776,7 @@ fn extract_ident(expr: &Expr) -> Option<String> {
 
 fn check_sase_pattern_refs(v: &mut Validator, expr: &SasePatternExpr, span: Span) {
     check_pattern_combinators(v, expr, span, false);
+    check_negated_steps(v, expr, span);
     check_where_joins_event(v, expr, span);
     for item in expr.items() {
         // Strip the "!" prefix used by negated arrow items (NOT EventType)
@@ -1807,6 +1808,51 @@ fn check_sase_pattern_refs(v: &mut Validator, expr: &SasePatternExpr, span: Span
                     .to_string(),
             );
         }
+    }
+}
+
+/// Where a negated step can stand (E038). `-> NOT B` is judged from the step
+/// before it: up to the next step when there is one (`A -> NOT B -> C`), to
+/// the pattern's `within` when it ends the pattern (`A -> NOT B`). A pattern
+/// that starts with `NOT B` has no step to judge it from, and `all NOT B`
+/// repeats nothing; the engine ran both as something else.
+fn check_negated_steps(v: &mut Validator, expr: &SasePatternExpr, span: Span) {
+    if let Some(name) = first_step(expr).and_then(|item| item.event_type.strip_prefix('!')) {
+        v.emit_with_hint(
+            Severity::Error,
+            span,
+            "E038",
+            format!("the pattern starts with `NOT {name}`"),
+            format!(
+                "an absence is judged from the step before it: start with the event it \
+                 follows (`X -> NOT {name}`, `X -> NOT {name} -> Y`)"
+            ),
+        );
+    }
+    for item in expr.items() {
+        if let (Some(name), Some(_)) = (item.event_type.strip_prefix('!'), &item.kleene) {
+            v.emit_with_hint(
+                Severity::Error,
+                span,
+                "E038",
+                format!("`all NOT {name}`"),
+                format!(
+                    "an absence is not repeated: write `-> NOT {name}`, which forbids every \
+                     `{name}` until the next step, or until the `within` when it ends the \
+                     pattern"
+                ),
+            );
+        }
+    }
+}
+
+/// The step a pattern starts with, when it is a single item.
+fn first_step(expr: &SasePatternExpr) -> Option<&crate::ast::SasePatternItem> {
+    match expr {
+        SasePatternExpr::Seq(items) => items.first(),
+        SasePatternExpr::FollowedBy(parts) => parts.first().and_then(first_step),
+        // Inside `and` / `or` a `NOT` is E035.
+        SasePatternExpr::And(_) | SasePatternExpr::Or(_) => None,
     }
 }
 
