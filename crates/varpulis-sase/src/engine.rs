@@ -7,7 +7,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use rustc_hash::FxHashMap;
 
-use super::advance::{advance_run_shared, OrEffects, OrLeft, RunAdvanceResult};
+use super::advance::{advance_run_shared, passes_over, OrEffects, OrLeft, RunAdvanceResult};
 use super::backpressure::{
     BackpressureStrategy, ProcessResult, ProcessStats, ProcessWarning, SaseExtendedStats,
 };
@@ -1520,7 +1520,9 @@ impl SaseEngine {
                 // later-arriving, earlier-stamped event may still complete this
                 // run. Culling stays with the watermark, which is the only
                 // thing that can promise no such event is coming.
-                if runs[i].event_time_excludes(event.timestamp) {
+                if runs[i].event_time_excludes(event.timestamp)
+                    || passes_over(&self.nfa, self.strategy, &runs[i], &event)
+                {
                     i += 1;
                     continue;
                 }
@@ -1722,7 +1724,9 @@ impl SaseEngine {
             // later-arriving, earlier-stamped event may still complete this
             // run. Culling stays with the watermark, which is the only
             // thing that can promise no such event is coming.
-            if self.runs[i].event_time_excludes(event.timestamp) {
+            if self.runs[i].event_time_excludes(event.timestamp)
+                || passes_over(&self.nfa, self.strategy, &self.runs[i], &event)
+            {
                 i += 1;
                 continue;
             }
@@ -1771,7 +1775,9 @@ impl SaseEngine {
             if run.is_timed_out() || run.invalidated {
                 continue;
             }
-            if run.event_time_excludes(event.timestamp) {
+            if run.event_time_excludes(event.timestamp)
+                || passes_over(&self.nfa, self.strategy, &run, &event)
+            {
                 self.file_run(run);
                 continue;
             }
