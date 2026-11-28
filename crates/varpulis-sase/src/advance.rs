@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::and_op::{AndConfig, AndOption, AndState};
 use super::enumeration::enumerate_with_filter;
 use super::kleene::{KleeneCapture, KleeneLimits};
-use super::nfa::{Nfa, StateType};
+use super::nfa::{Nfa, State, StateType};
 use super::predicate::{eval_predicate, event_matches_state, predicate_references_alias};
 use super::types::{Predicate, StackEntry};
 
@@ -657,6 +657,7 @@ fn plan(nfa: &Nfa, run: &Run, split: usize, next: usize) -> Plan {
 
 /// Offer the event to the transitions of `split` (the run's state, or a
 /// state its closure reaches by an epsilon transition).
+#[inline]
 fn follow(
     ctx: &Step<'_>,
     run: &mut Run,
@@ -665,11 +666,30 @@ fn follow(
     effects: &mut OrEffects,
 ) -> Followed {
     let nfa = ctx.nfa;
+    if nfa.or_groups.is_empty() {
+        // No `or`: nothing to plan, the first transition that takes the
+        // event moves the run.
+        for &next_id in &nfa.states[split].transitions {
+            if via_epsilon && nfa.states[next_id].state_type == StateType::Negation {
+                continue;
+            }
+            if other_type(&nfa.states[next_id], ctx.event) {
+                continue;
+            }
+            if let Some(result) = enter(ctx, run, next_id) {
+                return Followed::Moved(result);
+            }
+        }
+        return Followed::Nothing;
+    }
     let mut forked = false;
     for &next_id in &nfa.states[split].transitions {
         // A negated step after a closure is watched from the closure on
         // (see `watch_absence_after_closure`), not entered.
         if via_epsilon && nfa.states[next_id].state_type == StateType::Negation {
+            continue;
+        }
+        if other_type(&nfa.states[next_id], ctx.event) {
             continue;
         }
         match plan(nfa, run, split, next_id) {
@@ -729,6 +749,19 @@ fn follow(
     }
 }
 
+/// Whether `state` is a step for another event type than `event`'s, which
+/// [`enter`] would refuse: checked first, it spares the call (and, at an
+/// `or`, the copy of the run) for most of the runs an event visits. A
+/// negated step and an AND state are entered on their own terms.
+#[inline]
+fn other_type(state: &State, event: &SharedEvent) -> bool {
+    !matches!(state.state_type, StateType::Negation | StateType::And)
+        && state
+            .event_type
+            .as_ref()
+            .is_some_and(|et| *event.event_type != *et)
+}
+
 /// The position of `entry` among the first states of the alternatives of
 /// `or` `g`, in source order.
 fn entry_rank(nfa: &Nfa, g: usize, entry: usize) -> usize {
@@ -756,6 +789,7 @@ fn set_rank(nfa: &Nfa, run: &mut Run, split: usize, next: usize) {
 
 /// Move the run to `next_id` if the event takes that step; what advancing
 /// produced, or `None` when the event does not take it.
+#[inline]
 fn enter(ctx: &Step<'_>, run: &mut Run, next_id: usize) -> Option<RunAdvanceResult> {
     let Step {
         nfa,

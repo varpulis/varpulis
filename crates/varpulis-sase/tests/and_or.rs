@@ -804,6 +804,36 @@ fn a_fork_evicts_no_member_of_its_own_family() {
 }
 
 #[test]
+fn a_fork_past_the_run_cap_keeps_its_deadline_in_a_partition() {
+    // A -> ((B and C) or D) -> NOT F within 10s, one run per partition. C@5
+    // moves the window to [5, 15]; B@12 completes the `and` in the copy that
+    // replaces its parent at the cap. The absence must be confirmed once the
+    // watermark passes 15, which only a filed deadline makes the sweep visit.
+    let p = within(
+        SasePattern::Seq(vec![
+            step("A", "a"),
+            or(and(step("B", "b"), step("C", "c")), step("D", "d")),
+            SasePattern::Not(Box::new(step("F", "f"))),
+        ]),
+        10,
+    );
+    let mut e = engine(p)
+        .with_event_time()
+        .with_partition_by("key".into())
+        .with_max_runs(1);
+    let got = run(
+        &mut e,
+        &[
+            at(keyed("A", 1, 1), 10),
+            at(keyed("C", 2, 1), 5),
+            at(keyed("B", 3, 1), 12),
+            at(keyed("Z", 4, 2), 17),
+        ],
+    );
+    assert_eq!(got, ["a=1,b=3,c=2"]);
+}
+
+#[test]
 fn an_or_in_an_alternative_is_followed_too() {
     // A -> ((B -> ((C -> F) or G)) or D) -> E
     let p = || {

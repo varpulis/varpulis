@@ -45,10 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`A -> all B -> (C and D)`) moved its run into the `and` on any event that
   was not a B, which then sat on its stack. A closure followed by `NOT C`
   never completed: the absence is now watched from the closure's first
-  event. A closure followed by another closure (`A -> all B -> all C`)
-  emitted nothing; it now emits. A named pattern the
-  engine cannot compile is now a load error; it used to be dropped with a
-  log line. Constants are substituted inside `and` and `or`.
+  event. A named pattern the engine cannot compile is now a load error; it
+  used to be dropped with a log line. Constants are substituted inside `and`
+  and `or`.
+- Changed behaviour: a closure followed by another closure
+  (`A -> all B -> all C`) used to emit nothing; it now emits its match.
 
 ### Changed — an event looks up the runs it can advance instead of visiting them all
 
