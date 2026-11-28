@@ -1,7 +1,8 @@
 //! Timer module for periodic event generation
 //!
-//! This module provides functionality for spawning timer tasks that
-//! periodically generate events, similar to Apama's `on wait(period)`.
+//! This module spawns the tasks that fire a program's `timer()` sources on
+//! the wall clock: after the optional initial delay, one event per period,
+//! for as long as the engine's input channel is open.
 
 use std::time::Duration;
 

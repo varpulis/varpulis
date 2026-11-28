@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use varpulis_engine::Program;
+use varpulis_engine::{CompileOptions, Program, TimerClock};
 use varpulis_runtime::event_file::EventFileParser;
 
 #[derive(Parser)]
@@ -64,6 +64,12 @@ fn main() -> ExitCode {
     }
 }
 
+/// What the CLI compiles with: `simulate` is a replay, so its timers fire on
+/// the events' own time, and `check` gives the verdict `simulate` would.
+fn replay_options() -> CompileOptions {
+    CompileOptions::new().timer_clock(TimerClock::EventTime)
+}
+
 fn read(path: &Path) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
 }
@@ -72,7 +78,7 @@ fn run() -> Result<(), String> {
     match Cli::parse().command {
         Command::Check { file } => {
             let src = read(&file)?;
-            match Program::check_with_warnings(&src) {
+            match Program::check_with(&src, &replay_options()) {
                 Ok(warnings) => {
                     for warning in warnings {
                         eprintln!("{warning}");
@@ -100,7 +106,8 @@ fn run() -> Result<(), String> {
             workers: _,
         } => {
             let src = read(&program)?;
-            let mut program = Program::compile(&src).map_err(|e| e.to_string())?;
+            let mut program =
+                Program::compile_with(&src, &replay_options()).map_err(|e| e.to_string())?;
             let file = EventFileParser::parse_file(&events)?;
             let stdout = std::io::stdout();
             let mut out = stdout.lock();

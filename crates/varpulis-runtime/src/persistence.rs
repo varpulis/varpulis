@@ -1289,6 +1289,22 @@ pub struct EngineCheckpoint {
     /// nothing more to say.
     #[serde(default)]
     pub source_clocks: HashMap<String, i64>,
+    /// The `timer()` schedules of a program whose host fires its timers
+    /// (`varpulis-engine`'s `Program`): `None` when they have not started.
+    /// [`crate::Engine`] neither writes nor reads it.
+    #[serde(default)]
+    pub timers: Option<TimerCheckpoint>,
+}
+
+/// Where a program's `timer()` sources stand: the clock they were last
+/// advanced to and, per timer, the next instant it fires.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimerCheckpoint {
+    /// The timer clock, in nanoseconds since the epoch.
+    pub clock_ns: i64,
+    /// Next fire time per timer event type (`Timer_<stream>`), in
+    /// nanoseconds since the epoch.
+    pub next_fire_ns: HashMap<String, i64>,
 }
 
 impl EngineCheckpoint {

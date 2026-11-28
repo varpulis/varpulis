@@ -104,6 +104,7 @@ proptest! {
             limit_states: Default::default(),
             source_offsets: Default::default(),
             source_clocks: Default::default(),
+            timers: None,
         };
 
         let json = serde_json::to_string(&cp).expect("checkpoint should serialize");
@@ -131,6 +132,7 @@ proptest! {
             limit_states: Default::default(),
             source_offsets: Default::default(),
             source_clocks: Default::default(),
+            timers: None,
         };
 
         let result = cp.validate_and_migrate();
@@ -158,6 +160,7 @@ proptest! {
             limit_states: Default::default(),
             source_offsets: Default::default(),
             source_clocks: Default::default(),
+            timers: None,
         };
 
         let result = cp.validate_and_migrate();

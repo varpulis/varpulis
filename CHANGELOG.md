@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `timer()` runs in `Program`, on a clock the host names
+
+- `Program` used to refuse every `timer()` source (E102): it has no thread
+  to fire one. A host now names the clock at load:
+  `Program::compile_with(vpl, &CompileOptions::new().timer_clock(clock))`
+  (and `Program::check_with` for the same verdict). With `TimerClock::Host`,
+  `Program::next_deadline()` is when a timer is next due and
+  `Program::fire_due(now)` fires what is due at `now` and returns what that
+  emits, downstream patterns included. The first call starts the
+  schedules: `timer(p, initial_delay: d)` fires first at `now + d + p`, then
+  every `p`. With `TimerClock::EventTime`, every event fed also moves the
+  timers' clock to its time when later, and a timer due at or before an
+  event's time fires before that event, so a replay, or one batch against
+  the same events fed one by one, fires the same timers in the same places.
+  `varpulis check` and `varpulis simulate` use `EventTime`.
+- `Program::compile` without a clock still refuses a `timer()` with E102,
+  whose hint says how to name one: a timer nothing calls `fire_due` for
+  would compile and never fire. The editor shows the verdict of a host that
+  drives its timers (`check_sync_engine_support`); the WASM build, which has
+  no clock, refuses every `timer()` (`EngineSupport::WITHOUT_TIMERS`).
+- A clock that jumps over several deadlines of a timer fires it once,
+  stamped with the latest deadline reached, and counts the others in the new
+  `LossCounters::timer_periods_skipped`. The next deadline stays on the
+  schedule the first call fixed, however late the host calls, across jumps
+  of centuries too. A clock that goes back fires nothing. `fire_due` refuses
+  a time outside the years 1677 to 2262 with `Error::Time`; under event time
+  such an event does not move the clock. The fired event is
+  `Timer_<stream>`, timed at its deadline, with that deadline as a
+  `timestamp` field in epoch milliseconds. It is the engine's own: a
+  declared `.watermark()` never drops it as late, and it does not count as
+  a source of the watermark.
+- A snapshot keeps the timers' clock and each one's next deadline
+  (`EngineCheckpoint::timers`, absent from older snapshots, which restore
+  with the timers not started). `timer_periods_skipped` counts since the
+  `Program` was built, across restores, like the other losses.
+- Still refused with E102 whatever the clock: a period or `initial_delay`
+  that is not a duration literal (it used to become one second, or be
+  dropped, with a log line) and a period of zero.
+- `LossCounters`, `EngineSupport` and `CompileOptions` are
+  `#[non_exhaustive]`: build a `LossCounters` from `Default`, an
+  `EngineSupport` from its constants, `CompileOptions` from `new()`.
+
 ### Added — `and` and `or` between the steps of a pattern
 
 - `A and B` matches both events, in either order, within the pattern's

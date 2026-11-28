@@ -40,6 +40,15 @@
 //! - **`.from()` and `.to()` are declarations, not connections.** They are
 //!   reported through [`Program::sources`] and [`Program::sinks`] for the
 //!   host to honour. Nothing in this crate opens a socket.
+//! - **Timers run on the host's clock, if the host asks.** A `timer()`
+//!   source has no thread, so a program with one compiles only through
+//!   [`Program::compile_with`] and a [`CompileOptions::timer_clock`]: with
+//!   [`TimerClock::Host`], [`Program::next_deadline`] says when a timer is
+//!   next due and [`Program::fire_due`] fires what is due at the time the
+//!   host gives; with [`TimerClock::EventTime`], the events fed move the
+//!   timers' clock too. A clock that jumps several periods fires a timer
+//!   once, not once per period missed. [`Program::compile`] refuses a
+//!   `timer()` (E102), since nothing would fire it.
 //! - **State lives in the [`Program`].** Windows, sequences and aggregates are
 //!   in memory. [`Program::snapshot`] hands them to the host as bytes and
 //!   [`Program::restore`] takes them back; when to take one, where to keep
@@ -55,7 +64,12 @@
 
 #![forbid(unsafe_code)]
 
+mod timers;
+
+pub use chrono::{DateTime, Utc};
+pub use timers::TimerClock;
 pub use varpulis_core::decode::EventDecoder;
+use varpulis_core::validate::support::{check_engine_support, EngineSupport};
 pub use varpulis_core::{Event, Value};
 use varpulis_runtime::Engine;
 pub use varpulis_runtime::{EngineError, LossCounters, SinkBinding, SourceBinding};
@@ -81,6 +95,42 @@ pub enum Error {
     /// A snapshot could not be taken or put back.
     #[error("snapshot: {0}")]
     Snapshot(String),
+    /// A time the timers cannot be moved to: outside what nanoseconds since
+    /// the epoch hold in an `i64` (years 1677 to 2262).
+    #[error("time: {0}")]
+    Time(String),
+}
+
+/// How [`Program::compile_with`] loads a program.
+///
+/// ```
+/// use varpulis_engine::{CompileOptions, Program, TimerClock};
+///
+/// let options = CompileOptions::new().timer_clock(TimerClock::Host);
+/// let program = Program::compile_with("stream Beat = timer(5s)\n", &options).unwrap();
+/// assert_eq!(program.timer_clock(), Some(TimerClock::Host));
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CompileOptions {
+    /// What drives the program's `timer()` sources. `None`, the default,
+    /// refuses a program with a timer (E102): nothing would fire it.
+    pub timer_clock: Option<TimerClock>,
+}
+
+impl CompileOptions {
+    /// The defaults: no timer clock.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Let the program's `timer()` sources run, driven by `clock`. The host
+    /// then calls [`Program::fire_due`] (and, under [`TimerClock::EventTime`],
+    /// the events it feeds move the timers too).
+    pub fn timer_clock(mut self, clock: TimerClock) -> Self {
+        self.timer_clock = Some(clock);
+        self
+    }
 }
 
 /// A compiled VPL program with its running state.
@@ -102,6 +152,10 @@ pub struct Program {
     /// carried here and the engine's value at the restore is the new base.
     losses_carried: LossCounters,
     losses_base: LossCounters,
+    /// The `timer()` sources and their schedules.
+    timers: timers::Timers,
+    /// What [`CompileOptions::timer_clock`] said.
+    timer_clock: Option<TimerClock>,
 }
 
 impl std::fmt::Debug for Program {
@@ -152,11 +206,27 @@ impl Program {
     /// a file before it is deployed and get the same verdict.
     ///
     /// So is every construct the language has and this engine does not run:
-    /// `import`, `context`, `timer()`, `.enrich()` and `.alert(webhook: ...)`
-    /// are refused with codes E100 to E104 rather than loaded and skipped.
+    /// `import`, `context`, `.enrich()` and `.alert(webhook: ...)` are
+    /// refused with codes E100, E101, E103 and E104 rather than loaded and
+    /// skipped, and so is a `timer()` (E102): without a clock to drive it,
+    /// it would never fire. [`Program::compile_with`] takes one.
     pub fn compile(vpl: &str) -> Result<Self, Error> {
+        Self::compile_with(vpl, &CompileOptions::default())
+    }
+
+    /// [`Program::compile`], with `options`.
+    ///
+    /// With a [`CompileOptions::timer_clock`], a `timer()` is run (see
+    /// [`Program::fire_due`]); one whose period or initial delay is not a
+    /// duration literal, or whose period is zero, is still refused (E102).
+    pub fn compile_with(vpl: &str, options: &CompileOptions) -> Result<Self, Error> {
         let program = varpulis_parser::parse(vpl).map_err(|e| Error::Parse(e.to_string()))?;
-        let unsupported = varpulis_core::validate::support::check_sync_engine_support(&program);
+        let support = if options.timer_clock.is_some() {
+            EngineSupport::WITH_TIMERS
+        } else {
+            EngineSupport::WITHOUT_TIMER_CLOCK
+        };
+        let unsupported = check_engine_support(&program, support);
         let mut engine = Engine::new_sync();
         let loaded = engine.load(&program);
         if unsupported.has_errors() {
@@ -171,6 +241,8 @@ impl Program {
         loaded?;
         let sources = engine.source_bindings().to_vec();
         let sinks = engine.sink_bindings();
+        let timers =
+            timers::Timers::new(engine.get_timers(), options.timer_clock.unwrap_or_default());
         Ok(Self {
             engine,
             sources,
@@ -179,12 +251,28 @@ impl Program {
             decoder: EventDecoder::new(),
             losses_carried: LossCounters::default(),
             losses_base: LossCounters::default(),
+            timers,
+            timer_clock: options.timer_clock,
         })
     }
 
     /// [`Program::compile`] without keeping the result. Same verdict.
     pub fn check(vpl: &str) -> Result<(), Error> {
         Self::check_with_warnings(vpl).map(|_| ())
+    }
+
+    /// [`Program::check_with_warnings`] for a program to be compiled with
+    /// `options`: the verdict of [`Program::compile_with`].
+    pub fn check_with(vpl: &str, options: &CompileOptions) -> Result<Vec<String>, Error> {
+        let program = varpulis_parser::parse(vpl).map_err(|e| Error::Parse(e.to_string()))?;
+        let validation = varpulis_core::validate::validate(vpl, &program);
+        if validation.has_errors() {
+            return Err(Error::Invalid(
+                validation.format(vpl).trim_end().to_string(),
+            ));
+        }
+        Self::compile_with(vpl, options)?;
+        Ok(validation.format(vpl).lines().map(str::to_string).collect())
     }
 
     /// [`Program::check`], returning the validator's warnings as formatted
@@ -196,15 +284,7 @@ impl Program {
     /// [`Program::compile`] skips the validator: a host decides whether to
     /// check first.
     pub fn check_with_warnings(vpl: &str) -> Result<Vec<String>, Error> {
-        let program = varpulis_parser::parse(vpl).map_err(|e| Error::Parse(e.to_string()))?;
-        let validation = varpulis_core::validate::validate(vpl, &program);
-        if validation.has_errors() {
-            return Err(Error::Invalid(
-                validation.format(vpl).trim_end().to_string(),
-            ));
-        }
-        Self::compile(vpl)?;
-        Ok(validation.format(vpl).lines().map(str::to_string).collect())
+        Self::check_with(vpl, &CompileOptions::default())
     }
 
     /// The `.from()` bindings: what the host must subscribe to, and the event
@@ -224,8 +304,10 @@ impl Program {
     }
 
     /// What the program has let go of without an error: pattern runs not
-    /// opened because a pattern held [`Program::max_runs`] runs already, and
-    /// events a `.where()` discarded because its predicate had no value.
+    /// opened because a pattern held [`Program::max_runs`] runs already,
+    /// events a `.where()` discarded because its predicate had no value, and
+    /// timer periods skipped because the timers' clock jumped past them (see
+    /// [`Program::fire_due`]).
     /// Plain counters, cheap to read on every batch; a host publishes them,
     /// since each one is a detection that may have been missed.
     ///
@@ -235,23 +317,24 @@ impl Program {
     pub fn losses(&self) -> LossCounters {
         let now = self.engine.loss_counters();
         let since = |carried: u64, base: u64, now: u64| carried + now.saturating_sub(base);
-        LossCounters {
-            runs_dropped: since(
-                self.losses_carried.runs_dropped,
-                self.losses_base.runs_dropped,
-                now.runs_dropped,
-            ),
-            runs_evicted: since(
-                self.losses_carried.runs_evicted,
-                self.losses_base.runs_evicted,
-                now.runs_evicted,
-            ),
-            filters_without_value: since(
-                self.losses_carried.filters_without_value,
-                self.losses_base.filters_without_value,
-                now.filters_without_value,
-            ),
-        }
+        let mut losses = LossCounters::default();
+        losses.runs_dropped = since(
+            self.losses_carried.runs_dropped,
+            self.losses_base.runs_dropped,
+            now.runs_dropped,
+        );
+        losses.runs_evicted = since(
+            self.losses_carried.runs_evicted,
+            self.losses_base.runs_evicted,
+            now.runs_evicted,
+        );
+        losses.filters_without_value = since(
+            self.losses_carried.filters_without_value,
+            self.losses_base.filters_without_value,
+            now.filters_without_value,
+        );
+        losses.timer_periods_skipped = self.timers.periods_skipped;
+        losses
     }
 
     /// The cap on concurrent runs of each pattern, 10 000 by default; `None`
@@ -277,9 +360,97 @@ impl Program {
     }
 
     /// Feed events in order and return everything they caused to be emitted.
+    ///
+    /// Under [`TimerClock::EventTime`], each event moves the timers' clock to
+    /// its time when later, and a timer due at or before that time fires
+    /// just before the event, what it emits coming first. An event stamped
+    /// outside the range [`Program::fire_due`] accepts (years 1677 to 2262)
+    /// does not move the clock.
     pub fn feed_batch(&mut self, events: Vec<Event>) -> Result<Vec<Emit>, Error> {
-        let out = self.engine.process_batch_sync_collect(events)?;
+        if !self.timers.follows_events() {
+            let out = self.engine.process_batch_sync_collect(events)?;
+            return Ok(self.route(out));
+        }
+        let mut emits = Vec::new();
+        let mut run: Vec<Event> = Vec::with_capacity(events.len());
+        for event in events {
+            let fired = self.timers.advance(event.timestamp);
+            if !fired.is_empty() {
+                if !run.is_empty() {
+                    let out = self
+                        .engine
+                        .process_batch_sync_collect(std::mem::take(&mut run))?;
+                    emits.extend(self.route(out));
+                }
+                let out = self.engine.process_batch_sync_collect(fired)?;
+                emits.extend(self.route(out));
+            }
+            run.push(event);
+        }
+        if !run.is_empty() {
+            let out = self.engine.process_batch_sync_collect(run)?;
+            emits.extend(self.route(out));
+        }
+        Ok(emits)
+    }
+
+    /// When the next `timer()` of this program is due: the time to give
+    /// [`Program::fire_due`] next. `None` when the program has no timer, or
+    /// when its timers have not started, which they do the first time
+    /// [`Program::fire_due`] is called (or, under [`TimerClock::EventTime`],
+    /// the first event is fed).
+    pub fn next_deadline(&self) -> Option<DateTime<Utc>> {
+        self.timers.next_deadline()
+    }
+
+    /// Advance the timers' clock to `now` and return what the timers that
+    /// are due emit, with everything downstream of them.
+    ///
+    /// The first call starts the timers: a `timer(p, initial_delay: d)`
+    /// first fires at `now + d + p`, then every `p`, and this call fires
+    /// nothing. A live host calls it once when it starts, then whenever
+    /// [`Program::next_deadline`] is reached; it may call it more often, or
+    /// late. A `now` that is not later than the clock does nothing.
+    ///
+    /// Late by more than a period, a timer fires **once**, stamped with the
+    /// latest deadline `now` has reached, and the periods before it are
+    /// counted in [`LossCounters::timer_periods_skipped`]: a host that was
+    /// paused for an hour gets one heartbeat, not 3 600. Its next deadline
+    /// stays on its schedule, so calling late never makes it drift.
+    ///
+    /// The event a timer fires has the type `Timer_<stream>`, the deadline as
+    /// its time and as a `timestamp` field (epoch milliseconds), and goes
+    /// through the stream's operators like any other event. It is never late:
+    /// a declared `.watermark()` judges the data, not the timers.
+    ///
+    /// A `now` outside what the timers can hold (nanoseconds since the epoch
+    /// in an `i64`: years 1677 to 2262) is an [`Error::Time`], and the clock
+    /// does not move.
+    pub fn fire_due(&mut self, now: DateTime<Utc>) -> Result<Vec<Emit>, Error> {
+        if now.timestamp_nanos_opt().is_none() {
+            return Err(Error::Time(format!(
+                "{now} is outside the range the timers hold (years 1677 to 2262)"
+            )));
+        }
+        let fired = self.timers.advance(now);
+        if fired.is_empty() {
+            return Ok(Vec::new());
+        }
+        let out = self.engine.process_batch_sync_collect(fired)?;
         Ok(self.route(out))
+    }
+
+    /// What moves the timers: the [`CompileOptions::timer_clock`] the
+    /// program was compiled with, `None` when it was compiled without one
+    /// (and so has no `timer()`).
+    pub fn timer_clock(&self) -> Option<TimerClock> {
+        self.timer_clock
+    }
+
+    /// Whether the program has a `timer()` source, and so whether its host
+    /// has a clock to drive.
+    pub fn has_timers(&self) -> bool {
+        !self.timers.is_empty()
     }
 
     /// Decode a JSON payload into an event and feed it.
@@ -329,6 +500,7 @@ impl Program {
     ///
     /// For bounded input — a replay, a fixture, a test. A live unit never
     /// calls it: its windows close on event time as events keep coming.
+    /// Timers do not fire here: past the last event, no deadline is reached.
     pub fn end_of_input(&mut self) -> Result<Vec<Emit>, Error> {
         self.engine.flush_end_of_input_sync()?;
         let out = self.engine.take_collected_outputs();
@@ -337,14 +509,16 @@ impl Program {
 
     /// The program's state as bytes: open sequences with their event-time
     /// deadlines, windows, joins, distinct and limit counters, variables and
-    /// the watermark. The host keeps it next to whatever names the position
+    /// the watermark, and where the timers stand (their clock and each one's
+    /// next deadline). The host keeps it next to whatever names the position
     /// in its input — a stream sequence, an offset — and gives it to
     /// [`Program::restore`] on a `Program` compiled from the same source.
     ///
     /// Not in it: trend aggregates (`.trend_aggregate()`) and forecasts
     /// (`.forecast()`), which start empty after a restore.
     pub fn snapshot(&self) -> Result<Vec<u8>, Error> {
-        let checkpoint = self.engine.create_checkpoint();
+        let mut checkpoint = self.engine.create_checkpoint();
+        checkpoint.timers = self.timers.checkpoint();
         varpulis_runtime::codec::serialize(
             &checkpoint,
             varpulis_runtime::codec::CheckpointFormat::active(),
@@ -370,6 +544,12 @@ impl Program {
         // counting from where they were.
         self.losses_carried = carried;
         self.losses_base = self.engine.loss_counters();
+        if restored.is_ok() {
+            // A timer resumes its schedule: it fires next where it would
+            // have, and a snapshot taken before the timers started leaves
+            // them to start on the next time given.
+            self.timers.restore(checkpoint.timers.as_ref());
+        }
         restored
     }
 
@@ -458,6 +638,50 @@ mod tests {
             // `check` gives the same verdict as `compile`.
             assert!(Program::check(&vpl).is_err(), "{code}");
         }
+    }
+
+    #[test]
+    fn a_timer_compiles_once_the_host_names_its_clock() {
+        let vpl = "stream Beat = timer(5s, initial_delay: 1s)\n";
+        let msg = refusal(vpl);
+        assert!(msg.contains("error[E102]"), "{msg}");
+        assert!(msg.contains("CompileOptions"), "the hint says how: {msg}");
+        for clock in [TimerClock::Host, TimerClock::EventTime] {
+            let options = CompileOptions::new().timer_clock(clock);
+            let program = Program::compile_with(vpl, &options).unwrap();
+            assert!(program.has_timers());
+            assert_eq!(program.timer_clock(), Some(clock));
+            assert_eq!(program.next_deadline(), None, "not started");
+            Program::check_with(vpl, &options).unwrap();
+        }
+        assert!(Program::check(vpl).is_err());
+    }
+
+    #[test]
+    fn a_timer_that_cannot_be_fired_as_written_is_refused_even_with_a_clock() {
+        let options = CompileOptions::new().timer_clock(TimerClock::Host);
+        for vpl in [
+            "stream Beat = timer(0s)\n",
+            "stream Beat = timer(5)\n",
+            "stream Beat = timer(5s, initial_delay: 2)\n",
+        ] {
+            match Program::compile_with(vpl, &options) {
+                Err(Error::Invalid(msg)) => assert!(msg.contains("error[E102]"), "{vpl}: {msg}"),
+                other => panic!("{vpl}: expected E102, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn an_engine_without_a_clock_still_refuses_a_timer() {
+        use varpulis_core::validate::support::{
+            check_engine_support, check_sync_engine_support, EngineSupport,
+        };
+        let program = varpulis_parser::parse("stream Beat = timer(5s)\n").unwrap();
+        assert!(check_sync_engine_support(&program).diagnostics.is_empty());
+        let refused = check_engine_support(&program, EngineSupport::WITHOUT_TIMERS);
+        assert_eq!(refused.diagnostics.len(), 1);
+        assert_eq!(refused.diagnostics[0].code, Some("E102"));
     }
 
     #[test]

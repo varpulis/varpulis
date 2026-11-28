@@ -247,6 +247,13 @@ impl Engine {
     /// never advanced the watermark. In benchmark mode (no tracker) this is a
     /// single `Option` branch per event.
     fn pre_dispatch_watermark(&mut self, event: &SharedEvent) -> bool {
+        // 0. A `timer()` fire is made by the engine's host, not read from a
+        //    source: it is never late, and it is no source of the watermark.
+        //    Judged against the data's watermark, a timer driven by a clock
+        //    behind the data was dropped on every fire, and counted nowhere.
+        if self.watermark_tracker.is_some() && self.is_timer_event(&event.event_type) {
+            return false;
+        }
         // 1. Late-data check against the CURRENT effective watermark.
         if let Some(ref tracker) = self.watermark_tracker {
             if let Some(effective_wm) = tracker.effective_watermark() {
@@ -303,6 +310,22 @@ impl Engine {
             tracker.observe_event(&event.event_type, event.timestamp);
         }
         false
+    }
+
+    /// Whether `event_type` is what a `timer()` source fires: a
+    /// `Timer_<stream>` routed only to timer streams.
+    fn is_timer_event(&self, event_type: &str) -> bool {
+        if !event_type.starts_with("Timer_") {
+            return false;
+        }
+        self.router.get_routes(event_type).is_some_and(|names| {
+            !names.is_empty()
+                && names.iter().all(|sn| {
+                    self.streams
+                        .get(sn.as_str())
+                        .is_some_and(|s| matches!(s.source, RuntimeSource::Timer(_)))
+                })
+        })
     }
 
     /// Effective event-time watermark across all sources, if watermark tracking

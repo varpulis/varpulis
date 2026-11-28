@@ -108,7 +108,10 @@ impl WasmEngine {
 
         // What this engine does not run is refused, and a throwaway load
         // still runs so that any other error is reported with it.
-        let unsupported = varpulis_core::validate::support::check_sync_engine_support(&program);
+        let unsupported = varpulis_core::validate::support::check_engine_support(
+            &program,
+            varpulis_core::validate::support::EngineSupport::WITHOUT_TIMERS,
+        );
         if unsupported.has_errors() {
             let mut error = format!("Load error: {}", unsupported.format(vpl).trim_end());
             if let Err(e) = Engine::new_sync().load(&program) {
@@ -280,8 +283,10 @@ impl WasmEngine {
     pub fn validate(&self, vpl: &str) -> String {
         match varpulis_parser::parse(vpl) {
             Ok(program) => {
-                let unsupported =
-                    varpulis_core::validate::support::check_sync_engine_support(&program);
+                let unsupported = varpulis_core::validate::support::check_engine_support(
+                    &program,
+                    varpulis_core::validate::support::EngineSupport::WITHOUT_TIMERS,
+                );
                 if unsupported.has_errors() {
                     let error = unsupported.format(vpl).trim_end().to_string();
                     json(&serde_json::json!({"ok": false, "error": error}))

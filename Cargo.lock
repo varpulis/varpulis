@@ -5765,6 +5765,7 @@ dependencies = [
 name = "varpulis-engine"
 version = "0.11.0"
 dependencies = [
+ "chrono",
  "serde_json",
  "thiserror 2.0.18",
  "varpulis-core",
