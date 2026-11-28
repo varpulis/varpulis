@@ -12,7 +12,7 @@ name: Performance Tracking
 # the gh-pages dashboard (dev/bench), and a 150% alert threshold flags
 # only order-of-magnitude regressions — the level of signal shared
 # runners can actually support. Authoritative numbers come from the
-# local suites under benchmarks/ (arroyo/proton/apama comparisons) run
+# local suites under benchmarks/ (arroyo/proton comparisons) run
 # on dedicated hardware.
 
 on:

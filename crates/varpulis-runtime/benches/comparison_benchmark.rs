@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-//! Benchmarks for comparing Varpulis performance with Apama-style CEP workloads
+//! End-to-end benchmarks on common CEP workloads
 //!
 //! These benchmarks test end-to-end stream processing with realistic scenarios:
 //! - Simple filter baseline (price > threshold)
@@ -77,7 +77,7 @@ fn generate_sensor_events(count: usize) -> Vec<Event> {
 
 // =============================================================================
 // Benchmark 1: Simple Filter Baseline
-// Comparable to Apama: on all StockTick(*, >50.0)
+// Every StockTick with price > 50.0
 // =============================================================================
 
 fn bench_simple_filter(c: &mut Criterion) {
@@ -134,7 +134,7 @@ fn bench_simple_filter(c: &mut Criterion) {
 
 // =============================================================================
 // Benchmark 2: Windowed Aggregation (VWAP Style)
-// Comparable to Apama: from t in trades retain 100 select sum(t.price * t.volume) / sum(t.volume)
+// VWAP over the last 100 trades: sum(price * volume) / sum(volume)
 // =============================================================================
 
 fn bench_windowed_aggregation(c: &mut Criterion) {
@@ -268,7 +268,7 @@ fn bench_multi_aggregate(c: &mut Criterion) {
 
 // =============================================================================
 // Benchmark 4: Filter + Aggregation Pipeline
-// Combined workload similar to Apama benchmarks
+// Filter, then aggregate, in one pipeline
 // =============================================================================
 
 fn bench_filter_aggregate_pipeline(c: &mut Criterion) {
@@ -334,7 +334,7 @@ fn bench_filter_aggregate_pipeline(c: &mut Criterion) {
 
 // =============================================================================
 // Benchmark 5: Anomaly Detection with Threshold
-// Similar to Apama sensor monitoring
+// Sensor monitoring: flag readings above a threshold
 // =============================================================================
 
 fn bench_anomaly_detection(c: &mut Criterion) {

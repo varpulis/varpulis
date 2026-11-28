@@ -26,8 +26,8 @@ come from this suite.
 
 - Single-node, single-core workloads. No clustering.
 - File-mode ingestion (no Kafka, no MQTT). MQTT was deliberately excluded
-  because the broker caps throughput at ~6K events/sec (we proved this in the
-  apama benchmark) and would just be measuring the broker.
+  because the broker caps throughput at ~6K events/sec (measured in an
+  earlier MQTT connector benchmark) and would just be measuring the broker.
 - Cold-start excluded. Both engines are already booted and ready before
   the timing window opens.
 

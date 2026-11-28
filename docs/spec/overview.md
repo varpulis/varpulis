@@ -3,9 +3,9 @@
 ## Vision
 
 Varpulis is a next-generation streaming analytics engine combining:
-- Apama's intuitive syntax (EPL)
+- An intuitive, event-oriented syntax (VPL)
 - Hypertree efficiency for pattern detection
-- A unified approach that radically simplifies development compared to Apama
+- A unified approach to streams and patterns that simplifies development
 
 ## Project Name
 
@@ -54,17 +54,6 @@ Varpulis is a next-generation streaming analytics engine combining:
 | **Latency** | 100ms+ typical | < 1ms possible |
 | **Footprint** | Heavy (JVM cluster) | Lightweight (single binary) |
 | **Use case** | Batch-first | Stream-first |
-
-### vs Apama (Cumulocity)
-
-| Feature | Apama | Varpulis |
-|---------|-------|----------|
-| **Multi-stream aggregation** | ❌ Not directly possible | ✅ Native |
-| **Parallelization** | Complex and risky `spawn` | Declarative and supervised |
-| **Listeners vs Streams** | Separate and complex | Unified in a single concept |
-| **Debugging** | Difficult | Built-in observability |
-| **Pattern detection** | Hypertrees only | SASE+ NFA |
-| **License** | Commercial | Open Source |
 
 ### vs Esper
 

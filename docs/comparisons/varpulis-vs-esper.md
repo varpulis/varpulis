@@ -166,7 +166,7 @@ Varpulis can predict pattern completions before they happen using a built-in Pre
 
 ## Performance Characteristics
 
-Direct head-to-head benchmarks between Varpulis and Esper are not available in our test suite. However, the architectural differences lead to predictable performance characteristics based on benchmarks against other JVM-based engines (Flink CEP, Apama).
+Direct head-to-head benchmarks between Varpulis and Esper are not available in our test suite. However, the architectural differences between a native binary and a JVM engine lead to predictable performance characteristics.
 
 ### Native Rust vs JVM
 
@@ -180,20 +180,7 @@ Direct head-to-head benchmarks between Varpulis and Esper are not available in o
 
 Varpulis's Rust-native runtime avoids JVM overhead: no garbage collection pauses, no JIT compilation warmup, no class metadata. This translates to consistently lower memory usage and more predictable latency.
 
-### Benchmarked Against Other JVM Engines
-
-From our Apama (JVM-based) benchmarks with 100K events:
-
-| Scenario | Varpulis | Apama (JVM) | Memory Ratio |
-|----------|----------|-------------|-------------|
-| Simple filter | 234K/s | 199K/s | **Varpulis 3.1x less RAM** |
-| Sequence (A -> B) | 256K/s | 221K/s | **Varpulis 5.1x less RAM** |
-| Kleene+ pattern | 97K/s (99K matches) | 195K/s (20K matches) | **Varpulis 3.3x less RAM** |
-| EMA crossover | 266K/s | 212K/s | **Varpulis 3.5x less RAM** |
-
-The Kleene+ result is particularly notable: Apama's greedy matching is faster on raw throughput but misses 80% of valid matches. Varpulis's SASE+ exhaustive semantics find all valid subsequences.
-
-Esper, also running on the JVM, would exhibit similar memory and startup characteristics to Apama. Throughput depends on the specific pattern and Esper version, but the 3--10x memory advantage of a native binary is structural.
+Esper, running on the JVM, carries the memory and startup costs in the table above. Throughput depends on the specific pattern and Esper version, but the 3--10x memory advantage of a native binary is structural.
 
 ## Feature Comparison
 

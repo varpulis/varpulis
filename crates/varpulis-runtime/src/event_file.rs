@@ -1,6 +1,6 @@
 //! Event file parser for VPL
 //!
-//! Inspired by Apama's .evt file format, this module provides:
+//! This module provides a line-based `.evt` event file format with:
 //! - Event file parsing with timing control
 //! - BATCH tags for grouping events with delays
 //! - Support for JSON-style event representation

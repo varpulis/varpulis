@@ -15,17 +15,19 @@
 | Simple events | > 1M events/sec (single node) |
 | With complex aggregations | > 500K events/sec |
 
-## Comparison vs Apama (measured)
+## Measured (2026-02-09)
 
-Benchmarked against Apama Community Edition v27.18, 100K events, 7 scenarios.
-See [`benchmarks-apama-comparison.md`](../benchmarks-apama-comparison.md) for full details.
+7 CEP scenarios, 100K events, median of 3 runs.
 
-| Metric | Apama | Varpulis | Result |
-|--------|-------|----------|--------|
-| Throughput (CLI) | 195–221K/s | 234–335K/s | **V 1.2–1.3x faster** |
-| Throughput (MQTT) | ~6K/s | ~6K/s | Tie (I/O-bound) |
-| Memory (connector) | 85–153 MB | 10–57 MB | **V 2x–16x less** |
-| Kleene matches | 20K | 100K | **V 5x more complete** |
+| Mode | Throughput | Memory |
+|------|------------|--------|
+| CLI ramdisk (CPU-bound) | 234–335K events/sec | 36–66 MB |
+| MQTT connector (I/O-bound) | 6–10K events/sec | 10–57 MB |
+
+Optimizations behind these figures:
+
+- **PERF-04 (2026-01-31)**: `event_sources` moved from `HashMap<String, Vec<String>>` to `Arc<[String]>`, so a clone is an atomic increment instead of a deep copy (~4–6%).
+- **PERF-05 (2026-02-07)**: sync processing path, zero-clone preload, batch size 1K→10K, zero-alloc field splitting (~40%, 140K→234K events/sec on the filter scenario).
 
 ## Performance Modes
 

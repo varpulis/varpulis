@@ -170,8 +170,6 @@ cargo bench -p varpulis-runtime -- hamlet
 cargo bench -p varpulis-runtime -- pst
 ```
 
-Comparison benchmarks against Apama are in `benchmarks/apama-comparison/`. See the README in that directory for setup instructions.
-
 **Important**: Always validate benchmark results manually. Check return codes and verify output counts match expectations. A benchmark that errors instantly will report misleading throughput numbers.
 
 ## Running Fuzz Tests

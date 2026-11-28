@@ -40,7 +40,7 @@ User-facing operators in VPL:
 
 The default is `EmissionMode::Each`. Rationale:
 
-1. **Practitioner intuition**: Most CEP users coming from Esper, FlinkCEP, or Apama expect "fire on each event" semantics. Asking them to configure a mode for the most common case is friction.
+1. **Practitioner intuition**: Most CEP users coming from Esper or FlinkCEP expect "fire on each event" semantics. Asking them to configure a mode for the most common case is friction.
 2. **Linear cost**: `Each` is O(N) in the Kleene size — predictable and bounded.
 3. **No data loss**: Each captured Kleene event produces an observable output, so users can react to every step.
 
