@@ -8,7 +8,22 @@
 //! places.
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use varpulis_engine::{Emit, Program, TimerClock};
+use varpulis_engine::{CompileOptions, Emit, Error, Program, TimerClock};
+
+fn compiled(vpl: &str, clock: TimerClock) -> Program {
+    Program::compile_with(vpl, &CompileOptions::new().timer_clock(clock))
+        .unwrap_or_else(|e| panic!("{vpl}\n{e}"))
+}
+
+/// The host drives the timers with `fire_due`.
+fn host(vpl: &str) -> Program {
+    compiled(vpl, TimerClock::Host)
+}
+
+/// The events fed drive the timers too.
+fn event_time(vpl: &str) -> Program {
+    compiled(vpl, TimerClock::EventTime)
+}
 
 fn t0() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 11, 28, 10, 0, 0).unwrap()
@@ -34,9 +49,9 @@ const BEAT: &str = "stream Beat = timer(10s)\n    .emit(kind: \"beat\")\n";
 
 #[test]
 fn a_timer_fires_every_period_on_the_hosts_clock() {
-    let mut program = Program::compile(BEAT).unwrap();
+    let mut program = host(BEAT);
     assert!(program.has_timers());
-    assert_eq!(program.timer_clock(), TimerClock::Host);
+    assert_eq!(program.timer_clock(), Some(TimerClock::Host));
     assert_eq!(program.next_deadline(), None, "not started yet");
 
     // The first call starts the schedule and fires nothing.
@@ -59,10 +74,8 @@ fn a_timer_fires_every_period_on_the_hosts_clock() {
 
 #[test]
 fn an_initial_delay_comes_before_the_first_period() {
-    let mut program = Program::compile(
-        "stream Beat = timer(10s, initial_delay: 5s)\n    .emit(kind: \"beat\")\n",
-    )
-    .unwrap();
+    let mut program =
+        host("stream Beat = timer(10s, initial_delay: 5s)\n    .emit(kind: \"beat\")\n");
     program.fire_due(t0()).unwrap();
     assert_eq!(program.next_deadline(), Some(at(15)));
     assert_eq!(when(&program.fire_due(at(15)).unwrap()), vec![beat(15)]);
@@ -71,7 +84,7 @@ fn an_initial_delay_comes_before_the_first_period() {
 
 #[test]
 fn a_late_call_fires_once_counts_what_it_skipped_and_does_not_drift() {
-    let mut program = Program::compile(BEAT).unwrap();
+    let mut program = host(BEAT);
     program.fire_due(t0()).unwrap();
 
     // Late by three and a half periods: one fire, for the latest deadline
@@ -90,7 +103,7 @@ fn a_late_call_fires_once_counts_what_it_skipped_and_does_not_drift() {
 
 #[test]
 fn a_clock_that_goes_back_fires_nothing_and_moves_no_deadline() {
-    let mut program = Program::compile(BEAT).unwrap();
+    let mut program = host(BEAT);
     program.fire_due(at(100)).unwrap();
     assert!(program.fire_due(at(50)).unwrap().is_empty());
     assert_eq!(program.next_deadline(), Some(at(110)));
@@ -99,11 +112,10 @@ fn a_clock_that_goes_back_fires_nothing_and_moves_no_deadline() {
 
 #[test]
 fn timers_due_at_the_same_instant_fire_in_time_then_name_order() {
-    let mut program = Program::compile(
+    let mut program = host(
         "stream B = timer(10s)\n    .emit(n: 1)\n\
          stream A = timer(5s)\n    .emit(n: 2)\n",
-    )
-    .unwrap();
+    );
     program.fire_due(t0()).unwrap();
     assert_eq!(program.next_deadline(), Some(at(5)));
     let emits = program.fire_due(at(10)).unwrap();
@@ -129,7 +141,7 @@ fn order(secs: i64, id: &str) -> varpulis_engine::Event {
 
 #[test]
 fn under_the_hosts_clock_events_do_not_move_the_timers() {
-    let mut program = Program::compile(ORDERS_AND_BEAT).unwrap();
+    let mut program = host(ORDERS_AND_BEAT);
     program.fire_due(t0()).unwrap();
     let emits = program.feed(order(60, "a")).unwrap();
     assert_eq!(when(&emits), vec![("Seen".to_string(), 60)]);
@@ -138,8 +150,7 @@ fn under_the_hosts_clock_events_do_not_move_the_timers() {
 
 #[test]
 fn under_event_time_the_events_move_the_timers_and_a_timer_fires_first() {
-    let mut program = Program::compile(ORDERS_AND_BEAT).unwrap();
-    program.set_timer_clock(TimerClock::EventTime);
+    let mut program = event_time(ORDERS_AND_BEAT);
 
     // The first event starts the schedule at its own time.
     assert_eq!(
@@ -187,15 +198,13 @@ fn under_event_time_one_batch_gives_what_the_same_events_one_by_one_give() {
         ]
     };
 
-    let mut one_by_one = Program::compile(ORDERS_AND_BEAT).unwrap();
-    one_by_one.set_timer_clock(TimerClock::EventTime);
+    let mut one_by_one = event_time(ORDERS_AND_BEAT);
     let mut expected = Vec::new();
     for event in events() {
         expected.extend(when(&one_by_one.feed(event).unwrap()));
     }
 
-    let mut batched = Program::compile(ORDERS_AND_BEAT).unwrap();
-    batched.set_timer_clock(TimerClock::EventTime);
+    let mut batched = event_time(ORDERS_AND_BEAT);
     let got = when(&batched.feed_batch(events()).unwrap());
 
     assert_eq!(got, expected);
@@ -218,12 +227,12 @@ fn under_event_time_one_batch_gives_what_the_same_events_one_by_one_give() {
 
 #[test]
 fn a_restore_mid_period_resumes_the_schedule_where_it_was() {
-    let mut before = Program::compile(BEAT).unwrap();
+    let mut before = host(BEAT);
     before.fire_due(t0()).unwrap();
     assert_eq!(when(&before.fire_due(at(15)).unwrap()), vec![beat(10)]);
     let snapshot = before.snapshot().unwrap();
 
-    let mut after = Program::compile(BEAT).unwrap();
+    let mut after = host(BEAT);
     after.restore(&snapshot).unwrap();
     assert_eq!(after.next_deadline(), Some(at(20)), "mid-period, as it was");
     // The clock came back too: a time before it does nothing.
@@ -234,9 +243,9 @@ fn a_restore_mid_period_resumes_the_schedule_where_it_was() {
 
 #[test]
 fn a_snapshot_taken_before_the_timers_started_leaves_them_to_start() {
-    let snapshot = Program::compile(BEAT).unwrap().snapshot().unwrap();
+    let snapshot = host(BEAT).snapshot().unwrap();
 
-    let mut program = Program::compile(BEAT).unwrap();
+    let mut program = host(BEAT);
     program.fire_due(t0()).unwrap();
     program.restore(&snapshot).unwrap();
     assert_eq!(program.next_deadline(), None);
@@ -246,7 +255,7 @@ fn a_snapshot_taken_before_the_timers_started_leaves_them_to_start() {
 
 #[test]
 fn skipped_periods_count_since_the_program_was_built_across_a_restore() {
-    let mut program = Program::compile(BEAT).unwrap();
+    let mut program = host(BEAT);
     program.fire_due(t0()).unwrap();
     let snapshot = program.snapshot().unwrap();
     program.fire_due(at(35)).unwrap();
@@ -266,13 +275,11 @@ fn skipped_periods_count_since_the_program_was_built_across_a_restore() {
 #[test]
 fn a_timer_feeds_a_pattern() {
     // Each order is reported on the first beat after it.
-    let mut program = Program::compile(
+    let mut program = event_time(
         "event Order:\n    id: str\n\n\
          stream Beat = timer(1m)\n    .emit(kind: \"beat\")\n\
          stream Reported = Order as o\n    -> Beat as b\n    .within(5m)\n    .emit(id: o.id, beat: b.kind)\n",
-    )
-    .unwrap();
-    program.set_timer_clock(TimerClock::EventTime);
+    );
 
     assert!(program.feed(order(0, "a")).unwrap().is_empty());
     assert!(program.feed(order(20, "b")).unwrap().is_empty());
@@ -311,4 +318,126 @@ fn a_timer_feeds_a_pattern() {
         .map(|e| e.to_json()["id"].as_str().unwrap_or_default().to_string())
         .collect();
     assert_eq!(ids, vec!["c".to_string()], "{:?}", when(&emits));
+}
+
+const BEAT_AND_WATERMARKED_ORDERS: &str = "stream Beat = timer(10s)\n    .emit(kind: \"beat\")\n\
+     stream Seen = Order\n    .watermark(out_of_order: 0s)\n    .allowed_lateness(0s)\n    .emit(id: id)\n";
+
+#[test]
+fn a_timer_behind_the_datas_watermark_still_fires_on_the_hosts_clock() {
+    // The data runs an hour ahead of the host's clock. A timer fire is the
+    // engine's own, not data: the watermark does not judge it late.
+    let mut program = host(BEAT_AND_WATERMARKED_ORDERS);
+    program.fire_due(t0()).unwrap();
+    let seen = program.feed(order(3600, "a")).unwrap();
+    assert_eq!(when(&seen), vec![("Seen".to_string(), 3600)]);
+    let mut beats = Vec::new();
+    for k in 1..=5 {
+        beats.extend(when(&program.fire_due(at(10 * k)).unwrap()));
+    }
+    assert_eq!(beats, (1..=5).map(|k| beat(10 * k)).collect::<Vec<_>>());
+    // And the data is still judged by its own watermark.
+    assert!(program.feed(order(3599, "late")).unwrap().is_empty());
+}
+
+#[test]
+fn under_event_time_a_timer_changes_nothing_the_watermark_decides() {
+    let times = [0, 12, 8, 25, 21, 19, 41, 36];
+    let feed_all = |program: &mut Program| {
+        let mut out = Vec::new();
+        for (i, s) in times.iter().enumerate() {
+            out.extend(when(&program.feed(order(*s, &format!("o{i}"))).unwrap()));
+        }
+        out
+    };
+    let mut with_timer = event_time(BEAT_AND_WATERMARKED_ORDERS);
+    let got = feed_all(&mut with_timer);
+    let mut without = Program::compile(
+        "stream Seen = Order\n    .watermark(out_of_order: 0s)\n    .allowed_lateness(0s)\n    .emit(id: id)\n",
+    )
+    .unwrap();
+    let control = feed_all(&mut without);
+
+    let seen: Vec<_> = got.iter().filter(|(s, _)| s == "Seen").cloned().collect();
+    assert_eq!(
+        seen, control,
+        "the same data is late with or without a timer"
+    );
+    let beats: Vec<_> = got.iter().filter(|(s, _)| s == "Beat").cloned().collect();
+    assert_eq!(beats, vec![beat(10), beat(20), beat(40)], "30 s skipped");
+}
+
+#[test]
+fn a_clock_jump_of_centuries_fires_once_without_overflow() {
+    let long_ago = Utc.with_ymd_and_hms(1700, 1, 1, 0, 0, 0).unwrap();
+    let periods = (t0() - long_ago).num_seconds() / 10;
+
+    let mut program = host(BEAT);
+    program.fire_due(long_ago).unwrap();
+    let emits = program.fire_due(t0()).unwrap();
+    assert_eq!(emits.len(), 1);
+    // 1700-01-01 plus a whole number of 10 s periods lands on t0.
+    assert_eq!(when(&emits), vec![beat(0)]);
+    assert_eq!(program.next_deadline(), Some(at(10)));
+    assert_eq!(program.losses().timer_periods_skipped, periods as u64 - 1);
+
+    let mut program = event_time(ORDERS_AND_BEAT);
+    program.feed(order_at(long_ago, "a")).unwrap();
+    let emits = program.feed(order(0, "b")).unwrap();
+    assert_eq!(when(&emits), vec![beat(0), ("Seen".to_string(), 0)]);
+    assert_eq!(program.losses().timer_periods_skipped, periods as u64 - 1);
+}
+
+fn order_at(time: DateTime<Utc>, id: &str) -> varpulis_engine::Event {
+    let json = format!(r#"{{"id": "{id}", "@timestamp": "{}"}}"#, time.to_rfc3339());
+    varpulis_engine::event_from_json("Order", json.as_bytes()).unwrap()
+}
+
+#[test]
+fn a_time_the_timers_cannot_hold_is_an_error() {
+    let mut program = host(BEAT);
+    program.fire_due(t0()).unwrap();
+    for out_of_range in [DateTime::<Utc>::MAX_UTC, DateTime::<Utc>::MIN_UTC] {
+        match program.fire_due(out_of_range) {
+            Err(Error::Time(msg)) => assert!(msg.contains("1677"), "{msg}"),
+            other => panic!("expected a time error, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        program.next_deadline(),
+        Some(at(10)),
+        "the clock did not move"
+    );
+
+    // Under event time, such an event is processed and does not move the
+    // clock.
+    let mut program = event_time(ORDERS_AND_BEAT);
+    program.feed(order(0, "a")).unwrap();
+    let far = Utc.with_ymd_and_hms(2300, 1, 1, 0, 0, 0).unwrap();
+    assert_eq!(program.feed(order_at(far, "b")).unwrap().len(), 1);
+    assert_eq!(when(&program.feed(order(10, "c")).unwrap())[0], beat(10));
+}
+
+fn snapshot_clock(program: &Program) -> Option<i64> {
+    let snapshot: serde_json::Value = serde_json::from_slice(&program.snapshot().unwrap()).unwrap();
+    snapshot["timers"]["clock_ns"].as_i64()
+}
+
+#[test]
+fn under_event_time_every_event_moves_the_clock() {
+    let ns = |secs| at(secs).timestamp_nanos_opt();
+    let mut program = event_time(ORDERS_AND_BEAT);
+    assert_eq!(snapshot_clock(&program), None);
+    program.feed(order(0, "a")).unwrap();
+    assert_eq!(snapshot_clock(&program), ns(0));
+    // Nothing is due at 5 s; the clock moves anyway.
+    program.feed(order(5, "b")).unwrap();
+    assert_eq!(snapshot_clock(&program), ns(5));
+    // A late event does not move it back.
+    program.feed(order(2, "c")).unwrap();
+    assert_eq!(snapshot_clock(&program), ns(5));
+    program
+        .feed_batch(vec![order(6, "d"), order(7, "e")])
+        .unwrap();
+    assert_eq!(snapshot_clock(&program), ns(7));
 }

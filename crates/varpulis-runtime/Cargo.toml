@@ -34,6 +34,12 @@ categories = ["science", "development-tools", "data-structures"]
 #       retired platform used them: the engine's consumers compile against
 #       `varpulis-engine`, which re-exports none of it.
 #
+#   struct_marked_non_exhaustive
+#       `LossCounters` gained `timer_periods_skipped` and was marked
+#       `#[non_exhaustive]` in the same change, so that the next counter a
+#       host must publish is not a breaking change again. Hosts read it; none
+#       had a reason to build one.
+#
 # `semver_exceptions_expire_with_their_baseline` in src/engine/error.rs turns
 # red the moment the version moves past 0.11.x, which is when this whole
 # block must be deleted.
@@ -41,6 +47,7 @@ categories = ["science", "development-tools", "data-structures"]
 constructible_struct_adds_field = "allow"
 enum_variant_added = "allow"
 enum_marked_non_exhaustive = "allow"
+struct_marked_non_exhaustive = "allow"
 feature_missing = "allow"
 module_missing = "allow"
 struct_missing = "allow"

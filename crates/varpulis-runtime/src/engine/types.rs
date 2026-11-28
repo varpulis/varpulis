@@ -59,6 +59,7 @@ pub struct EngineMetrics {
 /// `Program::losses` evens this out: there all of them count since the
 /// `Program` was built, whatever is restored.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LossCounters {
     /// Pattern runs that were never opened because the pattern already held
     /// its maximum of concurrent runs (see [`crate::Engine::set_max_runs`]).

@@ -20,12 +20,13 @@ use chrono::{DateTime, Utc};
 use varpulis_core::{Event, Value};
 use varpulis_runtime::persistence::TimerCheckpoint;
 
-/// What moves a [`crate::Program`]'s timers.
+/// What moves a [`crate::Program`]'s timers, named at load with
+/// [`crate::CompileOptions::timer_clock`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TimerClock {
     /// Only [`crate::Program::fire_due`]: the host owns the clock, whether
-    /// it is the wall clock or a simulated one. The default.
+    /// it is the wall clock or a simulated one.
     #[default]
     Host,
     /// The program's event time as well: every event fed moves the clock to
@@ -51,7 +52,7 @@ struct Timer {
 pub(crate) struct Timers {
     list: Vec<Timer>,
     clock_ns: Option<i64>,
-    pub(crate) mode: TimerClock,
+    mode: TimerClock,
     pub(crate) periods_skipped: u64,
 }
 
@@ -63,7 +64,7 @@ impl Timers {
     /// From the engine's `(interval_ns, initial_delay_ns, event_type)`, in
     /// event type order so that timers due at the same instant fire in an
     /// order that does not depend on a hash map.
-    pub(crate) fn new(configs: Vec<(u64, Option<u64>, String)>) -> Self {
+    pub(crate) fn new(configs: Vec<(u64, Option<u64>, String)>, mode: TimerClock) -> Self {
         let to_i64 = |ns: u64| i64::try_from(ns).unwrap_or(i64::MAX);
         let mut timers: Vec<Timer> = configs
             .into_iter()
@@ -77,6 +78,7 @@ impl Timers {
         timers.sort_by(|a, b| a.event_type.cmp(&b.event_type));
         Self {
             list: timers,
+            mode,
             ..Self::default()
         }
     }
@@ -97,17 +99,10 @@ impl Timers {
             .map(DateTime::from_timestamp_nanos)
     }
 
-    /// Whether advancing the clock to `now` would fire anything.
-    pub(crate) fn is_due(&self, now: DateTime<Utc>) -> bool {
-        let Some(now) = ns_of(now) else { return false };
-        self.list
-            .iter()
-            .any(|t| t.next_ns.is_some_and(|next| next <= now))
-    }
-
     /// Move the clock to `now` when later, and return the timer events that
     /// fire, in time order. The first time the clock reads a time, the
-    /// timers' schedules start there and nothing fires.
+    /// timers' schedules start there and nothing fires. A time outside the
+    /// `i64` nanosecond range moves nothing.
     pub(crate) fn advance(&mut self, now: DateTime<Utc>) -> Vec<Event> {
         let Some(now) = ns_of(now) else {
             return Vec::new();
@@ -132,9 +127,15 @@ impl Timers {
             }
             // Fire once, for the latest deadline the clock has reached; the
             // earlier ones are skipped and counted.
-            let missed = (now - next) / t.interval_ns;
-            let at = next + missed * t.interval_ns;
-            self.periods_skipped += missed as u64;
+            // In i128: the clock may jump across more than an i64 of
+            // nanoseconds (292 years). `at` is between `next` and `now`, so
+            // it fits back in an i64.
+            let interval = i128::from(t.interval_ns);
+            let missed = (i128::from(now) - i128::from(next)) / interval;
+            let at = i64::try_from(i128::from(next) + missed * interval).unwrap_or(now);
+            self.periods_skipped = self
+                .periods_skipped
+                .saturating_add(u64::try_from(missed).unwrap_or(u64::MAX));
             t.next_ns = Some(at.saturating_add(t.interval_ns));
             fired.push((at, timer_event(&t.event_type, at)));
         }

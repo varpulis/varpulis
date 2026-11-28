@@ -7,10 +7,11 @@
 //! compiles and then silently does less than it says is worse than one that
 //! is refused, so these are refused at load, each with a code and a hint.
 //!
-//! `timer()` is run by `Program`, on a clock its host drives, and refused by
-//! the WASM build, which has no such clock: [`check_engine_support`] takes
-//! what the engine can do, [`check_sync_engine_support`] is `Program`'s
-//! verdict.
+//! `timer()` is run by `Program` when its host says, at load, which clock
+//! drives the timers; without that it is refused, as it is by the WASM build,
+//! which has no clock at all. [`check_engine_support`] takes what the engine
+//! can do; [`check_sync_engine_support`] is the verdict for a host that
+//! drives the timers, the one the editor shows.
 //!
 //! This is a separate check from [`super::validate`]: the validator describes
 //! the language, this describes one engine. A host that embeds an engine able
@@ -32,28 +33,51 @@ pub const ENRICH_UNSUPPORTED: &str = "E103";
 /// `.alert(webhook: ...)`: the webhook is not called.
 pub const ALERT_WEBHOOK_UNSUPPORTED: &str = "E104";
 
+/// Whether an engine fires `timer()` sources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TimerSupport {
+    /// Fired, on a clock the host drives.
+    Run,
+    /// The engine could fire them, but the host has not said which clock
+    /// drives them, so nothing would: `Program` compiled without a timer
+    /// clock.
+    NoClock,
+    /// Never fired: the engine has no clock (the WASM build).
+    Never,
+}
+
 /// What an engine runs beyond the constructs every engine runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EngineSupport {
-    /// `timer()` sources, fired on a clock the host drives. `Program` has
-    /// one; the WASM build does not.
-    pub timers: bool,
+    /// What becomes of a `timer()` source.
+    pub timers: TimerSupport,
 }
 
 impl EngineSupport {
-    /// `varpulis-engine`'s `Program`, and the CLI built on it.
-    pub const PROGRAM: Self = Self { timers: true };
+    /// `varpulis-engine`'s `Program` with a timer clock, and so the CLI's
+    /// `simulate`; the verdict the editor shows.
+    pub const WITH_TIMERS: Self = Self {
+        timers: TimerSupport::Run,
+    };
+    /// `varpulis-engine`'s `Program` compiled without a timer clock.
+    pub const WITHOUT_TIMER_CLOCK: Self = Self {
+        timers: TimerSupport::NoClock,
+    };
     /// The WASM build: no clock to fire a timer on.
-    pub const WITHOUT_TIMERS: Self = Self { timers: false };
+    pub const WITHOUT_TIMERS: Self = Self {
+        timers: TimerSupport::Never,
+    };
 }
 
-/// Every construct of `program` that `Program` would not run.
+/// Every construct of `program` that the synchronous engine would not run,
+/// for a host that drives its timers.
 ///
-/// `Program` is the synchronous engine the library and the CLI run. The
-/// result is error diagnostics, empty when the program runs as written.
-/// Same as [`check_engine_support`] with [`EngineSupport::PROGRAM`].
+/// Error diagnostics, empty when the program runs as written. Same as
+/// [`check_engine_support`] with [`EngineSupport::WITH_TIMERS`].
 pub fn check_sync_engine_support(program: &Program) -> ValidationResult {
-    check_engine_support(program, EngineSupport::PROGRAM)
+    check_engine_support(program, EngineSupport::WITH_TIMERS)
 }
 
 /// Every construct of `program` an engine able to do `support` would not run.
@@ -85,17 +109,27 @@ pub fn check_engine_support(program: &Program, support: EngineSupport) -> Valida
                 ..
             } => {
                 if let StreamSource::Timer(decl) = source {
-                    if support.timers {
-                        check_timer(decl, span, &mut diagnostics);
-                    } else {
-                        diagnostics.push(error(
+                    match support.timers {
+                        TimerSupport::Run => check_timer(decl, span, &mut diagnostics),
+                        TimerSupport::NoClock => diagnostics.push(error(
+                            span,
+                            TIMER_UNSUPPORTED,
+                            "timer() would never fire: the program was compiled without a \
+                             timer clock"
+                                .to_string(),
+                            "compile it with Program::compile_with(vpl, \
+                             &CompileOptions::new().timer_clock(TimerClock::Host)) and call \
+                             Program::fire_due, or TimerClock::EventTime to let the events \
+                             fed drive the timers",
+                        )),
+                        TimerSupport::Never => diagnostics.push(error(
                             span,
                             TIMER_UNSUPPORTED,
                             "timer() never fires in this engine: it has no clock to drive it"
                                 .to_string(),
                             "let the host feed a periodic event, or run the program with \
                              varpulis-engine's Program, whose host drives its timers",
-                        ));
+                        )),
                     }
                 }
                 for (i, op) in ops.iter().enumerate() {

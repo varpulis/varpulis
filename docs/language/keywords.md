@@ -118,12 +118,18 @@ Not keywords, but parsed and then refused at load, for the same reason:
 | `.enrich(...)` | E103 | The lookup is not performed. The host enriches the event before feeding it |
 | `.alert(webhook: ...)` | E104 | The webhook is not called. Route the stream with `.to()`; `.alert(message: ...)` without a webhook only logs |
 
-`timer(5s)` as a stream source is run, on a clock the host drives: the
-library's `Program::next_deadline` says when a timer is next due and
-`Program::fire_due(now)` fires it, or the events fed move the timers when
-the host chooses event time, as `varpulis simulate` does. A clock that jumps
-over several periods fires a timer once, for the latest of them, and counts
-the others as skipped. The period and the `initial_delay` are duration
+`timer(5s)` as a stream source is run when the host says what drives it.
+A library host compiles with
+`Program::compile_with(vpl, &CompileOptions::new().timer_clock(clock))`;
+`Program::compile` without a clock refuses the timer (E102), since nothing
+would fire it. With `TimerClock::Host`, `Program::next_deadline` says when a
+timer is next due and `Program::fire_due(now)` fires it. With
+`TimerClock::EventTime`, as `varpulis check` and `varpulis simulate` use,
+every event fed also moves the timers' clock to its time when later, and a
+timer due at or before that time fires first. A clock that jumps over
+several periods fires a timer once, for the latest of them, and counts the
+others as skipped. A timer's event is the engine's own: a `.watermark()`
+never judges it late. The period and the `initial_delay` are duration
 literals:
 
 ```vpl
@@ -131,9 +137,15 @@ stream Beat = timer(1m, initial_delay: 10s)
     .emit(kind: "beat")
 ```
 
+Under `TimerClock::EventTime` the clock only moves forward. One event
+stamped far in the future (a wrong clock on one machine) moves it there at
+once: the timers fire once for that time, and then fire no more until the
+data's time catches up with it. An event stamped outside the years 1677 to
+2262 does not move the clock; `fire_due` refuses such a time with an error.
+
 A period or delay that is not a duration literal, or a period of zero, is
-refused (E102): an expression used to become one second, and a zero period
-would fire without end.
+refused (E102) whatever the clock: an expression used to become one second,
+and a zero period would fire without end.
 
 <!-- engine-refuses: E102 -->
 ```vpl
@@ -142,7 +154,7 @@ stream Beat = timer(0s)
 ```
 
 The WASM build has no clock to fire a timer on and refuses every `timer()`
-with E102.
+with E102. The editor shows the verdict of a host that drives its timers.
 
 ## Words set aside
 
