@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `timer()` runs in `Program`, on the host's clock
+
+- `Program` used to refuse every `timer()` source (E102): it has no thread
+  to fire one. The host now owns the clock. `Program::next_deadline()` is
+  when a timer is next due, `Program::fire_due(now)` fires what is due at
+  `now` and returns what that emits, downstream patterns included. The first
+  call starts the schedules: `timer(p, initial_delay: d)` fires first at
+  `now + d + p`, then every `p`. `Program::set_timer_clock(TimerClock::EventTime)`
+  lets the events fed move the timers too: a timer due at or before an
+  event's time fires before that event, so a replay, or one batch against
+  the same events fed one by one, fires the same timers in the same places.
+  `varpulis simulate` runs timers this way.
+- A clock that jumps over several deadlines of a timer fires it once,
+  stamped with the latest deadline reached, and counts the others in the new
+  `LossCounters::timer_periods_skipped`. The next deadline stays on the
+  schedule the first call fixed, however late the host calls. A clock that
+  goes back fires nothing. The fired event is `Timer_<stream>`, timed at its
+  deadline, with that deadline as a `timestamp` field in epoch milliseconds.
+- A snapshot keeps the timers' clock and each one's next deadline
+  (`EngineCheckpoint::timers`, absent from older snapshots, which restore
+  with the timers not started). `timer_periods_skipped` counts since the
+  `Program` was built, across restores, like the other losses.
+- Still refused with E102: a period or `initial_delay` that is not a
+  duration literal (it used to become one second, or be dropped, with a log
+  line) and a period of zero. The WASM build has no clock and refuses every
+  `timer()`; `check_engine_support` with `EngineSupport::WITHOUT_TIMERS` is
+  its verdict, `check_sync_engine_support` stays `Program`'s and the
+  editor's.
+
 ### Added — `and` and `or` between the steps of a pattern
 
 - `A and B` matches both events, in either order, within the pattern's

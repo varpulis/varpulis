@@ -101,6 +101,8 @@ fn run() -> Result<(), String> {
         } => {
             let src = read(&program)?;
             let mut program = Program::compile(&src).map_err(|e| e.to_string())?;
+            // A replay: its timers fire on the events' own time.
+            program.set_timer_clock(varpulis_engine::TimerClock::EventTime);
             let file = EventFileParser::parse_file(&events)?;
             let stdout = std::io::stdout();
             let mut out = stdout.lock();

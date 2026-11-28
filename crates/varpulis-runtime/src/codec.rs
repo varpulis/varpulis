@@ -107,6 +107,7 @@ mod tests {
             limit_states: Default::default(),
             source_offsets: Default::default(),
             source_clocks: Default::default(),
+            timers: None,
         };
 
         let data = serialize(&cp, CheckpointFormat::Json).unwrap();
@@ -134,6 +135,7 @@ mod tests {
             limit_states: Default::default(),
             source_offsets: Default::default(),
             source_clocks: Default::default(),
+            timers: None,
         };
 
         let data = serialize(&cp, CheckpointFormat::MessagePack).unwrap();
@@ -193,6 +195,7 @@ mod tests {
             limit_states: Default::default(),
             source_offsets: Default::default(),
             source_clocks: Default::default(),
+            timers: None,
         };
 
         let json_data = serialize(&cp, CheckpointFormat::Json).unwrap();

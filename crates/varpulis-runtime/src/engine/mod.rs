@@ -2156,6 +2156,7 @@ impl Engine {
                     clock.timestamp_nanos_opt().map(|ns| (source.clone(), ns))
                 })
                 .collect(),
+            timers: None,
         }
     }
 

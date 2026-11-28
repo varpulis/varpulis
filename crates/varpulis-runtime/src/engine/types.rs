@@ -56,7 +56,7 @@ pub struct EngineMetrics {
 /// On an [`crate::Engine`], the run counters are part of a checkpoint and
 /// restoring one sets them to the checkpoint's values, while
 /// `filters_without_value` is not and keeps counting. `varpulis-engine`'s
-/// `Program::losses` evens this out: there all three count since the
+/// `Program::losses` evens this out: there all of them count since the
 /// `Program` was built, whatever is restored.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LossCounters {
@@ -71,6 +71,12 @@ pub struct LossCounters {
     /// true/false value: a missing field, a type mismatch, a failed call.
     /// The event was treated as not matching.
     pub filters_without_value: u64,
+    /// Periods of a `timer()` that passed without firing because its clock
+    /// jumped past more than one deadline at once: the timer fired once, for
+    /// the latest of them, and skipped the others. Counted by
+    /// `varpulis-engine`'s `Program`, which fires the timers; an
+    /// [`crate::Engine`] fires none and leaves it at 0.
+    pub timer_periods_skipped: u64,
 }
 
 /// Report from a hot reload operation

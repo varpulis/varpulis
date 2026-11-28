@@ -115,9 +115,34 @@ Not keywords, but parsed and then refused at load, for the same reason:
 
 | Operator | Code | Why |
 |----------|------|-----|
-| `timer(5s)` as a stream source | E102 | Nothing fires it. The host feeds a periodic event instead |
 | `.enrich(...)` | E103 | The lookup is not performed. The host enriches the event before feeding it |
 | `.alert(webhook: ...)` | E104 | The webhook is not called. Route the stream with `.to()`; `.alert(message: ...)` without a webhook only logs |
+
+`timer(5s)` as a stream source is run, on a clock the host drives: the
+library's `Program::next_deadline` says when a timer is next due and
+`Program::fire_due(now)` fires it, or the events fed move the timers when
+the host chooses event time, as `varpulis simulate` does. A clock that jumps
+over several periods fires a timer once, for the latest of them, and counts
+the others as skipped. The period and the `initial_delay` are duration
+literals:
+
+```vpl
+stream Beat = timer(1m, initial_delay: 10s)
+    .emit(kind: "beat")
+```
+
+A period or delay that is not a duration literal, or a period of zero, is
+refused (E102): an expression used to become one second, and a zero period
+would fire without end.
+
+<!-- engine-refuses: E102 -->
+```vpl
+stream Beat = timer(0s)
+    .emit(kind: "beat")
+```
+
+The WASM build has no clock to fire a timer on and refuses every `timer()`
+with E102.
 
 ## Words set aside
 
