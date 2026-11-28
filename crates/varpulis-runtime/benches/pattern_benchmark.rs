@@ -11,6 +11,7 @@
 //! - complex_patterns: Negation, OR, nested patterns
 //! - partition_by: Partitioned pattern matching
 //! - throughput: Events per second measurement
+//! - waiting_runs: Many open runs that most events pass by
 //! - scalability: Large event volumes (50K-100K)
 
 use std::hint::black_box;
@@ -468,6 +469,52 @@ fn bench_throughput(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark runs that wait while most events pass them by: `A -> B -> C`
+/// over a stream where one event in 100 is an A and the rest are of a type
+/// no step takes, so open runs pile up and each event visits them all.
+fn bench_waiting_runs(c: &mut Criterion) {
+    let mut group = c.benchmark_group("waiting_runs");
+
+    for size in [5_000, 10_000] {
+        let events: Vec<Event> = (0..size)
+            .map(|i| {
+                let event_type = if i % 100 == 0 { "A" } else { "Z" };
+                Event::new(event_type).with_field("id", i as i64)
+            })
+            .collect();
+
+        group.bench_with_input(BenchmarkId::new("seq_3", size), &events, |b, events| {
+            b.iter(|| {
+                let pattern = SasePattern::Seq(vec![
+                    SasePattern::Event {
+                        event_type: "A".into(),
+                        predicate: None,
+                        alias: Some("a".into()),
+                    },
+                    SasePattern::Event {
+                        event_type: "B".into(),
+                        predicate: None,
+                        alias: Some("b".into()),
+                    },
+                    SasePattern::Event {
+                        event_type: "C".into(),
+                        predicate: None,
+                        alias: Some("c".into()),
+                    },
+                ]);
+                let mut engine = SaseEngine::new(pattern);
+                let mut matches = 0;
+                for event in events {
+                    matches += engine.process(black_box(event)).len();
+                }
+                matches
+            });
+        });
+    }
+
+    group.finish();
+}
+
 /// Benchmark scalability with large event volumes
 fn bench_scalability(c: &mut Criterion) {
     let mut group = c.benchmark_group("scalability");
@@ -550,6 +597,7 @@ criterion_group!(
     bench_complex_patterns,
     bench_multi_predicates,
     bench_throughput,
+    bench_waiting_runs,
     bench_scalability,
 );
 

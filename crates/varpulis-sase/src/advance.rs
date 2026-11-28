@@ -749,6 +749,31 @@ fn follow(
     }
 }
 
+/// Whether `event` cannot move, end or complete `run`, which advancing it
+/// would only report as [`RunAdvanceResult::NoMatch`]: the run waits in a
+/// plain step, with no absence to watch and no closure exit, and each step
+/// it could take next is for another event type. Checked before advancing,
+/// it spares most of the runs an event visits the whole advance (under
+/// strict contiguity such an event ends the run, so it is advanced).
+#[inline]
+pub(crate) fn passes_over(
+    nfa: &Nfa,
+    strategy: SelectionStrategy,
+    run: &Run,
+    event: &SharedEvent,
+) -> bool {
+    if strategy == SelectionStrategy::StrictContiguous || !run.pending_negations.is_empty() {
+        return false;
+    }
+    let state = &nfa.states[run.current_state];
+    state.state_type == StateType::Normal
+        && state.epsilon_transitions.is_empty()
+        && state
+            .transitions
+            .iter()
+            .all(|&t| other_type(&nfa.states[t], event))
+}
+
 /// Whether `state` is a step for another event type than `event`'s, which
 /// [`enter`] would refuse: checked first, it spares the call (and, at an
 /// `or`, the copy of the run) for most of the runs an event visits. A
