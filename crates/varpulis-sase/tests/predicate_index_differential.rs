@@ -226,6 +226,35 @@ fn patterns() -> Vec<(&'static str, SasePattern, bool)> {
             true,
         ),
         (
+            // Parked while waiting for `B`, then visited while the negated
+            // step in the middle forbids `C`, until `D` completes the run.
+            "negation-in-the-middle",
+            SasePattern::Within(
+                Box::new(SasePattern::Seq(vec![
+                    a(),
+                    step("B", "b", Some(key_eq())),
+                    SasePattern::Not(Box::new(step("C", "c", Some(key_eq())))),
+                    step("B", "b2", Some(key_eq())),
+                ])),
+                Duration::from_secs(5),
+            ),
+            true,
+        ),
+        (
+            // A closure, then an absence in the middle.
+            "kleene-then-negation",
+            SasePattern::Within(
+                Box::new(SasePattern::Seq(vec![
+                    a(),
+                    SasePattern::KleenePlus(Box::new(step("B", "bs", Some(key_eq())))),
+                    SasePattern::Not(Box::new(step("C", "c", Some(key_eq())))),
+                    step("B", "b2", Some(cref("price", CompareOp::Gt, "a", "price"))),
+                ])),
+                Duration::from_secs(5),
+            ),
+            false,
+        ),
+        (
             "kleene",
             SasePattern::Seq(vec![
                 a(),

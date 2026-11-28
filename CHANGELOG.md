@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a `NOT` in the middle of a pattern matches
+
+- `A -> NOT B -> C` compiled, loaded, and never matched. Every negated step
+  was run as a trailing one: the run moved past it only when the pattern's
+  `within` had passed without a B, and that same deadline ended the run, so
+  C could never be taken. A negated step with a step after it now forbids
+  B from the step before it until the run takes the step after it: a
+  matching B in between invalidates the run, and C completes it at once,
+  without waiting for the `within`. The `within` still bounds the run.
+  The event that takes C closes the gap even when it fits the forbidden
+  filter, so `A -> NOT B -> B where id == "k1"` is "the next B for k1, with
+  no other B in between".
+  Two in a row (`A -> NOT B -> NOT D -> C`) forbid both; after a closure
+  (`A -> all X -> NOT B -> C`) the absence is watched from the closure's
+  first event; before an `or` or an `and`, it ends with the first event of
+  the alternative or operand the run takes. Events are judged in the order
+  they arrive, as for the other steps. A snapshot taken while a run waits
+  keeps the absence.
+- E038: a pattern that starts with `NOT B` (nothing to judge the absence
+  from) and `all NOT B` are refused at load. Both used to load and run as
+  something else.
+
 ### Added — `timer()` runs in `Program`, on a clock the host names
 
 - `Program` used to refuse every `timer()` source (E102): it has no thread
