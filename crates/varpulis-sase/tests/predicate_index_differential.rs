@@ -200,6 +200,32 @@ fn patterns() -> Vec<(&'static str, SasePattern, bool)> {
             true,
         ),
         (
+            // Both alternatives start with the same unpredicated `C`, so a run
+            // at the `or` forks a copy per alternative. The runs reaching the
+            // `or` come out of the index in its order, not the visited list's:
+            // the copies must still be numbered, admitted and emitted in the
+            // order of the runs they were forked from.
+            "or-forking",
+            SasePattern::Within(
+                Box::new(SasePattern::Seq(vec![
+                    a(),
+                    step("B", "b", Some(cref("price", CompareOp::Gt, "a", "price"))),
+                    SasePattern::Or(
+                        Box::new(SasePattern::Seq(vec![
+                            step("C", "c1", None),
+                            step("B", "b2", Some(key_eq())),
+                        ])),
+                        Box::new(SasePattern::Seq(vec![
+                            step("C", "c2", None),
+                            step("C", "c3", Some(key_eq())),
+                        ])),
+                    ),
+                ])),
+                Duration::from_secs(8),
+            ),
+            true,
+        ),
+        (
             "kleene",
             SasePattern::Seq(vec![
                 a(),

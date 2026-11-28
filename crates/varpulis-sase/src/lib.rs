@@ -35,6 +35,7 @@ mod kleene;
 mod metrics;
 mod negation;
 mod nfa;
+mod partition;
 pub(crate) mod predicate;
 mod run;
 mod run_index;
@@ -55,6 +56,7 @@ pub use kleene::KleeneCapture;
 pub use metrics::{LatencyHistogram, MetricsSummary, SaseMetrics};
 pub use negation::NegationConstraint;
 pub use nfa::{Nfa, NfaCompiler, OrGroup, State, StateType};
+pub use partition::Partition;
 pub use predicate::{classify_predicate, PredicateClass};
 pub use run::{OrFamily, Run};
 // ---------------------------------------------------------------------------

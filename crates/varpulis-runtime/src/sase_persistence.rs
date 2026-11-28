@@ -201,10 +201,11 @@ impl SaseCheckpointExt for SaseEngine {
         let partitioned_runs = self
             .partitioned_runs
             .iter()
-            .map(|(k, runs)| {
+            .map(|(k, partition)| {
                 // In creation order too: the list order is what swap-removes
                 // left, and a restore numbers the runs in the order written.
-                let mut runs: Vec<&Run> = runs.iter().collect();
+                // A partition's parked runs are active runs of it as well.
+                let mut runs: Vec<&Run> = partition.all_runs().collect();
                 runs.sort_by_key(|r| r.seq);
                 let run_cps = runs.into_iter().map(|r| r.checkpoint()).collect();
                 (k.clone(), run_cps)
@@ -234,8 +235,8 @@ impl SaseCheckpointExt for SaseEngine {
             .partitioned_runs
             .iter()
             .map(|(k, runs)| {
-                let restored_runs = runs.iter().map(Run::from_checkpoint).collect();
-                (k.clone(), restored_runs)
+                let restored_runs: Vec<Run> = runs.iter().map(Run::from_checkpoint).collect();
+                (k.clone(), restored_runs.into())
             })
             .collect();
 

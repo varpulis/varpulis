@@ -710,6 +710,14 @@ pattern PerUser =
 - Each partition maintains its own NFA state
 - N partitions = N × base memory
 
+**Many runs in one partition:** an event visits only the runs of its own
+partition. When one partition holds many waiting runs (a key of low
+cardinality, or many orders waiting under the same key), that partition files
+them in its own predicate index once it holds 8 runs, and lets them go under
+4, as the non-partitioned runs do: an event then visits the runs it can
+advance, not every run of its partition. A partition of a run or two never
+builds one. `VARPULIS_SASE_INDEX=1` forces the index, `0` disables it.
+
 ### Without Partitioning
 
 Global pattern matching across all events:

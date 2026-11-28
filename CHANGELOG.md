@@ -71,9 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Under 8 waiting runs, visiting them all is cheaper and the engine does
   that; it goes back to it under 4. `SaseEngine::with_predicate_index(bool)`
   forces either way, and `VARPULIS_SASE_INDEX=1` or `0` sets the default.
-  The index stays off under strict contiguity, with global negations and
-  with `partition_by`, and a run that has a pending negation, an AND or a
-  Kleene capture stays in the visited list.
+  The index stays off under strict contiguity and with global negations,
+  and a run that has a pending negation, an AND or a Kleene capture stays in
+  the visited list. With `partition_by`, see the next section.
 - The matches one event completes are now emitted in the order their runs
   were created, with or without the index. Before, they came out in the
   order of the run list, which removals reshuffled. A checkpoint lists runs
@@ -81,6 +81,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ExprEvaluator::indexable_comparisons` (default `false`) tells the index
   whether it may plan comparisons written as expressions; the runtime's
   evaluator says `true`.
+
+### Changed — with `partition_by`, an event looks up the runs of its partition it can advance
+
+- An event visits only its partition's runs, but it visited all of them: a
+  partition with many runs waiting (a key of low cardinality, or many orders
+  waiting under the same key) cost one predicate evaluation per run, per
+  event. With `A as a -> B where ref == a.ref`, one event completing a run
+  and one reopening it cost 179 µs with 1 000 runs in one partition and
+  44 µs with 4 partitions of 250; they now cost about 2 µs. Each partition
+  that holds 8 runs files them in its own index, as the non-partitioned runs
+  are, and lets them go under 4; `VARPULIS_SASE_INDEX` and
+  `with_predicate_index` apply to partitions too. A partition of a run or
+  two never builds one, and costs what it cost before (within 2 % of
+  instructions, no measurable time). With 100 000 partitions of 9 runs, the
+  indexes take less memory than the visited lists they replace.
+- **Emission order within a partition.** The matches one event completes in
+  a partition now come out in the order their runs were created, as the
+  non-partitioned ones already did, and so do the matches a deadline
+  confirms (a negated step). Before, they came out in the order of the
+  partition's run list, which removals reshuffled: `A(k0), A(k1), A(k1),
+  B(k0), B(k1)` on `A as a -> B where key == a.key`, in one partition, gave
+  `[a=3, a=2]` for the last event and now gives `[a=2, a=3]`. When one
+  event completes several runs, a downstream `.limit()`, `.distinct()` or
+  count window can therefore keep different matches than before.
+- The copies a run forks at an `or` are now numbered in the order of the
+  runs they were forked from, with or without `partition_by`. Before, they
+  were numbered in the order the pass visited their parents, which the
+  index changes: with an `or` whose alternatives start with the same event,
+  the index could change the order of the matches and, at the run cap,
+  which parent's copy was kept.
+- `SaseEngine::partitioned_runs` now maps each key to a `Partition`: the
+  visited `runs`, and the runs parked in the partition's index
+  (`Partition::parked_runs`, `all_runs`, `len`). `parked_run_count` counts
+  the runs parked in every index.
 
 ### Changed — an absence over many open keys no longer costs them all per event
 

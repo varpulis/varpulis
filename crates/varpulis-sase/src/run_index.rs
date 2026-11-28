@@ -45,13 +45,16 @@
 //!
 //! Every other run stays in the engine's list and is visited as before. The
 //! engine also keeps the index off when the shape of the whole pattern rules
-//! it out (strict contiguity, global negations, partitioning): see
-//! `SaseEngine::with_predicate_index`.
+//! it out (strict contiguity, global negations): see
+//! `SaseEngine::with_predicate_index`. Under `partition by`, each partition
+//! that holds enough runs has its own index, on one plan the engine computes
+//! once ([`IndexPlan`], IDX-03).
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use rustc_hash::{FxHashMap, FxHasher};
@@ -298,10 +301,9 @@ struct Parked {
 /// Runs filed by the values their next step compares against.
 #[derive(Debug)]
 pub(crate) struct RunIndex {
-    /// Per NFA state: how its runs are filed, if they can be.
-    plans: Vec<Option<StatePlan>>,
-    /// Event type -> the states whose runs wait for it.
-    by_type: FxHashMap<String, Vec<usize>>,
+    /// How each state's runs are filed, shared by every index of one engine
+    /// (one per partition under `partition by`).
+    plan: Arc<IndexPlan>,
     /// Per NFA state: equality key -> bucket.
     buckets: Vec<FxHashMap<u64, Bucket>>,
     slab: Vec<Option<Parked>>,
@@ -315,14 +317,24 @@ pub(crate) struct RunIndex {
     scratch: Vec<Slot>,
 }
 
-impl RunIndex {
+/// How the runs of each NFA state are filed, if they can be. Computed once
+/// per engine from its NFA; every [`RunIndex`] of the engine reads it.
+#[derive(Debug)]
+pub(crate) struct IndexPlan {
+    /// Per NFA state: how its runs are filed, if they can be.
+    plans: Vec<Option<StatePlan>>,
+    /// Event type -> the states whose runs wait for it.
+    by_type: FxHashMap<String, Vec<usize>>,
+}
+
+impl IndexPlan {
     /// Plan every state of `nfa`. `None` when no state's runs can be filed,
     /// so an engine that cannot use the index does not carry one.
     ///
     /// `expressions`: whether comparisons written as expressions may be
     /// planned, which the engine's evaluator decides
     /// (`ExprEvaluator::indexable_comparisons`).
-    pub(crate) fn new(nfa: &Nfa, expressions: bool) -> Option<Self> {
+    pub(crate) fn new(nfa: &Nfa, expressions: bool) -> Option<Arc<Self>> {
         let mut plans = Vec::with_capacity(nfa.states.len());
         let mut by_type: FxHashMap<String, Vec<usize>> = FxHashMap::default();
         for state_id in 0..nfa.states.len() {
@@ -337,17 +349,32 @@ impl RunIndex {
         if by_type.is_empty() {
             return None;
         }
-        Some(Self {
-            buckets: (0..plans.len()).map(|_| FxHashMap::default()).collect(),
-            plans,
-            by_type,
+        Some(Arc::new(Self { plans, by_type }))
+    }
+}
+
+impl RunIndex {
+    /// An index for the engine whose NFA `nfa` is; `None` when no state's
+    /// runs can be filed. See [`IndexPlan::new`].
+    pub(crate) fn new(nfa: &Nfa, expressions: bool) -> Option<Self> {
+        IndexPlan::new(nfa, expressions).map(Self::with_plan)
+    }
+
+    /// An empty index filing runs by `plan`. Nothing is allocated until a
+    /// run is filed.
+    pub(crate) fn with_plan(plan: Arc<IndexPlan>) -> Self {
+        Self {
+            buckets: (0..plan.plans.len())
+                .map(|_| FxHashMap::default())
+                .collect(),
+            plan,
             slab: Vec::new(),
             free: Vec::new(),
             len: 0,
             deadlines: BTreeSet::new(),
             event_time_deadlines: BTreeSet::new(),
             scratch: Vec::new(),
-        })
+        }
     }
 
     /// Number of parked runs.
@@ -380,7 +407,7 @@ impl RunIndex {
     /// Where `run` would be filed, or `None` if it has to stay with the
     /// runs every event visits.
     pub(crate) fn key_for(&self, run: &Run) -> Option<ParkKey> {
-        let plan = self.plans.get(run.current_state)?.as_ref()?;
+        let plan = self.plan.plans.get(run.current_state)?.as_ref()?;
         if run.invalidated
             || !run.pending_negations.is_empty()
             || run.and_state.is_some()
@@ -504,14 +531,14 @@ impl RunIndex {
         if self.len == 0 {
             return;
         }
-        let Some(states) = self.by_type.get(&*event.event_type) else {
+        let Some(states) = self.plan.by_type.get(&*event.event_type) else {
             return;
         };
 
         let mut slots = std::mem::take(&mut self.scratch);
         slots.clear();
         for &state in states {
-            let Some(plan) = self.plans[state].as_ref() else {
+            let Some(plan) = self.plan.plans[state].as_ref() else {
                 continue;
             };
             let mut hasher = FxHasher::default();
@@ -610,9 +637,22 @@ impl RunIndex {
             self.slab[slot as usize] = Some(parked);
             slot
         } else {
+            // A slot holds a whole run, a few hundred bytes. Growing by half
+            // rather than doubling leaves a third of the slab unused at
+            // worst, not half: under `partition by`, with an index in each of
+            // many small partitions, that unused half was most of what the
+            // indexes cost.
+            if self.slab.len() == self.slab.capacity() {
+                self.slab.reserve_exact((self.slab.len() / 2).max(4));
+            }
             self.slab.push(Some(parked));
             Slot::try_from(self.slab.len() - 1).expect("more than u32::MAX parked runs")
         }
+    }
+
+    /// Make room for `additional` more runs without growing the slab again.
+    pub(crate) fn reserve_exact(&mut self, additional: usize) {
+        self.slab.reserve_exact(additional);
     }
 
     /// Remove the run at `slot` from every structure that refers to it.
