@@ -152,7 +152,11 @@ fn patterns() -> Vec<(&'static str, SasePattern)> {
 
 fn random_event(rng: &mut Rng, id: i64, at: DateTime<Utc>) -> Event {
     let event_type = ["A", "A", "B", "B", "B"][rng.below(5) as usize];
-    let mut event = Event::new(event_type).with_field("id", Value::Int(id));
+    // `part` is what the partitioned engines partition by: three partitions,
+    // so each fills up.
+    let mut event = Event::new(event_type)
+        .with_field("id", Value::Int(id))
+        .with_field("part", Value::Int(id % 3));
     event.timestamp = at;
 
     let k = rng.below(4) as i64;
@@ -208,6 +212,24 @@ fn engine(pattern: &SasePattern, strategy: SelectionStrategy, index: Option<bool
         .with_strategy(strategy)
         .with_max_runs(1_000_000)
         .with_backpressure(BackpressureStrategy::Drop);
+    if let Some(on) = index {
+        engine = engine.with_predicate_index(on);
+    }
+    engine.set_evaluator(Arc::new(RuntimeExprEvaluator));
+    engine
+}
+
+/// [`engine`], partitioned by `part`: IDX-03, each partition's own index.
+fn partitioned(
+    pattern: &SasePattern,
+    strategy: SelectionStrategy,
+    index: Option<bool>,
+) -> SaseEngine {
+    let mut engine = SaseEngine::new(pattern.clone())
+        .with_strategy(strategy)
+        .with_max_runs(1_000_000)
+        .with_backpressure(BackpressureStrategy::Drop)
+        .with_partition_by("part".into());
     if let Some(on) = index {
         engine = engine.with_predicate_index(on);
     }
@@ -315,6 +337,103 @@ fn a_restore_keeps_the_indexed_runs_and_their_order() {
         }
         // The original keeps going too, and matches like a restored engine.
         let mut restored = engine(&pattern, SelectionStrategy::SkipTillAnyMatch, Some(false));
+        restored.restore(&checkpoint);
+        for event in after {
+            let expected: Vec<String> = original.process(event).iter().map(describe).collect();
+            let actual: Vec<String> = restored.process(event).iter().map(describe).collect();
+            assert_eq!(actual, expected, "{name}: the restore changed what matches");
+        }
+        assert!(matches > 0, "{name}: nothing matched after the restore");
+    }
+}
+
+/// IDX-03: expression steps under `partition by`, each partition with its
+/// own index, match as without any.
+#[test]
+fn expression_steps_match_the_same_in_partitions() {
+    for (name, pattern) in patterns() {
+        let mut most_parked = 0;
+        let mut matches = 0;
+        for seed in 1..=4u64 {
+            let mut plain = partitioned(&pattern, SelectionStrategy::SkipTillAnyMatch, Some(false));
+            let mut indexed =
+                partitioned(&pattern, SelectionStrategy::SkipTillAnyMatch, Some(true));
+            let mut auto = partitioned(&pattern, SelectionStrategy::SkipTillAnyMatch, None);
+            let mut rng = Rng(seed * 0x7F4A_7C15);
+            let mut at = DateTime::from_timestamp(1_700_000_000, 0).expect("valid");
+            for id in 0..1_200 {
+                at += chrono::Duration::milliseconds(rng.below(1000) as i64);
+                let event = random_event(&mut rng, id, at);
+                let expected: Vec<String> = plain.process(&event).iter().map(describe).collect();
+                let actual: Vec<String> = indexed.process(&event).iter().map(describe).collect();
+                let automatic: Vec<String> = auto.process(&event).iter().map(describe).collect();
+                assert_eq!(
+                    actual, expected,
+                    "{name} (seed {seed}): differ at event {id}"
+                );
+                assert_eq!(automatic, expected, "{name}: automatic mode differs");
+                assert_eq!(indexed.stats().active_runs, plain.stats().active_runs);
+                matches += expected.len();
+                most_parked = most_parked.max(indexed.parked_run_count());
+            }
+        }
+        if name != "string-order" {
+            assert!(matches > 0, "{name}: never matched, the test is vacuous");
+        }
+        assert!(most_parked > 0, "{name}: no partition index filed a run");
+    }
+}
+
+/// IDX-03: a checkpoint taken while runs sit in the partitions' indexes
+/// restores them all, each partition's runs in creation order: the restored
+/// engine, with the index or without, emits what the original one emits.
+#[test]
+fn a_restore_keeps_the_partition_indexes_and_their_order() {
+    use varpulis_runtime::sase_persistence::SaseCheckpointExt;
+
+    for (name, pattern) in patterns() {
+        if name == "string-order" {
+            continue;
+        }
+        let mut original = partitioned(&pattern, SelectionStrategy::SkipTillAnyMatch, Some(true));
+        let mut rng = Rng(0x5EED_0003);
+        let mut at = DateTime::from_timestamp(1_700_000_000, 0).expect("valid");
+        let mut stream = Vec::new();
+        for id in 0..1_000 {
+            at += chrono::Duration::milliseconds(rng.below(1000) as i64);
+            stream.push(random_event(&mut rng, id, at));
+        }
+        let (before, after) = stream.split_at(500);
+        for event in before {
+            let _ = original.process(event);
+        }
+        assert!(
+            original.parked_run_count() > 0,
+            "{name}: no run was in a partition's index at the checkpoint"
+        );
+        let checkpoint = original.checkpoint();
+
+        let mut matches = 0;
+        for index in [Some(true), Some(false), None] {
+            let mut restored = partitioned(&pattern, SelectionStrategy::SkipTillAnyMatch, index);
+            restored.restore(&checkpoint);
+            assert_eq!(
+                restored.stats().active_runs,
+                original.stats().active_runs,
+                "{name}: runs lost by the restore"
+            );
+            let mut reference =
+                partitioned(&pattern, SelectionStrategy::SkipTillAnyMatch, Some(false));
+            reference.restore(&checkpoint);
+            for (i, event) in after.iter().enumerate() {
+                let expected: Vec<String> = reference.process(event).iter().map(describe).collect();
+                let actual: Vec<String> = restored.process(event).iter().map(describe).collect();
+                assert_eq!(actual, expected, "{name} ({index:?}): differ at event {i}");
+                matches += expected.len();
+            }
+        }
+        // The original keeps going too, and matches like a restored engine.
+        let mut restored = partitioned(&pattern, SelectionStrategy::SkipTillAnyMatch, Some(false));
         restored.restore(&checkpoint);
         for event in after {
             let expected: Vec<String> = original.process(event).iter().map(describe).collect();

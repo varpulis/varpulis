@@ -16,9 +16,10 @@ use super::event_time::{EventTimeConfig, EventTimeManager, EventTimeResult};
 use super::kleene::KleeneLimits;
 use super::metrics::SaseMetrics;
 use super::nfa::{Nfa, NfaCompiler, StateType};
+use super::partition::Partition;
 use super::predicate::{eval_predicate, event_matches_state, predicate_references_alias};
 use super::run::{OrFamily, Run};
-use super::run_index::RunIndex;
+use super::run_index::{IndexPlan, RunIndex};
 use super::types::{
     EmissionMode, GlobalNegation, MatchResult, Predicate, SasePattern, SaseStats,
     SelectionStrategy, SharedEvent, TimeSemantics, MAX_ENUMERATION_RESULTS, MAX_KLEENE_EVENTS,
@@ -49,8 +50,9 @@ pub struct SaseEngine {
     strategy: SelectionStrategy,
     /// Partition-by field (SASEXT optimization)
     partition_by: Option<String>,
-    /// Partitioned runs for SASEXT
-    pub partitioned_runs: FxHashMap<String, Vec<Run>>,
+    /// Partitioned runs for SASEXT. IDX-03: each partition may file its
+    /// waiting runs in its own predicate index (`Partition`).
+    pub partitioned_runs: FxHashMap<String, Partition>,
     /// The event-time deadline of each partitioned run, with its partition,
     /// in order: the watermark sweep visits the partitions holding a run it
     /// has made due, instead of every partition on every event. An entry can
@@ -117,14 +119,21 @@ pub struct SaseEngine {
     /// compares against. Built on first use, and only while the engine's
     /// shape allows it (`sync_run_index`).
     run_index: Option<RunIndex>,
+    /// IDX-03: how the partitions' indexes file runs, planned once for all
+    /// of them when the first partition needs one.
+    partition_plan: Option<Arc<IndexPlan>>,
 }
 
 /// IDX-02: in `Auto` mode, the number of non-partitioned runs from which the
 /// engine files them in the predicate index.
+///
+/// IDX-03: under `partition by`, the number of runs of one partition from
+/// which that partition files them in its own index.
 pub const INDEX_ON_RUNS: usize = 8;
 
 /// IDX-02: in `Auto` mode, the number of runs under which the engine puts
-/// them back in the visited list.
+/// them back in the visited list (IDX-03: of one partition, under
+/// `partition by`).
 ///
 /// Lower than [`INDEX_ON_RUNS`], so a count hovering around the threshold
 /// does not move runs back and forth.
@@ -142,6 +151,17 @@ enum IndexMode {
 }
 
 impl IndexMode {
+    /// Whether `runs` runs call for an index, given whether one is already
+    /// there (the thresholds differ, see [`INDEX_OFF_RUNS`]).
+    fn wants(self, runs: usize, indexed: bool) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Always => true,
+            Self::Auto if indexed => runs >= INDEX_OFF_RUNS,
+            Self::Auto => runs >= INDEX_ON_RUNS,
+        }
+    }
+
     /// `VARPULIS_SASE_INDEX=1` forces the index, `0` disables it; anything
     /// else leaves the automatic default.
     fn from_env() -> Self {
@@ -187,14 +207,62 @@ impl std::fmt::Debug for SaseEngine {
 /// ("poison") partition keys leave empty `Vec`s behind in `partitioned_runs`
 /// forever — an unbounded memory leak for streams partitioned on something like
 /// a session id or request id.
+///
+/// IDX-03: a partition's parked runs expire by their wall-clock deadline
+/// (`now`), as `keep` drops the visited ones.
 fn retain_and_evict_empty_partitions<F: Fn(&Run) -> bool>(
-    partitioned_runs: &mut FxHashMap<String, Vec<Run>>,
+    partitioned_runs: &mut FxHashMap<String, Partition>,
     keep: F,
+    now: Timestamp,
 ) {
-    partitioned_runs.retain(|_key, runs| {
-        runs.retain(&keep);
-        !runs.is_empty()
+    partitioned_runs.retain(|_key, partition| {
+        partition.runs.retain(&keep);
+        if let Some(index) = partition.index.as_mut() {
+            index.expire_processing_time(now);
+        }
+        !partition.is_empty()
     });
+}
+
+/// IDX-03: build or release the index of `partition` so that it has one
+/// exactly when `wanted`. The plan is computed on the first build, from
+/// `nfa`, and shared by every partition; when no state can be planned,
+/// `unplannable` is set and no index is built.
+fn sync_partition_index(
+    partition: &mut Partition,
+    wanted: bool,
+    plan: &mut Option<Arc<IndexPlan>>,
+    unplannable: &mut bool,
+    nfa: &Nfa,
+    expressions: bool,
+) {
+    if !wanted {
+        partition.release_index();
+        return;
+    }
+    if partition.index.is_some() {
+        return;
+    }
+    if plan.is_none() {
+        *plan = IndexPlan::new(nfa, expressions);
+    }
+    let Some(plan) = plan.as_ref() else {
+        // No state of this pattern can be planned: stop asking.
+        *unplannable = true;
+        return;
+    };
+    let mut index = RunIndex::with_plan(Arc::clone(plan));
+    // The runs already waiting move in, as far as they can.
+    let mut i = 0;
+    while i < partition.runs.len() {
+        if let Some(key) = index.key_for(&partition.runs[i]) {
+            let run = partition.runs.swap_remove(i);
+            index.insert(run, key);
+        } else {
+            i += 1;
+        }
+    }
+    partition.index = Some(Box::new(index));
 }
 
 /// What happened to `or` families during one pass over the runs: the
@@ -374,6 +442,7 @@ impl SaseEngine {
             index_mode: IndexMode::from_env(),
             index_unplannable: false,
             run_index: None,
+            partition_plan: None,
         }
     }
 
@@ -390,12 +459,15 @@ impl SaseEngine {
     /// By default the engine uses the index once it holds
     /// [`INDEX_ON_RUNS`] non-partitioned runs, and stops below
     /// [`INDEX_OFF_RUNS`]: under a few runs, visiting them all is cheaper.
+    /// Under `partition by` each partition decides alone, on its own runs:
+    /// an event visits only its partition's runs, so that is the count the
+    /// index saves visits on.
     /// `true` uses it whatever the number of runs, `false` never. The
     /// `VARPULIS_SASE_INDEX` environment variable sets the default: `1` for
     /// always, `0` for never.
     ///
-    /// Inactive (every run visited, as without it) under strict contiguity,
-    /// with global negations, or with `partition_by`.
+    /// Inactive (every run visited, as without it) under strict contiguity
+    /// or with global negations.
     pub fn with_predicate_index(mut self, enabled: bool) -> Self {
         self.index_mode = if enabled {
             IndexMode::Always
@@ -408,51 +480,66 @@ impl SaseEngine {
         self
     }
 
-    /// IDX-02: number of runs currently held by the run index.
+    /// IDX-02: number of runs currently held by the run indexes: the
+    /// non-partitioned one and, under `partition by`, every partition's.
     pub fn parked_run_count(&self) -> usize {
+        self.listed_parked_count()
+            + self
+                .partitioned_runs
+                .values()
+                .map(Partition::parked_run_count)
+                .sum::<usize>()
+    }
+
+    /// The runs parked in the index of the non-partitioned runs.
+    fn listed_parked_count(&self) -> usize {
         self.run_index.as_ref().map_or(0, RunIndex::len)
     }
 
-    /// IDX-02: the runs held by the run index, in no particular order. A
-    /// checkpoint must include them: they are not in `runs`.
+    /// IDX-02: the runs held by the index of the non-partitioned runs, in no
+    /// particular order. A checkpoint must include them: they are not in
+    /// `runs`. A partition's are [`Partition::parked_runs`].
     pub fn parked_runs(&self) -> impl Iterator<Item = &Run> {
         self.run_index.iter().flat_map(RunIndex::runs)
     }
 
-    /// IDX-02: drop the runs held by the run index, for a restore that is
+    /// IDX-02: drop the runs held by the run indexes, for a restore that is
     /// about to replace every run.
     pub fn discard_parked_runs(&mut self) {
         self.run_index = None;
+        for partition in self.partitioned_runs.values_mut() {
+            partition.index = None;
+        }
     }
 
-    /// IDX-02: put the index's runs back in `runs` and drop the index. It is
-    /// rebuilt on the next event if the engine still allows it.
+    /// IDX-02: put the indexes' runs back in the visited lists and drop the
+    /// indexes. They are rebuilt on the next event if the engine still
+    /// allows it.
     fn release_run_index(&mut self) {
         if let Some(mut index) = self.run_index.take() {
             self.runs.extend(index.drain());
         }
+        for partition in self.partitioned_runs.values_mut() {
+            partition.release_index();
+        }
+    }
+
+    /// IDX-02: whether the shape of the engine allows an index at all.
+    fn index_usable(&self) -> bool {
+        !self.index_unplannable
+            && self.strategy != SelectionStrategy::StrictContiguous
+            && self.global_negations.is_empty()
     }
 
     /// IDX-02: build the index if it was asked for and the engine allows it;
     /// release it if the engine no longer does.
     fn sync_run_index(&mut self) {
-        let usable = !self.index_unplannable
-            && self.partition_by.is_none()
-            && self.strategy != SelectionStrategy::StrictContiguous
-            && self.global_negations.is_empty();
+        let usable = self.index_usable() && self.partition_by.is_none();
         let wanted = usable
-            && match self.index_mode {
-                IndexMode::Never => false,
-                IndexMode::Always => true,
-                IndexMode::Auto => {
-                    let runs = self.runs.len() + self.parked_run_count();
-                    if self.run_index.is_some() {
-                        runs >= INDEX_OFF_RUNS
-                    } else {
-                        runs >= INDEX_ON_RUNS
-                    }
-                }
-            };
+            && self.index_mode.wants(
+                self.runs.len() + self.listed_parked_count(),
+                self.run_index.is_some(),
+            );
         if !wanted {
             self.release_run_index();
         } else if self.run_index.is_none() {
@@ -526,6 +613,7 @@ impl SaseEngine {
         // evaluator; the index is planned again on the next event.
         self.release_run_index();
         self.index_unplannable = false;
+        self.partition_plan = None;
         self.evaluator = Some(evaluator);
     }
 
@@ -661,8 +749,9 @@ impl SaseEngine {
     fn purge_partition_deadlines(&mut self) {
         let partitions = &self.partitioned_runs;
         self.partition_deadlines.retain(|(deadline, key)| {
-            partitions.get(key).is_some_and(|runs| {
-                runs.iter()
+            partitions.get(key).is_some_and(|partition| {
+                partition
+                    .all_runs()
                     .any(|run| run.event_time_deadline == Some(*deadline))
             })
         });
@@ -676,8 +765,9 @@ impl SaseEngine {
         self.partition_deadlines = self
             .partitioned_runs
             .iter()
-            .flat_map(|(key, runs)| {
-                runs.iter()
+            .flat_map(|(key, partition)| {
+                partition
+                    .all_runs()
                     .filter_map(|run| run.event_time_deadline)
                     .map(|deadline| (deadline, key.clone()))
             })
@@ -695,11 +785,11 @@ impl SaseEngine {
     /// run's deadline, as entering the step built it.
     fn restore_pending_negations(&mut self) {
         let nfa = &self.nfa;
-        for run in self
-            .runs
-            .iter_mut()
-            .chain(self.partitioned_runs.values_mut().flatten())
-        {
+        for run in self.runs.iter_mut().chain(
+            self.partitioned_runs
+                .values_mut()
+                .flat_map(|partition| partition.runs.iter_mut()),
+        ) {
             if !run.pending_negations.is_empty() {
                 continue;
             }
@@ -823,8 +913,8 @@ impl SaseEngine {
             });
         }
         // Also include partitioned runs
-        for runs in self.partitioned_runs.values() {
-            for run in runs {
+        for partition in self.partitioned_runs.values() {
+            for run in partition.all_runs() {
                 snapshots.push(super::types::RunSnapshot {
                     current_state: run.current_state,
                     started_at_ns: run
@@ -980,7 +1070,7 @@ impl SaseEngine {
         let in_partitions: usize = self
             .partitioned_runs
             .values()
-            .map(|runs| runs.iter().filter(|r| r.invalidated).count())
+            .map(|partition| partition.runs.iter().filter(|r| r.invalidated).count())
             .sum();
         in_runs + in_partitions
     }
@@ -1171,7 +1261,10 @@ impl SaseEngine {
                 && self
                     .partitioned_runs
                     .get(&partition_key)
-                    .is_some_and(|runs| runs.iter().any(|r| !r.invalidated));
+                    .is_some_and(|partition| {
+                        partition.parked_run_count() > 0
+                            || partition.runs.iter().any(|r| !r.invalidated)
+                    });
 
             if !has_active {
                 // Try to start new run in partition with backpressure
@@ -1194,7 +1287,7 @@ impl SaseEngine {
             // starting a new run if any active run exists (avoids duplicate
             // emissions on each Kleene event).
             let has_active = suppress_new_runs
-                && (self.parked_run_count() > 0 || self.runs.iter().any(|r| !r.invalidated));
+                && (self.listed_parked_count() > 0 || self.runs.iter().any(|r| !r.invalidated));
 
             if !has_active {
                 // Try to start new run with backpressure
@@ -1236,7 +1329,7 @@ impl SaseEngine {
     /// BP-01: Handle backpressure for non-partitioned runs
     /// Returns (was_added, optional_warning)
     fn handle_backpressure(&mut self, run: Run) -> (bool, Option<ProcessWarning>) {
-        if self.runs.len() + self.parked_run_count() < self.max_runs {
+        if self.runs.len() + self.listed_parked_count() < self.max_runs {
             // IDX-02: the event that started this run has already been
             // looked up, so filing it now cannot offer it that event again.
             self.file_run(run);
@@ -1262,7 +1355,7 @@ impl SaseEngine {
                     Some(ProcessWarning::RunDropped {
                         reason: format!(
                             "Max runs exceeded: {} / {} (Error strategy)",
-                            self.runs.len() + self.parked_run_count(),
+                            self.runs.len() + self.listed_parked_count(),
                             self.max_runs
                         ),
                     }),
@@ -1376,15 +1469,34 @@ impl SaseEngine {
         if let Some(deadline) = run.event_time_deadline {
             self.index_partition_deadline(deadline, partition_key);
         }
-        let partition_runs = self
+        let nfa = &self.nfa;
+        let partition = self
             .partitioned_runs
             .entry(partition_key.to_string())
             .or_default();
 
-        if partition_runs.len() < self.max_runs {
-            partition_runs.push(run);
+        if partition.len() < self.max_runs {
+            // IDX-03: the event that started this run has already been
+            // looked up, so filing it now cannot offer it that event again.
+            partition.file_run(run);
             return (true, None);
         }
+
+        // Evict the run with the least `key`, visited or parked, and file the
+        // new one in its place. Ties go to the run created first (`seq`).
+        let evict = |partition: &mut Partition, run: Run, oldest: bool| {
+            let victim = if oldest {
+                partition.remove_min_by_key_except(|r| (r.started_at, r.seq), |_| false)
+            } else {
+                partition.remove_min_by_key_except(|r| (r.stack.len(), r.seq), |_| false)
+            };
+            let age = victim.map(|victim| {
+                release_evicted(nfa, &mut partition.runs, &victim);
+                victim.started_at.elapsed()
+            });
+            partition.file_run(run);
+            age
+        };
 
         // Apply same backpressure logic as non-partitioned
         match &self.backpressure {
@@ -1404,63 +1516,33 @@ impl SaseEngine {
                     Some(ProcessWarning::RunDropped {
                         reason: format!(
                             "Max runs exceeded in partition: {} / {}",
-                            partition_runs.len(),
+                            partition.len(),
                             self.max_runs
                         ),
                     }),
                 )
             }
-            BackpressureStrategy::EvictOldest => {
-                if let Some((idx, age)) = partition_runs
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, r)| (r.started_at, r.seq))
-                    .map(|(idx, r)| (idx, r.started_at.elapsed()))
-                {
-                    let victim = partition_runs.swap_remove(idx);
-                    release_evicted(&self.nfa, partition_runs, &victim);
-                    partition_runs.push(run);
-                    self.total_runs_evicted += 1;
-                    (true, Some(ProcessWarning::RunEvicted { age }))
-                } else {
-                    partition_runs.push(run);
-                    (true, None)
-                }
-            }
-            BackpressureStrategy::EvictLeastProgress => {
-                if let Some((idx, age)) = partition_runs
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, r)| (r.stack.len(), r.seq))
-                    .map(|(idx, r)| (idx, r.started_at.elapsed()))
-                {
-                    let victim = partition_runs.swap_remove(idx);
-                    release_evicted(&self.nfa, partition_runs, &victim);
-                    partition_runs.push(run);
-                    self.total_runs_evicted += 1;
-                    (true, Some(ProcessWarning::RunEvicted { age }))
-                } else {
-                    partition_runs.push(run);
-                    (true, None)
+            BackpressureStrategy::EvictOldest | BackpressureStrategy::EvictLeastProgress => {
+                let oldest = matches!(self.backpressure, BackpressureStrategy::EvictOldest);
+                match evict(partition, run, oldest) {
+                    Some(age) => {
+                        self.total_runs_evicted += 1;
+                        (true, Some(ProcessWarning::RunEvicted { age }))
+                    }
+                    None => (true, None),
                 }
             }
             BackpressureStrategy::Sample { rate } => {
                 let should_accept =
                     (self.total_runs_created as f64 * rate) as u64 > self.total_runs_dropped;
                 if should_accept {
-                    if let Some((idx, age)) = partition_runs
-                        .iter()
-                        .enumerate()
-                        .min_by_key(|(_, r)| (r.started_at, r.seq))
-                        .map(|(idx, r)| (idx, r.started_at.elapsed()))
-                    {
-                        let victim = partition_runs.swap_remove(idx);
-                        release_evicted(&self.nfa, partition_runs, &victim);
-                        partition_runs.push(run);
-                        self.total_runs_evicted += 1;
-                        (true, Some(ProcessWarning::RunEvicted { age }))
-                    } else {
+                    if partition.is_empty() {
+                        // `max_runs` is 0: nothing to evict, nowhere to go.
                         (false, None)
+                    } else {
+                        let age = evict(partition, run, true);
+                        self.total_runs_evicted += 1;
+                        (true, age.map(|age| ProcessWarning::RunEvicted { age }))
                     }
                 } else {
                     self.total_runs_dropped += 1;
@@ -1478,9 +1560,9 @@ impl SaseEngine {
     /// Get total run count across all partitions
     fn total_run_count(&self) -> usize {
         if self.partition_by.is_some() {
-            self.partitioned_runs.values().map(|v| v.len()).sum()
+            self.partitioned_runs.values().map(Partition::len).sum()
         } else {
-            self.runs.len() + self.parked_run_count()
+            self.runs.len() + self.listed_parked_count()
         }
     }
 
@@ -1494,22 +1576,89 @@ impl SaseEngine {
         partition_key: &str,
         event: SharedEvent,
     ) -> (Vec<MatchResult>, bool) {
+        let usable = self.index_usable();
         let mut completed = Vec::with_capacity(4);
+        // The creation number of the run behind each entry of `completed`.
+        let mut completed_seq: Vec<u64> = Vec::new();
         let mut consumed = false;
         let limits = self.kleene_limits();
         let now = Timestamp::now();
         let mode = self.resolved_emission_mode();
+        let processing_time = self.time_semantics == TimeSemantics::ProcessingTime;
 
         let mut pass = OrPass::default();
         // Filled only by a run at an `or`; reused across the pass.
         let mut effects = OrEffects::default();
-        if let Some(runs) = self.partitioned_runs.get_mut(partition_key) {
-            // The creation number of the run behind each entry of `completed`.
-            let mut completed_seq: Vec<u64> = Vec::new();
+        let nfa = &self.nfa;
+        let strategy = self.strategy;
+        let evaluator = self.evaluator.as_deref();
+        let partition_deadlines = &mut self.partition_deadlines;
+        if let Some(partition) = self.partitioned_runs.get_mut(partition_key) {
+            // IDX-03: the partition's own index, under the same thresholds as
+            // the non-partitioned one, counted on this partition's runs.
+            let indexed = partition.index.is_some();
+            let wanted = usable && self.index_mode.wants(partition.len(), indexed);
+            if wanted != indexed {
+                sync_partition_index(
+                    partition,
+                    wanted,
+                    &mut self.partition_plan,
+                    &mut self.index_unplannable,
+                    nfa,
+                    evaluator.is_some_and(ExprEvaluator::indexable_comparisons),
+                );
+            }
+
+            // IDX-03: as for the non-partitioned index, a parked run whose
+            // processing-time deadline has passed leaves at this pass, and
+            // the parked runs this event may advance leave the index before
+            // anything is filed in it, so a run this pass files is not
+            // offered the event that moved it a second time.
+            let mut woken = Vec::new();
+            if let Some(index) = partition.index.as_mut() {
+                if processing_time {
+                    index.expire_processing_time(now);
+                }
+                index.take_candidates(&event, &mut woken);
+            }
+
+            // Advance one run; `true` if it lives on.
+            let mut advance = |run: &mut Run, pass: &mut OrPass| -> bool {
+                // An `and` that takes an event stamped before the run's start
+                // moves the run's window, deadline included, earlier.
+                let deadline_before = run.event_time_deadline;
+                let advanced = advance_run_shared(
+                    nfa,
+                    strategy,
+                    run,
+                    Arc::clone(&event),
+                    limits,
+                    now,
+                    evaluator,
+                    mode,
+                    &mut effects,
+                );
+                if !effects.is_empty() {
+                    pass.take(&mut effects);
+                }
+                if let Some(deadline) = run.event_time_deadline {
+                    if deadline_before != Some(deadline) {
+                        partition_deadlines.insert((deadline, partition_key.to_string()));
+                    }
+                }
+                if matches!(advanced, RunAdvanceResult::Invalidate) && !run.or_families.is_empty() {
+                    pass.release(nfa, run);
+                }
+                let keep = Self::apply_advance(advanced, &mut completed, &mut consumed);
+                completed_seq.resize(completed.len(), run.seq);
+                keep
+            };
+
             let mut i = 0;
-            while i < runs.len() {
-                if runs[i].is_timed_out() || runs[i].invalidated {
-                    runs.swap_remove(i);
+            while i < partition.runs.len() {
+                let run = &mut partition.runs[i];
+                if run.is_timed_out() || run.invalidated {
+                    partition.runs.swap_remove(i);
                     continue;
                 }
 
@@ -1520,90 +1669,72 @@ impl SaseEngine {
                 // later-arriving, earlier-stamped event may still complete this
                 // run. Culling stays with the watermark, which is the only
                 // thing that can promise no such event is coming.
-                if runs[i].event_time_excludes(event.timestamp)
-                    || passes_over(&self.nfa, self.strategy, &runs[i], &event)
+                if run.event_time_excludes(event.timestamp)
+                    || passes_over(nfa, strategy, run, &event)
                 {
                     i += 1;
                     continue;
                 }
 
-                // An `and` that takes an event stamped before the run's start
-                // moves the run's window, deadline included, earlier.
-                let deadline_before = runs[i].event_time_deadline;
-                let advanced = advance_run_shared(
-                    &self.nfa,
-                    self.strategy,
-                    &mut runs[i],
-                    Arc::clone(&event),
-                    limits,
-                    now,
-                    self.evaluator.as_deref(),
-                    mode,
-                    &mut effects,
-                );
-                if !effects.is_empty() {
-                    pass.take(&mut effects);
+                if !advance(run, &mut pass) {
+                    partition.runs.swap_remove(i);
+                    continue;
                 }
-                let seq = runs[i].seq;
-                if let Some(deadline) = runs[i].event_time_deadline {
-                    if deadline_before != Some(deadline) {
-                        self.partition_deadlines
-                            .insert((deadline, partition_key.to_string()));
+
+                // IDX-03: a run now waiting on a step the index can plan
+                // moves into it. The swap brings an unvisited run to `i`.
+                if let Some(index) = partition.index.as_mut() {
+                    if let Some(key) = index.key_for(&partition.runs[i]) {
+                        let run = partition.runs.swap_remove(i);
+                        index.insert(run, key);
+                        continue;
                     }
                 }
-                match advanced {
-                    RunAdvanceResult::Continue => {
-                        consumed = true;
-                        i += 1;
-                    }
-                    RunAdvanceResult::Complete(result) => {
-                        consumed = true;
-                        completed.push(result);
-                        runs.swap_remove(i);
-                    }
-                    RunAdvanceResult::CompleteAndContinue(result) => {
-                        consumed = true;
-                        // Each mode: emit result but keep run active
-                        completed.push(result);
-                        i += 1;
-                    }
-                    RunAdvanceResult::CompleteMulti(results) => {
-                        consumed = true;
-                        completed.extend(results);
-                        runs.swap_remove(i);
-                    }
-                    RunAdvanceResult::Drained => {
-                        consumed = true;
-                        // Each mode: matches were already emitted; drop the run silently
-                        runs.swap_remove(i);
-                    }
-                    RunAdvanceResult::Invalidate => {
-                        let run = runs.swap_remove(i);
-                        if !run.or_families.is_empty() {
-                            pass.release(&self.nfa, &run);
-                        }
-                    }
-                    RunAdvanceResult::NoMatch => i += 1,
-                }
-                completed_seq.resize(completed.len(), seq);
+                i += 1;
             }
-            pass.reopen(runs);
+
+            // IDX-03: the woken runs, exactly as the pass above treats a run.
+            for mut run in woken {
+                if run.is_timed_out() || run.invalidated {
+                    continue;
+                }
+                if run.event_time_excludes(event.timestamp)
+                    || passes_over(nfa, strategy, &run, &event)
+                    || advance(&mut run, &mut pass)
+                {
+                    partition.file_run(run);
+                }
+            }
+
+            // Runs of an `or` family stay visited (the index does not park
+            // them), so ending a family's other members is a sweep of the
+            // visited runs.
+            pass.reopen(&mut partition.runs);
             if !pass.left.is_empty() {
-                let losers = pass.settle(runs);
-                runs.retain(|r| !r.invalidated);
+                let losers = pass.settle(&mut partition.runs);
+                partition.runs.retain(|r| !r.invalidated);
                 if !losers.is_empty() {
                     let mut seqs = completed_seq.iter();
                     completed.retain(|_| seqs.next().is_some_and(|s| !losers.contains(s)));
+                    completed_seq.retain(|s| !losers.contains(s));
                 }
             }
             // A partition whose runs are all gone leaves the map now: the
             // watermark sweep only visits the partitions with a deadline due.
-            if runs.is_empty() && pass.forks.is_empty() {
+            if partition.is_empty() && pass.forks.is_empty() {
                 self.partitioned_runs.remove(partition_key);
             }
         }
         for (fork, parent) in std::mem::take(&mut pass.forks) {
             self.admit_fork(fork, parent, Some(partition_key));
+        }
+
+        // Emit in run creation order. The visited runs are in an order that
+        // their swap-removes reshuffle, and the index hands runs back in its
+        // own; ordering by creation makes the output independent of both. A
+        // run's own matches keep their order (stable sort).
+        if !completed_seq.is_sorted() {
+            completed = in_creation_order(completed_seq.into_iter().zip(completed).collect());
         }
 
         (completed, consumed)
@@ -1620,8 +1751,8 @@ impl SaseEngine {
         let families: Vec<u64> = fork.or_families.iter().map(|m| m.family).collect();
         let kin = |r: &Run| r.or_families.iter().any(|m| families.contains(&m.family));
         let held = match partition_key {
-            Some(key) => self.partitioned_runs.get(key).map_or(0, Vec::len),
-            None => self.runs.len() + self.parked_run_count(),
+            Some(key) => self.partitioned_runs.get(key).map_or(0, Partition::len),
+            None => self.runs.len() + self.listed_parked_count(),
         };
         let evicting = matches!(
             self.backpressure,
@@ -1635,16 +1766,13 @@ impl SaseEngine {
                 None => self.evict_min_by_key_except(|r| (r.stack.len(), r.seq), kin),
                 Some(key) => {
                     let nfa = &self.nfa;
-                    self.partitioned_runs.get_mut(key).and_then(|runs| {
-                        let others = runs.iter().enumerate().filter(|(_, r)| !kin(r));
-                        let idx = if oldest {
-                            others.min_by_key(|(_, r)| (r.started_at, r.seq))
+                    self.partitioned_runs.get_mut(key).and_then(|partition| {
+                        let victim = if oldest {
+                            partition.remove_min_by_key_except(|r| (r.started_at, r.seq), kin)
                         } else {
-                            others.min_by_key(|(_, r)| (r.stack.len(), r.seq))
-                        }
-                        .map(|(i, _)| i)?;
-                        let victim = runs.swap_remove(idx);
-                        release_evicted(nfa, runs, &victim);
+                            partition.remove_min_by_key_except(|r| (r.stack.len(), r.seq), kin)
+                        }?;
+                        release_evicted(nfa, &mut partition.runs, &victim);
                         Some(victim.started_at.elapsed())
                     })
                 }
@@ -1660,8 +1788,15 @@ impl SaseEngine {
             self.index_partition_deadline(deadline, key);
         }
         if room {
+            // A member of an `or` family: never parked.
             let runs = match partition_key {
-                Some(key) => self.partitioned_runs.entry(key.to_string()).or_default(),
+                Some(key) => {
+                    &mut self
+                        .partitioned_runs
+                        .entry(key.to_string())
+                        .or_default()
+                        .runs
+                }
                 None => &mut self.runs,
             };
             runs.push(fork);
@@ -1670,7 +1805,13 @@ impl SaseEngine {
         }
         // No room: the parent commits to this alternative.
         let runs = match partition_key {
-            Some(key) => self.partitioned_runs.entry(key.to_string()).or_default(),
+            Some(key) => {
+                &mut self
+                    .partitioned_runs
+                    .entry(key.to_string())
+                    .or_default()
+                    .runs
+            }
             None => &mut self.runs,
         };
         if let Some(slot) = runs.iter().position(|r| r.seq == parent && !r.invalidated) {
@@ -2131,9 +2272,11 @@ impl SaseEngine {
                 if let Some(index) = self.run_index.as_mut() {
                     index.expire_processing_time(Timestamp::now());
                 }
-                retain_and_evict_empty_partitions(&mut self.partitioned_runs, |r| {
-                    !r.is_timed_out() && !r.invalidated
-                });
+                retain_and_evict_empty_partitions(
+                    &mut self.partitioned_runs,
+                    |r| !r.is_timed_out() && !r.invalidated,
+                    Timestamp::now(),
+                );
                 completed
             }
             TimeSemantics::EventTime => {
@@ -2152,12 +2295,17 @@ impl SaseEngine {
             }
         }
         let mut out = in_creation_order(keyed);
-        for runs in self.partitioned_runs.values_mut() {
-            for run in runs.iter_mut() {
-                out.extend(Self::confirm_run_negations_processing_time_static(
-                    run, &self.nfa,
-                ));
+        // Each partition's in creation order too: its visited runs are in
+        // an order the index, among others, reshuffles.
+        for partition in self.partitioned_runs.values_mut() {
+            let mut keyed = Vec::new();
+            for run in &mut partition.runs {
+                if let Some(m) = Self::confirm_run_negations_processing_time_static(run, &self.nfa)
+                {
+                    keyed.push((run.seq, m));
+                }
             }
+            out.extend(in_creation_order(keyed));
         }
         out
     }
@@ -2227,16 +2375,27 @@ impl SaseEngine {
             let Some((_, key)) = self.partition_deadlines.pop_first() else {
                 break;
             };
-            let Some(runs) = self.partitioned_runs.get_mut(&key) else {
+            let Some(partition) = self.partitioned_runs.get_mut(&key) else {
                 continue;
             };
-            for run in runs.iter_mut() {
-                completed.extend(Self::confirm_run_negations_event_time_static(
-                    run, &self.nfa, watermark,
-                ));
+            let mut keyed = Vec::new();
+            for run in &mut partition.runs {
+                if let Some(m) =
+                    Self::confirm_run_negations_event_time_static(run, &self.nfa, watermark)
+                {
+                    keyed.push((run.seq, m));
+                }
             }
-            runs.retain(|r| !r.is_timed_out_event_time(watermark) && !r.invalidated);
-            if runs.is_empty() {
+            completed.extend(in_creation_order(keyed));
+            partition
+                .runs
+                .retain(|r| !r.is_timed_out_event_time(watermark) && !r.invalidated);
+            // IDX-03: as for the non-partitioned index, expiring is all the
+            // watermark does to parked runs.
+            if let Some(index) = partition.index.as_mut() {
+                index.expire_event_time(watermark);
+            }
+            if partition.is_empty() {
                 self.partitioned_runs.remove(&key);
             }
         }
@@ -2343,8 +2502,10 @@ impl SaseEngine {
                     .get(partition_field.as_str())
                     .map(|v| v.to_partition_key().into_owned())
                     .unwrap_or_default();
-                if let Some(runs) = self.partitioned_runs.get_mut(&key) {
-                    for run in runs.iter_mut() {
+                // IDX-03: global negations keep every index off, so no run
+                // of the partition is parked.
+                if let Some(partition) = self.partitioned_runs.get_mut(&key) {
+                    for run in &mut partition.runs {
                         let should_invalidate = match &negation.predicate {
                             Some(pred) => eval_predicate(
                                 pred,
@@ -2360,8 +2521,8 @@ impl SaseEngine {
                     }
                 }
             } else {
-                for runs in self.partitioned_runs.values_mut() {
-                    for run in runs.iter_mut() {
+                for partition in self.partitioned_runs.values_mut() {
+                    for run in &mut partition.runs {
                         let should_invalidate = match &negation.predicate {
                             Some(pred) => eval_predicate(
                                 pred,
@@ -2383,9 +2544,9 @@ impl SaseEngine {
     /// Get statistics
     pub fn stats(&self) -> SaseStats {
         let total_runs: usize = if self.partition_by.is_some() {
-            self.partitioned_runs.values().map(|v| v.len()).sum()
+            self.partitioned_runs.values().map(Partition::len).sum()
         } else {
-            self.runs.len() + self.parked_run_count()
+            self.runs.len() + self.listed_parked_count()
         };
 
         SaseStats {
@@ -2421,16 +2582,16 @@ mod tests {
     fn retain_and_evict_removes_emptied_partitions() {
         // A "poison" partition whose runs all die must be dropped from the map,
         // not left behind as an empty Vec (the unbounded-growth leak).
-        let mut parts: FxHashMap<String, Vec<Run>> = FxHashMap::default();
+        let mut parts: FxHashMap<String, Partition> = FxHashMap::default();
         let dead = || {
             let mut r = Run::new(0);
             r.invalidated = true;
             r
         };
-        parts.insert("keep".to_string(), vec![Run::new(0), dead()]); // one survives
-        parts.insert("poison".to_string(), vec![dead(), dead()]); // all die
+        parts.insert("keep".to_string(), vec![Run::new(0), dead()].into()); // one survives
+        parts.insert("poison".to_string(), vec![dead(), dead()].into()); // all die
 
-        retain_and_evict_empty_partitions(&mut parts, |r| !r.invalidated);
+        retain_and_evict_empty_partitions(&mut parts, |r| !r.invalidated, Timestamp::now());
 
         assert!(
             parts.contains_key("keep"),

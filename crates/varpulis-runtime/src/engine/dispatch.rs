@@ -2089,7 +2089,11 @@ impl Engine {
         if let Some(ref sase) = stream.sase_engine {
             let active_runs = sase.runs.len()
                 + sase.parked_run_count()
-                + sase.partitioned_runs.values().map(Vec::len).sum::<usize>();
+                + sase
+                    .partitioned_runs
+                    .values()
+                    .map(|partition| partition.runs.len())
+                    .sum::<usize>();
             let completed = result.emitted_events.len().max(result.output_events.len());
             trace.record(TraceEntry::PatternState {
                 stream_name: stream_name.to_string(),

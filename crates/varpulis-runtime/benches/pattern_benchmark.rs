@@ -12,6 +12,8 @@
 //! - partition_by: Partitioned pattern matching
 //! - throughput: Events per second measurement
 //! - waiting_runs: Many open runs that most events pass by
+//! - partitioned_waiting_runs: Many open runs per partition, each event
+//!   advancing one of them
 //! - scalability: Large event volumes (50K-100K)
 
 use std::hint::black_box;
@@ -515,6 +517,71 @@ fn bench_waiting_runs(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark `partition by` with runs waiting in each partition:
+/// `A as a -> B where ref == a.ref`, partitioned by `part`, with `runs`
+/// open runs spread over `partitions` partitions. Each iteration is a `B`
+/// that completes one run and the `A` that opens it again, so the number of
+/// waiting runs stays put. Few partitions with many runs each is where a
+/// partition's predicate index pays; many partitions with a run or two each
+/// is the common shape (`partition by id`), where it must stay off.
+fn bench_partitioned_waiting_runs(c: &mut Criterion) {
+    let mut group = c.benchmark_group("partitioned_waiting_runs");
+    group.throughput(Throughput::Elements(2));
+
+    let event = |event_type: &str, r: i64, partitions: i64| {
+        Event::new(event_type)
+            .with_field("part", r % partitions)
+            .with_field("ref", r)
+    };
+    for (partitions, runs) in [(1_i64, 1_000_i64), (4, 1_000), (500, 1_000), (1_000, 1_000)] {
+        let pattern = SasePattern::Seq(vec![
+            SasePattern::Event {
+                event_type: "A".into(),
+                predicate: None,
+                alias: Some("a".into()),
+            },
+            SasePattern::Event {
+                event_type: "B".into(),
+                predicate: Some(Predicate::CompareRef {
+                    field: "ref".into(),
+                    op: CompareOp::Eq,
+                    ref_alias: "a".into(),
+                    ref_field: "ref".into(),
+                }),
+                alias: Some("b".into()),
+            },
+        ]);
+        let mut engine = SaseEngine::new(pattern)
+            .with_max_runs(usize::MAX)
+            .with_partition_by("part".into());
+        for r in 0..runs {
+            engine.process(&event("A", r, partitions));
+        }
+        let pairs: Vec<(Event, Event)> = (0..runs)
+            .map(|i| {
+                // Spread over the partitions, in no particular order.
+                let r = (i * 7_919) % runs;
+                (event("B", r, partitions), event("A", r, partitions))
+            })
+            .collect();
+        let mut next = 0;
+        group.bench_function(
+            BenchmarkId::new("eq", format!("{partitions}x{}", runs / partitions)),
+            |b| {
+                b.iter(|| {
+                    let (close, reopen) = &pairs[next % pairs.len()];
+                    next += 1;
+                    let matched = engine.process(black_box(close)).len();
+                    engine.process(black_box(reopen));
+                    matched
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 /// Benchmark scalability with large event volumes
 fn bench_scalability(c: &mut Criterion) {
     let mut group = c.benchmark_group("scalability");
@@ -598,6 +665,7 @@ criterion_group!(
     bench_multi_predicates,
     bench_throughput,
     bench_waiting_runs,
+    bench_partitioned_waiting_runs,
     bench_scalability,
 );
 
