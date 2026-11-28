@@ -53,6 +53,7 @@ impl RunCheckpointExt for Run {
             event_time_deadline_ms: self.event_time_deadline.map(|t| t.timestamp_millis()),
             deadline_ms: self.deadline.map(|t| t.as_datetime().timestamp_millis()),
             started_at_ms: Some(self.started_at.as_datetime().timestamp_millis()),
+            started_at_ns: self.started_at.as_datetime().timestamp_nanos_opt(),
             partition_key: self.partition_key.as_ref().map(persistence::value_to_ser),
             invalidated: self.invalidated,
             pending_negation_count: self.pending_negations.len(),
@@ -120,8 +121,9 @@ impl RunCheckpointExt for Run {
             // `now()` restarted the WITHIN clock on every restore, which made
             // a restored partial match immortal under processing time.
             started_at: rc
-                .started_at_ms
-                .and_then(DateTime::from_timestamp_millis)
+                .started_at_ns
+                .map(DateTime::from_timestamp_nanos)
+                .or_else(|| rc.started_at_ms.and_then(DateTime::from_timestamp_millis))
                 .map_or_else(Timestamp::now, Timestamp::from_datetime),
             deadline: rc
                 .deadline_ms

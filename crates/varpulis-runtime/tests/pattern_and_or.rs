@@ -294,3 +294,44 @@ fn a_restore_keeps_the_winner_of_a_tie_in_a_partition() {
         ]
     );
 }
+
+#[test]
+fn a_restore_keeps_which_run_is_oldest_below_the_millisecond() {
+    // A copy forked into an `or` keeps the start of the run it was copied
+    // from, so a run written later in a checkpoint can be older, by a few
+    // microseconds, than one written before it. `EvictOldest` must evict the
+    // same run after a restore as before it. Here the second run is made
+    // 0.4 ms older than the first, in the same millisecond.
+    use varpulis_runtime::sase::BackpressureStrategy;
+    let src = "pattern P = A as a -> B as b";
+    let capped = || {
+        engine_for(src)
+            .with_max_runs(2)
+            .with_backpressure(BackpressureStrategy::EvictOldest)
+    };
+    let mut engine = capped();
+    engine.process(&ev("A", 1, 0));
+    engine.process(&ev("A", 2, 0));
+    let mut json: serde_json::Value =
+        serde_json::to_value(engine.checkpoint()).expect("serializes");
+    let runs = json["active_runs"].as_array_mut().expect("runs");
+    assert_eq!(runs.len(), 2);
+    let ms = runs[0]["started_at_ms"].as_i64().expect("started_at_ms");
+    for (run, offset_ns) in runs.iter_mut().zip([600_000, 200_000]) {
+        run["started_at_ms"] = ms.into();
+        run["started_at_ns"] = (ms * 1_000_000 + offset_ns).into();
+    }
+    let cp: SaseCheckpoint = serde_json::from_value(json).expect("deserializes");
+    let mut fresh = capped();
+    fresh.restore(&cp);
+    // A third run: the cap evicts the oldest, the one A2 opened.
+    fresh.process(&ev("A", 3, 0));
+    let got: Vec<String> = fresh.process(&ev("B", 4, 0)).iter().map(describe).collect();
+    assert_eq!(
+        got,
+        [
+            "a=Some(Int(1)),b=Some(Int(4))",
+            "a=Some(Int(3)),b=Some(Int(4))"
+        ]
+    );
+}
