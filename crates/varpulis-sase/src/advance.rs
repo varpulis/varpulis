@@ -143,13 +143,23 @@ pub(crate) fn watch_absence_after_closure(nfa: &Nfa, run: &mut Run) {
 }
 
 /// What advancing a run did besides the run itself: the copies it forked
-/// into the alternatives of an `or`, and the `or` families one of whose
-/// members just left the `or`, as (family, the member's `seq`). The engine
-/// ends the other members.
+/// into the alternatives of an `or`, each with the `seq` of the run it was
+/// copied from, and the `or` families one of whose members just left the
+/// `or`. The engine ends the other members.
 #[derive(Debug, Default)]
 pub(crate) struct OrEffects {
-    pub forks: Vec<Run>,
-    pub left: Vec<(u64, u64)>,
+    pub forks: Vec<(Run, u64)>,
+    pub left: Vec<OrLeft>,
+}
+
+/// A member leaving its `or` family's `or`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OrLeft {
+    pub family: u64,
+    /// The member's [`Run::seq`].
+    pub seq: u64,
+    /// The member's [`OrFamily::rank`]: on a tie, the lowest wins.
+    pub rank: usize,
 }
 
 impl OrEffects {
@@ -340,15 +350,19 @@ pub(crate) fn advance_run_shared(
     let result = advance_inner(
         nfa, strategy, run, event, limits, now, evaluator, mode, effects,
     );
-    if run.current_state != before {
+    if run.current_state != before && !run.or_families.is_empty() {
+        // Past the `or` it was at, the run starts no more alternatives.
+        for m in &mut run.or_families {
+            m.forked.clear();
+        }
         leave_or_families(nfa, run, &mut effects.left);
     }
     result
 }
 
 /// Drop the run's memberships of the `or`s it has just left, recording
-/// their families, with the run's `seq`, in `left`.
-fn leave_or_families(nfa: &Nfa, run: &mut Run, left: &mut Vec<(u64, u64)>) {
+/// them in `left`.
+fn leave_or_families(nfa: &Nfa, run: &mut Run, left: &mut Vec<OrLeft>) {
     if run.or_families.is_empty() {
         return;
     }
@@ -356,7 +370,11 @@ fn leave_or_families(nfa: &Nfa, run: &mut Run, left: &mut Vec<(u64, u64)>) {
     run.or_families.retain(|m| {
         let gone = nfa.or_groups[m.group].is_left_at(state);
         if gone {
-            left.push((m.family, seq));
+            left.push(OrLeft {
+                family: m.family,
+                seq,
+                rank: m.rank,
+            });
         }
         !gone
     });
@@ -535,7 +553,7 @@ fn advance_inner(
     };
     match follow(&ctx, run, run.current_state, false, effects) {
         Followed::Moved(result) => return result,
-        Followed::Forked => return RunAdvanceResult::Continue,
+        Followed::Forked => return forked_result(strategy),
         Followed::Nothing => {}
     }
 
@@ -550,7 +568,7 @@ fn advance_inner(
 
         match follow(&ctx, run, eps_id, true, effects) {
             Followed::Moved(result) => return result,
-            Followed::Forked => return RunAdvanceResult::Continue,
+            Followed::Forked => return forked_result(strategy),
             Followed::Nothing => {}
         }
     }
@@ -558,6 +576,17 @@ fn advance_inner(
     match strategy {
         SelectionStrategy::StrictContiguous => RunAdvanceResult::Invalidate,
         _ => RunAdvanceResult::NoMatch,
+    }
+}
+
+/// What becomes of a run whose event went into `or` alternatives on its
+/// copies. It stays, open to the other alternatives; under strict
+/// contiguity it cannot take any (the next event would have to start one,
+/// and this one is already in its copies), so it ends, silently.
+fn forked_result(strategy: SelectionStrategy) -> RunAdvanceResult {
+    match strategy {
+        SelectionStrategy::StrictContiguous => RunAdvanceResult::Drained,
+        _ => RunAdvanceResult::Continue,
     }
 }
 
@@ -647,6 +676,7 @@ fn follow(
             Plan::Skip => {}
             Plan::Take => {
                 if let Some(result) = enter(ctx, run, next_id) {
+                    set_rank(nfa, run, split, next_id);
                     return Followed::Moved(result);
                 }
             }
@@ -658,8 +688,10 @@ fn follow(
                 if !matches!(result, RunAdvanceResult::Continue) {
                     // Not a step into an alternative still open: commit.
                     *run = copy;
+                    set_rank(nfa, run, split, next_id);
                     return Followed::Moved(result);
                 }
+                let rank = entry_rank(nfa, g, next_id);
                 let family = match run.or_families.iter_mut().find(|m| m.group == g) {
                     Some(m) => {
                         m.forked.push(next_id);
@@ -671,6 +703,7 @@ fn follow(
                             group: g,
                             family,
                             forked: vec![next_id],
+                            rank: 0,
                         });
                         family
                     }
@@ -681,9 +714,10 @@ fn follow(
                     group: g,
                     family,
                     forked: Vec::new(),
+                    rank,
                 });
                 leave_or_families(nfa, &mut copy, &mut effects.left);
-                effects.forks.push(copy);
+                effects.forks.push((copy, run.seq));
                 forked = true;
             }
         }
@@ -692,6 +726,31 @@ fn follow(
         Followed::Forked
     } else {
         Followed::Nothing
+    }
+}
+
+/// The position of `entry` among the first states of the alternatives of
+/// `or` `g`, in source order.
+fn entry_rank(nfa: &Nfa, g: usize, entry: usize) -> usize {
+    nfa.or_groups[g]
+        .entries
+        .iter()
+        .position(|&e| e == entry)
+        .unwrap_or(usize::MAX)
+}
+
+/// The run, a member of the family of the `or` it entered from `split`
+/// at `next`, now follows that alternative.
+fn set_rank(nfa: &Nfa, run: &mut Run, split: usize, next: usize) {
+    if run.or_families.is_empty() {
+        return;
+    }
+    let Some(g) = nfa.or_split(split, next) else {
+        return;
+    };
+    let rank = entry_rank(nfa, g, next);
+    if let Some(m) = run.or_families.iter_mut().find(|m| m.group == g) {
+        m.rank = rank;
     }
 }
 

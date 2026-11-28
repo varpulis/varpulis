@@ -7,7 +7,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use rustc_hash::FxHashMap;
 
-use super::advance::{advance_run_shared, OrEffects, RunAdvanceResult};
+use super::advance::{advance_run_shared, OrEffects, OrLeft, RunAdvanceResult};
 use super::backpressure::{
     BackpressureStrategy, ProcessResult, ProcessStats, ProcessWarning, SaseExtendedStats,
 };
@@ -197,6 +197,117 @@ fn retain_and_evict_empty_partitions<F: Fn(&Run) -> bool>(
     });
 }
 
+/// The runs one event opens: one, almost always, without allocating;
+/// several when the pattern starts with an `or` whose alternatives the
+/// event starts.
+type StartedRuns = smallvec::SmallVec<[Run; 1]>;
+
+/// What happened to `or` families during one pass over the runs: the
+/// copies forked (with the `seq` of the run each was copied from), the
+/// members that left their `or`, and the alternatives whose copy died
+/// otherwise, as (family, first state of the alternative).
+#[derive(Default)]
+struct OrPass {
+    forks: Vec<(Run, u64)>,
+    left: Vec<OrLeft>,
+    released: Vec<(u64, usize)>,
+}
+
+impl OrPass {
+    fn take(&mut self, effects: OrEffects) {
+        self.forks.extend(effects.forks);
+        self.left.extend(effects.left);
+    }
+
+    /// End the families a member left during the pass. The member that left
+    /// first wins; members that left on the same event tie, and the one in
+    /// the leftmost alternative (lowest rank) wins, the one created first
+    /// among equals, so the outcome depends neither on the order the pass
+    /// visited them in nor on how the run forked. Every other member ends:
+    /// marked invalidated in `runs` (the caller sweeps them out), dropped
+    /// from the forks. Returns the `seq` of the members whose matches this
+    /// pass must take back, the losers of a tie.
+    fn settle(&mut self, runs: &mut [Run]) -> Vec<u64> {
+        if self.left.is_empty() {
+            return Vec::new();
+        }
+        let mut winners: Vec<OrLeft> = Vec::new();
+        for &left in &self.left {
+            match winners.iter_mut().find(|w| w.family == left.family) {
+                Some(w) if (left.rank, left.seq) < (w.rank, w.seq) => *w = left,
+                Some(_) => {}
+                None => winners.push(left),
+            }
+        }
+        let losers: Vec<u64> = self
+            .left
+            .iter()
+            .filter(|l| !winners.contains(l))
+            .map(|l| l.seq)
+            .collect();
+        let ends = |r: &Run| {
+            losers.contains(&r.seq)
+                || r.or_families
+                    .iter()
+                    .any(|m| winners.iter().any(|w| w.family == m.family))
+        };
+        for run in runs.iter_mut().filter(|r| ends(r)) {
+            run.invalidated = true;
+        }
+        self.forks.retain(|(r, _)| !ends(r));
+        self.left.clear();
+        losers
+    }
+
+    /// Note that `run`, a member of `or` families, ended other than by its
+    /// family settling (refuted, evicted): the alternative it followed is
+    /// open to the run before the `or` again.
+    fn release(&mut self, nfa: &Nfa, run: &Run) {
+        released_alternatives(nfa, run, &mut self.released);
+    }
+
+    /// Give the released alternatives back to the runs before their `or`.
+    fn reopen(&mut self, runs: &mut [Run]) {
+        reopen_alternatives(runs, &self.released);
+        self.released.clear();
+    }
+}
+
+/// The alternatives `run` followed in its `or` families, as (family, first
+/// state of the alternative). The run before an `or` follows none.
+fn released_alternatives(nfa: &Nfa, run: &Run, out: &mut Vec<(u64, usize)>) {
+    for m in &run.or_families {
+        if !m.forked.is_empty() {
+            continue;
+        }
+        if let Some(&entry) = nfa.or_groups[m.group].entries.get(m.rank) {
+            out.push((m.family, entry));
+        }
+    }
+}
+
+/// An evicted run's alternatives, given back to the runs before their `or`.
+fn release_evicted(nfa: &Nfa, runs: &mut [Run], victim: &Run) {
+    if victim.or_families.is_empty() {
+        return;
+    }
+    let mut released = Vec::new();
+    released_alternatives(nfa, victim, &mut released);
+    reopen_alternatives(runs, &released);
+}
+
+/// The runs before an `or` may start these alternatives again.
+fn reopen_alternatives(runs: &mut [Run], released: &[(u64, usize)]) {
+    if released.is_empty() {
+        return;
+    }
+    for run in runs.iter_mut() {
+        for m in &mut run.or_families {
+            m.forked.retain(|&t| !released.contains(&(m.family, t)));
+        }
+    }
+}
+
 /// Build the match a run produces when a deadline completes it.
 ///
 /// Drains `captured` and `stack`, so a run cannot emit twice: the retain that
@@ -208,59 +319,6 @@ fn retain_and_evict_empty_partitions<F: Fn(&Run) -> bool>(
 /// The matches of several runs, in the order the runs were created: the
 /// order the list holds them in depends on its history and on the predicate
 /// index, the creation order on neither.
-/// The `or` families members left during one pass over the runs, and the
-/// copies forked during it.
-#[derive(Default)]
-struct OrPass {
-    forks: Vec<Run>,
-    left: Vec<(u64, u64)>,
-}
-
-impl OrPass {
-    fn take(&mut self, effects: OrEffects) {
-        self.forks.extend(effects.forks);
-        self.left.extend(effects.left);
-    }
-
-    /// End the families a member left during the pass. The member that left
-    /// first wins; members that left on the same event tie, and the one
-    /// created first (lowest `seq`) wins, so the outcome does not depend on
-    /// the order the pass visited them in. Every other member ends: marked
-    /// invalidated in `runs` (the caller sweeps them out), dropped from the
-    /// forks. Returns the `seq` of the members whose matches this pass must
-    /// take back, the losers of a tie.
-    fn settle(&mut self, runs: &mut [Run]) -> Vec<u64> {
-        if self.left.is_empty() {
-            return Vec::new();
-        }
-        let mut winners: Vec<(u64, u64)> = Vec::new();
-        for &(family, seq) in &self.left {
-            match winners.iter_mut().find(|(f, _)| *f == family) {
-                Some(w) => w.1 = w.1.min(seq),
-                None => winners.push((family, seq)),
-            }
-        }
-        let losers: Vec<u64> = self
-            .left
-            .iter()
-            .filter(|(f, seq)| !winners.contains(&(*f, *seq)))
-            .map(|&(_, seq)| seq)
-            .collect();
-        let ends = |r: &Run| {
-            losers.contains(&r.seq)
-                || r.or_families
-                    .iter()
-                    .any(|m| winners.iter().any(|(f, _)| *f == m.family))
-        };
-        for run in runs.iter_mut().filter(|r| ends(r)) {
-            run.invalidated = true;
-        }
-        self.forks.retain(|r| !ends(r));
-        self.left.clear();
-        losers
-    }
-}
-
 fn in_creation_order(mut keyed: Vec<(u64, MatchResult)>) -> Vec<MatchResult> {
     keyed.sort_by_key(|(seq, _)| *seq);
     keyed.into_iter().map(|(_, m)| m).collect()
@@ -1269,10 +1327,22 @@ impl SaseEngine {
     /// return its age. IDX-02: the parked runs are compared where they are,
     /// so evicting does not take the index apart.
     fn evict_min_by_key<K: Ord>(&mut self, key: impl Fn(&Run) -> K) -> Option<Duration> {
+        self.evict_min_by_key_except(key, |_| false)
+    }
+
+    /// [`Self::evict_min_by_key`] among the runs `spared` does not protect.
+    /// An evicted member of an `or` family gives its alternative back to
+    /// the run before the `or`.
+    fn evict_min_by_key_except<K: Ord>(
+        &mut self,
+        key: impl Fn(&Run) -> K,
+        spared: impl Fn(&Run) -> bool,
+    ) -> Option<Duration> {
         let listed = self
             .runs
             .iter()
             .enumerate()
+            .filter(|(_, r)| !spared(r))
             .map(|(i, r)| (key(r), i))
             .min_by(|a, b| a.0.cmp(&b.0));
         let parked = self.run_index.as_ref().and_then(|ix| ix.min_by_key(&key));
@@ -1282,6 +1352,11 @@ impl SaseEngine {
             (None, Some((_, slot))) => self.run_index.as_mut()?.remove(slot),
             (None, None) => return None,
         };
+        if !victim.or_families.is_empty() {
+            let mut released = Vec::new();
+            released_alternatives(&self.nfa, &victim, &mut released);
+            reopen_alternatives(&mut self.runs, &released);
+        }
         Some(victim.started_at.elapsed())
     }
 
@@ -1339,7 +1414,8 @@ impl SaseEngine {
                     .min_by_key(|(_, r)| (r.started_at, r.seq))
                     .map(|(idx, r)| (idx, r.started_at.elapsed()))
                 {
-                    partition_runs.swap_remove(idx);
+                    let victim = partition_runs.swap_remove(idx);
+                    release_evicted(&self.nfa, partition_runs, &victim);
                     partition_runs.push(run);
                     self.total_runs_evicted += 1;
                     (true, Some(ProcessWarning::RunEvicted { age }))
@@ -1355,7 +1431,8 @@ impl SaseEngine {
                     .min_by_key(|(_, r)| (r.stack.len(), r.seq))
                     .map(|(idx, r)| (idx, r.started_at.elapsed()))
                 {
-                    partition_runs.swap_remove(idx);
+                    let victim = partition_runs.swap_remove(idx);
+                    release_evicted(&self.nfa, partition_runs, &victim);
                     partition_runs.push(run);
                     self.total_runs_evicted += 1;
                     (true, Some(ProcessWarning::RunEvicted { age }))
@@ -1374,7 +1451,8 @@ impl SaseEngine {
                         .min_by_key(|(_, r)| (r.started_at, r.seq))
                         .map(|(idx, r)| (idx, r.started_at.elapsed()))
                     {
-                        partition_runs.swap_remove(idx);
+                        let victim = partition_runs.swap_remove(idx);
+                        release_evicted(&self.nfa, partition_runs, &victim);
                         partition_runs.push(run);
                         self.total_runs_evicted += 1;
                         (true, Some(ProcessWarning::RunEvicted { age }))
@@ -1494,12 +1572,16 @@ impl SaseEngine {
                         runs.swap_remove(i);
                     }
                     RunAdvanceResult::Invalidate => {
-                        runs.swap_remove(i);
+                        let run = runs.swap_remove(i);
+                        if !run.or_families.is_empty() {
+                            pass.release(&self.nfa, &run);
+                        }
                     }
                     RunAdvanceResult::NoMatch => i += 1,
                 }
                 completed_seq.resize(completed.len(), seq);
             }
+            pass.reopen(runs);
             if !pass.left.is_empty() {
                 let losers = pass.settle(runs);
                 runs.retain(|r| !r.invalidated);
@@ -1514,24 +1596,79 @@ impl SaseEngine {
                 self.partitioned_runs.remove(partition_key);
             }
         }
-        for fork in std::mem::take(&mut pass.forks) {
-            self.admit_fork(fork, Some(partition_key));
+        for (fork, parent) in std::mem::take(&mut pass.forks) {
+            self.admit_fork(fork, parent, Some(partition_key));
         }
 
         (completed, consumed)
     }
 
-    /// File a copy a run forked into an `or` alternative, within the run
-    /// cap: past it the backpressure strategy decides, and counts, as for a
-    /// run an event opens.
-    fn admit_fork(&mut self, fork: Run, partition_key: Option<&str>) {
-        let (added, _) = match partition_key {
-            Some(key) => self.handle_backpressure_partitioned(key, fork),
-            None => self.handle_backpressure(fork),
+    /// File a copy a run (`parent`, by `seq`) forked into an `or`
+    /// alternative. Within the run cap it is simply filed. At the cap, under
+    /// an evicting strategy it evicts a run outside its own family; when it
+    /// cannot (a strategy that does not evict, or only its family to evict),
+    /// the parent commits to the alternative itself: the copy takes its
+    /// place, and the alternatives the parent still held open are lost,
+    /// counted as a dropped run.
+    fn admit_fork(&mut self, fork: Run, parent: u64, partition_key: Option<&str>) {
+        let families: Vec<u64> = fork.or_families.iter().map(|m| m.family).collect();
+        let kin = |r: &Run| r.or_families.iter().any(|m| families.contains(&m.family));
+        let held = match partition_key {
+            Some(key) => self.partitioned_runs.get(key).map_or(0, Vec::len),
+            None => self.runs.len() + self.parked_run_count(),
         };
-        if added {
-            self.total_runs_created += 1;
+        let evicting = matches!(
+            self.backpressure,
+            BackpressureStrategy::EvictOldest | BackpressureStrategy::EvictLeastProgress
+        );
+        let mut room = held < self.max_runs;
+        if !room && evicting {
+            let oldest = matches!(self.backpressure, BackpressureStrategy::EvictOldest);
+            let evicted = match partition_key {
+                None if oldest => self.evict_min_by_key_except(|r| (r.started_at, r.seq), kin),
+                None => self.evict_min_by_key_except(|r| (r.stack.len(), r.seq), kin),
+                Some(key) => {
+                    let nfa = &self.nfa;
+                    self.partitioned_runs.get_mut(key).and_then(|runs| {
+                        let others = runs.iter().enumerate().filter(|(_, r)| !kin(r));
+                        let idx = if oldest {
+                            others.min_by_key(|(_, r)| (r.started_at, r.seq))
+                        } else {
+                            others.min_by_key(|(_, r)| (r.stack.len(), r.seq))
+                        }
+                        .map(|(i, _)| i)?;
+                        let victim = runs.swap_remove(idx);
+                        release_evicted(nfa, runs, &victim);
+                        Some(victim.started_at.elapsed())
+                    })
+                }
+            };
+            if evicted.is_some() {
+                self.total_runs_evicted += 1;
+                room = true;
+            }
         }
+        if room {
+            if let (Some(key), Some(deadline)) = (partition_key, fork.event_time_deadline) {
+                self.partition_deadlines.insert((deadline, key.to_string()));
+            }
+            let runs = match partition_key {
+                Some(key) => self.partitioned_runs.entry(key.to_string()).or_default(),
+                None => &mut self.runs,
+            };
+            runs.push(fork);
+            self.total_runs_created += 1;
+            return;
+        }
+        // No room: the parent commits to this alternative.
+        let runs = match partition_key {
+            Some(key) => self.partitioned_runs.entry(key.to_string()).or_default(),
+            None => &mut self.runs,
+        };
+        if let Some(slot) = runs.iter().position(|r| r.seq == parent && !r.invalidated) {
+            runs[slot] = fork;
+        }
+        self.total_runs_dropped += 1;
     }
 
     fn process_runs_shared(&mut self, event: SharedEvent) -> (Vec<MatchResult>, bool) {
@@ -1598,6 +1735,11 @@ impl SaseEngine {
             if !effects.is_empty() {
                 pass.take(effects);
             }
+            if matches!(advanced, RunAdvanceResult::Invalidate)
+                && !self.runs[i].or_families.is_empty()
+            {
+                pass.release(&self.nfa, &self.runs[i]);
+            }
             let keep = Self::apply_advance(advanced, &mut completed, &mut consumed);
             completed_seq.resize(completed.len(), seq);
             if !keep {
@@ -1650,6 +1792,7 @@ impl SaseEngine {
         }
         // Runs of an `or` family stay listed (the index does not park them),
         // so ending a family's other members is a sweep of the list.
+        pass.reopen(&mut self.runs);
         if !pass.left.is_empty() {
             let losers = pass.settle(&mut self.runs);
             self.runs.retain(|r| !r.invalidated);
@@ -1660,8 +1803,8 @@ impl SaseEngine {
                 completed_seq.retain(|s| !losers.contains(s));
             }
         }
-        for fork in std::mem::take(&mut pass.forks) {
-            self.admit_fork(fork, None);
+        for (fork, parent) in std::mem::take(&mut pass.forks) {
+            self.admit_fork(fork, parent, None);
         }
 
         // Emit in run creation order. The list is visited in an order that
@@ -1745,9 +1888,9 @@ impl SaseEngine {
     /// most one match, and every event that could open the pattern used to
     /// open a run whatever the strategy (four failed logins and a success
     /// made one alert per failure under `.stnm()` as under the default).
-    fn try_start_run_after(&self, event: SharedEvent, consumed: bool) -> Vec<Run> {
+    fn try_start_run_after(&self, event: SharedEvent, consumed: bool) -> StartedRuns {
         if consumed && self.strategy == SelectionStrategy::SkipTillNextMatch {
-            return Vec::new();
+            return StartedRuns::new();
         }
         self.try_start_run_shared(event)
     }
@@ -1759,7 +1902,7 @@ impl SaseEngine {
     ///
     /// The entry is here rather than at each of the `return` points inside,
     /// so a new one cannot be added that forgets it.
-    fn try_start_run_shared(&self, event: SharedEvent) -> Vec<Run> {
+    fn try_start_run_shared(&self, event: SharedEvent) -> StartedRuns {
         let mut runs = self.try_start_run_inner(event);
         for run in &mut runs {
             // "A, and then NOT B" must begin waiting for B's absence the
@@ -1829,7 +1972,7 @@ impl SaseEngine {
         Some(run)
     }
 
-    fn try_start_run_inner(&self, event: SharedEvent) -> Vec<Run> {
+    fn try_start_run_inner(&self, event: SharedEvent) -> StartedRuns {
         let start = self.nfa.start_state;
         let start_state = &self.nfa.states[start];
         // PERF: Use static empty map instead of allocating on every call
@@ -1839,7 +1982,7 @@ impl SaseEngine {
         // starts an alternative of an `or` that needs more events, every
         // other alternative the event starts opens a run too, all one
         // family; an alternative the event completes wins alone.
-        let mut family: Option<(usize, Vec<Run>)> = None;
+        let mut family: Option<(usize, StartedRuns)> = None;
         for &next_id in &start_state.transitions {
             let group = self.nfa.or_split(start, next_id);
             if let Some((g, _)) = &family {
@@ -1847,28 +1990,48 @@ impl SaseEngine {
                     continue;
                 }
             }
-            let Some(run) = self.start_at(next_id, &event) else {
+            let Some(mut run) = self.start_at(next_id, &event) else {
                 continue;
             };
             let open_alternative = group.filter(|&g| {
                 !self.nfa.or_groups[g].ends.contains(&next_id)
                     && self.nfa.states[next_id].state_type != StateType::Kleene
             });
+            if let Some(g) = open_alternative {
+                // Its rank, should it join a family below.
+                let rank = self.nfa.or_groups[g]
+                    .entries
+                    .iter()
+                    .position(|&e| e == next_id)
+                    .unwrap_or(usize::MAX);
+                run.or_families.push(OrFamily {
+                    group: g,
+                    family: 0,
+                    forked: Vec::new(),
+                    rank,
+                });
+            }
             match (open_alternative, &mut family) {
-                (Some(g), None) => family = Some((g, vec![run])),
+                (Some(g), None) => family = Some((g, smallvec::smallvec![run])),
                 (Some(_), Some((_, runs))) => runs.push(run),
-                (None, _) => return vec![run],
+                (None, _) => {
+                    run.or_families.clear();
+                    return smallvec::smallvec![run];
+                }
             }
         }
-        if let Some((group, mut runs)) = family {
+        if let Some((_, mut runs)) = family {
             if runs.len() > 1 {
                 let id = OrFamily::next_id();
                 for run in &mut runs {
-                    run.or_families.push(OrFamily {
-                        group,
-                        family: id,
-                        forked: Vec::new(),
-                    });
+                    if let Some(m) = run.or_families.last_mut() {
+                        m.family = id;
+                    }
+                }
+            } else {
+                // Alone, it has no family.
+                for run in &mut runs {
+                    run.or_families.clear();
                 }
             }
             return runs;
@@ -1883,7 +2046,7 @@ impl SaseEngine {
                 // AND-01: Handle AND states in epsilon paths
                 if next_state.state_type == StateType::And {
                     if let Some(run) = self.start_in_and(next_id, &event) {
-                        return vec![run];
+                        return smallvec::smallvec![run];
                     }
                     continue;
                 }
@@ -1897,12 +2060,12 @@ impl SaseEngine {
                 ) {
                     let mut run = self.new_run_at(next_id, &event);
                     run.push(Arc::clone(&event), next_state.alias.clone());
-                    return vec![run];
+                    return smallvec::smallvec![run];
                 }
             }
         }
 
-        Vec::new()
+        StartedRuns::new()
     }
 
     /// Drop runs whose deadline has passed, and return the matches that
@@ -2243,6 +2406,42 @@ mod tests {
             "an emptied partition must be evicted, not kept as an empty Vec"
         );
         assert_eq!(parts.len(), 1);
+    }
+
+    #[test]
+    fn an_evicted_copy_gives_its_alternative_back() {
+        // A -> ((B -> C) or D): after A, B the run waits for D and its copy
+        // for C. With the copy evicted, the run can take a later B itself.
+        let step = |t: &str| SasePattern::Event {
+            event_type: t.into(),
+            predicate: None,
+            alias: Some(t.to_lowercase()),
+        };
+        let pattern = SasePattern::Seq(vec![
+            step("A"),
+            SasePattern::Or(
+                Box::new(SasePattern::Seq(vec![step("B"), step("C")])),
+                Box::new(step("D")),
+            ),
+        ]);
+        let mut engine = SaseEngine::new(pattern);
+        let ev = |t: &str| varpulis_core::Event::new(t);
+        assert!(engine.process(&ev("A")).is_empty());
+        assert!(engine.process(&ev("B")).is_empty());
+        assert_eq!(engine.runs.len(), 2);
+        let parent = engine
+            .runs
+            .iter()
+            .find(|r| r.or_families.iter().any(|m| !m.forked.is_empty()))
+            .map(|r| r.seq)
+            .expect("the run before the `or`");
+        assert!(engine
+            .evict_min_by_key_except(|r| r.seq, |r| r.seq == parent)
+            .is_some());
+        assert_eq!(engine.runs.len(), 1);
+        assert!(engine.process(&ev("B")).is_empty());
+        assert_eq!(engine.runs.len(), 2, "the run forked into B again");
+        assert_eq!(engine.process(&ev("C")).len(), 1);
     }
 
     fn keyed(event_type: &str, key: &str, secs: i64) -> varpulis_core::Event {

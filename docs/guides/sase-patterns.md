@@ -493,10 +493,17 @@ stream Delivered = Paid
   `A -> ((B -> C) or D) -> E`, the events A, B, D, E match through D while
   the copy still waits for C. The first copy to complete its alternative ends
   the others, so a run gives at most one match through an `or`; with
-  `X -> ((B -> C) or (B -> D))`, X, B, D matches through the second. A
-  closure (`all B`) at the start of an alternative commits the run to it.
-  Forks count towards the run cap and, past it, are dropped or evict as the
-  backpressure setting says.
+  `X -> ((B -> C) or (B -> D))`, X, B, D matches through the second. When
+  one event completes several alternatives at once, the leftmost in the
+  source wins. A closure (`all B`) at the start of an alternative commits
+  the run to it.
+- **Under `.strict()`** the event that forks the run is the run's next
+  event: a later one cannot start another alternative.
+  `X -> ((B -> C) or (D -> E))` matches X, B, C and X, D, E, not X, B, D, E.
+- **At the run cap** a fork evicts another run if the backpressure setting
+  evicts, never one of its own family. When it cannot, the run commits to the
+  alternative the event started, as if there were no other, and the run cap
+  counts a dropped run.
 
 `pattern Either = A or B` matches each A and each B on its own; for a stream
 of either type with nothing after it, `merge(A, B)` does the same without a

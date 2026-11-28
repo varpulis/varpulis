@@ -76,6 +76,7 @@ impl RunCheckpointExt for Run {
                     group: m.group,
                     family: m.family,
                     forked: m.forked.clone(),
+                    rank: m.rank,
                 })
                 .collect(),
         }
@@ -154,6 +155,7 @@ impl RunCheckpointExt for Run {
                         group: m.group,
                         family: m.family,
                         forked: m.forked.clone(),
+                        rank: m.rank,
                     }
                 })
                 .collect(),
@@ -200,7 +202,11 @@ impl SaseCheckpointExt for SaseEngine {
             .partitioned_runs
             .iter()
             .map(|(k, runs)| {
-                let run_cps = runs.iter().map(|r| r.checkpoint()).collect();
+                // In creation order too: the list order is what swap-removes
+                // left, and a restore numbers the runs in the order written.
+                let mut runs: Vec<&Run> = runs.iter().collect();
+                runs.sort_by_key(|r| r.seq);
+                let run_cps = runs.into_iter().map(|r| r.checkpoint()).collect();
                 (k.clone(), run_cps)
             })
             .collect();

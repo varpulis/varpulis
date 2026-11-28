@@ -236,3 +236,61 @@ fn runs_restored_mid_or_still_end_each_other() {
     // The copy ended with the match: C completes nothing.
     assert!(engine.process(&ev("C", 4, 0)).is_empty());
 }
+
+#[test]
+fn a_restore_keeps_the_winner_of_a_tie_in_a_partition() {
+    // Two runs in one partition, each of which forks; then both
+    // alternatives of each wait for one C. Live and restored must agree.
+    let src = "pattern P = A as a -> ((B where v == a.v as p -> C where v == a.v as c) \
+               or (D where v == a.v as p -> C where v == a.v as c))";
+    let at = |t: &str, v: i64, secs: i64| {
+        let mut e = Event::new(t)
+            .with_field("id", Value::Int(secs))
+            .with_field("v", Value::Int(v))
+            .with_field("pk", Value::Int(0));
+        e.timestamp = chrono::DateTime::from_timestamp(1_700_000_000 + secs, 0).expect("ts");
+        e
+    };
+    let first = [
+        at("A", 0, 0),
+        at("B", 0, 1),
+        at("A", 1, 2),
+        at("B", 1, 3),
+        at("D", 0, 4),
+        at("C", 0, 5),
+    ];
+    let second = [at("D", 1, 6), at("C", 1, 7)];
+    let make = || {
+        SaseEngine::new(compiled(src).expect("compiles"))
+            .with_event_time()
+            .with_partition_by("pk".into())
+    };
+    let feed = |e: &mut SaseEngine, evs: &[Event]| -> Vec<String> {
+        evs.iter()
+            .flat_map(|x| e.process(x))
+            .map(|m| describe(&m))
+            .collect()
+    };
+
+    let mut live = make();
+    let mut want = feed(&mut live, &first);
+    want.extend(feed(&mut live, &second));
+
+    let mut before = make();
+    let mut got = feed(&mut before, &first);
+    let json = serde_json::to_string(&before.checkpoint()).expect("serializes");
+    let cp: SaseCheckpoint = serde_json::from_str(&json).expect("deserializes");
+    let mut after = make();
+    after.restore(&cp);
+    got.extend(feed(&mut after, &second));
+
+    assert_eq!(got, want);
+    // The leftmost alternative, through B, wins both ties.
+    assert_eq!(
+        want,
+        [
+            "a=Some(Int(0)),c=Some(Int(5)),p=Some(Int(1))",
+            "a=Some(Int(2)),c=Some(Int(7)),p=Some(Int(3))"
+        ]
+    );
+}

@@ -5911,6 +5911,7 @@ dependencies = [
  "chrono",
  "iai-callgrind",
  "rustc-hash",
+ "smallvec",
  "tracing",
  "varpulis-core",
  "varpulis-zdd",

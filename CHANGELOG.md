@@ -25,8 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The alternatives of an `or` can be sequences or `and`s, and a run follows
   all of them at once: an event that starts an alternative needing more
   events forks the run, and the first copy to complete its alternative ends
-  the others, so a run gives at most one match through an `or`. Forks count
-  towards the run cap. A shared alias names whichever alternative matched.
+  the others, so a run gives at most one match through an `or`; when one
+  event completes several, the leftmost alternative wins. Under `.strict()`
+  the event that forked is the run's next event, so a later one starts no
+  other alternative. At the run cap a fork evicts only outside its own
+  family; when it cannot, the run commits to that alternative, counted as a
+  dropped run. A shared alias names whichever alternative matched.
 - The validator refuses `NOT` or `all` inside `and`/`or` and a sequence inside
   `and` (E035), one alias on two operands of an `and` (E036) and operands that
   read each other's alias (E037). It warns on a later step that reads an
@@ -41,7 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`A -> all B -> (C and D)`) moved its run into the `and` on any event that
   was not a B, which then sat on its stack. A closure followed by `NOT C`
   never completed: the absence is now watched from the closure's first
-  event. A named pattern the
+  event. A closure followed by another closure (`A -> all B -> all C`)
+  emitted nothing; it now emits. A named pattern the
   engine cannot compile is now a load error; it used to be dropped with a
   log line. Constants are substituted inside `and` and `or`.
 

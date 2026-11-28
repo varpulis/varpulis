@@ -772,13 +772,35 @@ fn alternatives_are_followed_with_the_predicate_index_on_and_off() {
 }
 
 #[test]
-fn a_fork_past_the_run_cap_is_dropped_and_counted() {
+fn a_fork_past_the_run_cap_commits_the_run_to_its_alternative() {
     let mut e = engine(sequence_or_single()).with_max_runs(1);
+    // No room for the copy that takes B: the run takes B itself, and gives
+    // up D (counted as a dropped run).
     let got = run(&mut e, &[ev("A", 1), ev("B", 2), ev("C", 3), ev("E", 4)]);
-    // The copy that took B had no room; the run itself still waits for D.
-    assert!(got.is_empty(), "{got:?}");
+    assert_eq!(got, ["a=1,b=2,c=3,e=4"]);
     assert_eq!(e.total_runs_dropped, 1);
-    assert_eq!(run(&mut e, &[ev("D", 5), ev("E", 6)]), ["a=1,d=5,e=6"]);
+}
+
+#[test]
+fn a_fork_evicts_no_member_of_its_own_family() {
+    use varpulis_sase::BackpressureStrategy;
+    // A -> ((B -> C) or (D -> E)), one run allowed, evicting the oldest.
+    let p = || {
+        seq(vec![
+            step("A", "a"),
+            or(
+                seq(vec![step("B", "b"), step("C", "c")]),
+                seq(vec![step("D", "d"), step("E", "e")]),
+            ),
+        ])
+    };
+    let mut e = engine(p())
+        .with_max_runs(1)
+        .with_backpressure(BackpressureStrategy::EvictOldest);
+    let got = run(&mut e, &[ev("A", 1), ev("B", 2), ev("C", 3)]);
+    assert_eq!(got, ["a=1,b=2,c=3"]);
+    // The only other run is its parent: no eviction, the parent commits.
+    assert_eq!(e.total_runs_evicted, 0);
 }
 
 #[test]
@@ -844,10 +866,10 @@ fn a_zero_event_cap_holds_no_waiting_event() {
 }
 
 #[test]
-fn a_tie_goes_to_the_run_created_first() {
+fn a_tie_goes_to_the_leftmost_alternative() {
     // X -> ((A and B) or B): the B completes the copy in the `and` and the
-    // run's own alternative at once. The run, created before its copy,
-    // wins, whatever the order the runs are visited in.
+    // run's own alternative at once. The `and`, on the left, wins, whatever
+    // the order the runs are visited in.
     let p = || {
         seq(vec![
             step("X", "x"),
@@ -861,12 +883,85 @@ fn a_tie_goes_to_the_run_created_first() {
         let mut e = engine(p()).with_predicate_index(index);
         assert_eq!(
             run(&mut e, &events),
-            ["b=4,x=1", "b=4,x=2"],
+            ["a=3,b=4,x=1", "a=3,b=4,x=2"],
             "index {index}"
         );
     }
     let mut e = engine(p()).with_partition_by("key".into());
     let mut got = run(&mut e, &events);
     got.sort();
-    assert_eq!(got, ["b=4,x=1", "b=4,x=2"]);
+    assert_eq!(got, ["a=3,b=4,x=1", "a=3,b=4,x=2"]);
+}
+
+#[test]
+fn a_tie_does_not_depend_on_how_the_run_forked() {
+    // A -> ((B as p -> C) or (D as p -> C)): B and D both wait for the C.
+    // The run forks into B and takes D itself; with a third alternative it
+    // forks into both. Either way the leftmost, B, wins.
+    let two = || {
+        seq(vec![
+            step("A", "a"),
+            or(
+                seq(vec![step("B", "p"), step("C", "c")]),
+                seq(vec![step("D", "p"), step("C", "c")]),
+            ),
+        ])
+    };
+    let three = || {
+        seq(vec![
+            step("A", "a"),
+            or(
+                or(
+                    seq(vec![step("B", "p"), step("C", "c")]),
+                    seq(vec![step("D", "p"), step("C", "c")]),
+                ),
+                seq(vec![step("Q", "q"), step("C", "c")]),
+            ),
+        ])
+    };
+    let events = [ev("A", 0), ev("B", 1), ev("D", 2), ev("C", 3)];
+    assert_eq!(run(&mut engine(two()), &events), ["a=0,c=3,p=1"]);
+    assert_eq!(run(&mut engine(three()), &events), ["a=0,c=3,p=1"]);
+}
+
+#[test]
+fn strict_contiguity_holds_across_alternatives() {
+    // X -> ((B -> C) or (D -> E)) under `.strict()`: once B went into the
+    // first alternative, a D cannot start the second.
+    let p = || {
+        seq(vec![
+            step("X", "x"),
+            or(
+                seq(vec![step("B", "b"), step("C", "c")]),
+                seq(vec![step("D", "d"), step("E", "e")]),
+            ),
+        ])
+    };
+    let strict = || engine(p()).with_strategy(SelectionStrategy::StrictContiguous);
+    assert!(run(
+        &mut strict(),
+        &[ev("X", 1), ev("B", 2), ev("D", 3), ev("E", 4)]
+    )
+    .is_empty());
+    assert_eq!(
+        run(&mut strict(), &[ev("X", 1), ev("B", 2), ev("C", 3)]),
+        ["b=2,c=3,x=1"]
+    );
+    assert_eq!(
+        run(&mut strict(), &[ev("X", 1), ev("D", 2), ev("E", 3)]),
+        ["d=2,e=3,x=1"]
+    );
+}
+
+#[test]
+fn a_closure_after_a_closure_emits() {
+    // A -> all B -> all C: the second closure is entered from the first.
+    let p = seq(vec![step("A", "a"), closure("B", "bs"), closure("C", "cs")]);
+    let mut e = SaseEngine::new(p);
+    let got: Vec<MatchResult> = [ev("A", 1), ev("B", 2), ev("C", 3)]
+        .iter()
+        .flat_map(|x| e.process(x))
+        .collect();
+    assert!(!got.is_empty());
+    assert_eq!(stack(&got[0]), ["A 1", "B 2", "C 3"]);
 }

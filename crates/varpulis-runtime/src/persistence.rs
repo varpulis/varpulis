@@ -1406,6 +1406,10 @@ pub struct OrFamilyCheckpoint {
     /// The alternatives (their first state) the run has left to its copies.
     #[serde(default)]
     pub forked: Vec<usize>,
+    /// Which alternative the run follows, in source order; the lowest wins
+    /// a tie.
+    #[serde(default)]
+    pub rank: usize,
 }
 
 /// Checkpoint for a stack entry in a SASE+ run.

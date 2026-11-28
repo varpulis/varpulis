@@ -246,7 +246,8 @@ pattern Paid =
   `NOT`, `all` and sequences do not go inside an `and`, and `NOT` and `all`
   not inside an `or` either (E035).
 - The alternatives of an `or` can be sequences or `and`s, and a run follows
-  all of them at once: the first to complete ends the others. Only the one
+  all of them at once: the first to complete ends the others, the leftmost
+  when several complete on one event. Only the one
   that matched binds its aliases; a shared alias (`p`) names whichever came.
 - A step's `where` takes `and`/`or` into its filter: join a filtered step after
   its alias (`A where x > 1 as a and B`) or in parentheses.

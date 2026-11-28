@@ -67,6 +67,11 @@ pub struct OrFamily {
     /// leaves to the copy that took them. Only the run before the `or` has
     /// any.
     pub forked: Vec<usize>,
+    /// Where the alternative this run follows starts, as a position in
+    /// [`crate::nfa::OrGroup::entries`] (source order). When members leave
+    /// the `or` on the same event, the lowest wins: the leftmost
+    /// alternative. Meaningless for the run before the `or`.
+    pub rank: usize,
 }
 
 /// Source of [`Run::seq`].
