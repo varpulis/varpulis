@@ -187,6 +187,32 @@ fn patterns() -> Vec<(&'static str, SasePattern, bool)> {
             false,
         ),
         (
+            // Both alternatives start with the same unpredicated `C`, so a run
+            // at the `or` forks a copy per alternative. The runs reaching the
+            // `or` come out of the index in its order, not the visited list's:
+            // the copies must still be numbered, admitted and emitted in the
+            // order of the runs they were forked from.
+            "or-forking",
+            within(
+                SasePattern::Seq(vec![
+                    a(),
+                    step("B", "b", Some(cref("price", CompareOp::Gt, "a", "price"))),
+                    SasePattern::Or(
+                        Box::new(SasePattern::Seq(vec![
+                            step("C", "c1", None),
+                            step("B", "b2", Some(key_eq())),
+                        ])),
+                        Box::new(SasePattern::Seq(vec![
+                            step("C", "c2", None),
+                            step("C", "c3", Some(key_eq())),
+                        ])),
+                    ),
+                ]),
+                8,
+            ),
+            true,
+        ),
+        (
             "and",
             within(
                 SasePattern::And(
@@ -367,10 +393,12 @@ fn partition_index_never_changes_matches() {
             SelectionStrategy::SkipTillAnyMatch,
             SelectionStrategy::SkipTillNextMatch,
         ] {
-            // One partition, a few, and many with a run or two each.
+            // One partition, a few, and many with a run or two each. With
+            // many, a long pattern may never complete: matches are counted
+            // over the three.
+            let mut matches = 0;
             for partitions in [1, 3, 40] {
                 let mut most_parked = 0;
-                let mut matches = 0;
                 for (n, lag) in [None, Some(Duration::from_secs(2))].into_iter().enumerate() {
                     let setup = Setup {
                         lag,
@@ -388,10 +416,6 @@ fn partition_index_never_changes_matches() {
                         matches += outcome.matches;
                     }
                 }
-                assert!(
-                    matches > 0,
-                    "{name} ({strategy:?}, {partitions}): never matched, the comparison is vacuous"
-                );
                 if must_engage {
                     assert!(
                         most_parked > 0,
@@ -399,6 +423,10 @@ fn partition_index_never_changes_matches() {
                     );
                 }
             }
+            assert!(
+                matches > 0,
+                "{name} ({strategy:?}): never matched, the comparison is vacuous"
+            );
         }
     }
 }

@@ -252,7 +252,10 @@ fn sync_partition_index(
         return;
     };
     let mut index = RunIndex::with_plan(Arc::clone(plan));
-    // The runs already waiting move in, as far as they can.
+    // The runs already waiting move in, as far as they can, with room for
+    // half as many again (the threshold is crossed one run at a time).
+    let waiting = partition.runs.len();
+    index.reserve_exact(waiting + waiting / 2);
     let mut i = 0;
     while i < partition.runs.len() {
         if let Some(key) = index.key_for(&partition.runs[i]) {
@@ -262,6 +265,9 @@ fn sync_partition_index(
             i += 1;
         }
     }
+    // The list keeps its capacity otherwise: as many whole runs again, empty,
+    // in every partition that moved its runs in.
+    partition.runs.shrink_to(partition.runs.len());
     partition.index = Some(Box::new(index));
 }
 
@@ -381,6 +387,27 @@ fn reopen_alternatives(runs: &mut [Run], released: &[(u64, usize)]) {
 /// No Kleene bookkeeping, because a negated step takes no Kleene operator —
 /// "not B, repeated" is not a thing the grammar offers or the engine could act
 /// on.
+/// The copies a pass forked, in the order of the runs they were forked
+/// from (`parent`, by `seq`), each numbered afresh in that order.
+///
+/// A copy is numbered when its parent forks it, in the order the pass
+/// visits the parents, and that order depends on the list's history and on
+/// the predicate index (woken runs come last, in the index's order). Copies
+/// are admitted in their numbering, which decides which one a full run cap
+/// keeps, and their matches later come out in it. Numbering them by parent
+/// makes both independent of the visit order.
+fn in_parent_order(mut forks: Vec<(Run, u64)>) -> Vec<(Run, u64)> {
+    if forks.len() < 2 {
+        return forks;
+    }
+    // Stable: a parent's own copies keep the order it forked them in.
+    forks.sort_by_key(|(fork, parent)| (*parent, fork.seq));
+    for (fork, _) in &mut forks {
+        fork.seq = Run::next_seq();
+    }
+    forks
+}
+
 /// The matches of several runs, in the order the runs were created: the
 /// order the list holds them in depends on its history and on the predicate
 /// index, the creation order on neither.
@@ -1725,14 +1752,16 @@ impl SaseEngine {
                 self.partitioned_runs.remove(partition_key);
             }
         }
-        for (fork, parent) in std::mem::take(&mut pass.forks) {
+        for (fork, parent) in in_parent_order(std::mem::take(&mut pass.forks)) {
             self.admit_fork(fork, parent, Some(partition_key));
         }
 
         // Emit in run creation order. The visited runs are in an order that
         // their swap-removes reshuffle, and the index hands runs back in its
-        // own; ordering by creation makes the output independent of both. A
-        // run's own matches keep their order (stable sort).
+        // own; ordering by creation makes the output independent of both, as
+        // long as creation itself does not follow the visit order: the copies
+        // an `or` forks are numbered by parent (`in_parent_order`). A run's
+        // own matches keep their order (stable sort).
         if !completed_seq.is_sorted() {
             completed = in_creation_order(completed_seq.into_iter().zip(completed).collect());
         }
@@ -1958,15 +1987,17 @@ impl SaseEngine {
                     completed_seq.retain(|s| !losers.contains(s));
                 }
             }
-            for (fork, parent) in std::mem::take(&mut pass.forks) {
+            for (fork, parent) in in_parent_order(std::mem::take(&mut pass.forks)) {
                 self.admit_fork(fork, parent, None);
             }
         }
 
         // Emit in run creation order. The list is visited in an order that
         // its swap-removes reshuffle, and the index hands runs back in its
-        // own; ordering by creation makes the output independent of both.
-        // A run's own matches keep their order (stable sort).
+        // own; ordering by creation makes the output independent of both,
+        // the copies an `or` forks being numbered by parent
+        // (`in_parent_order`). A run's own matches keep their order (stable
+        // sort).
         if !completed_seq.is_sorted() {
             completed = in_creation_order(completed_seq.into_iter().zip(completed).collect());
         }

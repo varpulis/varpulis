@@ -637,9 +637,22 @@ impl RunIndex {
             self.slab[slot as usize] = Some(parked);
             slot
         } else {
+            // A slot holds a whole run, a few hundred bytes. Growing by half
+            // rather than doubling leaves a third of the slab unused at
+            // worst, not half: under `partition by`, with an index in each of
+            // many small partitions, that unused half was most of what the
+            // indexes cost.
+            if self.slab.len() == self.slab.capacity() {
+                self.slab.reserve_exact((self.slab.len() / 2).max(4));
+            }
             self.slab.push(Some(parked));
             Slot::try_from(self.slab.len() - 1).expect("more than u32::MAX parked runs")
         }
+    }
+
+    /// Make room for `additional` more runs without growing the slab again.
+    pub(crate) fn reserve_exact(&mut self, additional: usize) {
+        self.slab.reserve_exact(additional);
     }
 
     /// Remove the run at `slot` from every structure that refers to it.
