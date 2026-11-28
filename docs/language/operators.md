@@ -241,19 +241,20 @@ pattern Paid =
 ```
 
 - The operands of an `and` are single events, each with its `where` and
-  alias. A `where` that reads a sibling's alias (`b`'s above) is judged once
-  that sibling has matched. `NOT`, `all` and sequences do not go inside an
-  `and`, and `NOT` and `all` not inside an `or` either (E035).
-- The alternatives of an `or` can be sequences or `and`s. Only the one that
-  matched binds its aliases; a shared alias (`p`) names whichever came. An
-  event takes the leftmost alternative it satisfies.
+  alias, or `or`s of single events (`(A or B) and C`). A `where` that reads a
+  sibling's alias (`b`'s above) is judged once that sibling has matched.
+  `NOT`, `all` and sequences do not go inside an `and`, and `NOT` and `all`
+  not inside an `or` either (E035).
+- The alternatives of an `or` can be sequences or `and`s, and a run follows
+  all of them at once: the first to complete ends the others. Only the one
+  that matched binds its aliases; a shared alias (`p`) names whichever came.
 - A step's `where` takes `and`/`or` into its filter: join a filtered step after
   its alias (`A where x > 1 as a and B`) or in parentheses.
 
 The validator reports what the engine does not run (E035), one alias on two
 operands of an `and` (E036), operands that read each other's alias in a
-circle (E037), alternatives that start with the same event type (W036), an
-alias only some alternatives bind read by a later step (W037), and a `where`
+circle (E037), an alias only some alternatives bind read by a later step
+(W037), and a `where`
 that reads an event type's name as a value (W038). The full account is in
 [SASE+ patterns](../guides/sase-patterns.md#both-in-any-order-and).
 

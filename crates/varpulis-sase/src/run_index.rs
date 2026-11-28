@@ -385,6 +385,9 @@ impl RunIndex {
             || !run.pending_negations.is_empty()
             || run.and_state.is_some()
             || run.kleene_capture.is_some()
+            // A member of an `or` family stays listed, where the member
+            // that leaves the `or` first can end it.
+            || !run.or_families.is_empty()
         {
             return None;
         }

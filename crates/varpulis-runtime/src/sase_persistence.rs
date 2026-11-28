@@ -6,7 +6,9 @@
 use std::sync::Arc;
 
 use chrono::DateTime;
-use varpulis_sase::{AndState, KleeneCapture, Run, SaseEngine, SharedEvent, StackEntry, Timestamp};
+use varpulis_sase::{
+    AndState, KleeneCapture, OrFamily, Run, SaseEngine, SharedEvent, StackEntry, Timestamp,
+};
 
 use crate::persistence;
 
@@ -67,6 +69,15 @@ impl RunCheckpointExt for Run {
                 })
                 .unwrap_or_default(),
             and_anchored: self.and_state.as_ref().is_some_and(|a| a.anchor.is_some()),
+            or_families: self
+                .or_families
+                .iter()
+                .map(|m| persistence::OrFamilyCheckpoint {
+                    group: m.group,
+                    family: m.family,
+                    forked: m.forked.clone(),
+                })
+                .collect(),
         }
     }
 
@@ -132,6 +143,20 @@ impl RunCheckpointExt for Run {
             // A fresh number, taken in checkpoint order: the checkpoint lists
             // runs in creation order, so the restored runs keep theirs.
             seq: Run::next_seq(),
+            or_families: rc
+                .or_families
+                .iter()
+                .map(|m| {
+                    // Families formed after the restore must not take an id
+                    // a restored run carries.
+                    OrFamily::reserve_past(m.family);
+                    OrFamily {
+                        group: m.group,
+                        family: m.family,
+                        forked: m.forked.clone(),
+                    }
+                })
+                .collect(),
         }
     }
 }

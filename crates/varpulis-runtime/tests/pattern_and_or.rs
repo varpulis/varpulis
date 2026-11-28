@@ -52,9 +52,13 @@ fn compiles_and_or_and_followed_by() {
 }
 
 #[test]
-fn an_and_over_ors_distributes() {
+fn an_and_over_ors_is_one_and() {
+    // One state whose first operand is either event: no expansion.
     let p = compiled("pattern P = (A or B) and C").expect("compiles");
-    assert_eq!(shape(&p), "or(and(A, C), and(B, C))");
+    assert_eq!(shape(&p), "and(or(A, B), C)");
+    let wide = ["(A or B)"; 7].join(" and ");
+    let p = compiled(&format!("pattern P = {wide}")).expect("compiles");
+    assert_eq!(shape(&p).matches("and(").count(), 6);
 }
 
 #[test]
@@ -63,8 +67,59 @@ fn what_the_engine_does_not_run_does_not_compile() {
     assert!(compiled("pattern P = (A -> B) and C").is_none());
     assert!(compiled("pattern P = all A as xs and B").is_none());
     assert!(compiled("pattern P = A and NOT B").is_none());
-    let too_many = ["(A or B)"; 7].join(" and ");
-    assert!(compiled(&format!("pattern P = {too_many}")).is_none());
+    assert!(compiled("pattern P = ((A as a -> B as b) or C as c) and D as d").is_none());
+    assert!(compiled("pattern P = ((A and B) or C) and D").is_none());
+}
+
+#[test]
+fn a_named_pattern_the_engine_cannot_run_fails_the_load() {
+    let src = "
+event A:
+    id: int
+event B:
+    id: int
+event C:
+    id: int
+event D:
+    id: int
+pattern P = ((A as a -> B as b) or C as c) and D as d within 1m
+stream S = P
+    .emit(d: d.id)
+";
+    let program = parse(src).expect("parses");
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let mut engine = varpulis_runtime::engine::Engine::new(tx);
+    let err = engine
+        .load(&program)
+        .expect_err("an uncompilable pattern fails the load");
+    assert!(err.to_string().contains("pattern 'P'"), "{err}");
+}
+
+#[test]
+fn constants_reach_the_filters_inside_and_and_or() {
+    let program = parse(
+        "
+const LIMIT = 100
+pattern P = (A where id > LIMIT as a) or (B as b and C where id < LIMIT as c)
+",
+    )
+    .expect("parses");
+    let Some(expr) = program.statements.into_iter().find_map(|s| match s.node {
+        Stmt::PatternDecl { expr, .. } => Some(expr),
+        _ => None,
+    }) else {
+        panic!("a pattern declaration");
+    };
+    let filters: Vec<String> = expr
+        .items()
+        .iter()
+        .filter_map(|i| i.filter.as_ref().map(|f| format!("{f:?}")))
+        .collect();
+    assert_eq!(filters.len(), 2);
+    for f in filters {
+        assert!(!f.contains("LIMIT"), "the constant is left as a name: {f}");
+        assert!(f.contains("100"), "{f}");
+    }
 }
 
 #[test]
@@ -161,4 +216,23 @@ fn a_checkpoint_from_before_and_existed_still_restores() {
     fresh.restore(&cp);
     let got: Vec<String> = fresh.process(&ev("B", 2, 0)).iter().map(describe).collect();
     assert_eq!(got, ["a=Some(Int(1)),b=Some(Int(2))"]);
+}
+
+#[test]
+fn runs_restored_mid_or_still_end_each_other() {
+    // X, B: the run waits for D while its copy, past B, waits for C.
+    let src = "pattern P = X as x -> ((B as b -> C as c) or D as d)";
+    let mut engine = engine_for(src);
+    assert!(engine.process(&ev("X", 1, 0)).is_empty());
+    assert!(engine.process(&ev("B", 2, 0)).is_empty());
+
+    let mut engine = restored(&engine, src);
+    let got: Vec<String> = engine
+        .process(&ev("D", 3, 0))
+        .iter()
+        .map(describe)
+        .collect();
+    assert_eq!(got, ["d=Some(Int(3)),x=Some(Int(1))"]);
+    // The copy ended with the match: C completes nothing.
+    assert!(engine.process(&ev("C", 4, 0)).is_empty());
 }

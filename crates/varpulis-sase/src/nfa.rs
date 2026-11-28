@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use super::and_op::{AndBranch, AndConfig, NegationInfo};
+use super::and_op::{AndBranch, AndConfig, AndOption, NegationInfo};
 use super::predicate::{classify_predicate, needs_deferred_evaluation, PredicateClass};
 use super::types::{Predicate, SasePattern};
 
@@ -120,6 +120,35 @@ pub struct Nfa {
     pub start_state: usize,
     /// Indices of accepting (final) states.
     pub accept_states: Vec<usize>,
+    /// The `or`s of the pattern, outermost first. See [`OrGroup`].
+    pub or_groups: Vec<OrGroup>,
+}
+
+/// An `or` of the pattern, with what a run needs to follow every
+/// alternative at once.
+///
+/// A run before the `or` that an event takes into an alternative still
+/// needing more events forks: the copy goes into the alternative and the
+/// run stays, open to the others. The run and its copies form a family;
+/// the first of them to leave the `or` (to reach the end of an alternative)
+/// ends the others, so one run gives at most one match through the `or`.
+#[derive(Debug, Clone, Default)]
+pub struct OrGroup {
+    /// The states the alternatives follow.
+    pub prevs: Vec<usize>,
+    /// The first state of each alternative.
+    pub entries: Vec<usize>,
+    /// The last state of each alternative: arriving there leaves the `or`.
+    pub ends: Vec<usize>,
+    /// The states of the alternatives, a contiguous range of ids.
+    pub inside: std::ops::Range<usize>,
+}
+
+impl OrGroup {
+    /// Whether a run that has just arrived at `state` is out of this `or`.
+    pub fn is_left_at(&self, state: usize) -> bool {
+        self.ends.contains(&state) || !self.inside.contains(&state)
+    }
 }
 
 impl Nfa {
@@ -130,6 +159,7 @@ impl Nfa {
             states: vec![start],
             start_state: 0,
             accept_states: Vec::new(),
+            or_groups: Vec::new(),
         }
     }
 
@@ -209,6 +239,15 @@ impl Nfa {
             })
             .filter_map(|s| s.alias.as_deref())
             .next_back()
+    }
+
+    /// The outermost `or` that `next` enters from `split`, if any: `split`
+    /// is one of the states its alternatives follow and `next` the first
+    /// state of one of them.
+    pub fn or_split(&self, split: usize, next: usize) -> Option<usize> {
+        self.or_groups
+            .iter()
+            .position(|g| g.entries.contains(&next) && g.prevs.contains(&split))
     }
 
     /// Mark a state as an accepting (final) state.
@@ -296,7 +335,8 @@ impl NfaCompiler {
     /// A fragment can have several entries and several ends: `B or C` enters
     /// at B and at C and ends at both, and what follows it is reached from
     /// each. An `or` adds no state of its own; the state before it simply has
-    /// one transition per alternative, the leftmost first.
+    /// one transition per alternative, and the run there follows each (see
+    /// [`OrGroup`]).
     fn compile_pattern(&mut self, pattern: &SasePattern, prevs: &[usize]) -> Frag {
         match pattern {
             SasePattern::Event {
@@ -336,13 +376,19 @@ impl NfaCompiler {
 
             SasePattern::And(_, _) => {
                 // AND-01: every branch must match, in any order. Nested ANDs
-                // are one state: `A and B and C` waits for three events.
+                // are one state: `A and B and C` waits for three events. An
+                // `or` of events is one branch with an option per event.
                 let mut branches = Vec::new();
                 collect_and_branches(pattern, &mut branches);
-                let aliases: Vec<Option<String>> =
-                    branches.iter().map(|b| b.alias.clone()).collect();
+                let aliases: Vec<Vec<String>> = branches
+                    .iter()
+                    .map(|b| b.options.iter().filter_map(|o| o.alias.clone()).collect())
+                    .collect();
                 for (idx, branch) in branches.iter_mut().enumerate() {
-                    branch.sibling_refs = sibling_refs(branch.predicate.as_ref(), &aliases, idx);
+                    for option in &mut branch.options {
+                        option.sibling_refs =
+                            sibling_refs(option.predicate.as_ref(), &aliases, idx);
+                    }
                 }
 
                 // Create join state (where we go after both branches complete)
@@ -365,15 +411,28 @@ impl NfaCompiler {
                 }
             }
 
-            SasePattern::Or(left, right) => {
-                // Either branch can match. Both follow `prevs` directly; their
-                // ends are all ends of the OR.
-                let l = self.compile_pattern(left, prevs);
-                let r = self.compile_pattern(right, prevs);
-                let mut entries = l.entries;
-                entries.extend(r.entries);
-                let mut ends = l.ends;
-                ends.extend(r.ends);
+            SasePattern::Or(_, _) => {
+                // Either alternative can match. Each follows `prevs`
+                // directly; their ends are all ends of the OR. Nested ORs
+                // are one: `A or B or C` has three alternatives.
+                let mut alternatives = Vec::new();
+                collect_or_alternatives(pattern, &mut alternatives);
+                let group = self.nfa.or_groups.len();
+                self.nfa.or_groups.push(OrGroup::default());
+                let first = self.nfa.states.len();
+                let mut entries = Vec::new();
+                let mut ends = Vec::new();
+                for alternative in alternatives {
+                    let frag = self.compile_pattern(alternative, prevs);
+                    entries.extend(frag.entries);
+                    ends.extend(frag.ends);
+                }
+                self.nfa.or_groups[group] = OrGroup {
+                    prevs: prevs.to_vec(),
+                    entries: entries.clone(),
+                    ends: ends.clone(),
+                    inside: first..self.nfa.states.len(),
+                };
                 Frag { entries, ends }
             }
 
@@ -509,43 +568,59 @@ impl Frag {
     }
 }
 
-/// The branches of an AND, nested ANDs flattened, in source order.
+/// The branches of an AND, nested ANDs flattened, in source order. An `or`
+/// of events is one branch, with one option per event.
 fn collect_and_branches(pattern: &SasePattern, out: &mut Vec<AndBranch>) {
     match pattern {
         SasePattern::And(left, right) => {
             collect_and_branches(left, out);
             collect_and_branches(right, out);
         }
-        other => {
-            let (event_type, predicate) = extract_event_info(other);
+        SasePattern::Or(_, _) => {
+            let mut alternatives = Vec::new();
+            collect_or_alternatives(pattern, &mut alternatives);
             out.push(AndBranch {
-                event_type: event_type.unwrap_or_default(),
-                predicate,
-                alias: extract_alias(other),
-                sibling_refs: Vec::new(),
+                options: alternatives.into_iter().map(and_option).collect(),
             });
         }
+        other => out.push(AndBranch {
+            options: vec![and_option(other)],
+        }),
     }
 }
 
-/// The other branches of the same AND whose alias `predicate` reads. A
-/// branch can only be judged once those have matched.
-fn sibling_refs(
-    predicate: Option<&Predicate>,
-    aliases: &[Option<String>],
-    own: usize,
-) -> Vec<usize> {
+fn and_option(pattern: &SasePattern) -> AndOption {
+    let (event_type, predicate) = extract_event_info(pattern);
+    AndOption {
+        event_type: event_type.unwrap_or_default(),
+        predicate,
+        alias: extract_alias(pattern),
+        sibling_refs: Vec::new(),
+    }
+}
+
+/// The alternatives of an OR, nested ORs flattened, in source order.
+fn collect_or_alternatives<'p>(pattern: &'p SasePattern, out: &mut Vec<&'p SasePattern>) {
+    match pattern {
+        SasePattern::Or(left, right) => {
+            collect_or_alternatives(left, out);
+            collect_or_alternatives(right, out);
+        }
+        other => out.push(other),
+    }
+}
+
+/// The other branches of the same AND whose alias `predicate` reads. An
+/// option can only be judged once those have matched.
+fn sibling_refs(predicate: Option<&Predicate>, aliases: &[Vec<String>], own: usize) -> Vec<usize> {
     let Some(predicate) = predicate else {
         return Vec::new();
     };
     aliases
         .iter()
         .enumerate()
-        .filter(|&(idx, alias)| {
-            idx != own
-                && alias
-                    .as_deref()
-                    .is_some_and(|a| predicate_mentions_alias(predicate, a))
+        .filter(|&(idx, names)| {
+            idx != own && names.iter().any(|a| predicate_mentions_alias(predicate, a))
         })
         .map(|(idx, _)| idx)
         .collect()

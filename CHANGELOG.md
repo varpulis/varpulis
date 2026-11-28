@@ -14,27 +14,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then `or`, then `->`, and parentheses group:
   `X -> A or B and C -> Y` is `X -> (A or (B and C)) -> Y`. They are written
   in `pattern` declarations. See the SASE+ patterns guide.
-- The operands of an `and` are single events. A `where` that reads a
-  sibling's alias (`A as a and B where id == a.id as b`) is judged once that
+- The operands of an `and` are single events, or `or`s of single events:
+  `(A or B) and C` waits for C and either of A and B, in one state. A
+  `where` that reads a sibling's alias (`A as a and B where id == a.id as b`) is judged once that
   sibling has matched; an event that comes first waits for it, at most 20 per
   run. Under event time the window counts from the earliest event, whichever
   came first. A checkpoint keeps the operands a run has matched and the
-  events that wait.
-- The alternatives of an `or` can be sequences or `and`s. An event takes the
-  leftmost alternative it satisfies; a shared alias names whichever matched.
-  `(A or B) and C` runs as `(A and C) or (B and C)`.
+  events that wait. Under the default `.stam()` each run pairs with its
+  first partner: A, B1, B2 gives one match, (A, B1), as `A -> B` does.
+- The alternatives of an `or` can be sequences or `and`s, and a run follows
+  all of them at once: an event that starts an alternative needing more
+  events forks the run, and the first copy to complete its alternative ends
+  the others, so a run gives at most one match through an `or`. Forks count
+  towards the run cap. A shared alias names whichever alternative matched.
 - The validator refuses `NOT` or `all` inside `and`/`or` and a sequence inside
   `and` (E035), one alias on two operands of an `and` (E036) and operands that
-  read each other's alias (E037). It warns on alternatives that start with
-  the same event type (W036), on a later step that reads an alias only some
-  alternatives bind (W037), and on a `where` that reads an event type's name
+  read each other's alias (E037). It warns on a later step that reads an
+  alias only some alternatives bind (W037), and on a `where` that reads an event type's name
   as a value (W038), which is what `A where x > 1 and B` does: the filter
   takes the `and`.
 - Fixed on the way: a pattern that one event completes (`pattern P = A`,
   `A or B`) emitted its match only when the next event arrived; it now emits
   at once. An AND inside a sequence moved its run into the AND on any event,
   even one it did not take. A run restored from a checkpoint inside an AND
-  lost the operands it had matched.
+  lost the operands it had matched. A closure followed by an `and`
+  (`A -> all B -> (C and D)`) moved its run into the `and` on any event that
+  was not a B, which then sat on its stack. A closure followed by `NOT C`
+  never completed: the absence is now watched from the closure's first
+  event. A named pattern the
+  engine cannot compile is now a load error; it used to be dropped with a
+  log line. Constants are substituted inside `and` and `or`.
 
 ### Changed — an event looks up the runs it can advance instead of visiting them all
 

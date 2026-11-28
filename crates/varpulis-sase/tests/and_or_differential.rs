@@ -10,6 +10,11 @@
 //! - `A as a -> (B where key == a.key as b or C where key == a.key as c)
 //!   within W`: every A opens a run, which completes with the first B or C
 //!   after it with the same key and at most W later.
+//! - `A as a -> ((B where key == a.key as b -> C where key == a.key as c)
+//!   or D where key == a.key as d) within W`: every A opens a run, which
+//!   follows both alternatives: it completes with the first D after it, or
+//!   with the first C after the first B after it, whichever comes first, all
+//!   with A's key and at most W after A.
 //!
 //! Each event must complete exactly the runs the model says, with the index
 //! on and off, partitioned by the key or not.
@@ -45,13 +50,17 @@ struct Ev {
 }
 
 fn stream(seed: u64, n: usize) -> Vec<Ev> {
+    stream_of(seed, n, &["A", "A", "B", "B", "C"])
+}
+
+fn stream_of(seed: u64, n: usize, types: &[&'static str]) -> Vec<Ev> {
     let mut rng = Rng(seed);
     let mut secs = 0;
     (0..n)
         .map(|_| {
             secs += rng.below(4) as i64;
             Ev {
-                event_type: ["A", "A", "B", "B", "C"][rng.below(5) as usize],
+                event_type: types[rng.below(types.len() as u64) as usize],
                 key: rng.below(3) as i64,
                 secs,
             }
@@ -105,14 +114,38 @@ fn or_pattern() -> SasePattern {
     ]))
 }
 
+fn fork_pattern() -> SasePattern {
+    within(SasePattern::Seq(vec![
+        step("A", "a", None),
+        SasePattern::Or(
+            Box::new(SasePattern::Seq(vec![
+                step("B", "b", Some(same_key("a"))),
+                step("C", "c", Some(same_key("a"))),
+            ])),
+            Box::new(step("D", "d", Some(same_key("a")))),
+        ),
+    ]))
+}
+
 /// The first event after `opener` of one of `partners` with its key, at
 /// most the window later.
 fn first_partner(events: &[Ev], opener: usize, partners: &[&str]) -> Option<usize> {
+    first_partner_after(events, opener, opener, partners)
+}
+
+/// The first event after `after` of one of `partners` with the key of
+/// `opener`, at most the window after `opener`.
+fn first_partner_after(
+    events: &[Ev],
+    opener: usize,
+    after: usize,
+    partners: &[&str],
+) -> Option<usize> {
     let o = &events[opener];
     events
         .iter()
         .enumerate()
-        .skip(opener + 1)
+        .skip(after + 1)
         .take_while(|(_, e)| e.secs - o.secs <= WITHIN_SECS)
         .find(|(_, e)| partners.contains(&e.event_type) && e.key == o.key)
         .map(|(j, _)| j)
@@ -154,6 +187,26 @@ fn model_or(events: &[Ev]) -> Vec<Vec<String>> {
     out
 }
 
+fn model_fork(events: &[Ev]) -> Vec<Vec<String>> {
+    let mut out = vec![Vec::new(); events.len()];
+    for (i, e) in events.iter().enumerate() {
+        if e.event_type != "A" {
+            continue;
+        }
+        let through_c = first_partner(events, i, &["B"])
+            .and_then(|b| first_partner_after(events, i, b, &["C"]).map(|c| (b, c)));
+        let through_d = first_partner(events, i, &["D"]);
+        match (through_c, through_d) {
+            (Some((b, c)), d) if d.is_none_or(|d| c < d) => {
+                out[c].push(format!("a={i},b={b},c={c}"));
+            }
+            (_, Some(d)) => out[d].push(format!("a={i},d={d}")),
+            _ => {}
+        }
+    }
+    out
+}
+
 fn describe(m: &MatchResult) -> String {
     let mut parts: Vec<String> = m
         .captured
@@ -168,6 +221,15 @@ fn describe(m: &MatchResult) -> String {
 }
 
 fn check(name: &str, pattern: fn() -> SasePattern, model: fn(&[Ev]) -> Vec<Vec<String>>) {
+    check_on(name, pattern, model, stream);
+}
+
+fn check_on(
+    name: &str,
+    pattern: fn() -> SasePattern,
+    model: fn(&[Ev]) -> Vec<Vec<String>>,
+    stream: fn(u64, usize) -> Vec<Ev>,
+) {
     let mut total = 0;
     for seed in 1..=12u64 {
         let events = stream(seed * 0x9E37_79B9, 400);
@@ -214,4 +276,11 @@ fn and_matches_the_model() {
 #[test]
 fn or_matches_the_model() {
     check("or", or_pattern, model_or);
+}
+
+#[test]
+fn every_alternative_of_an_or_is_followed_as_the_model_says() {
+    check_on("fork", fork_pattern, model_fork, |seed, n| {
+        stream_of(seed, n, &["A", "A", "B", "B", "C", "D"])
+    });
 }

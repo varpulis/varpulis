@@ -8,6 +8,17 @@ homepage.workspace = true
 documentation.workspace = true
 description = "Core types and AST for VPL"
 
+# `SasePatternExpr` gains `FollowedBy`, `And` and `Or`: a named pattern's
+# steps can now be combined with `and` and `or`, and the AST says how. A
+# variant added to an exhaustive public enum is reported as a breaking change;
+# it is taken against the 0.11.0 baseline, as the runtime's are (and without
+# `#[non_exhaustive]`, which would break every exhaustive match outside this
+# crate once more). `semver_exceptions_expire_with_their_baseline` in
+# src/lib.rs turns red the moment the version moves past 0.11.x, which is when
+# this block must go.
+[package.metadata.cargo-semver-checks.lints]
+enum_variant_added = "allow"
+
 [dependencies]
 serde = { workspace = true }
 chrono = { workspace = true }

@@ -41,7 +41,7 @@ mod run_index;
 mod types;
 
 // Re-export all public types to maintain API compatibility
-pub use and_op::{AndBranch, AndConfig, AndState, NegationInfo};
+pub use and_op::{AndBranch, AndConfig, AndOption, AndState, NegationInfo};
 pub use backpressure::{
     BackpressureError, BackpressureStrategy, ProcessResult, ProcessStats, ProcessWarning,
     SaseExtendedStats,
@@ -54,9 +54,9 @@ pub use event_time::{EventTimeConfig, EventTimeManager, EventTimeResult};
 pub use kleene::KleeneCapture;
 pub use metrics::{LatencyHistogram, MetricsSummary, SaseMetrics};
 pub use negation::NegationConstraint;
-pub use nfa::{Nfa, NfaCompiler, State, StateType};
+pub use nfa::{Nfa, NfaCompiler, OrGroup, State, StateType};
 pub use predicate::{classify_predicate, PredicateClass};
-pub use run::Run;
+pub use run::{OrFamily, Run};
 // ---------------------------------------------------------------------------
 // Expression evaluator trait (abstraction for engine dependency)
 // ---------------------------------------------------------------------------

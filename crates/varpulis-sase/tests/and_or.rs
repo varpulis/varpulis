@@ -407,7 +407,7 @@ fn or_alternatives_can_be_sequences() {
 }
 
 #[test]
-fn an_event_takes_the_leftmost_alternative_it_satisfies() {
+fn an_event_completing_two_alternatives_takes_the_leftmost() {
     let p = SasePattern::Seq(vec![
         step("X", "x"),
         or(
@@ -462,4 +462,411 @@ fn an_or_of_single_events_matches_on_each() {
     let mut e = engine(p);
     assert_eq!(run(&mut e, &[ev("A", 1)]), ["a=1"]);
     assert_eq!(run(&mut e, &[ev("C", 2), ev("B", 3)]), ["b=3"]);
+}
+
+// ---------------------------------------------------------------------------
+// after a closure
+// ---------------------------------------------------------------------------
+
+fn closure(event_type: &str, alias: &str) -> SasePattern {
+    SasePattern::KleenePlus(Box::new(step(event_type, alias)))
+}
+
+/// The events of a match, as `type id` in stack order.
+fn stack(m: &MatchResult) -> Vec<String> {
+    m.stack
+        .iter()
+        .map(|e| match e.event.get("id") {
+            Some(Value::Int(id)) => format!("{} {id}", e.event.event_type),
+            _ => e.event.event_type.to_string(),
+        })
+        .collect()
+}
+
+fn closure_then_and() -> SasePattern {
+    // A as a -> all B as bs -> (C as c and D as d) within 60s
+    within(
+        SasePattern::Seq(vec![
+            step("A", "a"),
+            closure("B", "bs"),
+            and(step("C", "c"), step("D", "d")),
+        ]),
+        60,
+    )
+}
+
+#[test]
+fn an_and_after_a_closure_completes() {
+    let mut e = SaseEngine::new(closure_then_and());
+    let got: Vec<MatchResult> = [ev("A", 1), ev("B", 2), ev("C", 3), ev("D", 4)]
+        .iter()
+        .flat_map(|x| e.process(x))
+        .collect();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(stack(&got[0]), ["A 1", "B 2", "C 3", "D 4"]);
+}
+
+#[test]
+fn an_and_after_a_closure_takes_only_its_own_events() {
+    // The second A is no operand of the `and`; it used to land on the stack.
+    let mut e = SaseEngine::new(closure_then_and());
+    let got: Vec<MatchResult> = [ev("A", 1), ev("B", 2), ev("A", 3), ev("C", 4), ev("D", 5)]
+        .iter()
+        .flat_map(|x| e.process(x))
+        .collect();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(stack(&got[0]), ["A 1", "B 2", "C 4", "D 5"]);
+}
+
+#[test]
+fn an_and_after_a_closure_keeps_its_first_partner() {
+    let mut e = SaseEngine::new(closure_then_and());
+    let got: Vec<String> = [ev("A", 1), ev("B", 2), ev("C", 3), ev("D", 4), ev("C", 5)]
+        .iter()
+        .flat_map(|x| e.process(x))
+        .map(|m| format!("c={:?}", m.captured["c"].get("id")))
+        .collect();
+    assert_eq!(got, ["c=Some(Int(3))"]);
+}
+
+#[test]
+fn an_absence_after_a_closure_completes_when_its_window_ends() {
+    // A -> all B -> NOT C within 10s, event time.
+    let p = || {
+        within(
+            SasePattern::Seq(vec![
+                step("A", "a"),
+                closure("B", "bs"),
+                SasePattern::Not(Box::new(step("C", "c"))),
+            ]),
+            10,
+        )
+    };
+    let mut e = SaseEngine::new(p()).with_event_time();
+    let got: Vec<MatchResult> = [
+        at(ev("A", 1), 0),
+        at(ev("B", 2), 1),
+        at(ev("Z", 3), 2),
+        at(ev("B", 4), 3),
+        at(ev("Z", 5), 30),
+    ]
+    .iter()
+    .flat_map(|x| e.process(x))
+    .collect();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(stack(&got[0]), ["A 1", "B 2", "B 4"]);
+
+    let mut e = SaseEngine::new(p()).with_event_time();
+    let got: Vec<MatchResult> = [
+        at(ev("A", 1), 0),
+        at(ev("B", 2), 1),
+        at(ev("C", 3), 2),
+        at(ev("Z", 4), 30),
+    ]
+    .iter()
+    .flat_map(|x| e.process(x))
+    .collect();
+    assert!(got.is_empty(), "C came within the window: {got:?}");
+}
+
+// ---------------------------------------------------------------------------
+// an `or` inside an `and`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_or_operand_takes_any_of_its_events_in_any_order() {
+    // (A as e or B as e) and C as c
+    let p = || and(or(step("A", "e"), step("B", "e")), step("C", "c"));
+    assert_eq!(
+        run(&mut engine(p()), &[ev("C", 1), ev("B", 2)]),
+        ["c=1,e=2"]
+    );
+    assert_eq!(
+        run(&mut engine(p()), &[ev("C", 1), ev("A", 2)]),
+        ["c=1,e=2"]
+    );
+    assert_eq!(
+        run(&mut engine(p()), &[ev("B", 1), ev("C", 2)]),
+        ["c=2,e=1"]
+    );
+    assert!(run(&mut engine(p()), &[ev("A", 1), ev("B", 2)]).is_empty());
+}
+
+#[test]
+fn each_option_of_an_or_operand_keeps_its_where_and_alias() {
+    // X as x -> ((A where v > 5 as hi or B as lo) and C where key == hi.key as c)
+    let p = || {
+        SasePattern::Seq(vec![
+            step("X", "x"),
+            and(
+                or(step_where("A", "hi", gt("v", 5)), step("B", "lo")),
+                step_where("C", "c", same_key("hi")),
+            ),
+        ])
+    };
+    let a = |id, v| keyed("A", id, 7).with_field("v", Value::Int(v));
+    // The C waits for `hi`; a low A is no option.
+    assert_eq!(
+        run(
+            &mut engine(p()),
+            &[ev("X", 1), keyed("C", 2, 7), a(3, 1), a(4, 9)]
+        ),
+        ["c=2,hi=4,x=1"]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// every alternative of an `or` is followed
+// ---------------------------------------------------------------------------
+
+fn seq(steps: Vec<SasePattern>) -> SasePattern {
+    SasePattern::Seq(steps)
+}
+
+fn sequence_or_single() -> SasePattern {
+    // A -> ((B -> C) or D) -> E
+    seq(vec![
+        step("A", "a"),
+        or(seq(vec![step("B", "b"), step("C", "c")]), step("D", "d")),
+        step("E", "e"),
+    ])
+}
+
+#[test]
+fn a_started_alternative_leaves_the_others_open() {
+    let got = run(
+        &mut engine(sequence_or_single()),
+        &[ev("A", 1), ev("B", 2), ev("D", 3), ev("E", 4)],
+    );
+    assert_eq!(got, ["a=1,d=3,e=4"]);
+}
+
+#[test]
+fn the_first_alternative_to_complete_ends_the_others() {
+    // Through D, then the C that would complete the other is too late.
+    let got = run(
+        &mut engine(sequence_or_single()),
+        &[ev("A", 1), ev("B", 2), ev("D", 3), ev("C", 4), ev("E", 5)],
+    );
+    assert_eq!(got, ["a=1,d=3,e=5"]);
+    // Through B and C, then the D is too late.
+    let got = run(
+        &mut engine(sequence_or_single()),
+        &[ev("A", 1), ev("B", 2), ev("C", 3), ev("D", 4), ev("E", 5)],
+    );
+    assert_eq!(got, ["a=1,b=2,c=3,e=5"]);
+}
+
+#[test]
+fn a_started_and_alternative_leaves_the_others_open() {
+    // X -> ((A and B) or C)
+    let p = || {
+        seq(vec![
+            step("X", "x"),
+            or(and(step("A", "a"), step("B", "b")), step("C", "c")),
+        ])
+    };
+    assert_eq!(
+        run(&mut engine(p()), &[ev("X", 1), ev("A", 2), ev("C", 3)]),
+        ["c=3,x=1"]
+    );
+    assert_eq!(
+        run(
+            &mut engine(p()),
+            &[ev("X", 1), ev("A", 2), ev("B", 3), ev("C", 4)]
+        ),
+        ["a=2,b=3,x=1"]
+    );
+}
+
+#[test]
+fn an_event_waiting_in_an_and_alternative_leaves_the_others_open() {
+    // X -> ((A as a and B where key == a.key as b) or C)
+    let p = seq(vec![
+        step("X", "x"),
+        or(
+            and(step("A", "a"), step_where("B", "b", same_key("a"))),
+            step("C", "c"),
+        ),
+    ]);
+    assert_eq!(
+        run(&mut engine(p), &[ev("X", 1), keyed("B", 2, 9), ev("C", 3)]),
+        ["c=3,x=1"]
+    );
+}
+
+#[test]
+fn alternatives_that_start_alike_are_all_followed() {
+    // X -> ((B -> C) or (B -> D))
+    let p = || {
+        seq(vec![
+            step("X", "x"),
+            or(
+                seq(vec![step("B", "b"), step("C", "c")]),
+                seq(vec![step("B", "b"), step("D", "d")]),
+            ),
+        ])
+    };
+    assert_eq!(
+        run(&mut engine(p()), &[ev("X", 1), ev("B", 2), ev("D", 3)]),
+        ["b=2,d=3,x=1"]
+    );
+    assert_eq!(
+        run(
+            &mut engine(p()),
+            &[ev("X", 1), ev("B", 2), ev("C", 3), ev("D", 4)]
+        ),
+        ["b=2,c=3,x=1"]
+    );
+}
+
+#[test]
+fn alternatives_that_start_alike_at_the_start_are_all_followed() {
+    // (B -> C) or (B -> D)
+    let p = || {
+        or(
+            seq(vec![step("B", "b"), step("C", "c")]),
+            seq(vec![step("B", "b"), step("D", "d")]),
+        )
+    };
+    assert_eq!(
+        run(&mut engine(p()), &[ev("B", 1), ev("D", 2)]),
+        ["b=1,d=2"]
+    );
+    assert_eq!(
+        run(&mut engine(p()), &[ev("B", 1), ev("C", 2), ev("D", 3)]),
+        ["b=1,c=2"]
+    );
+}
+
+#[test]
+fn alternatives_are_followed_in_each_partition() {
+    let mut e = engine(sequence_or_single()).with_partition_by("key".into());
+    let got = run(
+        &mut e,
+        &[
+            keyed("A", 1, 1),
+            keyed("A", 2, 2),
+            keyed("B", 3, 1),
+            keyed("B", 4, 2),
+            keyed("D", 5, 1),
+            keyed("C", 6, 2),
+            keyed("C", 7, 1),
+            keyed("E", 8, 1),
+            keyed("E", 9, 2),
+        ],
+    );
+    assert_eq!(got, ["a=1,d=5,e=8", "a=2,b=4,c=6,e=9"]);
+}
+
+#[test]
+fn alternatives_are_followed_with_the_predicate_index_on_and_off() {
+    for enabled in [false, true] {
+        let mut e = engine(sequence_or_single()).with_predicate_index(enabled);
+        let got = run(
+            &mut e,
+            &[ev("A", 1), ev("B", 2), ev("D", 3), ev("C", 4), ev("E", 5)],
+        );
+        assert_eq!(got, ["a=1,d=3,e=5"], "index {enabled}");
+    }
+}
+
+#[test]
+fn a_fork_past_the_run_cap_is_dropped_and_counted() {
+    let mut e = engine(sequence_or_single()).with_max_runs(1);
+    let got = run(&mut e, &[ev("A", 1), ev("B", 2), ev("C", 3), ev("E", 4)]);
+    // The copy that took B had no room; the run itself still waits for D.
+    assert!(got.is_empty(), "{got:?}");
+    assert_eq!(e.total_runs_dropped, 1);
+    assert_eq!(run(&mut e, &[ev("D", 5), ev("E", 6)]), ["a=1,d=5,e=6"]);
+}
+
+#[test]
+fn an_or_in_an_alternative_is_followed_too() {
+    // A -> ((B -> ((C -> F) or G)) or D) -> E
+    let p = || {
+        seq(vec![
+            step("A", "a"),
+            or(
+                seq(vec![
+                    step("B", "b"),
+                    or(seq(vec![step("C", "c"), step("F", "f")]), step("G", "g")),
+                ]),
+                step("D", "d"),
+            ),
+            step("E", "e"),
+        ])
+    };
+    assert_eq!(
+        run(
+            &mut engine(p()),
+            &[
+                ev("A", 1),
+                ev("B", 2),
+                ev("C", 3),
+                ev("G", 4),
+                ev("D", 5),
+                ev("E", 6)
+            ]
+        ),
+        ["a=1,b=2,e=6,g=4"]
+    );
+    assert_eq!(
+        run(
+            &mut engine(p()),
+            &[
+                ev("A", 1),
+                ev("B", 2),
+                ev("C", 3),
+                ev("D", 4),
+                ev("F", 5),
+                ev("E", 6)
+            ]
+        ),
+        ["a=1,d=4,e=6"]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// caps
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_zero_event_cap_holds_no_waiting_event() {
+    // A as a and B where key == a.key as b, nothing may wait.
+    let p = and(step("A", "a"), step_where("B", "b", same_key("a")));
+    let mut e = engine(p).with_max_kleene_events(0);
+    let got = run(
+        &mut e,
+        &[keyed("B", 1, 1), keyed("A", 2, 1), keyed("B", 3, 1)],
+    );
+    assert_eq!(got, ["a=2,b=3"]);
+}
+
+#[test]
+fn a_tie_goes_to_the_run_created_first() {
+    // X -> ((A and B) or B): the B completes the copy in the `and` and the
+    // run's own alternative at once. The run, created before its copy,
+    // wins, whatever the order the runs are visited in.
+    let p = || {
+        seq(vec![
+            step("X", "x"),
+            or(and(step("A", "a"), step("B", "b")), step("B", "b")),
+        ])
+    };
+    // Two Xs: when the first run completes and leaves the list, the copy of
+    // the second is swapped into its place and visited before its run.
+    let events = [ev("X", 1), ev("X", 2), ev("A", 3), ev("B", 4)];
+    for index in [false, true] {
+        let mut e = engine(p()).with_predicate_index(index);
+        assert_eq!(
+            run(&mut e, &events),
+            ["b=4,x=1", "b=4,x=2"],
+            "index {index}"
+        );
+    }
+    let mut e = engine(p()).with_partition_by("key".into());
+    let mut got = run(&mut e, &events);
+    got.sort();
+    assert_eq!(got, ["b=4,x=1", "b=4,x=2"]);
 }

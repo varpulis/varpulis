@@ -417,11 +417,12 @@ A then B for one case, or B then A, fires `Complete`; a case with only one of
 the two fires nothing. `A and B and C` waits for three events, in any of the
 six orders.
 
-- **The operands are single events**, each with its own `where` and alias.
-  `NOT` and `all` are steps of their own and do not go inside an `and`
-  (E035); neither does a sequence: write `(A and B) -> C`, not
-  `(A -> C) and B`. An `and` over `or`s distributes:
-  `(A or B) and C` runs as `(A and C) or (B and C)`.
+- **The operands are single events**, each with its own `where` and alias,
+  or an `or` of single events: `(A as e or B as e) and C` waits for C and for
+  either an A or a B, in any order. `NOT` and `all` are steps of their own
+  and do not go inside an `and` (E035); neither does a sequence, nor an `or`
+  with a sequence or an `and` among its alternatives: write
+  `(A and B) -> C`, not `(A -> C) and B`.
 - **A `where` may read a sibling's alias**, as `b`'s does above. Such an
   operand is judged once the sibling has matched: a `DocumentB` that comes
   first waits, and is judged when a `DocumentA` arrives. The engine keeps at
@@ -434,8 +435,9 @@ six orders.
   still match, as long as all the events fit in the `within`.
 - **Each run completes once**, with the first partner that comes after it.
   Under the default `.stam()` every `DocumentA` and every `DocumentB` opens a
-  run, so A1, A2, B gives two matches, (A1, B) and (A2, B). `.stnm()` and
-  `.strict()` behave as they do for a sequence.
+  run, so A1, A2, B gives two matches, (A1, B) and (A2, B); A, B1, B2 gives
+  one, (A, B1), as `A -> B` does. `.stnm()` and `.strict()` behave as they do
+  for a sequence.
 
 An `and` can sit anywhere in a sequence, and an absence can follow it. The
 absence is watched from the moment the `and` completes to the pattern's
@@ -456,7 +458,8 @@ stream SettledOrders = Settled
 ```
 
 **Implementation:** `StateType::And` with an `AndConfig` (one `AndBranch` per
-operand), in `crates/varpulis-sase/src/and_op.rs`. A run inside an `and`
+operand, with one `AndOption` per event an `or` operand allows), in
+`crates/varpulis-sase/src/and_op.rs`. A run inside an `and`
 records which operands have matched; it is not filed in the predicate index,
 and a checkpoint keeps what it has matched and what waits.
 
@@ -484,9 +487,16 @@ stream Delivered = Paid
   alternatives the same alias, as `p` above, to read whichever came. A later
   step that reads an alias only some alternatives bind is flagged (W037): after
   the others it has no value and the comparison fails.
-- **One event takes one alternative**, the leftmost it satisfies. When two
-  alternatives can start with the same event type, make their `where` clauses
-  exclusive, or the one on the right may never match (W036).
+- **Every alternative is followed at once.** When an event starts an
+  alternative that needs more events, the run forks: a copy goes on in that
+  alternative and the run stays open to the others. In
+  `A -> ((B -> C) or D) -> E`, the events A, B, D, E match through D while
+  the copy still waits for C. The first copy to complete its alternative ends
+  the others, so a run gives at most one match through an `or`; with
+  `X -> ((B -> C) or (B -> D))`, X, B, D matches through the second. A
+  closure (`all B`) at the start of an alternative commits the run to it.
+  Forks count towards the run cap and, past it, are dropped or evict as the
+  backpressure setting says.
 
 `pattern Either = A or B` matches each A and each B on its own; for a stream
 of either type with nothing after it, `merge(A, B)` does the same without a

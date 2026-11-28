@@ -1496,7 +1496,7 @@ fn e050_every_function_the_engine_evaluates_is_known() {
 }
 
 // =============================================================================
-// `and` / `or` in patterns (E035-E037, W036-W038)
+// `and` / `or` in patterns (E035-E037, W037-W038)
 // =============================================================================
 
 const AND_OR_EVENTS: &str = "event A:\n    id: int\n\nevent B:\n    id: int\n\n\
@@ -1515,13 +1515,16 @@ fn and_or_patterns_that_run_check_clean() {
         "pattern P = A as a -> (B and C) -> NOT D where id == a.id within 5m",
         "pattern P = all A as xs -> B or C",
         "pattern P = A as a -> (B as e or C as e) -> D where id == e.id",
+        "pattern P = (A as e or B as e) and C where id == e.id as c within 5m",
+        "pattern P = D -> ((A -> B) or (A -> C))",
+        "pattern P = (A or B) and (C or D) and (A or C) and (B or D) and A and B and C",
     ] {
         let diags = validate_pattern(pattern);
         assert!(has_no_errors(&diags), "{pattern}: {diags:?}");
         assert!(
             !diags
                 .iter()
-                .any(|(_, c, _)| matches!(c, Some("W036" | "W037" | "W038"))),
+                .any(|(_, c, _)| matches!(c, Some("W037" | "W038"))),
             "{pattern}: {diags:?}"
         );
     }
@@ -1545,32 +1548,45 @@ fn e035_closure_or_sequence_inside_and() {
 }
 
 #[test]
-fn e035_an_and_over_ors_that_expands_too_far() {
-    // 2^7 = 128 alternatives.
+fn e035_an_or_operand_of_an_and_with_more_than_single_events() {
+    // What `varpulis check` passed and the engine then could not compile.
+    let diags = validate_pattern("pattern P = ((A as a -> B as b) or C as c) and D as d within 1m");
+    assert!(has_error(&diags, "E035"), "{diags:?}");
+    let diags = validate_pattern("pattern P = ((A and B) or C) and D");
+    assert!(has_error(&diags, "E035"), "{diags:?}");
+}
+
+#[test]
+fn a_wide_and_over_ors_is_no_error() {
+    // One state, whatever the number of `or` operands.
     let ors = ["(A or B)"; 7].join(" and ");
     let diags = validate_pattern(&format!("pattern P = {ors}"));
-    assert!(has_error(&diags, "E035"), "{diags:?}");
+    assert!(!has_code(&diags, "E035"), "{diags:?}");
 }
 
 #[test]
 fn e036_one_alias_on_two_operands_of_an_and() {
     let diags = validate_pattern("pattern P = A as x and B as x");
     assert!(has_error(&diags, "E036"), "{diags:?}");
-    // Alternatives of an `or` may share one.
+    // Alternatives of an `or` may share one, inside an `and` too.
     let diags = validate_pattern("pattern P = A as x or B as x");
     assert!(!has_code(&diags, "E036"), "{diags:?}");
+    let diags = validate_pattern("pattern P = (A as x or B as x) and C as c");
+    assert!(!has_code(&diags, "E036"), "{diags:?}");
+    // Not with another operand.
+    let diags = validate_pattern("pattern P = (A as x or B as y) and C as x");
+    assert!(has_error(&diags, "E036"), "{diags:?}");
 }
 
 #[test]
 fn e037_operands_that_read_each_other() {
     let diags = validate_pattern("pattern P = A where id == b.id as a and B where id == a.id as b");
     assert!(has_error(&diags, "E037"), "{diags:?}");
-}
-
-#[test]
-fn w036_alternatives_that_start_with_the_same_event_type() {
-    let diags = validate_pattern("pattern P = D -> ((A -> B) or (A -> C))");
-    assert!(has_warning(&diags, "W036"), "{diags:?}");
+    // Through an option of an `or` operand.
+    let diags = validate_pattern(
+        "pattern P = (A where id == c.id as e or B as e) and C where id == e.id as c",
+    );
+    assert!(has_error(&diags, "E037"), "{diags:?}");
 }
 
 #[test]

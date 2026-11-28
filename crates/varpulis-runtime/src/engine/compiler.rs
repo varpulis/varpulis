@@ -490,9 +490,8 @@ pub fn expr_to_sase_predicate(expr: &varpulis_core::ast::Expr) -> Option<Predica
 /// Compile a `SasePatternExpr` (from a named `pattern` declaration) into a runtime `SasePattern`.
 ///
 /// `None` when the expression holds a combination the engine does not run:
-/// an `and` operand that is not a single event (a sequence, `all`, `NOT`), or
-/// an `and` over `or`s that would expand into more than
-/// [`MAX_AND_ALTERNATIVES`] alternatives. The validator refuses those first
+/// an `and` operand that is neither a single event nor an `or` of single
+/// events (a sequence, `all`, `NOT`). The validator refuses those first
 /// (E035), with the reason.
 pub fn compile_sase_pattern_expr(
     expr: &varpulis_core::ast::SasePatternExpr,
@@ -507,10 +506,6 @@ pub fn compile_sase_pattern_expr(
         Some(pattern)
     }
 }
-
-/// How many alternatives an `and` over `or`s may expand into:
-/// `(A or B) and (C or D)` is the four `and`s `A and C`, `A and D`, ...
-pub const MAX_AND_ALTERNATIVES: usize = 64;
 
 fn compile_sase_expr(expr: &varpulis_core::ast::SasePatternExpr) -> Option<SasePattern> {
     use varpulis_core::ast::SasePatternExpr;
@@ -539,19 +534,14 @@ fn compile_sase_expr(expr: &varpulis_core::ast::SasePatternExpr) -> Option<SaseP
             or_of(alternatives)
         }
         SasePatternExpr::And(parts) => {
-            // An `and` joins single events. One over `or`s distributes:
-            // `(A or B) and C` is `(A and C) or (B and C)`.
-            let alternatives = and_alternatives(parts)?;
-            let ands = alternatives
+            // An `and` joins operands each of which is one event, or an
+            // `or` of events: `(A or B) and C` waits for C and for either
+            // of A and B, in one state.
+            let operands = parts.iter().map(and_operand).collect::<Option<Vec<_>>>()?;
+            operands
                 .into_iter()
-                .map(|events| {
-                    events
-                        .into_iter()
-                        .rev()
-                        .reduce(|acc, e| SasePattern::And(Box::new(e), Box::new(acc)))
-                })
-                .collect::<Option<Vec<_>>>()?;
-            or_of(ands)
+                .rev()
+                .reduce(|acc, e| SasePattern::And(Box::new(e), Box::new(acc)))
         }
     }
 }
@@ -564,52 +554,42 @@ fn or_of(alternatives: Vec<SasePattern>) -> Option<SasePattern> {
         .reduce(|acc, alt| SasePattern::Or(Box::new(alt), Box::new(acc)))
 }
 
-/// The `and`s, each a list of single events, that `parts` (the operands of
-/// one `and`) stand for. `None` when an operand is not a single event, an
-/// `and` or an `or` of those, or when the expansion passes the cap.
-fn and_alternatives(
-    parts: &[varpulis_core::ast::SasePatternExpr],
-) -> Option<Vec<Vec<SasePattern>>> {
-    let mut product: Vec<Vec<SasePattern>> = vec![Vec::new()];
-    for part in parts {
-        let options = and_operand_options(part)?;
-        let mut next = Vec::with_capacity(product.len() * options.len());
-        for prefix in &product {
-            for option in &options {
-                let mut combined = prefix.clone();
-                combined.extend(option.iter().cloned());
-                next.push(combined);
-            }
-        }
-        if next.len() > MAX_AND_ALTERNATIVES {
-            return None;
-        }
-        product = next;
+/// One operand of an `and`: a single event, a nested `and`, or an `or` of
+/// single events. `None` for anything else.
+fn and_operand(part: &varpulis_core::ast::SasePatternExpr) -> Option<SasePattern> {
+    use varpulis_core::ast::SasePatternExpr;
+
+    match part {
+        SasePatternExpr::Seq(_) => single_event(part),
+        SasePatternExpr::And(_) => compile_sase_expr(part),
+        SasePatternExpr::Or(alternatives) => or_of(
+            alternatives
+                .iter()
+                .map(single_event)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        SasePatternExpr::FollowedBy(_) => None,
     }
-    Some(product)
 }
 
-fn and_operand_options(
-    part: &varpulis_core::ast::SasePatternExpr,
-) -> Option<Vec<Vec<SasePattern>>> {
+fn single_event(part: &varpulis_core::ast::SasePatternExpr) -> Option<SasePattern> {
     use varpulis_core::ast::SasePatternExpr;
 
     match part {
         SasePatternExpr::Seq(items) => match items.as_slice() {
             [item] if item.kleene.is_none() && !item.event_type.starts_with('!') => {
-                Some(vec![vec![compile_sase_pattern_item(item)]])
+                Some(compile_sase_pattern_item(item))
             }
             _ => None,
         },
-        SasePatternExpr::And(inner) => and_alternatives(inner),
-        SasePatternExpr::Or(inner) => {
-            let mut options = Vec::new();
-            for alt in inner {
-                options.extend(and_operand_options(alt)?);
-            }
-            Some(options)
-        }
-        SasePatternExpr::FollowedBy(_) => None,
+        // `((A or B) or C) and D`, should the parser ever leave it nested.
+        SasePatternExpr::Or(alternatives) => or_of(
+            alternatives
+                .iter()
+                .map(single_event)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        _ => None,
     }
 }
 

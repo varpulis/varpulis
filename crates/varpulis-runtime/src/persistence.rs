@@ -1389,6 +1389,23 @@ pub struct RunCheckpoint {
     /// Whether the first of `and_waiting` is the event that opened the run.
     #[serde(default)]
     pub and_anchored: bool,
+    /// The `or` families the run belongs to: it or a copy of it follows
+    /// several alternatives of an `or`, and the first to leave the `or` ends
+    /// the others.
+    #[serde(default)]
+    pub or_families: Vec<OrFamilyCheckpoint>,
+}
+
+/// A run's membership of an `or` family, in a [`RunCheckpoint`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrFamilyCheckpoint {
+    /// Index of the `or` in the pattern's automaton.
+    pub group: usize,
+    /// Shared by the members of the family.
+    pub family: u64,
+    /// The alternatives (their first state) the run has left to its copies.
+    #[serde(default)]
+    pub forked: Vec<usize>,
 }
 
 /// Checkpoint for a stack entry in a SASE+ run.

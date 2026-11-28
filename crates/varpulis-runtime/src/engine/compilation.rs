@@ -1521,7 +1521,7 @@ impl Engine {
             selection_mode_override,
             emission_mode_override,
             sase_time,
-        );
+        )?;
 
         // === Build PST Forecaster if .forecast() specified ===
         if let Some(spec) = forecast_spec {
@@ -1810,6 +1810,8 @@ impl Engine {
     ///
     /// Returns `Some(SaseEngine)` when the stream has followed-by clauses, a Sequence source,
     /// or references a named pattern. Returns `None` for non-sequence streams.
+    /// A named pattern the engine cannot run is an error: the stream would
+    /// otherwise load and never emit.
     #[allow(clippy::too_many_arguments)]
     fn compile_sase_detection(
         &self,
@@ -1822,7 +1824,7 @@ impl Engine {
         selection_mode: Option<varpulis_core::ast::SelectionMode>,
         emission_mode: Option<varpulis_core::ast::EmissionMode>,
         time_semantics: SaseTimeSemantics,
-    ) -> Option<SaseEngine> {
+    ) -> Result<Option<SaseEngine>, super::error::EngineError> {
         let is_pattern_ref =
             matches!(source, StreamSource::Ident(name) if self.patterns.contains_key(name));
 
@@ -1896,10 +1898,10 @@ impl Engine {
                 }
 
                 info!("Created SASE+ engine for sequence pattern");
-                Some(engine)
+                Ok(Some(engine))
             } else {
                 warn!("Failed to compile SASE+ pattern");
-                None
+                Ok(None)
             }
         } else if is_pattern_ref {
             // Named pattern reference: compile the pattern's SasePatternExpr directly
@@ -1958,16 +1960,16 @@ impl Engine {
                 }
 
                 info!("Created SASE+ engine from named pattern '{}'", pattern_name);
-                Some(engine)
+                Ok(Some(engine))
             } else {
-                warn!(
-                    "Failed to compile named pattern '{}' to SASE+ engine",
-                    pattern_name
-                );
-                None
+                Err(super::error::EngineError::Compilation(format!(
+                    "pattern '{pattern_name}' combines its steps in a way the engine does not \
+                     run: an `and` operand must be one event or an `or` of single events \
+                     (`varpulis check` explains, E035)"
+                )))
             }
         } else {
-            None
+            Ok(None)
         }
     }
 

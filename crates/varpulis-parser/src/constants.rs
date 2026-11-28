@@ -116,30 +116,54 @@ fn stmt(node: Stmt, known: &HashMap<String, Expr>) -> Stmt {
         }
         Stmt::PatternDecl {
             name,
-            expr: SasePatternExpr::Seq(items),
+            expr: pattern,
             within,
             partition_by,
         } => {
-            let bound: HashSet<String> = items
-                .iter()
+            // Every step binds its type and alias for the whole pattern,
+            // whichever `and` / `or` it sits in.
+            let bound: HashSet<String> = pattern
+                .items()
+                .into_iter()
                 .flat_map(|i| [Some(i.event_type.clone()), i.alias.clone()])
                 .flatten()
                 .collect();
-            let items = items
-                .into_iter()
-                .map(|mut item| {
-                    item.filter = item.filter.take().map(|f| expr(f, known, &bound));
-                    item
-                })
-                .collect();
             Stmt::PatternDecl {
                 name,
-                expr: SasePatternExpr::Seq(items),
+                expr: pattern_expr(pattern, known, &bound),
                 within: within.map(|w| expr(w, known, &bound)),
                 partition_by: partition_by.map(|p| expr(p, known, &bound)),
             }
         }
         other => other,
+    }
+}
+
+/// The steps' filters of a pattern, constants substituted, at every depth.
+fn pattern_expr(
+    pattern: SasePatternExpr,
+    known: &HashMap<String, Expr>,
+    bound: &HashSet<String>,
+) -> SasePatternExpr {
+    let all = |parts: Vec<SasePatternExpr>| -> Vec<SasePatternExpr> {
+        parts
+            .into_iter()
+            .map(|p| pattern_expr(p, known, bound))
+            .collect()
+    };
+    match pattern {
+        SasePatternExpr::Seq(items) => SasePatternExpr::Seq(
+            items
+                .into_iter()
+                .map(|mut item| {
+                    item.filter = item.filter.take().map(|f| expr(f, known, bound));
+                    item
+                })
+                .collect(),
+        ),
+        SasePatternExpr::FollowedBy(parts) => SasePatternExpr::FollowedBy(all(parts)),
+        SasePatternExpr::And(parts) => SasePatternExpr::And(all(parts)),
+        SasePatternExpr::Or(parts) => SasePatternExpr::Or(all(parts)),
     }
 }
 

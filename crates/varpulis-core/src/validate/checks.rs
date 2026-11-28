@@ -1810,13 +1810,9 @@ fn check_sase_pattern_refs(v: &mut Validator, expr: &SasePatternExpr, span: Span
     }
 }
 
-/// The cap on what an `and` over `or`s expands into; mirrors
-/// `MAX_AND_ALTERNATIVES` in the runtime compiler.
-const MAX_AND_ALTERNATIVES: usize = 64;
-
 /// `and` / `or` in a pattern: what the engine does not run (E035), aliases
 /// that clash (E036) or refer to each other in a circle (E037), and what
-/// runs but likely not as meant (W036, W037).
+/// runs but likely not as meant (W037).
 fn check_pattern_combinators(
     v: &mut Validator,
     expr: &SasePatternExpr,
@@ -1866,7 +1862,6 @@ fn check_pattern_combinators(
             for alt in alternatives {
                 check_pattern_combinators(v, alt, span, true);
             }
-            check_overlapping_alternatives(v, alternatives, span);
         }
         SasePatternExpr::And(operands) => {
             for op in operands {
@@ -1881,20 +1876,22 @@ fn check_pattern_combinators(
                          around it: `(A and B) -> C`, not `(A -> C) and B`"
                             .to_string(),
                     );
+                } else if let SasePatternExpr::Or(alternatives) = op {
+                    if !alternatives.iter().all(is_single_event_or) {
+                        v.emit_with_hint(
+                            Severity::Error,
+                            span,
+                            "E035",
+                            "an `or` operand of an `and` has an alternative that is not a \
+                             single event"
+                                .to_string(),
+                            "an operand of an `and` is one event, or an `or` of single events \
+                             (`(A or B) and C`); write a sequence or an `and` of its own as a \
+                             separate step, or split the pattern"
+                                .to_string(),
+                        );
+                    }
                 }
-            }
-            if and_alternative_count(expr) > MAX_AND_ALTERNATIVES {
-                v.emit_with_hint(
-                    Severity::Error,
-                    span,
-                    "E035",
-                    format!(
-                        "this `and` over `or`s stands for more than {MAX_AND_ALTERNATIVES} \
-                         alternatives"
-                    ),
-                    "`(A or B) and C` runs as `(A and C) or (B and C)`; split the pattern"
-                        .to_string(),
-                );
             }
             check_and_aliases(v, operands, span);
         }
@@ -1909,66 +1906,73 @@ fn is_sequence(expr: &SasePatternExpr) -> bool {
     }
 }
 
-/// How many plain `and`s an `and` / `or` tree distributes into.
-fn and_alternative_count(expr: &SasePatternExpr) -> usize {
+/// A single event, or an `or` of single events.
+fn is_single_event_or(expr: &SasePatternExpr) -> bool {
     match expr {
-        SasePatternExpr::Seq(_) | SasePatternExpr::FollowedBy(_) => 1,
-        SasePatternExpr::Or(alts) => alts
-            .iter()
-            .map(and_alternative_count)
-            .fold(0usize, usize::saturating_add),
-        SasePatternExpr::And(ops) => ops
-            .iter()
-            .map(and_alternative_count)
-            .fold(1usize, usize::saturating_mul),
+        SasePatternExpr::Seq(items) => items.len() == 1,
+        SasePatternExpr::Or(alternatives) => alternatives.iter().all(is_single_event_or),
+        SasePatternExpr::FollowedBy(_) | SasePatternExpr::And(_) => false,
     }
 }
 
-/// The single-event operands of one `and`, nested `and`s flattened.
-fn and_items<'a>(operands: &'a [SasePatternExpr], out: &mut Vec<&'a SasePatternItem>) {
+/// The operands of one `and`, nested `and`s flattened, each with its
+/// events: one, or one per alternative of an `or` operand.
+fn and_operands<'a>(operands: &'a [SasePatternExpr], out: &mut Vec<Vec<&'a SasePatternItem>>) {
     for op in operands {
         match op {
-            SasePatternExpr::Seq(items) if items.len() == 1 => out.push(&items[0]),
-            SasePatternExpr::And(inner) => and_items(inner, out),
-            _ => {}
+            SasePatternExpr::And(inner) => and_operands(inner, out),
+            other => out.push(other.items()),
         }
     }
 }
 
 fn check_and_aliases(v: &mut Validator, operands: &[SasePatternExpr], span: Span) {
-    let mut items = Vec::new();
-    and_items(operands, &mut items);
+    let mut ops = Vec::new();
+    and_operands(operands, &mut ops);
+    let aliases: Vec<Vec<&str>> = ops
+        .iter()
+        .map(|items| {
+            let mut names: Vec<&str> = items.iter().filter_map(|i| i.alias.as_deref()).collect();
+            names.sort_unstable();
+            names.dedup();
+            names
+        })
+        .collect();
 
     let mut seen: Vec<&str> = Vec::new();
-    for alias in items.iter().filter_map(|i| i.alias.as_deref()) {
-        if seen.contains(&alias) {
-            v.emit_with_hint(
-                Severity::Error,
-                span,
-                "E036",
-                format!("alias '{alias}' names two operands of one `and`"),
-                "each operand of an `and` is a different event; give each its own alias \
-                 (the alternatives of an `or` may share one)"
-                    .to_string(),
-            );
-        } else {
-            seen.push(alias);
+    for names in &aliases {
+        for &alias in names {
+            if seen.contains(&alias) {
+                v.emit_with_hint(
+                    Severity::Error,
+                    span,
+                    "E036",
+                    format!("alias '{alias}' names two operands of one `and`"),
+                    "each operand of an `and` is a different event; give each its own alias \
+                     (the alternatives of an `or` may share one)"
+                        .to_string(),
+                );
+            }
+        }
+        for &alias in names {
+            if !seen.contains(&alias) {
+                seen.push(alias);
+            }
         }
     }
 
-    // i -> j when operand i's `where` reads operand j's alias.
+    // i -> j when a `where` of operand i reads an alias of operand j.
     let reads = |i: usize, j: usize| -> bool {
         i != j
-            && items[j].alias.as_deref().is_some_and(|alias| {
-                items[i]
-                    .filter
-                    .as_ref()
-                    .is_some_and(|f| f.mentions_name(alias))
+            && aliases[j].iter().any(|alias| {
+                ops[i]
+                    .iter()
+                    .any(|item| item.filter.as_ref().is_some_and(|f| f.mentions_name(alias)))
             })
     };
-    let n = items.len();
+    let n = ops.len();
     // Small n: a cycle exists when some operand reaches itself.
-    for (start, start_item) in items.iter().enumerate() {
+    for (start, start_items) in ops.iter().enumerate() {
         let mut stack = vec![start];
         let mut visited = vec![false; n];
         while let Some(i) = stack.pop() {
@@ -1977,6 +1981,9 @@ fn check_and_aliases(v: &mut Validator, operands: &[SasePatternExpr], span: Span
                     continue;
                 }
                 if j == start {
+                    let Some(item) = start_items.first() else {
+                        return;
+                    };
                     v.emit_with_hint(
                         Severity::Error,
                         span,
@@ -1984,10 +1991,7 @@ fn check_and_aliases(v: &mut Validator, operands: &[SasePatternExpr], span: Span
                         format!(
                             "the operands of an `and` refer to each other in a circle, \
                              through '{}'",
-                            start_item
-                                .alias
-                                .as_deref()
-                                .unwrap_or(&start_item.event_type)
+                            item.alias.as_deref().unwrap_or(&item.event_type)
                         ),
                         "an operand that reads another's alias is judged once that one has \
                          matched; in a circle none can be judged first. Keep the comparison \
@@ -2000,42 +2004,6 @@ fn check_and_aliases(v: &mut Validator, operands: &[SasePatternExpr], span: Span
                     *seen = true;
                     stack.push(j);
                 }
-            }
-        }
-    }
-}
-
-/// The event types an alternative can start with.
-fn first_event_types(expr: &SasePatternExpr) -> Vec<&str> {
-    match expr {
-        SasePatternExpr::Seq(items) => items
-            .first()
-            .map(|i| vec![i.event_type.strip_prefix('!').unwrap_or(&i.event_type)])
-            .unwrap_or_default(),
-        SasePatternExpr::FollowedBy(parts) => {
-            parts.first().map(first_event_types).unwrap_or_default()
-        }
-        SasePatternExpr::Or(parts) | SasePatternExpr::And(parts) => {
-            parts.iter().flat_map(first_event_types).collect()
-        }
-    }
-}
-
-fn check_overlapping_alternatives(v: &mut Validator, alternatives: &[SasePatternExpr], span: Span) {
-    let firsts: Vec<Vec<&str>> = alternatives.iter().map(first_event_types).collect();
-    for i in 0..firsts.len() {
-        for j in i + 1..firsts.len() {
-            if let Some(shared) = firsts[i].iter().find(|t| firsts[j].contains(t)) {
-                v.emit_with_hint(
-                    Severity::Warning,
-                    span,
-                    "W036",
-                    format!("two alternatives of an `or` can start with the same `{shared}`"),
-                    "an event takes the leftmost alternative it satisfies, and only that one; \
-                     make their `where` clauses exclusive, or the right one may never match"
-                        .to_string(),
-                );
-                return;
             }
         }
     }
